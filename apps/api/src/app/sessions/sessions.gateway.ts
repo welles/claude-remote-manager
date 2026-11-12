@@ -161,6 +161,9 @@ export class SessionsGateway
       case 'interrupt':
         await this.sessions.interrupt(message.sessionId);
         return;
+      case 'session.end':
+        await this.sessions.end(message.sessionId);
+        return;
       case 'permission.respond':
         // Rejected by parseClientFrame until approvals exist.
         return;

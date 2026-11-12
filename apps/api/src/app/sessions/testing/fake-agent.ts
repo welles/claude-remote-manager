@@ -89,6 +89,12 @@ export class FakeRun implements AgentRun {
     this.closed = true;
     this.output.close();
   }
+
+  stderr: string[] = [];
+
+  stderrTail(): string[] {
+    return this.stderr;
+  }
 }
 
 export class FakeAgentRunner implements AgentRunner {
@@ -121,6 +127,15 @@ export class FakeAgentRunner implements AgentRunner {
 export class FakeTranscriptReader implements TranscriptReader {
   transcripts = new Map<string, SessionMessage[]>();
   reads: { sdkSessionId: string; cwd: string }[] = [];
+
+  /** Session IDs that have a transcript besides those in `transcripts`. */
+  existing = new Set<string>();
+
+  async exists(sdkSessionId: string): Promise<boolean> {
+    return (
+      this.existing.has(sdkSessionId) || this.transcripts.has(sdkSessionId)
+    );
+  }
 
   async read(sdkSessionId: string, cwd: string): Promise<SessionMessage[]> {
     this.reads.push({ sdkSessionId, cwd });

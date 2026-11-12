@@ -54,6 +54,15 @@ const MAX_MESSAGE_LENGTH = 100_000;
 const MAX_TITLE_LENGTH = 200;
 const MODEL_PATTERN = /^[\w.[\]-]{1,100}$/;
 
+/** Error text, completed with Claude Code's last stderr line if any. */
+function errorMessage(error: unknown, run?: AgentRun): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const detail = run?.stderrTail().at(-1);
+  return detail && !message.includes(detail)
+    ? `${message}: ${detail}`
+    : message;
+}
+
 /** Default title: the first line of the first message, shortened. */
 export function titleFromPrompt(prompt: string): string {
   const line = prompt.trim().split('\n')[0].trim();
@@ -92,9 +101,18 @@ interface LiveSession {
   context: ContextUsage | null;
   interruptRequested: boolean;
   /** Why the current process is being closed on purpose. */
-  closing: 'idle' | 'shutdown' | null;
+  closing: 'idle' | 'shutdown' | 'end' | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
+  /** Settles when the message loop of the current process has ended. */
+  consuming: Promise<void> | null;
 }
+
+/** How long shutdown waits for Claude Code processes to exit. */
+export const SHUTDOWN_GRACE_MS = 5000;
+
+/** Notice stored when a server stop interrupts a running turn. */
+export const RESTART_NOTICE =
+  'The response was interrupted because the server stopped. Send a message to continue.';
 
 /**
  * Runs sessions: starts Claude Code processes, keeps them for follow-up
@@ -124,28 +142,64 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly limits: LimitsService,
   ) {}
 
+  /**
+   * Sessions still marked running were cut off by a server stop that did not
+   * shut down cleanly; they wait for the user again.
+   */
   onModuleInit(): void {
-    const count = this.sessions.finishActiveSessions();
-    if (count > 0) {
-      this.logger.log(
-        `Marked ${count} session(s) of the previous run as finished`,
+    const ids = this.sessions.stopRunningSessions();
+    for (const id of ids) {
+      // Where in the conversation is unknown: placed at the end.
+      this.storedEvents.add(
+        id,
+        { type: 'notice', level: 'warning', text: RESTART_NOTICE },
+        { uuid: null, userId: null },
       );
+    }
+    if (ids.length > 0) {
+      this.logger.log(`${ids.length} running session(s) were interrupted`);
     }
   }
 
-  /** Stops all Claude Code processes; runs before the database closes. */
-  onModuleDestroy(): void {
+  /**
+   * Stops all Claude Code processes and waits (bounded) until they have
+   * exited, so that their last transcript writes land and no process is left
+   * behind. Runs before the database closes. Sessions keep their status;
+   * a running turn is recorded as interrupted and the session waits.
+   */
+  async onModuleDestroy(): Promise<void> {
     this.shuttingDown = true;
+    const exits: Promise<void>[] = [];
     for (const live of this.live.values()) {
-      if (live.idleTimer) {
-        clearTimeout(live.idleTimer);
+      this.clearIdleTimer(live);
+      if (!live.run) {
+        continue;
       }
-      if (live.run) {
-        live.closing = 'shutdown';
-        live.run.close();
-        live.run = null;
-        this.sessions.update(live.id, { status: 'finished' });
+      if (this.requireRecord(live.id).status === 'running') {
+        this.append(live, {
+          type: 'notice',
+          level: 'warning',
+          text: RESTART_NOTICE,
+        });
+        this.sessions.update(live.id, { status: 'waiting' });
       }
+      live.closing = 'shutdown';
+      live.run.close();
+      if (live.consuming) {
+        exits.push(live.consuming);
+      }
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), SHUTDOWN_GRACE_MS);
+    });
+    const result = await Promise.race([
+      Promise.allSettled(exits).then(() => 'done' as const),
+      timeout,
+    ]);
+    clearTimeout(timer);
+    if (result === 'timeout') {
+      this.logger.warn('Claude Code processes did not exit in time');
     }
   }
 
@@ -232,13 +286,43 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /** Stops the running turn of a session. */
   async interrupt(sessionId: string): Promise<void> {
-    const record = this.requireRecord(sessionId);
+    this.requireRecord(sessionId);
     const live = this.live.get(sessionId);
+    if (live?.starting) {
+      // The process is still starting; the interrupt applies to its turn.
+      await live.starting;
+    }
+    const record = this.requireRecord(sessionId);
     if (!live?.run || record.status !== 'running') {
       throw new ConflictException('The session is not running');
     }
     live.interruptRequested = true;
     await live.run.interrupt();
+  }
+
+  /**
+   * Ends a session on request: stops its process and marks it finished. A
+   * message to a finished session resumes it.
+   */
+  async end(sessionId: string): Promise<SessionDto> {
+    const record = this.requireRecord(sessionId);
+    const live = this.live.get(sessionId);
+    if (live?.starting) {
+      await live.starting;
+    }
+    if (live?.run) {
+      live.closing = 'end';
+      live.run.close();
+    }
+    if (live) {
+      this.setStatus(live, 'finished');
+      this.releaseIfUnused(live);
+    } else if (record.status !== 'finished') {
+      this.updates.next(
+        this.toDto(this.sessions.update(sessionId, { status: 'finished' })),
+      );
+    }
+    return this.get(sessionId);
   }
 
   /**
@@ -297,6 +381,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         interruptRequested: false,
         closing: null,
         idleTimer: null,
+        consuming: null,
       };
       this.live.set(id, live);
     }
@@ -373,14 +458,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             additionalDirectories: record.additionalDirectories,
             model: record.model,
             permissionMode: record.permissionMode,
-            resume: record.sdkSessionId,
-            sessionId: record.sdkSessionId ? null : record.id,
+            ...(await this.resumeTarget(record)),
             canUseTool: this.canUseTool(live),
           },
           firstMessage,
         );
         live.run = run;
-        void this.consume(live, run);
+        live.consuming = this.consume(live, run);
       } catch (error) {
         this.failRun(live, error);
       } finally {
@@ -390,6 +474,29 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         this.releaseIfUnused(live);
       }
     })();
+  }
+
+  /**
+   * New sessions use their own ID as Claude Code session ID. If an earlier
+   * start died before Claude Code reported the ID, a transcript with that ID
+   * may already exist, and Claude Code refuses to reuse it ("Session ID ...
+   * is already in use"); then the session is resumed instead.
+   */
+  private async resumeTarget(
+    record: SessionRecord,
+  ): Promise<{ resume: string | null; sessionId: string | null }> {
+    if (record.sdkSessionId) {
+      return { resume: record.sdkSessionId, sessionId: null };
+    }
+    let exists = false;
+    try {
+      exists = await this.transcripts.exists(record.id, record.cwd);
+    } catch (error) {
+      this.logger.warn(`Transcript lookup failed: ${String(error)}`);
+    }
+    return exists
+      ? { resume: record.id, sessionId: null }
+      : { resume: null, sessionId: record.id };
   }
 
   private async consume(live: LiveSession, run: AgentRun): Promise<void> {
@@ -412,12 +519,25 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     live.run = null;
+    live.consuming = null;
     this.clearIdleTimer(live);
     live.log.clearDrafts();
-    if (failure && !live.closing) {
-      this.failRun(live, failure);
-    } else {
-      this.setStatus(live, 'finished');
+    const status = this.requireRecord(live.id).status;
+    if (live.closing) {
+      // Closed on purpose (idle timeout or end): the status stays.
+    } else if (status === 'running') {
+      // The process ended in the middle of a turn.
+      this.failRun(
+        live,
+        failure ??
+          new Error('Claude Code ended unexpectedly while a turn was running'),
+        run,
+      );
+    } else if (failure) {
+      // Ended while waiting; the next message starts a new process.
+      this.logger.warn(
+        `Claude Code of ${live.id} ended while waiting: ${errorMessage(failure, run)}`,
+      );
     }
     live.closing = null;
     this.releaseIfUnused(live);
@@ -562,9 +682,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private failRun(live: LiveSession, error: unknown): void {
+  private failRun(live: LiveSession, error: unknown, run?: AgentRun): void {
     live.run = null;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error, run);
     this.logger.error(`Session ${live.id} failed: ${message}`);
     this.append(live, { type: 'error', message });
     this.setStatus(live, 'failed', message);

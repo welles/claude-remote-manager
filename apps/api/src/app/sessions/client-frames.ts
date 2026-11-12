@@ -44,6 +44,7 @@ export function parseClientFrame(raw: unknown): ClientMessage {
     }
     case 'unsubscribe':
     case 'interrupt':
+    case 'session.end':
       return { type, sessionId: requireUuid(frame, 'sessionId'), ...base };
     case 'message.send':
       return {

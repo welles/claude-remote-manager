@@ -18,6 +18,7 @@ import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
 import {
   NO_APPROVAL_UI_MESSAGE,
+  RESTART_NOTICE,
   SessionsService,
   titleFromPrompt,
   type SessionEventEnvelope,
@@ -100,8 +101,8 @@ describe('SessionsService', () => {
     service = createService();
   });
 
-  afterEach(() => {
-    service.onModuleDestroy();
+  afterEach(async () => {
+    await service.onModuleDestroy();
     db.$client.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -457,7 +458,7 @@ describe('SessionsService', () => {
   });
 
   describe('process end and resume', () => {
-    it('finishes when the process ends and resumes with the next message', async () => {
+    it('keeps waiting when the process ends between turns, resumes on the next message', async () => {
       const session = await startSession();
       runner.last.emit(
         { type: 'system', subtype: 'init', session_id: 'sdk-1' },
@@ -466,7 +467,7 @@ describe('SessionsService', () => {
       await flush();
       runner.last.close();
       await flush();
-      expect(service.get(session.id).status).toBe('finished');
+      expect(service.get(session.id).status).toBe('waiting');
 
       await service.send(session.id, { id: MSG_2, text: 'Still there?' });
       await flush();
@@ -521,10 +522,11 @@ describe('SessionsService', () => {
         session_id: 'sdk-1',
       });
       await flush();
-      service.onModuleDestroy();
+      await service.onModuleDestroy();
       expect(runner.last.closed).toBe(true);
+      // A running turn was cut off: the session waits again.
       expect(new SessionRepository(db).require(session.id).status).toBe(
-        'finished',
+        'waiting',
       );
 
       transcripts.transcripts.set('sdk-1', [
@@ -555,7 +557,7 @@ describe('SessionsService', () => {
       expect(transcripts.reads).toEqual([
         { sdkSessionId: 'sdk-1', cwd: config.sessionCwd },
       ]);
-      expect(history.session.status).toBe('finished');
+      expect(history.session.status).toBe('waiting');
       expect(history.events).toEqual([
         expect.objectContaining({
           seq: 1,
@@ -567,6 +569,11 @@ describe('SessionsService', () => {
           type: 'assistant.text',
           text: 'pong',
         }),
+        expect.objectContaining({
+          seq: 3,
+          type: 'notice',
+          text: RESTART_NOTICE,
+        }),
       ]);
 
       await service.send(session.id, { id: MSG_3, text: 'Once more' });
@@ -574,8 +581,88 @@ describe('SessionsService', () => {
       expect(runner.last.options.resume).toBe('sdk-1');
       expect(
         (await service.subscribe(session.id)).events.map((e) => e.seq),
-      ).toEqual([1, 2, 3, 4]);
+      ).toEqual([1, 2, 3, 4, 5]);
       expect(transcripts.reads).toHaveLength(1);
+    });
+
+    it('marks sessions left running by a crash as waiting, with a notice', async () => {
+      const session = await startSession();
+      // Simulate a server that died without shutting down.
+      const fresh = createService();
+      expect(fresh.get(session.id).status).toBe('waiting');
+      const history = await fresh.subscribe(session.id);
+      expect(history.events.at(-1)).toMatchObject({
+        type: 'notice',
+        text: RESTART_NOTICE,
+      });
+    });
+
+    it('waits for processes to exit on shutdown, bounded', async () => {
+      await startSession();
+      const run = runner.last;
+      run.close = () => {
+        run.closed = true;
+        // The process takes a moment to exit.
+        setTimeout(() => run.output.close(), 30);
+      };
+      const started = Date.now();
+      await service.onModuleDestroy();
+      expect(Date.now() - started).toBeGreaterThanOrEqual(25);
+      expect(run.closed).toBe(true);
+    });
+
+    it('ends a session on request and resumes it with a message', async () => {
+      const session = await startSession();
+      runner.last.emit(
+        { type: 'system', subtype: 'init', session_id: 'sdk-1' },
+        resultMessage(1, 0),
+      );
+      await flush();
+
+      const ended = await service.end(session.id);
+      await flush();
+      expect(ended.status).toBe('finished');
+      expect(runner.last.closed).toBe(true);
+      expect(service.get(session.id).status).toBe('finished');
+      expect(lastEvent('error')).toBeUndefined();
+
+      await service.send(session.id, { id: MSG_2, text: 'Back again' });
+      await flush();
+      expect(service.get(session.id).status).toBe('running');
+      expect(runner.last.options.resume).toBe('sdk-1');
+    });
+
+    it('fails a turn whose process ends without error', async () => {
+      const session = await startSession();
+      runner.last.stderr = ['fatal: something broke'];
+      runner.last.close();
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'failed',
+        lastError:
+          'Claude Code ended unexpectedly while a turn was running: fatal: something broke',
+      });
+    });
+
+    it('resumes a first start that died before Claude Code reported the ID', async () => {
+      runner.failNextStart = new Error('boom');
+      const session = await startSession();
+      expect(service.get(session.id).sdkSessionId).toBeNull();
+
+      transcripts.existing.add(session.id);
+      await service.send(session.id, { id: MSG_2, text: 'again' });
+      await flush();
+      expect(runner.last.options).toMatchObject({
+        resume: session.id,
+        sessionId: null,
+      });
+    });
+
+    it('waits for a starting process before interrupting', async () => {
+      const session = await service.create({ prompt: 'Reply with pong' });
+      // No flush: the process is still starting.
+      await service.interrupt(session.id);
+      expect(runner.last.interrupted).toBe(1);
     });
 
     it('closes idle processes', async () => {
@@ -589,8 +676,13 @@ describe('SessionsService', () => {
       await new Promise((resolve) => setTimeout(resolve, 60));
       await flush();
       expect(runner.last.closed).toBe(true);
-      expect(service.get(session.id).status).toBe('finished');
+      // The process is an internal detail: the session still waits.
+      expect(service.get(session.id).status).toBe('waiting');
       expect(lastEvent('error')).toBeUndefined();
+
+      await service.send(session.id, { id: MSG_2, text: 'Later' });
+      await flush();
+      expect(runner.runs).toHaveLength(2);
     });
   });
 
@@ -699,7 +791,7 @@ describe('SessionsService', () => {
       await flush();
       run.close();
       await flush();
-      expect(service.get(session.id).status).toBe('finished');
+      expect(service.get(session.id).status).toBe('waiting');
       expect(service.liveCount).toBe(0);
       expect(service.get(session.id).context).toBeNull();
 

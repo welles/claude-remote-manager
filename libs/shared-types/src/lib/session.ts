@@ -1,13 +1,15 @@
 /**
- * Lifecycle of a session as shown in the UI.
+ * Lifecycle of a session as shown in the UI. The Claude Code process is an
+ * internal detail: it is closed when idle or when the server stops and
+ * restarted (resumed) with the next message without a status change.
  *
  * - `running`: Claude is working on a turn.
- * - `waiting`: the Claude Code process is alive and waits for the next user
- *   message (later also for a permission answer).
- * - `finished`: no process is running (idle timeout, server restart or the
- *   process ended normally). Sending a message resumes the session.
- * - `failed`: the process ended with an error. Sending a message tries to
- *   resume the session.
+ * - `waiting`: waits for the next user message (later also for a
+ *   permission answer).
+ * - `finished`: ended explicitly (later also by PR autoclose). Sending a
+ *   message resumes the session.
+ * - `failed`: the process could not start or ended with an error during a
+ *   turn. Sending a message tries to resume the session.
  */
 export type SessionStatus = 'running' | 'waiting' | 'finished' | 'failed';
 

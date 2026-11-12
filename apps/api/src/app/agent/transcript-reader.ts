@@ -10,6 +10,9 @@ export abstract class TranscriptReader {
    * project directory the transcript lives in.
    */
   abstract read(sdkSessionId: string, cwd: string): Promise<SessionMessage[]>;
+
+  /** Whether Claude Code has a transcript for this session ID. */
+  abstract exists(sdkSessionId: string, cwd: string): Promise<boolean>;
 }
 
 @Injectable()
@@ -17,5 +20,10 @@ export class SdkTranscriptReader implements TranscriptReader {
   async read(sdkSessionId: string, cwd: string): Promise<SessionMessage[]> {
     const sdk = await loadAgentSdk();
     return sdk.getSessionMessages(sdkSessionId, { dir: cwd });
+  }
+
+  async exists(sdkSessionId: string, cwd: string): Promise<boolean> {
+    const sdk = await loadAgentSdk();
+    return (await sdk.getSessionInfo(sdkSessionId, { dir: cwd })) !== undefined;
   }
 }

@@ -45,6 +45,8 @@ export interface AgentRun {
   planUsage(): Promise<SDKControlGetUsageResponse>;
   /** Ends the input and terminates the process. */
   close(): void;
+  /** The last lines Claude Code wrote to stderr, for error messages. */
+  stderrTail(): string[];
 }
 
 /**

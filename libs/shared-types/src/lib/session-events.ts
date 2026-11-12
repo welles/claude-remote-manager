@@ -319,6 +319,16 @@ export interface InterruptMessage {
   requestId?: string;
 }
 
+/**
+ * End the session: stops its Claude Code process and marks it finished. A
+ * later message resumes it.
+ */
+export interface EndSessionMessage {
+  type: 'session.end';
+  sessionId: string;
+  requestId?: string;
+}
+
 /** Answer a `permission.request`. Reserved; rejected until approvals exist. */
 export interface PermissionResponseMessage {
   type: 'permission.respond';
@@ -334,4 +344,5 @@ export type ClientMessage =
   | UnsubscribeMessage
   | SendMessageMessage
   | InterruptMessage
+  | EndSessionMessage
   | PermissionResponseMessage;

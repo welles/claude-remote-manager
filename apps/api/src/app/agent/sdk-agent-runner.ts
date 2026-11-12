@@ -38,6 +38,9 @@ export const SETTING_SOURCES: Sdk.SettingSource[] = [
   'local',
 ];
 
+/** Lines of Claude Code's stderr kept for error messages. */
+const STDERR_LINES = 5;
+
 /** Builds the SDK options for a session. Exported for tests. */
 export function buildQueryOptions(
   options: AgentStartOptions,
@@ -87,11 +90,18 @@ export class SdkAgentRunner implements AgentRunner {
       uuid: message.id as Sdk.SDKUserMessage['uuid'],
     });
     input.push(toSdk(firstMessage));
+    const stderr: string[] = [];
     const query = sdk.query({
       prompt: input,
-      options: buildQueryOptions(options, this.config, (data) =>
-        this.logger.debug(data.trimEnd()),
-      ),
+      options: buildQueryOptions(options, this.config, (data) => {
+        this.logger.debug(data.trimEnd());
+        for (const line of data.split('\n')) {
+          if (line.trim()) {
+            stderr.push(line.trim());
+          }
+        }
+        stderr.splice(0, Math.max(0, stderr.length - STDERR_LINES));
+      }),
     });
 
     return {
@@ -109,6 +119,7 @@ export class SdkAgentRunner implements AgentRunner {
         input.close();
         query.close();
       },
+      stderrTail: () => [...stderr],
     };
   }
 }

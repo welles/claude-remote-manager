@@ -221,6 +221,29 @@ describe('SessionsGateway', () => {
     });
   });
 
+  it('ends sessions over WebSocket and REST', async () => {
+    const session = await createSession();
+    client.send({
+      type: 'session.end',
+      sessionId: session.id,
+      requestId: 'e1',
+    });
+    await client.next('ack', (ack) => ack.requestId === 'e1');
+    expect(runner.last.closed).toBe(true);
+    const update = await client.next(
+      'session.updated',
+      (m) => m.session.status === 'finished',
+    );
+    expect(update.session.id).toBe(session.id);
+
+    const second = await createSession();
+    const response = await fetch(`${url}/api/sessions/${second.id}/end`, {
+      method: 'POST',
+    });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as SessionDto).status).toBe('finished');
+  });
+
   it('serves sessions and limits over REST', async () => {
     const session = await createSession();
     const list = (await (await fetch(`${url}/api/sessions`)).json()) as {
@@ -270,7 +293,7 @@ describe('SessionsGateway', () => {
   it('stops running sessions when the application shuts down', async () => {
     const session = await createSession();
     const run = runner.last;
-    await testApp.app.close();
+    await testApp.close();
     expect(run.closed).toBe(true);
     expect(session.status).toBe('running');
   });

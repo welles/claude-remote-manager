@@ -125,8 +125,7 @@ export interface HistoryItem {
  * Merges the transcript (conversation, without timestamps) with the stored
  * app events. A stored event goes right after the transcript entry it was
  * anchored to; if that entry is unknown (e.g. compacted away), at the end of
- * its user message's turn; otherwise at the end. Events anchored before any
- * entry come first.
+ * its user message's turn; otherwise (also without anchor) at the end.
  */
 export function buildHistory(
   entries: TranscriptEntry[],
@@ -138,7 +137,6 @@ export function buildHistory(
   );
   const afterEntry = new Map<string, StoredEvent[]>();
   const endOfTurn = new Map<string, StoredEvent[]>();
-  const first: StoredEvent[] = [];
   const last: StoredEvent[] = [];
   const push = (
     map: Map<string, StoredEvent[]>,
@@ -151,9 +149,8 @@ export function buildHistory(
       push(afterEntry, uuid, item);
     } else if (userId && userIds.has(userId)) {
       push(endOfTurn, userId, item);
-    } else if (!uuid && !userId) {
-      first.push(item);
     } else {
+      // Unknown or no anchor (e.g. a restart notice): at the end.
       last.push(item);
     }
   }
@@ -164,7 +161,6 @@ export function buildHistory(
       items.push({ event: item.event, at: item.createdAt.toISOString() });
     }
   };
-  addStored(first);
   let turn: string | null = null;
   for (const entry of entries) {
     if (entry.isUserMessage) {

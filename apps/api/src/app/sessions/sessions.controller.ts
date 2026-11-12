@@ -38,6 +38,13 @@ export class SessionsController {
     await this.sessions.send(id, body);
   }
 
+  /** Stops the session's process and marks it finished. */
+  @Post(':id/end')
+  @HttpCode(200)
+  end(@Param('id') id: string): Promise<SessionDto> {
+    return this.sessions.end(id);
+  }
+
   @Post(':id/interrupt')
   @HttpCode(202)
   interrupt(@Param('id') id: string): Promise<void> {

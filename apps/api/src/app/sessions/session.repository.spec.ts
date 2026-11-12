@@ -91,12 +91,12 @@ describe('SessionRepository', () => {
     });
   });
 
-  it('finishes running and waiting sessions on startup', () => {
+  it('sets running sessions to waiting on startup', () => {
     repository.create(newSession({ id: 'running', status: 'running' }));
     repository.create(newSession({ id: 'waiting', status: 'waiting' }));
     repository.create(newSession({ id: 'failed', status: 'failed' }));
 
-    expect(repository.finishActiveSessions()).toBe(2);
+    expect(repository.stopRunningSessions()).toEqual(['running']);
     expect(
       repository
         .list()
@@ -104,8 +104,8 @@ describe('SessionRepository', () => {
         .sort(),
     ).toEqual([
       ['failed', 'failed'],
-      ['running', 'finished'],
-      ['waiting', 'finished'],
+      ['running', 'waiting'],
+      ['waiting', 'waiting'],
     ]);
   });
 

@@ -98,16 +98,17 @@ export class SessionRepository {
   }
 
   /**
-   * Marks sessions that were running or waiting as finished. Used on startup:
-   * their Claude Code processes ended with the previous server process.
+   * Sets sessions that are still marked running to waiting and returns their
+   * IDs. Used on startup: their turns ended with the previous server process.
    */
-  finishActiveSessions(now = new Date()): number {
-    const result = this.db
+  stopRunningSessions(now = new Date()): string[] {
+    return this.db
       .update(sessions)
-      .set({ status: 'finished', updatedAt: now })
-      .where(inArray(sessions.status, ['running', 'waiting']))
-      .run();
-    return result.changes;
+      .set({ status: 'waiting', updatedAt: now })
+      .where(eq(sessions.status, 'running'))
+      .returning({ id: sessions.id })
+      .all()
+      .map((row) => row.id);
   }
 
   private withDirectories(rows: SessionRow[]): SessionRecord[] {

@@ -108,8 +108,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 
 - `POST /api/sessions` creates a session in the configured working directory and starts a
   Claude Code process through the Agent SDK in streaming-input mode. The process stays alive
-  for follow-up messages until it is idle for `SESSION_IDLE_TIMEOUT_MINUTES` or the server
-  stops; several sessions run side by side.
+  for follow-up messages; several sessions run side by side. The process is an internal
+  detail: it is closed after `SESSION_IDLE_TIMEOUT_MINUTES` without activity and when the
+  server stops, and the next message starts it again with the SDK's resume option.
 - SDK messages are mapped to session events (`libs/shared-types/src/lib/session-events.ts`):
   streamed text deltas, complete text blocks, tool calls and results, permission denials,
   notices, errors, turn results with usage, and context usage. The server keeps an event log
@@ -122,10 +123,12 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   the transcript. Status changes and text deltas are live-only. The Agent SDK returns
   transcript messages without timestamps, so rebuilt conversation events have `at: null`.
   An unused session's log is released and rebuilt this way when it is opened again.
-- Status: `running` (turn in progress), `waiting` (process alive, waiting for the user),
-  `finished` (no process; idle timeout, restart or normal end) and `failed` (the process
-  ended with an error). Sending a message to a finished or failed session resumes it with the
-  stored Claude Code session ID.
+- Status: `running` (Claude works on a turn), `waiting` (waits for the user, whether or not
+  a process is alive), `finished` (ended with "End session", `POST /api/sessions/:id/end` or
+  the `session.end` frame) and `failed` (the process could not start or ended with an error
+  during a turn). A message to a finished or failed session resumes it. A turn cut off by a
+  server stop is recorded with a notice and the session waits again; on shutdown the server
+  waits up to 5 seconds for the Claude Code processes to exit.
 - Usage: every result message's tokens (input, output, cache write, cache read) and the SDK's
   theoretical cost in USD are stored per request and model in `usage_records`; the session
   shows the totals. Context window usage and the account's rate limits are captured after
@@ -137,7 +140,8 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   policy `/etc/claude-code/CLAUDE.md` is always loaded.
 
 REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
-`POST /api/sessions/:id/messages`, `POST /api/sessions/:id/interrupt`, `GET /api/limits`,
+`POST /api/sessions/:id/messages`, `POST /api/sessions/:id/interrupt`,
+`POST /api/sessions/:id/end`, `GET /api/limits`,
 `GET /api/health`. WebSocket: `/api/ws` with the versioned protocol in
 `libs/shared-types/src/lib/session-events.ts`.
 

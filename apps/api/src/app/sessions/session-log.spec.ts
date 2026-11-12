@@ -132,7 +132,7 @@ describe('buildHistory', () => {
         assistant('a2', 'r2'),
       ],
       [
-        stored('before', null, null),
+        stored('unanchored', null, null),
         stored('after a1', 'a1', 'u1'),
         stored('turn 1 end', 'lost', 'u1'),
         stored('after u2', 'u2', 'u2'),
@@ -140,7 +140,6 @@ describe('buildHistory', () => {
       ],
     );
     expect(texts(items)).toEqual([
-      'notice:before',
       'q1',
       'r1',
       'notice:after a1',
@@ -148,6 +147,7 @@ describe('buildHistory', () => {
       'q2',
       'notice:after u2',
       'r2',
+      'notice:unanchored',
       'notice:unknown',
     ]);
   });
