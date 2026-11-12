@@ -108,7 +108,8 @@
       <mat-label>{{ running() ? 'Queue a message' : 'Message' }}</mat-label>
       <textarea
         matInput
-        [(ngModel)]="draft"
+        [value]="draft()"
+        (input)="onInput($event)"
         (keydown)="onKeydown($event)"
         cdkTextareaAutosize
         cdkAutosizeMinRows="1"
@@ -120,7 +121,7 @@
       <button
         matButton="filled"
         (click)="send()"
-        [disabled]="!draft.trim() || !connected()"
+        [disabled]="!draft().trim() || !connected()"
         data-testid="send"
       >
         Send

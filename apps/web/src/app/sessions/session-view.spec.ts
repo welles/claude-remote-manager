@@ -219,6 +219,8 @@ describe('SessionView', () => {
     ).click();
 
     const [, send, interrupt] = socket.sent as Record<string, unknown>[];
+    await harness.fixture.whenStable();
+    expect(input.value).toBe('');
     expect(send).toMatchObject({
       type: 'message.send',
       sessionId: 's1',

@@ -10,7 +10,6 @@ import {
   type OnInit,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
@@ -38,7 +37,6 @@ import { newId } from './sessions-api';
   selector: 'app-session-view',
   imports: [
     DecimalPipe,
-    FormsModule,
     MarkdownPipe,
     MatButtonModule,
     MatFormFieldModule,
@@ -71,7 +69,11 @@ export class SessionView implements OnInit {
   protected readonly running = computed(
     () => this.session()?.status === 'running',
   );
-  protected draft = '';
+  /**
+   * Text in the input box. A signal bound to the textarea's value (not
+   * ngModel, whose asynchronous write could leave sent text in the box).
+   */
+  protected readonly draft = signal('');
 
   /** Request IDs of frames this view sent, to show their errors. */
   private readonly pending = new Set<string>();
@@ -122,7 +124,7 @@ export class SessionView implements OnInit {
   }
 
   protected send(): void {
-    const text = this.draft.trim();
+    const text = this.draft().trim();
     if (!text) {
       return;
     }
@@ -140,7 +142,7 @@ export class SessionView implements OnInit {
     }
     this.pending.add(requestId);
     this.error.set(null);
-    this.draft = '';
+    this.draft.set('');
     this.stickToBottom = true;
   }
 
@@ -169,6 +171,10 @@ export class SessionView implements OnInit {
     ) {
       this.pending.add(requestId);
     }
+  }
+
+  protected onInput(event: Event): void {
+    this.draft.set((event.target as HTMLTextAreaElement).value);
   }
 
   protected onKeydown(event: KeyboardEvent): void {
