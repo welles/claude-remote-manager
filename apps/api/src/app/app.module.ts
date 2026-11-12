@@ -2,6 +2,8 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Module } from '@nestjs/common';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { ConfigModule } from './config/config.module';
+import { DatabaseModule } from './db/database.module';
 import { HealthController } from './health/health.controller';
 
 /**
@@ -12,6 +14,8 @@ const webRoot = resolve(process.env.WEB_ROOT || join(__dirname, 'public'));
 
 @Module({
   imports: [
+    ConfigModule,
+    DatabaseModule,
     ...(existsSync(webRoot)
       ? [
           ServeStaticModule.forRoot({

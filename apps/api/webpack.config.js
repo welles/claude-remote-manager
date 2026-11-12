@@ -15,7 +15,15 @@ module.exports = {
       compiler: 'tsc',
       main: './src/main.ts',
       tsConfig: './tsconfig.app.json',
-      assets: ['./src/assets'],
+      assets: [
+        './src/assets',
+        // SQL migrations, applied on startup (see src/app/db/database.ts)
+        {
+          input: './src/app/db/migrations',
+          glob: '**/*',
+          output: 'migrations',
+        },
+      ],
       optimization: false,
       outputHashing: 'none',
       generatePackageJson: true,
