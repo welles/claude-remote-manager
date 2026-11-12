@@ -5,9 +5,10 @@ work on several repositories at once, each in its own git worktree, with live ch
 cleanup. Everything runs in one Docker container. See [docs/specification.md](docs/specification.md)
 (German) for the full specification.
 
-Current state: sessions run through the Claude Agent SDK in one fixed working directory and
-stream to a minimal chat view; usage is recorded per request. Worktrees, the GitHub
-integration, approval dialogs and the full chat view follow.
+Current state: repositories are registered by clone URL; sessions run through the Claude
+Agent SDK in worktrees of one or more repositories (or in a new project) and stream to a
+minimal chat view; usage is recorded per request. The GitHub integration, approval dialogs,
+the full chat view and worktree cleanup follow.
 
 ## Workspace layout
 
@@ -51,9 +52,11 @@ config directory is `~/.claude` or `CLAUDE_CONFIG_DIR`). Never an API key.
 npm start                        # then open http://localhost:4200
 ```
 
-Start a session with a short prompt (choose Haiku to keep it cheap), watch the answer stream in,
-send a follow-up, restart the API and send another message: the session is resumed. Sessions
-work in `~/.local/share/claude-remote-manager/projects/scratch` by default, outside this
+Add a repository on the Repositories page (any clone URL git can use with the credentials of
+your shell, or a local path), then start a session on it with a short prompt (choose Haiku to
+keep it cheap), watch the answer stream in, send a follow-up, restart the API and send another
+message: the session is resumed. Clones, worktrees and new projects live in
+`~/.local/share/claude-remote-manager/{repos,worktrees,projects}` by default, outside this
 repository; the database lives in `data/db` of the workspace (gitignored).
 
 Start the API from a normal shell. Started from inside a Claude Code session it inherits that
@@ -65,9 +68,10 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | ------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------- |
 | `PORT`                         | `3000` (image: `8080`)                                 | HTTP and WebSocket port                                    |
 | `DB_DIR`                       | `data/db` in the working directory (image: `/data/db`) | SQLite database `claude-remote-manager.sqlite`             |
-| `PROJECTS_DIR`                 | `~/.local/share/claude-remote-manager/projects`        | Base of the default session working directory              |
-| `SESSION_CWD`                  | `$PROJECTS_DIR/scratch`                                | Working directory of new sessions (created if missing)     |
-| `SESSION_ADDITIONAL_DIRS`      | none                                                   | Colon-separated extra directories new sessions may access  |
+| `REPOS_DIR`                    | `~/.local/share/claude-remote-manager/repos`           | Shared clones: `<owner>/<repo>`                            |
+| `WORKTREES_DIR`                | `~/.local/share/claude-remote-manager/worktrees`       | Session worktrees: `<owner>/<repo>/<session-slug>`         |
+| `PROJECTS_DIR`                 | `~/.local/share/claude-remote-manager/projects`        | New projects without repository: `<name>`                  |
+| `SETUP_SCRIPT_TIMEOUT_MINUTES` | `15`                                                   | Setup scripts are stopped after this long                  |
 | `SESSION_IDLE_TIMEOUT_MINUTES` | `60`                                                   | Close Claude Code processes idle this long; `0` keeps them |
 | `CLAUDE_CODE_EXECUTABLE`       | the binary bundled with the Agent SDK                  | Other Claude Code executable for the sessions              |
 | `CLAUDE_CONFIG_DIR`            | `~/.claude` (image: `/data/claude`)                    | Read by Claude Code: login, settings, transcripts          |
@@ -106,8 +110,12 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
                                      SQLite (sessions, usage)    Claude Code process per session
 ```
 
-- `POST /api/sessions` creates a session in the configured working directory and starts a
-  Claude Code process through the Agent SDK in streaming-input mode. The process stays alive
+- `POST /api/sessions` creates a session in status `preparing` and returns it. Its
+  worktrees (or new project) are created and the setup scripts run (see
+  [Repositories and worktrees](#repositories-and-worktrees)); then a Claude Code process
+  starts through the Agent SDK in streaming-input mode with the prompt. The main repository's
+  worktree is the working directory, the other worktrees are additional directories. The
+  process stays alive
   for follow-up messages; several sessions run side by side. The process is an internal
   detail: it is closed after `SESSION_IDLE_TIMEOUT_MINUTES` without activity and when the
   server stops, and the next message starts it again with the SDK's resume option.
@@ -123,12 +131,14 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   the transcript. Status changes and text deltas are live-only. The Agent SDK returns
   transcript messages without timestamps, so rebuilt conversation events have `at: null`.
   An unused session's log is released and rebuilt this way when it is opened again.
-- Status: `running` (Claude works on a turn), `waiting` (waits for the user, whether or not
-  a process is alive), `finished` (ended with "End session", `POST /api/sessions/:id/end` or
-  the `session.end` frame) and `failed` (the process could not start or ended with an error
-  during a turn). A message to a finished or failed session resumes it. A turn cut off by a
-  server stop is recorded with a notice and the session waits again; on shutdown the server
-  waits up to 5 seconds for the Claude Code processes to exit.
+- Status: `preparing` (worktrees and setup scripts; messages are refused until it is done),
+  `running` (Claude works on a turn), `waiting` (waits for the user, whether or not a process
+  is alive), `finished` (ended with "End session", `POST /api/sessions/:id/end` or the
+  `session.end` frame) and `failed` (a worktree could not be created, or the process could
+  not start or ended with an error during a turn). A message to a finished or failed session
+  resumes it, unless its worktrees are gone (failed preparation, removed worktrees). A turn
+  cut off by a server stop is recorded with a notice and the session waits again; on shutdown
+  the server waits up to 5 seconds for the Claude Code processes to exit.
 - Usage: every result message's tokens (input, output, cache write, cache read) and the SDK's
   theoretical cost in USD are stored per request and model in `usage_records`; the session
   shows the totals. Context window usage and the account's rate limits are captured after
@@ -141,9 +151,108 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 
 REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `POST /api/sessions/:id/messages`, `POST /api/sessions/:id/interrupt`,
-`POST /api/sessions/:id/end`, `GET /api/limits`,
-`GET /api/health`. WebSocket: `/api/ws` with the versioned protocol in
+`POST /api/sessions/:id/end`, `GET /api/repositories`, `GET /api/repositories/:id`,
+`POST /api/repositories`, `PATCH /api/repositories/:id`, `POST /api/repositories/:id/fetch`,
+`GET /api/repositories/:id/branches`, `GET /api/limits`, `GET /api/health`. WebSocket: `/api/ws` with the versioned protocol in
 `libs/shared-types/src/lib/session-events.ts`.
+
+## Repositories and worktrees
+
+```
+REPOS_DIR/acme/app                      shared clone (bare): objects, refs, config, hooks
+WORKTREES_DIR/acme/app/fix-login-k3x9q2   session A, branch claude/fix-login-k3x9q2
+WORKTREES_DIR/acme/app/add-export-7pd2mz  session B, branch claude/add-export-7pd2mz
+WORKTREES_DIR/acme/lib/add-export-7pd2mz  session B's second repository, same branch name
+PROJECTS_DIR/new-tool                     session C: new project (git init), works on main
+```
+
+### Data model
+
+- `repositories`: owner, name, clone URL, default branch (as last fetched), path of the shared
+  clone, setup script, clone/fetch times and last error; `github_repository_id` and
+  `github_installation_id` are reserved for the GitHub integration.
+- `projects`: new projects without repository (name, path; `repository_id` for a repository
+  created for it later).
+- `sessions`: as before plus the `slug` and the `pending_message` (the prompt while the
+  session is prepared).
+- `session_directories`: the session's directories in order; position 0 is the working
+  directory, the others are additional directories. A row with `repository_id` is a
+  worktree: path, `branch`, `base_branch`, `base_commit` (the commit the branch started at,
+  for diffs of the whole session), `state` (`pending`, `ready`, `failed`, `removed`) and
+  `setup_status`. A row with `project_id` is the new project; rows with neither are plain
+  directories of sessions from before worktrees. This table is the only source of a
+  session's directories (the former `sessions.cwd` was migrated into it).
+
+### How a session gets its worktrees
+
+1. `POST /api/sessions` with `repositories: [{ repositoryId, baseBranch? }, …]` (the first is
+   the main repository) and/or `newProject: { name }`. The request is validated and a slug is
+   chosen: readable part from the title or prompt (`a-z0-9-`, at most 40 characters) plus 6
+   random characters, unique among sessions, worktree directories and branches.
+2. Per repository, in parallel: the shared clone is created on first use, otherwise fetched;
+   the worktree is created on the new branch `claude/<slug>` from the fetched base branch
+   (default branch unless chosen). Events `prepare.progress` report each step.
+3. If any worktree cannot be created (clone/fetch error, unknown base branch, …), the
+   session's other worktrees and branches and the new project are removed again, the session
+   is `failed` with an error naming the repository. A preparation cut off by a server stop is
+   rolled back the same way on the next start.
+4. The setup scripts run one after another in their worktrees (`bash -e -o pipefail`, with
+   `CRM_SESSION_ID`, `CRM_SESSION_SLUG`, `CRM_REPOSITORY`, `CRM_WORKTREE`; secrets of the app
+   removed from the environment), with `SETUP_SCRIPT_TIMEOUT_MINUTES`. Output streams as
+   `setup.output` events (stored, at most 256 KB per script; the end is kept in
+   `setup.result`). A failing script is reported but does not stop the session.
+5. The prompt goes to Claude; the status becomes `running`. Ending the session during the
+   preparation stops the setup script, keeps the worktrees and does not send the prompt.
+
+`GET /api/repositories` lists each repository with its worktrees from three sources: the
+database, `git worktree list` and the directories under `WORKTREES_DIR/<owner>/<repo>`.
+Worktrees without a session are marked orphaned, worktrees a session expects but that are
+gone are marked missing, and directories of unregistered repositories are listed as stray.
+Removing worktrees and deleting branches exist as service functions (`GitService`) for the
+cleanup step; there is no UI for them yet.
+
+Until the GitHub integration exists, cloning and fetching use whatever git credentials the
+API's environment has (SSH key, credential helper), so public HTTPS URLs and local paths work
+out of the box. Clone URLs are validated (https, ssh, scp-like `git@host:owner/repo` or an
+absolute local path; no credentials in the URL, no other transports); git always runs with
+argument arrays and `--` before user values, without prompts and without repository hooks.
+
+### Concurrency guarantees
+
+Several sessions may work in the same repository at the same time:
+
+- **Own worktree and branch per session and repository.** Paths and branches derive from the
+  unique slug; the database refuses the same branch of a repository twice. Git refuses to
+  check out a branch in two worktrees, so a session cannot take over another's branch.
+- **The shared clone is bare and nobody works in it.** It has no working tree, index or HEAD
+  that a session could change. It fetches only into `refs/remotes/origin/*`, so a fetch never
+  moves a session branch, never touches a checked-out branch, and works while sessions have
+  uncommitted changes. Tags from the remote overwrite local tags of the same name; local-only
+  tags stay.
+- **Writes to a shared clone are serialized** in the API (clone, fetch, adding and removing
+  worktrees, deleting branches), per clone: sessions on other repositories do not wait.
+  Sessions started at the same time share one fetch. Git's own ref locks protect against
+  git commands that sessions run themselves; the API retries a few times when it meets such
+  a lock.
+- **Worktrees are locked** (`git worktree lock`), so `git worktree prune`, which `git gc`
+  runs, keeps them even while the worktrees volume is unavailable, and a plain
+  `git worktree remove` refuses them.
+- **No operation of one session changes another session's files, index, HEAD or branch**:
+  creating, fetching and removing are tested with real repositories and parallel operations
+  (`apps/api/src/app/git/git.service.spec.ts`,
+  `apps/api/src/app/workspaces/session-preparation.spec.ts`).
+
+Limits:
+
+- What all worktrees of a repository share by design of git: branches, tags, remote-tracking
+  branches, the stash, the config and the hooks. Claude is told in the global `CLAUDE.md`
+  not to change them (no `git stash`, `git config`, hook installers, tags, other branches),
+  but nothing enforces it; a session with shell access can still change shared state.
+- The serialization is per API process; running two API instances on the same data is not
+  supported.
+- Joining a running fetch can miss a commit pushed after that fetch started.
+- Hooks are disabled for the API's own git commands only; inside worktrees, git uses the
+  repository's hooks as usual.
 
 ## Container
 
@@ -181,7 +290,7 @@ All state lives in volumes under `/data`, plus the Nix store, which has to stay 
 
 | Path              | Contents                                                                                        |
 | ----------------- | ----------------------------------------------------------------------------------------------- |
-| `/data/repos`     | Main checkouts of cloned repositories: `<owner>/<repo>`                                         |
+| `/data/repos`     | Shared clones of repositories (bare): `<owner>/<repo>`                                          |
 | `/data/worktrees` | Session worktrees: `<owner>/<repo>/<session>` on branch `claude/<session>`                      |
 | `/data/projects`  | New projects without an existing repository: `<name>`                                           |
 | `/data/claude`    | Claude Code configuration dir (`CLAUDE_CONFIG_DIR`): login, settings, transcripts               |

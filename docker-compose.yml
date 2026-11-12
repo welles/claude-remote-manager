@@ -17,7 +17,7 @@ services:
       # API refuses other Host headers except loopback names.
       # ALLOWED_HOSTS: crm.example.com
     volumes:
-      # Main checkouts of cloned repositories
+      # Shared clones of repositories (bare): <owner>/<repo>
       - repos:/data/repos
       # Session worktrees: <owner>/<repo>/<session>
       - worktrees:/data/worktrees
