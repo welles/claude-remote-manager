@@ -40,7 +40,46 @@
     formatTokens(s.usage.cacheCreationInputTokens) }} · Cache read {{
     formatTokens(s.usage.cacheReadInputTokens) }}
   </div>
-  } @if (incompatible()) {
+  @if (s.directories.length > 0) {
+  <details class="directories" data-testid="directories">
+    <summary>{{ workspaceSummary() }}</summary>
+    <ul>
+      @for (directory of s.directories; track directory.path) {
+      <li class="directory" data-testid="directory">
+        <span class="directory-name">
+          <strong>{{ directoryName(directory) }}</strong>
+          <span class="tag"
+            >{{ directory.role === 'main' ? 'working directory' : 'additional'
+            }}</span
+          >
+          @if (directory.kind === 'project') {
+          <span class="tag">new project</span>
+          } @if (directory.state !== 'ready') {
+          <span class="tag tag-{{ directory.state }}"
+            >{{ directory.state }}</span
+          >
+          } @if (directory.setupStatus !== 'none') {
+          <span class="tag tag-setup-{{ directory.setupStatus }}"
+            >setup {{ directory.setupStatus.replace('_', ' ') }}</span
+          >
+          }
+        </span>
+        @if (directory.branch) {
+        <span class="directory-branch">
+          <code>{{ directory.branch }}</code>
+          @if (directory.baseBranch) { from
+          <code>{{ directory.baseBranch }}</code>
+          } @if (directory.baseCommit) { at
+          <code>{{ directory.baseCommit.slice(0, 12) }}</code>
+          }
+        </span>
+        }
+        <code class="directory-path">{{ directory.path }}</code>
+      </li>
+      }
+    </ul>
+  </details>
+  } } @if (incompatible()) {
   <p class="banner error">The server uses a newer protocol. Reload the page.</p>
   } @else if (!connected()) {
   <p class="banner">Connecting to the server…</p>
@@ -84,6 +123,36 @@
   <p class="notice notice-{{ item.level }}">{{ item.text }}</p>
   } @case ('error') {
   <p class="error-message">{{ item.text }}</p>
+  } @case ('progress') {
+  <p class="progress progress-{{ item.state }}" data-testid="progress">
+    {{ progressText(item) }}
+  </p>
+  } @case ('setup') {
+  <details
+    class="setup"
+    [open]="item.state === 'failed' || item.state === 'timed_out'"
+    data-testid="setup"
+  >
+    <summary>
+      <span class="tool-name">Setup {{ item.repository }}</span>
+      <span class="tool-state tool-state-{{ item.state }}"
+        >{{ setupState(item) }}</span
+      >
+      @if (item.durationMs !== null) {
+      <span class="setup-duration"
+        >{{ item.durationMs / 1000 | number: '1.1-1' }} s</span
+      >
+      }
+    </summary>
+    @if (item.message) {
+    <p class="tool-denied">{{ item.message }}</p>
+    } @if (item.output) {
+    <pre class="tool-io">{{ item.output }}</pre>
+    } @if (item.outputTail) {
+    <p class="setup-truncated">Output truncated. Last lines:</p>
+    <pre class="tool-io">{{ item.outputTail }}</pre>
+    }
+  </details>
   } @case ('turn') {
   <p class="turn">
     @if (item.interrupted) { Interrupted · } {{ item.durationMs / 1000 | number:
@@ -92,6 +161,8 @@
   </p>
   } } } @if (running()) {
   <p class="working">Claude is working…</p>
+  } @else if (preparing()) {
+  <p class="working">Preparing the worktrees…</p>
   }
 </section>
 
@@ -105,7 +176,10 @@
       class="input"
       subscriptSizing="dynamic"
     >
-      <mat-label>{{ running() ? 'Queue a message' : 'Message' }}</mat-label>
+      <mat-label
+        >{{ preparing() ? 'Available when the preparation is done' : running() ?
+        'Queue a message' : 'Message' }}</mat-label
+      >
       <textarea
         matInput
         [value]="draft()"
@@ -121,7 +195,7 @@
       <button
         matButton="filled"
         (click)="send()"
-        [disabled]="!draft().trim() || !connected()"
+        [disabled]="!draft().trim() || !connected() || preparing()"
         data-testid="send"
       >
         Send

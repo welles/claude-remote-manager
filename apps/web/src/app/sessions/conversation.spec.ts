@@ -6,7 +6,9 @@ import {
   applyDraft,
   applyEvent,
   buildConversation,
+  progressText,
   toolSummary,
+  type ConversationItem,
 } from './conversation';
 
 let seq = 0;
@@ -255,5 +257,93 @@ describe('toolSummary', () => {
     const long = toolSummary('Bash', { command: 'echo '.repeat(50) });
     expect(long.length).toBe(120);
     expect(long.endsWith('…')).toBe(true);
+  });
+
+  it('shows preparation steps, updating each step in place', () => {
+    const progress = (
+      step: 'fetch' | 'worktree' | 'rollback' | 'done',
+      state: 'started' | 'succeeded' | 'failed',
+      target: string | null,
+      message: string | null = null,
+    ) =>
+      event({
+        type: 'prepare.progress',
+        step,
+        state,
+        target,
+        path: target ? `/w/${target}` : null,
+        message,
+      });
+    const items = buildConversation([
+      progress('fetch', 'started', 'acme/app'),
+      progress('fetch', 'started', 'acme/lib'),
+      progress('fetch', 'succeeded', 'acme/app', 'Default branch main'),
+      progress(
+        'worktree',
+        'succeeded',
+        'acme/app',
+        'claude/x from main at abc',
+      ),
+      progress(
+        'fetch',
+        'failed',
+        'acme/lib',
+        'Could not update acme/lib: offline',
+      ),
+      progress('rollback', 'succeeded', 'acme/app', 'Removed'),
+      progress('done', 'succeeded', null),
+    ]);
+
+    expect(
+      items.map((item) =>
+        progressText(item as Extract<ConversationItem, { kind: 'progress' }>),
+      ),
+    ).toEqual([
+      'Updated acme/app · Default branch main',
+      'Could not update acme/lib: offline',
+      'Worktree of acme/app · claude/x from main at abc',
+      'Removed acme/app again',
+      'Ready. The message went to Claude.',
+    ]);
+  });
+
+  it('collects setup output under its result', () => {
+    const result = (
+      state: 'started' | 'failed',
+      details: Record<string, unknown> = {},
+    ) =>
+      event({
+        type: 'setup.result',
+        repository: 'acme/app',
+        path: '/w/app',
+        state,
+        exitCode: null,
+        signal: null,
+        durationMs: null,
+        message: null,
+        outputTail: null,
+        ...details,
+      } as SessionEventInput);
+    const items = buildConversation([
+      result('started'),
+      event({ type: 'setup.output', repository: 'acme/app', text: 'npm ' }),
+      event({ type: 'setup.output', repository: 'acme/app', text: 'ERR!\n' }),
+      result('failed', { exitCode: 1, durationMs: 1200 }),
+    ]);
+
+    expect(items).toEqual([
+      {
+        kind: 'setup',
+        key: 'setup:acme/app',
+        repository: 'acme/app',
+        path: '/w/app',
+        state: 'failed',
+        output: 'npm ERR!\n',
+        exitCode: 1,
+        durationMs: 1200,
+        message: null,
+        outputTail: null,
+      },
+    ]);
   });
 });

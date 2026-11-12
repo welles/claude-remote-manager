@@ -19,12 +19,14 @@ import type {
   ContextUsage,
   LogPosition,
   ServerMessage,
+  SessionDirectoryDto,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import {
   applyDraft,
   applyEvent,
   buildConversation,
+  progressText,
   type ConversationItem,
 } from './conversation';
 import { formatCost, formatTokens, STATUS_LABELS, totalTokens } from './format';
@@ -57,6 +59,7 @@ export class SessionView implements OnInit {
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;
+  protected readonly progressText = progressText;
   protected readonly connected = this.socket.connected;
   protected readonly incompatible = this.socket.incompatible;
 
@@ -68,6 +71,15 @@ export class SessionView implements OnInit {
   protected readonly loaded = signal(false);
   protected readonly running = computed(
     () => this.session()?.status === 'running',
+  );
+  protected readonly preparing = computed(
+    () => this.session()?.status === 'preparing',
+  );
+  /** Repository names (or project) for the collapsed directory list. */
+  protected readonly workspaceSummary = computed(() =>
+    (this.session()?.directories ?? [])
+      .map((directory) => directoryName(directory))
+      .join(' + '),
   );
   /**
    * Text in the input box. A signal bound to the textarea's value (not
@@ -196,6 +208,25 @@ export class SessionView implements OnInit {
     return item.result.isError ? 'error' : 'done';
   }
 
+  protected readonly directoryName = directoryName;
+
+  protected setupState(
+    item: Extract<ConversationItem, { kind: 'setup' }>,
+  ): string {
+    switch (item.state) {
+      case 'started':
+        return 'running';
+      case 'failed':
+        return item.exitCode !== null
+          ? `failed (exit ${item.exitCode})`
+          : 'failed';
+      case 'timed_out':
+        return 'timed out';
+      default:
+        return item.state;
+    }
+  }
+
   protected inputJson(input: unknown): string {
     return JSON.stringify(input, null, 2);
   }
@@ -268,4 +299,14 @@ export class SessionView implements OnInit {
         return;
     }
   }
+}
+
+/** Name of a session directory: repository, project or the directory itself. */
+export function directoryName(directory: SessionDirectoryDto): string {
+  return (
+    directory.repository?.fullName ??
+    directory.projectName ??
+    directory.path.split('/').filter(Boolean).at(-1) ??
+    directory.path
+  );
 }

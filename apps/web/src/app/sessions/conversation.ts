@@ -1,6 +1,8 @@
 import type {
   AssistantDraft,
+  PrepareProgressEvent,
   SessionEvent,
+  SetupResultEvent,
   UsageTotals,
 } from '@claude-remote-manager/shared-types';
 
@@ -33,6 +35,29 @@ export type ConversationItem =
       usage: UsageTotals;
       durationMs: number;
       interrupted: boolean;
+    }
+  | {
+      /** A step of the preparation; later states replace earlier ones. */
+      kind: 'progress';
+      key: string;
+      step: PrepareProgressEvent['step'];
+      state: PrepareProgressEvent['state'];
+      target: string | null;
+      path: string | null;
+      message: string | null;
+    }
+  | {
+      /** A setup script with its output. */
+      kind: 'setup';
+      key: string;
+      repository: string;
+      path: string | null;
+      state: SetupResultEvent['state'];
+      output: string;
+      exitCode: number | null;
+      durationMs: number | null;
+      message: string | null;
+      outputTail: string | null;
     };
 
 const MAX_SUMMARY_LENGTH = 120;
@@ -201,10 +226,100 @@ export function applyEvent(
         ...items,
         { kind: 'error', key: `error:${event.seq}`, text: event.message },
       ];
+    case 'prepare.progress': {
+      const key =
+        event.step === 'rollback'
+          ? `prepare:rollback:${event.path ?? event.seq}`
+          : `prepare:${event.step}:${event.target ?? ''}`;
+      const item: ConversationItem = {
+        kind: 'progress',
+        key,
+        step: event.step,
+        state: event.state,
+        target: event.target,
+        path: event.path,
+        message: event.message,
+      };
+      const index = items.findIndex((existing) => existing.key === key);
+      return index >= 0 ? replaceAt(items, index, item) : [...items, item];
+    }
+    case 'setup.output': {
+      const key = `setup:${event.repository}`;
+      const index = items.findIndex((existing) => existing.key === key);
+      const existing = items[index];
+      if (existing?.kind === 'setup') {
+        return replaceAt(items, index, {
+          ...existing,
+          output: existing.output + event.text,
+        });
+      }
+      return [
+        ...items,
+        {
+          kind: 'setup',
+          key,
+          repository: event.repository,
+          path: null,
+          state: 'started',
+          output: event.text,
+          exitCode: null,
+          durationMs: null,
+          message: null,
+          outputTail: null,
+        },
+      ];
+    }
+    case 'setup.result': {
+      const key = `setup:${event.repository}`;
+      const index = items.findIndex((existing) => existing.key === key);
+      const existing = items[index];
+      const item: ConversationItem = {
+        kind: 'setup',
+        key,
+        repository: event.repository,
+        path: event.path,
+        state: event.state,
+        output: existing?.kind === 'setup' ? existing.output : '',
+        exitCode: event.exitCode,
+        durationMs: event.durationMs,
+        message: event.message,
+        outputTail: event.outputTail,
+      };
+      return index >= 0 ? replaceAt(items, index, item) : [...items, item];
+    }
     default:
       // Status, context usage and reserved permission events are shown
       // elsewhere or not yet.
       return items;
+  }
+}
+
+/** One line describing a preparation step. */
+export function progressText(
+  item: Extract<ConversationItem, { kind: 'progress' }>,
+): string {
+  const target = item.target ?? '';
+  const detail = item.message ? ` · ${item.message}` : '';
+  if (item.state === 'failed') {
+    return item.message ?? `${item.step} of ${target} failed`;
+  }
+  switch (item.step) {
+    case 'fetch':
+      return item.state === 'started'
+        ? `Updating ${target}…`
+        : `Updated ${target}${detail}`;
+    case 'worktree':
+      return item.state === 'started'
+        ? `Creating the worktree of ${target}…`
+        : `Worktree of ${target}${detail}`;
+    case 'project':
+      return item.state === 'started'
+        ? `Creating the project ${target}…`
+        : `Created the project ${target}${detail}`;
+    case 'rollback':
+      return `Removed ${target || item.path || 'the directory'} again`;
+    case 'done':
+      return 'Ready. The message went to Claude.';
   }
 }
 

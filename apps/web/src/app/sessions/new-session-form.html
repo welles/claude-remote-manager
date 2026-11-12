@@ -1,0 +1,150 @@
+<form (ngSubmit)="create()" class="form">
+  <mat-form-field appearance="outline" class="full">
+    <mat-label>What should Claude do?</mat-label>
+    <textarea
+      matInput
+      name="prompt"
+      [(ngModel)]="prompt"
+      (keydown)="onPromptKeydown($event)"
+      cdkTextareaAutosize
+      rows="3"
+      data-testid="new-prompt"
+    ></textarea>
+    <mat-hint>Ctrl+Enter to start</mat-hint>
+  </mat-form-field>
+
+  <div class="workspace">
+    <mat-button-toggle-group
+      [value]="mode()"
+      (change)="setMode($event.value)"
+      aria-label="Where the session works"
+      hideSingleSelectionIndicator
+    >
+      <mat-button-toggle value="repository" data-testid="mode-repository"
+        >Repository</mat-button-toggle
+      >
+      <mat-button-toggle value="project" data-testid="mode-project"
+        >New project</mat-button-toggle
+      >
+    </mat-button-toggle-group>
+
+    @if (mode() === 'project') {
+    <mat-form-field appearance="outline" class="full" subscriptSizing="dynamic">
+      <mat-label>Project name</mat-label>
+      <input
+        matInput
+        name="projectName"
+        [(ngModel)]="projectName"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        data-testid="project-name"
+      />
+      <mat-hint>New directory with an empty git repository</mat-hint>
+    </mat-form-field>
+    } @if (repositoriesLoaded() && repositories().length === 0) {
+    <p class="hint">
+      No repositories registered yet.
+      <a routerLink="/repositories">Add one</a> to work on it.
+    </p>
+    } @for (choice of choices(); track $index; let index = $index) {
+    <div class="choice" data-testid="repository-choice">
+      <span class="choice-label">
+        {{ mode() === 'repository' && index === 0 ? 'Main repository' :
+        'Additional repository' }}
+      </span>
+      <div class="choice-fields">
+        <mat-form-field
+          appearance="outline"
+          class="repository"
+          subscriptSizing="dynamic"
+        >
+          <mat-label>Repository</mat-label>
+          <mat-select
+            [value]="choice.repositoryId"
+            (selectionChange)="chooseRepository(index, $event.value)"
+            data-testid="repository-select"
+          >
+            @for (repository of repositories(); track repository.id) {
+            <mat-option
+              [value]="repository.id"
+              [disabled]="
+                repository.id !== choice.repositoryId &&
+                chosenIds().has(repository.id)
+              "
+              >{{ repository.fullName }}</mat-option
+            >
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field
+          appearance="outline"
+          class="branch"
+          subscriptSizing="dynamic"
+        >
+          <mat-label>Base branch</mat-label>
+          <mat-select
+            [value]="choice.baseBranch"
+            (selectionChange)="chooseBaseBranch(index, $event.value)"
+            [disabled]="!choice.repositoryId"
+            data-testid="branch-select"
+          >
+            <mat-option value=""
+              >{{ defaultLabel(choice.repositoryId) }}</mat-option
+            >
+            @for (branch of branchOptions(choice.repositoryId); track branch) {
+            <mat-option [value]="branch">{{ branch }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        @if (mode() === 'project' || index > 0) {
+        <button
+          matButton
+          type="button"
+          (click)="removeRepository(index)"
+          data-testid="remove-repository"
+        >
+          Remove
+        </button>
+        }
+      </div>
+    </div>
+    } @if (repositories().length > choices().length) {
+    <button
+      matButton
+      type="button"
+      class="add-repository"
+      (click)="addRepository()"
+      data-testid="add-repository"
+    >
+      + Add a repository
+    </button>
+    }
+  </div>
+
+  <div class="actions">
+    <mat-form-field
+      appearance="outline"
+      class="model"
+      subscriptSizing="dynamic"
+    >
+      <mat-label>Model</mat-label>
+      <mat-select name="model" [(ngModel)]="model">
+        @for (option of modelOptions; track option.value) {
+        <mat-option [value]="option.value">{{ option.label }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <button
+      matButton="filled"
+      type="submit"
+      [disabled]="!canStart()"
+      data-testid="start"
+    >
+      Start session
+    </button>
+  </div>
+  @if (createError(); as error) {
+  <p class="error" data-testid="create-error">{{ error }}</p>
+  }
+</form>

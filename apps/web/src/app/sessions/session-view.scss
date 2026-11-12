@@ -66,7 +66,8 @@
   border-left: 2px solid var(--mat-sys-outline-variant);
 }
 
-.tool {
+.tool,
+.setup {
   border: 1px solid var(--mat-sys-outline-variant);
   border-radius: 8px;
   padding: 4px 8px;
@@ -98,7 +99,9 @@
 }
 
 .tool-state-error,
-.tool-state-denied {
+.tool-state-denied,
+.tool-state-failed,
+.tool-state-timed_out {
   color: var(--mat-sys-error);
 }
 
@@ -120,6 +123,80 @@
 
 .tool-error {
   color: var(--mat-sys-error);
+}
+
+.setup-duration,
+.setup-truncated {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.setup-truncated {
+  margin: 4px 0 0;
+}
+
+.progress {
+  margin: 0;
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+.progress-failed {
+  color: var(--mat-sys-error);
+}
+
+.directories {
+  margin-top: 8px;
+  font: var(--mat-sys-body-small);
+
+  summary {
+    cursor: pointer;
+    color: var(--mat-sys-on-surface-variant);
+    overflow-wrap: anywhere;
+  }
+
+  ul {
+    list-style: none;
+    margin: 4px 0 0;
+    padding: 0;
+  }
+}
+
+.directory {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  border-top: 1px solid var(--mat-sys-outline-variant);
+}
+
+.directory-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  overflow-wrap: anywhere;
+}
+
+.directory-branch,
+.directory-path {
+  color: var(--mat-sys-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+.tag {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--mat-sys-surface-container-highest);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.tag-failed,
+.tag-removed,
+.tag-setup-failed,
+.tag-setup-timed_out {
+  background: var(--mat-sys-error-container);
+  color: var(--mat-sys-on-error-container);
 }
 
 .notice,

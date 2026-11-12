@@ -1,0 +1,73 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.full {
+  width: 100%;
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+mat-button-toggle-group {
+  align-self: flex-start;
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.choice-label {
+  font: var(--mat-sys-label-large);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.choice-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.repository {
+  flex: 2 1 220px;
+}
+
+.branch {
+  flex: 1 1 160px;
+}
+
+.add-repository {
+  align-self: flex-start;
+}
+
+.hint {
+  margin: 0;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.model {
+  width: 160px;
+}
+
+.error {
+  color: var(--mat-sys-error);
+  overflow-wrap: anywhere;
+}

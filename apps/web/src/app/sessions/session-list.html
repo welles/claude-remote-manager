@@ -3,46 +3,7 @@
     <mat-card-title>New session</mat-card-title>
   </mat-card-header>
   <mat-card-content>
-    <form (ngSubmit)="create()" class="new-session-form">
-      <mat-form-field appearance="outline" class="prompt">
-        <mat-label>What should Claude do?</mat-label>
-        <textarea
-          matInput
-          name="prompt"
-          [(ngModel)]="prompt"
-          (keydown)="onPromptKeydown($event)"
-          cdkTextareaAutosize
-          rows="3"
-          data-testid="new-prompt"
-        ></textarea>
-        <mat-hint>Ctrl+Enter to start</mat-hint>
-      </mat-form-field>
-      <div class="new-session-actions">
-        <mat-form-field
-          appearance="outline"
-          class="model"
-          subscriptSizing="dynamic"
-        >
-          <mat-label>Model</mat-label>
-          <mat-select name="model" [(ngModel)]="model">
-            @for (option of modelOptions; track option.value) {
-            <mat-option [value]="option.value">{{ option.label }}</mat-option>
-            }
-          </mat-select>
-        </mat-form-field>
-        <button
-          matButton="filled"
-          type="submit"
-          [disabled]="!prompt.trim() || creating()"
-          data-testid="start"
-        >
-          Start session
-        </button>
-      </div>
-      @if (createError(); as error) {
-      <p class="error">{{ error }}</p>
-      }
-    </form>
+    <app-new-session-form (created)="open($event)" />
   </mat-card-content>
 </mat-card>
 
@@ -67,7 +28,9 @@
         >{{ statusLabels[session.status] }}</span
       >
       <span>{{ session.updatedAt | date: 'short' }}</span>
-      @if (session.model) {
+      @if (workspaceLabel(session); as workspace) {
+      <span class="workspace">{{ workspace }}</span>
+      } @if (session.model) {
       <span>{{ session.model }}</span>
       }
       <span>

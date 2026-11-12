@@ -35,8 +35,12 @@ describe('SessionList', () => {
     return fixture;
   };
 
-  it('lists sessions with status and usage, updated live', async () => {
+  it('lists sessions with status, repositories and usage, updated live', async () => {
     const fixture = await render();
+    http.expectOne('/api/repositories').flush({
+      repositories: [],
+      strayDirectories: [],
+    });
     http.expectOne('/api/sessions').flush({
       sessions: [
         sessionDto(),
@@ -57,6 +61,7 @@ describe('SessionList', () => {
       );
     expect(rows()[0]).toContain('Reply with pong');
     expect(rows()[0]).toContain('Waiting');
+    expect(rows()[0]).toContain('acme/app');
     expect(rows()[0]).toContain('1.5k tokens · $0.01');
     expect(rows()[1]).toContain('Finished');
 
@@ -75,9 +80,13 @@ describe('SessionList', () => {
     expect(rows()[0]).toContain('Running');
   });
 
-  it('starts a session and opens it', async () => {
+  it('opens a session started with the form', async () => {
     const fixture = await render();
     http.expectOne('/api/sessions').flush({ sessions: [] });
+    http.expectOne('/api/repositories').flush({
+      repositories: [],
+      strayDirectories: [],
+    });
     await fixture.whenStable();
     expect((fixture.nativeElement as HTMLElement).textContent).toContain(
       'No sessions yet',
@@ -85,42 +94,18 @@ describe('SessionList', () => {
 
     const router = TestBed.inject(Router);
     const navigate = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    const component = fixture.componentInstance as unknown as {
-      prompt: string;
-      model: string;
-      create(): void;
-    };
-    component.prompt = '  Reply with pong ';
-    component.model = 'haiku';
-    component.create();
-
-    const request = http.expectOne({ method: 'POST', url: '/api/sessions' });
-    expect(request.request.body).toEqual({
-      prompt: 'Reply with pong',
-      model: 'haiku',
-    });
-    request.flush(sessionDto({ id: 'new' }));
-    expect(navigate).toHaveBeenCalledWith(['/sessions', 'new']);
-  });
-
-  it('shows why a session could not be started', async () => {
-    const fixture = await render();
-    http.expectOne('/api/sessions').flush({ sessions: [] });
-    const component = fixture.componentInstance as unknown as {
-      prompt: string;
-      create(): void;
-    };
-    component.prompt = 'x';
-    component.create();
-    http
-      .expectOne({ method: 'POST', url: '/api/sessions' })
-      .flush(
-        { message: 'model is not a valid model name' },
-        { status: 400, statusText: 'Bad Request' },
-      );
-    await fixture.whenStable();
-    expect((fixture.nativeElement as HTMLElement).textContent).toContain(
-      'model is not a valid model name',
+    const form = fixture.debugElement.query(
+      (node) => node.name === 'app-new-session-form',
     );
+    (
+      form.componentInstance as { created: { emit(s: unknown): void } }
+    ).created.emit(sessionDto({ id: 'new', status: 'preparing' }));
+    await fixture.whenStable();
+
+    expect(navigate).toHaveBeenCalledWith(['/sessions', 'new']);
+    const element = fixture.nativeElement as HTMLElement;
+    expect(
+      element.querySelector('[data-testid="session"]')?.textContent,
+    ).toContain('Preparing');
   });
 });

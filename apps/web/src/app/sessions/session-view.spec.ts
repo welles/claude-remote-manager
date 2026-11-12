@@ -4,6 +4,7 @@ import type {
   SessionEvent,
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
+import { words } from '../testing/text';
 import { WEBSOCKET_FACTORY } from './session-socket';
 import { SessionView } from './session-view';
 import { FakeWebSocket, fakeWebSocketFactory } from './testing/fake-websocket';
@@ -282,5 +283,83 @@ describe('SessionView', () => {
     expect(element.querySelector('.tool-denied')?.textContent).toContain(
       'not implemented',
     );
+  });
+
+  it('shows the directories and the preparation, and holds messages back meanwhile', async () => {
+    const { harness, socket, element, text } = await open();
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto({
+        status: 'preparing',
+        directories: [
+          ...sessionDto().directories,
+          {
+            role: 'additional',
+            kind: 'worktree',
+            path: '/worktrees/acme/lib/reply-with-pong-abc123',
+            state: 'pending',
+            repository: { id: 'r2', fullName: 'acme/lib' },
+            projectName: null,
+            branch: 'claude/reply-with-pong-abc123',
+            baseBranch: 'release',
+            baseCommit: null,
+            setupStatus: 'pending',
+          },
+        ],
+      }),
+      events: [
+        event({ type: 'user.message', id: 'u1', text: 'Reply with pong' }),
+        event({
+          type: 'prepare.progress',
+          step: 'worktree',
+          state: 'succeeded',
+          target: 'acme/app',
+          path: '/worktrees/acme/app/reply-with-pong-abc123',
+          message: 'claude/reply-with-pong-abc123 from main at 0123456789ab',
+        }),
+        event({
+          type: 'setup.result',
+          repository: 'acme/app',
+          path: '/worktrees/acme/app/reply-with-pong-abc123',
+          state: 'started',
+          exitCode: null,
+          signal: null,
+          durationMs: null,
+          message: null,
+          outputTail: null,
+        }),
+        event({
+          type: 'setup.output',
+          repository: 'acme/app',
+          text: 'added 3 packages',
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+
+    expect(text('status')).toBe('Preparing');
+    expect(text('directories')).toContain('acme/app + acme/lib');
+    const directories = [
+      ...element.querySelectorAll('[data-testid="directory"]'),
+    ].map((node) => words(node));
+    expect(directories).toEqual([
+      'acme/app working directory claude/reply-with-pong-abc123 from main at 0123456789ab /worktrees/acme/app/reply-with-pong-abc123',
+      'acme/lib additional pending setup pending claude/reply-with-pong-abc123 from release /worktrees/acme/lib/reply-with-pong-abc123',
+    ]);
+    expect(text('progress')).toBe(
+      'Worktree of acme/app · claude/reply-with-pong-abc123 from main at 0123456789ab',
+    );
+    expect(words(element.querySelector('[data-testid="setup"]'))).toContain(
+      'Setup acme/app running',
+    );
+    expect(text('setup')).toContain('added 3 packages');
+    expect(element.textContent).toContain('Preparing the worktrees');
+    expect(
+      (element.querySelector('[data-testid="send"]') as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 });
