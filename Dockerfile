@@ -114,5 +114,8 @@ ENV APP_VERSION=${VERSION} \
 USER ${USER_NAME}
 VOLUME ["/data/repos", "/data/worktrees", "/data/projects", "/data/claude", "/data/git", "/data/db", "/nix"]
 EXPOSE 8080
+# The start period covers seeding an empty /nix on the first start.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --start-interval=2s --retries=3 \
+    CMD curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/api/health" || exit 1
 ENTRYPOINT ["tini", "--", "app-entrypoint"]
 CMD ["node", "/app/main.js"]
