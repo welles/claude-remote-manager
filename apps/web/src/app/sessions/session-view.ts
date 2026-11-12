@@ -157,6 +157,20 @@ export class SessionView implements OnInit {
     }
   }
 
+  /** Stops the session's process and marks it finished. */
+  protected end(): void {
+    const requestId = newId();
+    if (
+      this.socket.send({
+        type: 'session.end',
+        sessionId: this.sessionId(),
+        requestId,
+      })
+    ) {
+      this.pending.add(requestId);
+    }
+  }
+
   protected onKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();

@@ -23,6 +23,17 @@
     </span>
     }
   </div>
+  @if (s.status !== 'finished') {
+  <button
+    matButton
+    class="end"
+    (click)="end()"
+    [disabled]="!connected()"
+    data-testid="end"
+  >
+    End session
+  </button>
+  }
   <div class="usage-detail">
     In {{ formatTokens(s.usage.inputTokens) }} · Out {{
     formatTokens(s.usage.outputTokens) }} · Cache write {{

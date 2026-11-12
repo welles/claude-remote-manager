@@ -226,6 +226,12 @@ describe('SessionView', () => {
     });
     expect(interrupt).toMatchObject({ type: 'interrupt', sessionId: 's1' });
 
+    (element.querySelector('[data-testid="end"]') as HTMLButtonElement).click();
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'session.end',
+      sessionId: 's1',
+    });
+
     socket.receive({
       type: 'error',
       requestId: interrupt['requestId'] as string,
