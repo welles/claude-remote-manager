@@ -6,7 +6,15 @@
   "engines": {
     "node": ">=24"
   },
-  "scripts": {},
+  "scripts": {
+    "start": "nx serve web",
+    "start:api": "nx serve api",
+    "build": "nx run-many -t build",
+    "test": "nx run-many -t test",
+    "lint": "nx run-many -t lint",
+    "check": "nx run-many -t lint test build",
+    "format": "nx format:write"
+  },
   "devDependencies": {
     "@angular-devkit/core": "~22.2.0",
     "@angular-devkit/schematics": "~22.2.0",

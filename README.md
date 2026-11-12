@@ -27,12 +27,14 @@ Requires Node.js 24 and npm.
 
 ```sh
 npm ci
-npx nx serve web                       # web app on http://localhost:4200, starts the API (port 3000) too
-npx nx serve api                       # API only
-npx nx run-many -t lint test build     # what CI runs
-npx nx test web                        # single project
-npx nx format:write                    # Prettier
+npm start              # web app on http://localhost:4200, starts the API (port 3000) too
+npm run start:api      # API only
+npm run check          # lint, test and build all projects, as in CI
+npm run lint           # or: npm test, npm run build
+npm run format         # Prettier
 ```
+
+The scripts wrap Nx; use `npx nx <target> <project>` for a single project, e.g. `npx nx test web`.
 
 The Angular dev server proxies `/api` to the API (`apps/web/proxy.conf.json`). In production the
 API serves the built web app itself from `WEB_ROOT`.
