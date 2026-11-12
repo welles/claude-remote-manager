@@ -16,7 +16,7 @@ services:
     volumes:
       # Main checkouts of cloned repositories
       - repos:/data/repos
-      # Session worktrees: <repo>/<session-slug>
+      # Session worktrees: <owner>/<repo>/<session>
       - worktrees:/data/worktrees
       # New projects without an existing repository
       - projects:/data/projects
