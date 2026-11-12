@@ -1,11 +1,14 @@
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { WsAdapter } from '@nestjs/platform-ws';
 import { AppModule } from './app/app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
+  // Plain WebSockets for streaming session events (see SessionsGateway).
+  app.useWebSocketAdapter(new WsAdapter(app));
   // Run onModuleDestroy/onApplicationShutdown hooks on SIGTERM/SIGINT, e.g.
   // to stop sessions and dev servers when the container stops.
   app.enableShutdownHooks();

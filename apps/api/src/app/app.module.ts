@@ -5,6 +5,8 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './db/database.module';
 import { HealthController } from './health/health.controller';
+import { LimitsModule } from './limits/limits.module';
+import { SessionsModule } from './sessions/sessions.module';
 
 /**
  * Directory with the built web app. In the image it sits next to the API
@@ -16,6 +18,8 @@ const webRoot = resolve(process.env.WEB_ROOT || join(__dirname, 'public'));
   imports: [
     ConfigModule,
     DatabaseModule,
+    LimitsModule,
+    SessionsModule,
     ...(existsSync(webRoot)
       ? [
           ServeStaticModule.forRoot({
