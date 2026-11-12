@@ -1,0 +1,188 @@
+<h1 class="heading">Repositories</h1>
+
+<form class="add" (ngSubmit)="add()">
+  <mat-form-field
+    appearance="outline"
+    class="clone-url"
+    subscriptSizing="dynamic"
+  >
+    <mat-label>Clone URL</mat-label>
+    <input
+      matInput
+      name="cloneUrl"
+      [(ngModel)]="cloneUrl"
+      placeholder="https://github.com/owner/repo.git"
+      autocomplete="off"
+      autocapitalize="off"
+      spellcheck="false"
+      data-testid="clone-url"
+    />
+    <mat-hint>https, ssh, git&#64;host:owner/repo or a local path</mat-hint>
+  </mat-form-field>
+  <button
+    matButton="filled"
+    type="submit"
+    [disabled]="!cloneUrl.trim() || adding()"
+    data-testid="add"
+  >
+    Add
+  </button>
+</form>
+@if (addError(); as error) {
+<p class="error" data-testid="add-error">{{ error }}</p>
+} @if (loading()) {
+<mat-progress-spinner mode="indeterminate" diameter="32" />
+} @else if (loadError(); as error) {
+<p class="error">{{ error }}</p>
+} @else if (repositories().length === 0) {
+<p class="empty">No repositories yet. Add one by its clone URL.</p>
+} @else {
+<div class="repositories">
+  @for (repository of repositories(); track repository.id) {
+  <mat-card appearance="outlined" class="repository" data-testid="repository">
+    <mat-card-content>
+      <div class="repository-head">
+        <h2 class="name">{{ repository.fullName }}</h2>
+        <button
+          matButton
+          type="button"
+          (click)="fetch(repository)"
+          [disabled]="repository.activity !== null"
+          data-testid="fetch"
+        >
+          Fetch
+        </button>
+      </div>
+      <div class="facts">
+        @if (repository.activity) {
+        <span class="activity" data-testid="activity">
+          <mat-progress-spinner mode="indeterminate" diameter="14" />
+          {{ repository.activity === 'cloning' ? 'Cloning…' : 'Fetching…' }}
+        </span>
+        } @if (repository.defaultBranch) {
+        <span>Default branch <code>{{ repository.defaultBranch }}</code></span>
+        } @else if (repository.clonedAt) {
+        <span>No branches yet</span>
+        } @else if (!repository.activity) {
+        <span>Not cloned</span>
+        } @if (repository.fetchedAt) {
+        <span>Fetched {{ repository.fetchedAt | date: 'short' }}</span>
+        }
+      </div>
+      <div class="paths">
+        <code>{{ repository.cloneUrl }}</code>
+      </div>
+      @if (repository.lastError) {
+      <p class="error" data-testid="repository-error">
+        {{ repository.lastError }}
+      </p>
+      } @if (actionError(); as failure) { @if (failure.id === repository.id) {
+      <p class="error">{{ failure.message }}</p>
+      } }
+
+      <section class="setup">
+        @if (editing() === repository.id) {
+        <mat-form-field appearance="outline" class="setup-script">
+          <mat-label>Setup script</mat-label>
+          <textarea
+            matInput
+            name="setup-{{ repository.id }}"
+            [(ngModel)]="setupDraft"
+            cdkTextareaAutosize
+            cdkAutosizeMinRows="3"
+            spellcheck="false"
+            class="script"
+            data-testid="setup-input"
+          ></textarea>
+          <mat-hint
+            >Runs with bash in each new worktree, e.g. <code>npm ci</code>;
+            stops at the first failing command.</mat-hint
+          >
+        </mat-form-field>
+        <div class="setup-actions">
+          <button matButton type="button" (click)="cancelSetup()">
+            Cancel
+          </button>
+          <button
+            matButton="filled"
+            type="button"
+            (click)="saveSetup(repository)"
+            [disabled]="saving()"
+            data-testid="setup-save"
+          >
+            Save
+          </button>
+        </div>
+        } @else {
+        <div class="setup-summary">
+          <span class="label">Setup script</span>
+          @if (repository.setupScript) {
+          <pre class="script" data-testid="setup-script">
+{{ repository.setupScript }}</pre
+          >
+          } @else {
+          <span class="muted">none</span>
+          }
+          <button
+            matButton
+            type="button"
+            (click)="editSetup(repository)"
+            data-testid="setup-edit"
+          >
+            Edit
+          </button>
+        </div>
+        }
+      </section>
+
+      <section class="worktrees">
+        <span class="label">Worktrees</span>
+        @if (repository.worktrees.length === 0) {
+        <span class="muted">none</span>
+        } @else {
+        <ul>
+          @for (worktree of repository.worktrees; track worktree.path) {
+          <li
+            class="worktree"
+            [class.orphaned]="worktree.orphaned"
+            data-testid="worktree"
+          >
+            <span class="worktree-name">
+              @if (worktree.sessionId) {
+              <a [routerLink]="['/sessions', worktree.sessionId]"
+                >{{ worktreeLabel(worktree) }}</a
+              >
+              } @else { {{ worktreeLabel(worktree) }} } @if (worktree.orphaned)
+              {
+              <span class="tag tag-warning">Orphaned</span>
+              } @if (worktree.missing) {
+              <span class="tag tag-error">Missing</span>
+              }
+            </span>
+            @if (worktree.branch) {
+            <code class="branch">{{ worktree.branch }}</code>
+            }
+            <code class="path">{{ worktree.path }}</code>
+          </li>
+          }
+        </ul>
+        }
+      </section>
+    </mat-card-content>
+  </mat-card>
+  }
+</div>
+} @if (strayDirectories().length > 0) {
+<section class="stray">
+  <h2 class="heading">Other worktree directories</h2>
+  <p class="muted">
+    Directories under the worktrees directory of repositories that are not
+    registered. No session uses them.
+  </p>
+  <ul>
+    @for (path of strayDirectories(); track path) {
+    <li data-testid="stray"><code>{{ path }}</code></li>
+    }
+  </ul>
+</section>
+}

@@ -13,6 +13,11 @@ export const appRoutes: Route[] = [
       import('./sessions/session-view').then((m) => m.SessionView),
   },
   {
+    path: 'repositories',
+    loadComponent: () =>
+      import('./repositories/repository-list').then((m) => m.RepositoryList),
+  },
+  {
     path: 'status',
     loadComponent: () => import('./home/home').then((m) => m.Home),
   },

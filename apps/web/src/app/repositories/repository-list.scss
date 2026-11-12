@@ -1,0 +1,169 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.heading {
+  font: var(--mat-sys-title-large);
+  margin: 4px 0;
+}
+
+h2.heading {
+  font: var(--mat-sys-title-medium);
+  margin: 12px 0 0;
+}
+
+.add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+}
+
+.clone-url {
+  flex: 1 1 260px;
+}
+
+.add button {
+  margin-top: 8px;
+}
+
+.repositories {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.repository-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.name {
+  font: var(--mat-sys-title-medium);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.paths,
+.path,
+.branch {
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-on-surface-variant);
+  overflow-wrap: anywhere;
+}
+
+.paths {
+  margin-top: 4px;
+}
+
+.setup,
+.worktrees {
+  margin-top: 12px;
+}
+
+.label {
+  font: var(--mat-sys-label-large);
+  margin-right: 8px;
+}
+
+.setup-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.script {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+pre.script {
+  flex-basis: 100%;
+  order: 3;
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--mat-sys-surface-container);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.setup-script {
+  width: 100%;
+}
+
+.setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.worktrees ul,
+.stray ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+.worktree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-top: 1px solid var(--mat-sys-outline-variant);
+}
+
+.worktree-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  overflow-wrap: anywhere;
+}
+
+.tag {
+  padding: 0 8px;
+  border-radius: 999px;
+  font: var(--mat-sys-label-medium);
+  line-height: 20px;
+}
+
+.tag-warning {
+  background: var(--mat-sys-tertiary-container);
+  color: var(--mat-sys-on-tertiary-container);
+}
+
+.tag-error {
+  background: var(--mat-sys-error-container);
+  color: var(--mat-sys-on-error-container);
+}
+
+.muted,
+.empty {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.error {
+  color: var(--mat-sys-error);
+  overflow-wrap: anywhere;
+}
