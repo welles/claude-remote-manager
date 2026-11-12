@@ -6,6 +6,9 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
+  // Run onModuleDestroy/onApplicationShutdown hooks on SIGTERM/SIGINT, e.g.
+  // to stop sessions and dev servers when the container stops.
+  app.enableShutdownHooks();
   const port = process.env.PORT || 3000;
   await app.listen(port);
   // Set when Nx waits for this server to be ready
