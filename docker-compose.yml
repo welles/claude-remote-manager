@@ -1,0 +1,36 @@
+services:
+  claude-remote-manager:
+    # Builds the image locally; to use the published image instead, replace
+    # this with image: ghcr.io/<owner>/claude-remote-manager:latest
+    build: .
+    image: claude-remote-manager:local
+    container_name: claude-remote-manager
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    environment:
+      TZ: ${TZ:-UTC}
+    volumes:
+      # Main checkouts of cloned repositories
+      - repos:/data/repos
+      # Session worktrees: <repo>/<session-slug>
+      - worktrees:/data/worktrees
+      # New projects without an existing repository
+      - projects:/data/projects
+      # Claude Code configuration: login, settings, session transcripts
+      - claude:/data/claude
+      # SSH key (ssh/), git config and credentials
+      - git:/data/git
+      # SQLite database
+      - db:/data/db
+      # Nix store, keeps downloaded tools across container re-creations
+      - nix:/nix
+
+volumes:
+  repos:
+  worktrees:
+  projects:
+  claude:
+  git:
+  db:
+  nix:

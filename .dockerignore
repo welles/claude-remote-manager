@@ -1,0 +1,17 @@
+# Only the sources are needed; dependencies and outputs are rebuilt in the image.
+.git
+.github
+.nx
+.angular
+.vscode
+.idea
+node_modules
+dist
+tmp
+coverage
+data
+.env
+.env.*
+docker-compose.yml
+*.md
+!docker/CLAUDE.md
