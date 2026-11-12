@@ -94,6 +94,16 @@ Die Oberfläche zeigt jederzeit, wie viel Spielraum noch bleibt. Drei Werte sind
 
 Session- und Wochenlimit gelten für das ganze Konto und sind deshalb global sichtbar (z. B. in der Kopfzeile bzw. Sitzungsliste), nicht nur innerhalb einer Sitzung. Die Werte stammen aus den Limit-Informationen, die Claude Code bzw. das Agent SDK liefert, und werden bei jeder Anfrage aktualisiert.
 
+## Dateien zeigen
+
+Claude kann dem Nutzer von sich aus eine Datei zeigen, etwa einen erzeugten Screenshot, ein Bild, einen Bericht oder eine HTML-Seite. Gemeint ist ausdrücklich kein allgemeiner Dateibrowser, sondern dass Claude eine bestimmte Datei gezielt vorlegt.
+
+- **Tool:** Das Backend stellt Claude über das SDK ein eigenes Tool `show_file` (Pfad, optionale Bildunterschrift) bereit. Erlaubt sind nur Dateien aus den Verzeichnissen der Sitzung.
+- **Anzeige:** Die Datei erscheint als Karte im Verlauf und lässt sich in einer Seitenansicht öffnen: Bilder direkt, Markdown und HTML gerendert, Code und Text mit Syntax-Highlighting, PDF eingebettet; alles andere als Download.
+- **Bilder im Verlauf:** Bilder, die Claude zeigt, erzeugt oder liest, erscheinen als Miniatur direkt im Chat, ohne Klick.
+- **Stand der Datei:** Gezeigt wird der Inhalt zum Zeitpunkt des Zeigens; er bleibt im Verlauf sichtbar, auch wenn die Datei später geändert oder die Sitzung aufgeräumt wird.
+- **Benachrichtigung:** Gezeigte Dateien lösen keine eigene Benachrichtigung aus.
+
 ## Statistik und Kosten
 
 Das Backend protokolliert den Verbrauch jeder Sitzung und zeigt ihn im Frontend über die Zeit an.
@@ -166,7 +176,7 @@ Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
 2. **Agent-SDK-Durchstich:** NestJS startet eine Sitzung in einem festen Verzeichnis, streamt Ereignisse per WebSocket, setzt Sitzungen über die ID fort. Minimale Chat-Ansicht im Frontend.
 3. **Multi-Repo-Worktrees:** Worktree-Modul mit Tests, von Anfang an für mehrere Repos pro Sitzung; SQLite-Datenmodell für Sitzungen, Repos und Worktrees; Setup-Skripte pro Repo.
 4. **GitHub App:** Repo-Liste inkl. Organisationen, Klonen ins Volume, neue Repos anlegen, Pushen und PRs erstellen.
-5. **Vollständige Chat-Ansicht:** Berechtigungsdialoge, Modellwahl und Plan-Modus, Diffs im Verlauf und Gesamt-Diff, To-do-Liste, Kontextanzeige, Nachrichten einreihen, Bilder und @-Dateien.
+5. **Vollständige Chat-Ansicht:** Berechtigungsdialoge, Modellwahl und Plan-Modus, Diffs im Verlauf und Gesamt-Diff, To-do-Liste, Kontextanzeige, Nachrichten einreihen, Bilder und @-Dateien, Dateien zeigen (`show_file`).
 6. **Betrieb:** Deployment auf dem Server hinter Cloudflare Tunnel mit Google SSO über Cloudflare Access; ab hier im Alltag nutzbar.
 7. **Benachrichtigungen und PWA:** ntfy mit Token, Web Push, PWA mit Aktionen in Benachrichtigungen, Badge, Shortcuts, Share Target, Offline-Shell, Umgang mit abgelaufener Access-Sitzung.
 8. **GitHub-Referenzen im Prompt.**
