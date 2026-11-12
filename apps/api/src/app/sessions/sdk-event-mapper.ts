@@ -106,10 +106,9 @@ export function userContentEvents(
     }
   }
   if (includeText && parentToolUseId === null) {
+    // Interruptions are shown through the stored turn result instead.
     for (const text of texts) {
-      if (/^\s*\[Request interrupted/.test(text)) {
-        events.push({ type: 'notice', level: 'info', text: 'Interrupted.' });
-      } else if (!GENERATED_USER_TEXT.test(text) && text.trim()) {
+      if (!GENERATED_USER_TEXT.test(text) && text.trim()) {
         events.push({ type: 'user.message', id, text });
       }
     }
@@ -239,34 +238,45 @@ export class SdkEventMapper {
   }
 }
 
-/** Events for the messages of a stored transcript (session history). */
-export function transcriptEvents(
+/** The events of one transcript entry. */
+export interface TranscriptEntry {
+  /** UUID of the transcript entry (the client's ID for user messages). */
+  uuid: string;
+  /** Whether the entry is a message the user typed. */
+  isUserMessage: boolean;
+  events: SessionEventInput[];
+}
+
+/** Events of a stored transcript, per entry (session history). */
+export function transcriptEntries(
   messages: SessionMessage[],
-): SessionEventInput[] {
-  const events: SessionEventInput[] = [];
+): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
   for (const message of messages) {
     if (!isRecord(message.message)) {
       continue;
     }
     const content = message.message['content'];
+    let events: SessionEventInput[] = [];
     if (message.type === 'assistant') {
       const id =
         typeof message.message['id'] === 'string'
           ? message.message['id']
           : message.uuid;
-      events.push(
-        ...assistantContentEvents(id, content, message.parent_tool_use_id),
-      );
+      events = assistantContentEvents(id, content, message.parent_tool_use_id);
     } else if (message.type === 'user') {
-      events.push(
-        ...userContentEvents(
-          message.uuid,
-          content,
-          message.parent_tool_use_id,
-          true,
-        ),
+      events = userContentEvents(
+        message.uuid,
+        content,
+        message.parent_tool_use_id,
+        true,
       );
     }
+    entries.push({
+      uuid: message.uuid,
+      isUserMessage: events.some((event) => event.type === 'user.message'),
+      events,
+    });
   }
-  return events;
+  return entries;
 }

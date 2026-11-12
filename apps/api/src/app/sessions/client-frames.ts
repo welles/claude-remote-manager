@@ -4,6 +4,7 @@ import {
   optionalString,
   requireObject,
   requireString,
+  requireInteger,
   requireUuid,
 } from '../common/validation';
 
@@ -22,7 +23,25 @@ export function parseClientFrame(raw: unknown): ClientMessage {
   });
   const base = requestId === undefined ? {} : { requestId };
   switch (type) {
-    case 'subscribe':
+    case 'subscribe': {
+      const after =
+        frame['after'] === undefined || frame['after'] === null
+          ? undefined
+          : requireObject(frame['after'], 'after');
+      return {
+        type,
+        sessionId: requireUuid(frame, 'sessionId'),
+        ...(after
+          ? {
+              after: {
+                logId: requireUuid(after, 'logId'),
+                seq: requireInteger(after, 'seq'),
+              },
+            }
+          : {}),
+        ...base,
+      };
+    }
     case 'unsubscribe':
     case 'interrupt':
       return { type, sessionId: requireUuid(frame, 'sessionId'), ...base };

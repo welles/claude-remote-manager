@@ -16,6 +16,7 @@ import {
   SESSION_PERMISSION_MODES,
   type ContextUsage,
   type CreateSessionRequest,
+  type LogPosition,
   type SessionDto,
   type SessionEvent,
   type SessionEventInput,
@@ -32,7 +33,13 @@ import {
 import { TranscriptReader } from '../agent/transcript-reader';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { LimitsService } from '../limits/limits.service';
-import { SdkEventMapper, transcriptEvents } from './sdk-event-mapper';
+import { SdkEventMapper, transcriptEntries } from './sdk-event-mapper';
+import {
+  SessionEventRepository,
+  STORED_EVENT_TYPES,
+  type EventAnchor,
+} from './session-event.repository';
+import { buildHistory, SessionLog, type LogSnapshot } from './session-log';
 import { SessionRepository, type SessionRecord } from './session.repository';
 import { EMPTY_USAGE, UsageRepository } from './usage.repository';
 import { sumUsage, UsageTracker } from './usage-tracker';
@@ -59,7 +66,16 @@ export interface SessionEventEnvelope {
   event: SessionEvent;
 }
 
-/** In-memory state of a session in this server process. */
+/** What a new subscriber gets. */
+export interface SessionSnapshot extends LogSnapshot {
+  session: SessionDto;
+}
+
+/**
+ * In-memory state of a session in this server process. It exists while the
+ * session has a process or subscribers and is released afterwards; the log
+ * is then rebuilt from the transcript and the stored events when needed.
+ */
 interface LiveSession {
   id: string;
   run: AgentRun | null;
@@ -67,9 +83,12 @@ interface LiveSession {
   starting: Promise<void> | null;
   mapper: SdkEventMapper;
   tracker: UsageTracker;
-  log: SessionEvent[];
-  nextSeq: number;
+  log: SessionLog;
   historyLoaded: Promise<void> | null;
+  /** Number of WebSocket subscriptions. */
+  subscribers: number;
+  /** Position in the transcript that new stored events are anchored to. */
+  anchor: EventAnchor;
   context: ContextUsage | null;
   interruptRequested: boolean;
   /** Why the current process is being closed on purpose. */
@@ -99,6 +118,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly sessions: SessionRepository,
     private readonly usage: UsageRepository,
+    private readonly storedEvents: SessionEventRepository,
     private readonly runner: AgentRunner,
     private readonly transcripts: TranscriptReader,
     private readonly limits: LimitsService,
@@ -172,7 +192,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.historyLoaded = Promise.resolve();
     this.append(live, { type: 'session.status', status: 'running' });
     const message = { id: randomUUID(), text: prompt };
-    this.append(live, { type: 'user.message', ...message });
+    this.appendUserMessage(live, message);
     const dto = this.toDto(record);
     this.updates.next(dto);
     this.startRun(live, record, message);
@@ -200,7 +220,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live.starting) {
       await live.starting;
     }
-    this.append(live, { type: 'user.message', id, text });
+    this.appendUserMessage(live, { id, text });
     if (live.run) {
       live.run.send({ id, text });
       this.setStatus(live, 'running');
@@ -221,17 +241,41 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     await live.run.interrupt();
   }
 
-  /** The session and its complete event log, for a new subscriber. */
-  async history(
+  /**
+   * Registers a subscriber and returns the session with its log: complete,
+   * or only the events after `after` if that log position is still valid.
+   * Pair every successful call with {@link unsubscribe}.
+   */
+  async subscribe(
     sessionId: string,
-  ): Promise<{ session: SessionDto; events: SessionEvent[] }> {
+    after?: LogPosition,
+  ): Promise<SessionSnapshot> {
     const record = this.requireRecord(sessionId);
     const live = this.liveSession(sessionId);
-    await this.ensureHistory(live, record);
+    live.subscribers++;
+    try {
+      await this.ensureHistory(live, record);
+    } catch (error) {
+      this.unsubscribe(sessionId);
+      throw error;
+    }
     return {
       session: this.toDto(this.requireRecord(sessionId)),
-      events: [...live.log],
+      ...live.log.snapshot(after),
     };
+  }
+
+  unsubscribe(sessionId: string): void {
+    const live = this.live.get(sessionId);
+    if (live) {
+      live.subscribers = Math.max(0, live.subscribers - 1);
+      this.releaseIfUnused(live);
+    }
+  }
+
+  /** Number of sessions held in memory (for tests and diagnostics). */
+  get liveCount(): number {
+    return this.live.size;
   }
 
   // -------------------------------------------------------------------------
@@ -245,9 +289,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         starting: null,
         mapper: new SdkEventMapper(),
         tracker: new UsageTracker(),
-        log: [],
-        nextSeq: 1,
+        log: new SessionLog(),
         historyLoaded: null,
+        subscribers: 0,
+        anchor: { uuid: null, userId: null },
         context: null,
         interruptRequested: false,
         closing: null,
@@ -259,39 +304,53 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Fills the event log of a session this process has not run yet from the
-   * Claude Code transcript, once.
+   * Fills the event log of a session from the Claude Code transcript and the
+   * stored app events, once per {@link LiveSession}.
    */
   private ensureHistory(
     live: LiveSession,
     record: SessionRecord,
   ): Promise<void> {
     live.historyLoaded ??= (async () => {
-      if (!record.sdkSessionId) {
-        return;
+      let entries: ReturnType<typeof transcriptEntries> = [];
+      let failed = false;
+      if (record.sdkSessionId) {
+        try {
+          entries = transcriptEntries(
+            await this.transcripts.read(record.sdkSessionId, record.cwd),
+          );
+        } catch (error) {
+          failed = true;
+          this.logger.warn(
+            `Could not read the transcript of ${record.id}: ${String(error)}`,
+          );
+        }
       }
-      try {
-        const messages = await this.transcripts.read(
-          record.sdkSessionId,
-          record.cwd,
-        );
-        const now = new Date().toISOString();
-        const loaded = transcriptEvents(messages).map(
-          (event) =>
-            ({ ...event, seq: live.nextSeq++, at: now }) as SessionEvent,
-        );
-        // Nothing else is logged before the history is loaded.
-        live.log.push(...loaded);
-      } catch (error) {
-        this.logger.warn(
-          `Could not read the transcript of ${record.id}: ${String(error)}`,
-        );
-        this.append(live, {
-          type: 'notice',
-          level: 'warning',
-          text: 'The earlier conversation could not be loaded.',
-        });
+      // Nothing else is logged before the history is loaded.
+      for (const item of buildHistory(
+        entries,
+        this.storedEvents.list(record.id),
+      )) {
+        live.log.append(item.event, item.at);
       }
+      if (failed) {
+        // Live-only: the transcript may be readable next time.
+        this.append(
+          live,
+          {
+            type: 'notice',
+            level: 'warning',
+            text: 'The earlier conversation could not be loaded.',
+          },
+          { store: false },
+        );
+      }
+      const lastUser = entries.findLast((entry) => entry.isUserMessage);
+      live.anchor = {
+        uuid: entries.at(-1)?.uuid ?? null,
+        userId: lastUser?.uuid ?? null,
+      };
+      live.context = live.log.findLast('context.usage')?.context ?? null;
     })();
     return live.historyLoaded;
   }
@@ -327,6 +386,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       } finally {
         live.starting = null;
       }
+      if (!live.run) {
+        this.releaseIfUnused(live);
+      }
     })();
   }
 
@@ -351,12 +413,27 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     live.run = null;
     this.clearIdleTimer(live);
+    live.log.clearDrafts();
     if (failure && !live.closing) {
       this.failRun(live, failure);
     } else {
       this.setStatus(live, 'finished');
     }
     live.closing = null;
+    this.releaseIfUnused(live);
+  }
+
+  /** Forgets a session without process and subscribers. */
+  private releaseIfUnused(live: LiveSession): void {
+    if (
+      live.subscribers === 0 &&
+      !live.run &&
+      !live.starting &&
+      !this.shuttingDown &&
+      this.live.get(live.id) === live
+    ) {
+      this.live.delete(live.id);
+    }
   }
 
   private handleMessage(live: LiveSession, message: SDKMessage): void {
@@ -379,7 +456,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.handleResult(live, message);
       return;
     }
-    for (const event of live.mapper.map(message)) {
+    const events = live.mapper.map(message);
+    if (
+      (message.type === 'assistant' || message.type === 'user') &&
+      message.uuid
+    ) {
+      // Stored events that follow belong after this transcript entry.
+      live.anchor = { ...live.anchor, uuid: message.uuid };
+    }
+    for (const event of events) {
       this.append(live, event);
     }
   }
@@ -412,13 +497,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (result.subtype === 'success' && result.is_error) {
         // API errors usually arrive as assistant text already; do not
         // repeat the same text.
-        const lastText = live.log.findLast(
-          (event) => event.type === 'assistant.text',
-        );
-        if (
-          lastText?.type !== 'assistant.text' ||
-          lastText.text !== result.result
-        ) {
+        if (live.log.lastAssistantText !== result.result) {
           this.append(live, {
             type: 'error',
             message: result.result || 'The request failed.',
@@ -541,24 +620,29 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Adds an event to the session log and publishes it. */
-  private append(live: LiveSession, input: SessionEventInput): void {
-    const event = {
-      ...input,
-      seq: live.nextSeq++,
-      at: new Date().toISOString(),
-    } as SessionEvent;
-    if (event.type === 'assistant.text' && event.blockIndex !== null) {
-      // The complete block replaces its streamed deltas.
-      live.log = live.log.filter(
-        (logged) =>
-          logged.type !== 'assistant.delta' ||
-          logged.messageId !== event.messageId ||
-          logged.blockIndex !== event.blockIndex,
-      );
+  /**
+   * Adds an event to the session log, stores it if it is not part of the
+   * transcript, and publishes it.
+   */
+  private append(
+    live: LiveSession,
+    input: SessionEventInput,
+    { store = true }: { store?: boolean } = {},
+  ): void {
+    const event = live.log.append(input);
+    if (store && STORED_EVENT_TYPES.has(input.type)) {
+      this.storedEvents.add(live.id, input, live.anchor);
     }
-    live.log.push(event);
     this.events.next({ sessionId: live.id, event });
+  }
+
+  private appendUserMessage(
+    live: LiveSession,
+    message: { id: string; text: string },
+  ): void {
+    this.append(live, { type: 'user.message', ...message });
+    // Claude Code uses the message ID as the transcript entry's UUID.
+    live.anchor = { uuid: message.id, userId: message.id };
   }
 
   private requireRecord(id: string): SessionRecord {

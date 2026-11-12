@@ -90,7 +90,32 @@ export const usageRecords = sqliteTable(
   ],
 );
 
+/**
+ * Session events that are not in the Claude Code transcript (permission
+ * decisions, errors, notices, turn results, context usage), so that the
+ * history survives restarts. Conversation events come from the transcript.
+ * `anchor_uuid` is the transcript entry the event followed; `anchor_user_id`
+ * the user message of the turn, as a fallback for placing the event.
+ */
+export const sessionEvents = sqliteTable(
+  'session_events',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    /** The event without `seq` and `at`, as JSON. */
+    payload: text('payload').notNull(),
+    anchorUuid: text('anchor_uuid'),
+    anchorUserId: text('anchor_user_id'),
+    createdAt: createdAt(),
+  },
+  (table) => [index('session_events_session').on(table.sessionId, table.id)],
+);
+
 export type SessionRow = typeof sessions.$inferSelect;
 export type NewSessionRow = typeof sessions.$inferInsert;
+export type SessionEventRow = typeof sessionEvents.$inferSelect;
 export type UsageRecordRow = typeof usageRecords.$inferSelect;
 export type NewUsageRecordRow = typeof usageRecords.$inferInsert;

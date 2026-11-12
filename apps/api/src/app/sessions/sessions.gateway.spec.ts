@@ -128,6 +128,27 @@ describe('SessionsGateway', () => {
     });
   });
 
+  it('resubscribes incrementally with a known log position', async () => {
+    const session = await createSession();
+    client.send({ type: 'subscribe', sessionId: session.id });
+    const full = await client.next('session.history');
+    expect(full.complete).toBe(true);
+    const seq = full.events.at(-1)?.seq ?? 0;
+
+    runner.last.emit(resultMessage(1, 0.001));
+    await client.next('session.event', (m) => m.event.type === 'turn.result');
+
+    client.send({
+      type: 'subscribe',
+      sessionId: session.id,
+      after: { logId: full.logId, seq },
+    });
+    const part = await client.next('session.history');
+    expect(part).toMatchObject({ complete: false, logId: full.logId });
+    expect(part.events[0].seq).toBe(seq + 1);
+    expect(part.events.map((event) => event.type)).toContain('turn.result');
+  });
+
   it('accepts messages and reports errors with the request ID', async () => {
     const session = await createSession();
     runner.last.emit(resultMessage(1, 0.001));

@@ -113,8 +113,15 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 - SDK messages are mapped to session events (`libs/shared-types/src/lib/session-events.ts`):
   streamed text deltas, complete text blocks, tool calls and results, permission denials,
   notices, errors, turn results with usage, and context usage. The server keeps an event log
-  per session; a client that subscribes gets the whole log, then live events. After a server
-  restart the log is rebuilt from Claude Code's transcript.
+  per session while it has a process or subscribers. A client that subscribes gets the whole
+  log, or after a reconnect only the events after its last position (`logId` and `seq`), plus
+  the text of blocks still streaming; then live events.
+- History: conversation events come from Claude Code's transcript (`getSessionMessages`).
+  Events the app produces itself (permission decisions, errors, notices, turn results,
+  context usage) are stored in the `session_events` table and merged in at their place in
+  the transcript. Status changes and text deltas are live-only. The Agent SDK returns
+  transcript messages without timestamps, so rebuilt conversation events have `at: null`.
+  An unused session's log is released and rebuilt this way when it is opened again.
 - Status: `running` (turn in progress), `waiting` (process alive, waiting for the user),
   `finished` (no process; idle timeout, restart or normal end) and `failed` (the process
   ended with an error). Sending a message to a finished or failed session resumes it with the

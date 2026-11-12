@@ -66,7 +66,11 @@ export class SessionsGateway
   }
 
   handleDisconnect(client: WebSocket): void {
+    const state = this.clients.get(client);
     this.clients.delete(client);
+    for (const sessionId of state?.subscriptions ?? []) {
+      this.sessions.unsubscribe(sessionId);
+    }
   }
 
   onModuleDestroy(): void {
@@ -124,17 +128,29 @@ export class SessionsGateway
     }
     switch (message.type) {
       case 'subscribe': {
-        const { session, events } = await this.sessions.history(
+        const snapshot = await this.sessions.subscribe(
           message.sessionId,
+          message.after,
         );
-        // No await between taking the history and subscribing: no event
+        if (!this.clients.has(client)) {
+          // Disconnected while the history was loading.
+          this.sessions.unsubscribe(message.sessionId);
+          return;
+        }
+        if (state.subscriptions.has(message.sessionId)) {
+          // Subscribed again (e.g. to catch up): count it once.
+          this.sessions.unsubscribe(message.sessionId);
+        }
+        // No await between taking the snapshot and subscribing: no event
         // can fall into the gap.
         state.subscriptions.add(message.sessionId);
-        this.send(client, { type: 'session.history', session, events });
+        this.send(client, { type: 'session.history', ...snapshot });
         return;
       }
       case 'unsubscribe':
-        state.subscriptions.delete(message.sessionId);
+        if (state.subscriptions.delete(message.sessionId)) {
+          this.sessions.unsubscribe(message.sessionId);
+        }
         return;
       case 'message.send':
         await this.sessions.send(message.sessionId, {

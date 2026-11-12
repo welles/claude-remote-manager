@@ -14,6 +14,7 @@ import type {
 import type { AppConfig } from '../config/app-config';
 import { openDatabase, type AppDatabase } from '../db/database';
 import { LimitsService } from '../limits/limits.service';
+import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
 import {
   NO_APPROVAL_UI_MESSAGE,
@@ -48,6 +49,7 @@ describe('SessionsService', () => {
       config,
       new SessionRepository(db),
       new UsageRepository(db),
+      new SessionEventRepository(db),
       runner,
       transcripts,
       limits,
@@ -299,7 +301,7 @@ describe('SessionsService', () => {
       });
 
       // The log replaces streamed deltas by the complete text.
-      const history = await service.history(session.id);
+      const history = await service.subscribe(session.id);
       expect(history.events.map((event) => event.type)).toEqual([
         'session.status',
         'user.message',
@@ -549,7 +551,7 @@ describe('SessionsService', () => {
       ]);
       service = createService();
 
-      const history = await service.history(session.id);
+      const history = await service.subscribe(session.id);
       expect(transcripts.reads).toEqual([
         { sdkSessionId: 'sdk-1', cwd: config.sessionCwd },
       ]);
@@ -571,7 +573,7 @@ describe('SessionsService', () => {
       await flush();
       expect(runner.last.options.resume).toBe('sdk-1');
       expect(
-        (await service.history(session.id)).events.map((e) => e.seq),
+        (await service.subscribe(session.id)).events.map((e) => e.seq),
       ).toEqual([1, 2, 3, 4]);
       expect(transcripts.reads).toHaveLength(1);
     });
@@ -589,6 +591,191 @@ describe('SessionsService', () => {
       expect(runner.last.closed).toBe(true);
       expect(service.get(session.id).status).toBe('finished');
       expect(lastEvent('error')).toBeUndefined();
+    });
+  });
+
+  describe('event log', () => {
+    it('answers subscriptions incrementally and with drafts', async () => {
+      const session = await startSession();
+      const first = await service.subscribe(session.id);
+      expect(first.complete).toBe(true);
+      const lastSeq = first.events.at(-1)?.seq ?? 0;
+
+      runner.last.emit(
+        {
+          type: 'stream_event',
+          parent_tool_use_id: null,
+          event: { type: 'message_start', message: { id: 'm1' } },
+        },
+        {
+          type: 'stream_event',
+          parent_tool_use_id: null,
+          event: {
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'text' },
+          },
+        },
+        {
+          type: 'stream_event',
+          parent_tool_use_id: null,
+          event: {
+            type: 'content_block_delta',
+            index: 0,
+            delta: { type: 'text_delta', text: 'po' },
+          },
+        },
+        {
+          type: 'system',
+          subtype: 'api_retry',
+          attempt: 1,
+          max_retries: 2,
+          retry_delay_ms: 1,
+          error_status: 529,
+          error: 'overloaded',
+        },
+      );
+      await flush();
+
+      const later = await service.subscribe(session.id, {
+        logId: first.logId,
+        seq: lastSeq,
+      });
+      expect(later).toMatchObject({ logId: first.logId, complete: false });
+      expect(later.events.map((event) => event.type)).toEqual(['notice']);
+      expect(later.drafts).toEqual([
+        { messageId: 'm1', blockIndex: 0, text: 'po', parentToolUseId: null },
+      ]);
+
+      const other = await service.subscribe(session.id, {
+        logId: '00000000-0000-4000-8000-000000000000',
+        seq: lastSeq,
+      });
+      expect(other.complete).toBe(true);
+    });
+
+    it('releases unused sessions and rebuilds them with stored events', async () => {
+      const session = await startSession();
+      const run = runner.last;
+      const firstId = run.sent[0].id;
+      run.emit(
+        { type: 'system', subtype: 'init', session_id: 'sdk-1' },
+        {
+          type: 'assistant',
+          uuid: 'a1',
+          parent_tool_use_id: null,
+          message: {
+            id: 'm1',
+            content: [
+              {
+                type: 'tool_use',
+                id: 't1',
+                name: 'Bash',
+                input: { command: 'ls' },
+              },
+            ],
+          },
+        },
+      );
+      await flush();
+      await run.options.canUseTool(
+        'Bash',
+        { command: 'ls' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 't1',
+          requestId: 'r',
+        },
+      );
+      run.emit(
+        {
+          type: 'assistant',
+          uuid: 'a2',
+          parent_tool_use_id: null,
+          message: { id: 'm2', content: [{ type: 'text', text: 'Denied.' }] },
+        },
+        resultMessage(10, 0.01),
+      );
+      await flush();
+      run.close();
+      await flush();
+      expect(service.get(session.id).status).toBe('finished');
+      expect(service.liveCount).toBe(0);
+      expect(service.get(session.id).context).toBeNull();
+
+      const message = (
+        uuid: string,
+        type: 'user' | 'assistant',
+        content: unknown,
+        id?: string,
+      ) => ({
+        type,
+        uuid,
+        session_id: 'sdk-1',
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: { id, role: type, content },
+      });
+      transcripts.transcripts.set('sdk-1', [
+        message(firstId, 'user', 'Reply with pong'),
+        message(
+          'a1',
+          'assistant',
+          [
+            {
+              type: 'tool_use',
+              id: 't1',
+              name: 'Bash',
+              input: { command: 'ls' },
+            },
+          ],
+          'm1',
+        ),
+        message('r1', 'user', [
+          {
+            type: 'tool_result',
+            tool_use_id: 't1',
+            content: 'denied',
+            is_error: true,
+          },
+        ]),
+        message('a2', 'assistant', [{ type: 'text', text: 'Denied.' }], 'm2'),
+      ]);
+
+      const rebuilt = await service.subscribe(session.id);
+      expect(rebuilt.events.map((event) => event.type)).toEqual([
+        'user.message',
+        'tool.call',
+        'permission.denied',
+        'tool.result',
+        'assistant.text',
+        'turn.result',
+        'context.usage',
+      ]);
+      expect(rebuilt.events.map((event) => event.at === null)).toEqual([
+        true,
+        true,
+        false,
+        true,
+        true,
+        false,
+        false,
+      ]);
+      expect(rebuilt.session.context).toMatchObject({ usedTokens: 1200 });
+
+      // Kept while subscribed, released after the last unsubscribe.
+      expect(service.liveCount).toBe(1);
+      service.unsubscribe(session.id);
+      expect(service.liveCount).toBe(0);
+    });
+
+    it('keeps errors of a session that never started', async () => {
+      runner.failNextStart = new Error('Native CLI binary not found');
+      const session = await startSession();
+      expect(service.liveCount).toBe(0);
+      const history = await service.subscribe(session.id);
+      expect(history.events.map((event) => event.type)).toEqual(['error']);
+      expect(transcripts.reads).toHaveLength(0);
     });
   });
 

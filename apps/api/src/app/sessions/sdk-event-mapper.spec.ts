@@ -6,7 +6,7 @@ import {
   MAX_TOOL_RESULT_LENGTH,
   SdkEventMapper,
   toolResultText,
-  transcriptEvents,
+  transcriptEntries,
 } from './sdk-event-mapper';
 
 /** Builds SDK messages; only the fields the mapper reads are relevant. */
@@ -286,7 +286,11 @@ describe('SdkEventMapper', () => {
   });
 });
 
-describe('transcriptEvents', () => {
+/** All events of the transcript entries, flattened. */
+const transcriptEvents = (messages: SessionMessage[]) =>
+  transcriptEntries(messages).flatMap((entry) => entry.events);
+
+describe('transcriptEntries', () => {
   const entry = (
     type: SessionMessage['type'],
     message: unknown,
@@ -345,7 +349,32 @@ describe('transcriptEvents', () => {
     ]);
   });
 
-  it('hides text Claude Code generated and marks interruptions', () => {
+  it('groups events by entry and marks user messages', () => {
+    expect(
+      transcriptEntries([
+        entry('user', { role: 'user', content: 'Hi' }, 'u1'),
+        entry('assistant', { id: 'm1', content: [] }, 'a1'),
+        entry(
+          'user',
+          {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 't' }],
+          },
+          'r1',
+        ),
+      ]).map(({ uuid, isUserMessage, events }) => [
+        uuid,
+        isUserMessage,
+        events.length,
+      ]),
+    ).toEqual([
+      ['u1', true, 1],
+      ['a1', false, 0],
+      ['r1', false, 1],
+    ]);
+  });
+
+  it('hides text Claude Code generated, including interruption markers', () => {
     expect(
       transcriptEvents([
         entry('user', {
@@ -359,7 +388,7 @@ describe('transcriptEvents', () => {
         entry('system', { content: 'ignored' }),
         entry('assistant', 'not an object'),
       ]),
-    ).toEqual([{ type: 'notice', level: 'info', text: 'Interrupted.' }]);
+    ).toEqual([]);
   });
 });
 

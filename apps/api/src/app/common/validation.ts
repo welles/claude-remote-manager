@@ -87,6 +87,18 @@ export function optionalEnum<T extends string>(
   return value as T;
 }
 
+export function requireInteger(
+  object: Record<string, unknown>,
+  field: string,
+  min = 0,
+): number {
+  const value = optionalInteger(object, field, min);
+  if (value === undefined) {
+    throw new BadRequestException(`${field} must be an integer >= ${min}`);
+  }
+  return value;
+}
+
 export function optionalInteger(
   object: Record<string, unknown>,
   field: string,

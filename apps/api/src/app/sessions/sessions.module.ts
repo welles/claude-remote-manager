@@ -6,6 +6,7 @@ import {
   TranscriptReader,
 } from '../agent/transcript-reader';
 import { LimitsModule } from '../limits/limits.module';
+import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
 import { SessionsController } from './sessions.controller';
 import { SessionsGateway } from './sessions.gateway';
@@ -17,6 +18,7 @@ import { UsageRepository } from './usage.repository';
   controllers: [SessionsController],
   providers: [
     SessionRepository,
+    SessionEventRepository,
     UsageRepository,
     SessionsService,
     SessionsGateway,

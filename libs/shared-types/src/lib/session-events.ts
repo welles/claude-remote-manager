@@ -24,12 +24,17 @@ export const SESSION_PROTOCOL_VERSION = 1;
 
 interface SessionEventBase {
   /**
-   * Position in the session's event log of the current server process.
-   * Increases monotonically; restarts after a server restart.
+   * Position in the session's event log. Increases monotonically within one
+   * log; seq numbers of different logs (see `logId` in `session.history`)
+   * cannot be compared.
    */
   seq: number;
-  /** When the event happened (ISO 8601). */
-  at: string;
+  /**
+   * When the event happened (ISO 8601). `null` for conversation events
+   * rebuilt from a Claude Code transcript: the Agent SDK returns transcript
+   * messages without timestamps.
+   */
+  at: string | null;
 }
 
 /** A message the user sent. */
@@ -41,7 +46,8 @@ export interface UserMessageEvent extends SessionEventBase {
 }
 
 /**
- * A piece of assistant text while it streams. Deltas with the same
+ * A piece of assistant text while it streams; sent live only, not kept in
+ * the log (see `drafts` in `session.history`). Deltas with the same
  * `messageId` and `blockIndex` belong together; the matching
  * `assistant.text` event replaces them.
  */
@@ -189,15 +195,38 @@ export interface HelloMessage {
   protocolVersion: number;
 }
 
+/** Text of an assistant block that is still streaming. */
+export interface AssistantDraft {
+  messageId: string;
+  blockIndex: number;
+  /** All text streamed so far; replaces what the client has for the block. */
+  text: string;
+  parentToolUseId: string | null;
+}
+
 /**
- * Answer to `subscribe`: the session and its complete event log so far.
- * Replaces whatever the client knew about the session. Live events follow
- * as `session.event`.
+ * Answer to `subscribe`. Live events follow as `session.event`.
+ *
+ * - `complete: true`: `events` is the whole log; replace what the client
+ *   knew about the session.
+ * - `complete: false`: the client's `after` position is still valid;
+ *   `events` holds only the newer events.
+ *
+ * Streamed text deltas are not part of the log; `drafts` carries the text of
+ * blocks still streaming.
  */
 export interface SessionHistoryMessage {
   type: 'session.history';
   session: SessionDto;
+  /**
+   * Identifies the event log. It changes when the server rebuilds the log
+   * (after a restart or after releasing an unused session); seq numbers are
+   * only comparable within one log.
+   */
+  logId: string;
+  complete: boolean;
   events: SessionEvent[];
+  drafts: AssistantDraft[];
 }
 
 /** A live event of a subscribed session. */
@@ -247,10 +276,20 @@ export type ServerMessage =
 // answers with `ack` or `error` carrying it.
 // ---------------------------------------------------------------------------
 
-/** Receive the history and live events of a session. */
+/** Position in an event log a client has seen up to. */
+export interface LogPosition {
+  logId: string;
+  seq: number;
+}
+
+/**
+ * Receive the history and live events of a session. With `after`, only
+ * events newer than that position are sent if the log still exists.
+ */
 export interface SubscribeMessage {
   type: 'subscribe';
   sessionId: string;
+  after?: LogPosition;
   requestId?: string;
 }
 
