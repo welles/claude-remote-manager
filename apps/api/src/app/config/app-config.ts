@@ -13,7 +13,20 @@ export interface AppConfig {
   sessionIdleTimeoutMs: number;
   /** Claude Code executable; `null` uses the one bundled with the Agent SDK. */
   claudeExecutable: string | null;
+  /** Origins besides the server's own that may call the API. */
+  allowedOrigins: string[];
+  /** Host names besides the loopback names the server answers to. */
+  allowedHosts: string[];
 }
+
+/** The Angular dev server, allowed outside production. */
+export const DEV_ORIGINS = ['http://localhost:4200', 'http://127.0.0.1:4200'];
+
+const list = (value: string | undefined) =>
+  (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 
 export const APP_CONFIG = Symbol('APP_CONFIG');
 
@@ -46,5 +59,16 @@ export function loadAppConfig(env: Env = process.env): AppConfig {
       .map((dir) => resolve(dir)),
     sessionIdleTimeoutMs: idleMinutes * 60_000,
     claudeExecutable: value('CLAUDE_CODE_EXECUTABLE') ?? null,
+    allowedOrigins: [
+      ...(env['NODE_ENV'] === 'production' ? [] : DEV_ORIGINS),
+      ...list(value('ALLOWED_ORIGINS')).map((origin) => {
+        try {
+          return new URL(origin).origin;
+        } catch {
+          throw new Error(`ALLOWED_ORIGINS: ${origin} is not a URL`);
+        }
+      }),
+    ],
+    allowedHosts: list(value('ALLOWED_HOSTS')),
   };
 }

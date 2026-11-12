@@ -1,0 +1,136 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Test } from '@nestjs/testing';
+import { AgentRunner } from '../agent/agent-runner';
+import { TranscriptReader } from '../agent/transcript-reader';
+import { AppModule } from '../app.module';
+import { APP_CONFIG, type AppConfig } from '../config/app-config';
+import { configureApp } from '../configure-app';
+import {
+  FakeAgentRunner,
+  FakeTranscriptReader,
+} from '../sessions/testing/fake-agent';
+
+/** The whole API on a random port, with a fake Claude Code. */
+export interface TestApp {
+  app: NestExpressApplication;
+  runner: FakeAgentRunner;
+  transcripts: FakeTranscriptReader;
+  config: AppConfig;
+  port: number;
+  /** `127.0.0.1:<port>`, the default Host header. */
+  host: string;
+  close(): Promise<void>;
+}
+
+export async function startTestApp(
+  overrides: Partial<AppConfig> = {},
+): Promise<TestApp> {
+  const dir = mkdtempSync(join(tmpdir(), 'crm-app-'));
+  const runner = new FakeAgentRunner();
+  const transcripts = new FakeTranscriptReader();
+  const config: AppConfig = {
+    dbDir: join(dir, 'db'),
+    sessionCwd: join(dir, 'scratch'),
+    sessionAdditionalDirectories: [],
+    sessionIdleTimeoutMs: 0,
+    claudeExecutable: null,
+    allowedOrigins: [],
+    allowedHosts: [],
+    ...overrides,
+  };
+  const module = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(APP_CONFIG)
+    .useValue(config)
+    .overrideProvider(AgentRunner)
+    .useValue(runner)
+    .overrideProvider(TranscriptReader)
+    .useValue(transcripts)
+    .compile();
+  const app = module.createNestApplication<NestExpressApplication>({
+    logger: false,
+    bodyParser: false,
+  });
+  configureApp(app);
+  await app.listen(0, '127.0.0.1');
+  const { port } = app.getHttpServer().address() as AddressInfo;
+  let closed = false;
+  return {
+    app,
+    runner,
+    transcripts,
+    config,
+    port,
+    host: `127.0.0.1:${port}`,
+    close: async () => {
+      if (!closed) {
+        closed = true;
+        await app.close();
+      }
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+export interface RawResponse {
+  status: number;
+  headers: IncomingHttpHeaders;
+  body: string;
+  json<T = unknown>(): T;
+}
+
+/**
+ * Plain HTTP request with full control over headers (fetch forbids setting
+ * Host and adds its own).
+ */
+export function rawRequest(
+  port: number,
+  method: string,
+  path: string,
+  headers: Record<string, string> = {},
+  body?: string,
+): Promise<RawResponse> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      { host: '127.0.0.1', port, method, path, headers },
+      (response) => {
+        let data = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk: string) => (data += chunk));
+        response.on('end', () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            headers: response.headers,
+            body: data,
+            json: <T>() => JSON.parse(data) as T,
+          }),
+        );
+      },
+    );
+    request.on('error', reject);
+    if (body !== undefined) {
+      request.write(body);
+    }
+    request.end();
+  });
+}
+
+/** POST with a JSON body. */
+export function postJson(
+  port: number,
+  path: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<RawResponse> {
+  return rawRequest(
+    port,
+    'POST',
+    path,
+    { 'content-type': 'application/json', ...headers },
+    typeof body === 'string' ? body : JSON.stringify(body),
+  );
+}

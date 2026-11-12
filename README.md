@@ -72,6 +72,29 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `CLAUDE_CODE_EXECUTABLE`       | the binary bundled with the Agent SDK                  | Other Claude Code executable for the sessions              |
 | `CLAUDE_CONFIG_DIR`            | `~/.claude` (image: `/data/claude`)                    | Read by Claude Code: login, settings, transcripts          |
 | `WEB_ROOT`                     | `public` next to the bundle (image: `/app/public`)     | Built web app served by the API                            |
+| `ALLOWED_HOSTS`                | none (loopback names are always allowed)               | Comma-separated host names the server answers to           |
+| `ALLOWED_ORIGINS`              | `http://localhost:4200` outside production             | Comma-separated origins besides the server's own           |
+
+### Request guard
+
+The API has no login of its own and drives an agent with tools, so every HTTP request and
+WebSocket upgrade passes a guard (`apps/api/src/app/security`):
+
+- The `Host` header must be a loopback name (`localhost`, `127.0.0.1`, `::1`, `*.localhost`),
+  a name in `ALLOWED_HOSTS` or the host of an `ALLOWED_ORIGINS` entry. This stops DNS
+  rebinding. **In production set `ALLOWED_HOSTS` to the public host name**, e.g.
+  `ALLOWED_HOSTS=crm.example.com`, or every request through the tunnel is refused with 403.
+- A request with an `Origin` header must come from the same origin (`Origin` host equals
+  `Host`) or from `ALLOWED_ORIGINS`; `Origin: null` is refused. Browsers send `Origin` on
+  every WebSocket upgrade and on cross-site or non-GET requests.
+- Without `Origin`, POSTs and WebSocket upgrades are refused only if the browser marks them
+  as cross-site (`Sec-Fetch-Site`). Non-browser clients such as curl or the container health
+  check work unchanged.
+- Request bodies must be `application/json` (415 otherwise), so HTML forms on other sites
+  cannot post to the API.
+
+Routes that need another protection (e.g. a signed webhook) are exempted in
+`REQUEST_GUARD_EXEMPT_ROUTES`.
 
 ## Sessions
 

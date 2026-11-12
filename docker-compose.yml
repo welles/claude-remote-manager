@@ -13,6 +13,9 @@ services:
       - '127.0.0.1:8080:8080'
     environment:
       TZ: ${TZ:-UTC}
+      # Public host name the app is reached under (behind the tunnel); the
+      # API refuses other Host headers except loopback names.
+      # ALLOWED_HOSTS: crm.example.com
     volumes:
       # Main checkouts of cloned repositories
       - repos:/data/repos

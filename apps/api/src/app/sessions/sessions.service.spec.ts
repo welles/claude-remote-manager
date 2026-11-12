@@ -83,6 +83,8 @@ describe('SessionsService', () => {
       sessionAdditionalDirectories: ['/extra'],
       sessionIdleTimeoutMs: 0,
       claudeExecutable: null,
+      allowedOrigins: [],
+      allowedHosts: [],
     };
     runner = new FakeAgentRunner();
     transcripts = new FakeTranscriptReader();

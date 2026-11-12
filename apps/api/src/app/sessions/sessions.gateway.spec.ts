@@ -1,10 +1,3 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { INestApplication } from '@nestjs/common';
-import { WsAdapter } from '@nestjs/platform-ws';
-import { Test } from '@nestjs/testing';
 import { WebSocket } from 'ws';
 import {
   SESSION_PROTOCOL_VERSION,
@@ -12,16 +5,12 @@ import {
   type ServerMessage,
   type SessionDto,
 } from '@claude-remote-manager/shared-types';
-import { AgentRunner } from '../agent/agent-runner';
-import { TranscriptReader } from '../agent/transcript-reader';
-import { AppModule } from '../app.module';
-import { APP_CONFIG, type AppConfig } from '../config/app-config';
+import { startTestApp, type TestApp } from '../testing/test-app';
 import { SESSIONS_WS_PATH } from './sessions.gateway';
 import {
-  FakeAgentRunner,
-  FakeTranscriptReader,
   flush,
   resultMessage,
+  type FakeAgentRunner,
 } from './testing/fake-agent';
 
 /** A WebSocket client that records server frames. */
@@ -75,48 +64,22 @@ class TestClient {
 }
 
 describe('SessionsGateway', () => {
-  let dir: string;
-  let app: INestApplication;
+  let testApp: TestApp;
   let runner: FakeAgentRunner;
   let url: string;
   let client: TestClient;
-  let closed: boolean;
 
   beforeEach(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'crm-gateway-'));
-    closed = false;
-    runner = new FakeAgentRunner();
-    const config: AppConfig = {
-      dbDir: join(dir, 'db'),
-      sessionCwd: join(dir, 'scratch'),
-      sessionAdditionalDirectories: [],
-      sessionIdleTimeoutMs: 0,
-      claudeExecutable: null,
-    };
-    const module = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(APP_CONFIG)
-      .useValue(config)
-      .overrideProvider(AgentRunner)
-      .useValue(runner)
-      .overrideProvider(TranscriptReader)
-      .useValue(new FakeTranscriptReader())
-      .compile();
-    app = module.createNestApplication({ logger: false });
-    app.setGlobalPrefix('api');
-    app.useWebSocketAdapter(new WsAdapter(app));
-    await app.listen(0, '127.0.0.1');
-    const { port } = app.getHttpServer().address() as AddressInfo;
-    url = `http://127.0.0.1:${port}`;
-    client = new TestClient(`ws://127.0.0.1:${port}${SESSIONS_WS_PATH}`);
+    testApp = await startTestApp();
+    runner = testApp.runner;
+    url = `http://${testApp.host}`;
+    client = new TestClient(`ws://${testApp.host}${SESSIONS_WS_PATH}`);
     await client.opened;
   });
 
   afterEach(async () => {
     client.close();
-    if (!closed) {
-      await app.close();
-    }
-    rmSync(dir, { recursive: true, force: true });
+    await testApp.close();
   });
 
   const createSession = async (): Promise<SessionDto> => {
@@ -230,8 +193,7 @@ describe('SessionsGateway', () => {
   it('stops running sessions when the application shuts down', async () => {
     const session = await createSession();
     const run = runner.last;
-    await app.close();
-    closed = true;
+    await testApp.app.close();
     expect(run.closed).toBe(true);
     expect(session.status).toBe('running');
   });
