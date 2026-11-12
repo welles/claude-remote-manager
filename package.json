@@ -13,7 +13,8 @@
     "test": "nx run-many -t test",
     "lint": "nx run-many -t lint",
     "check": "nx run-many -t lint test build",
-    "format": "nx format:write"
+    "format": "nx format:write",
+    "db:generate": "drizzle-kit generate --config apps/api/drizzle.config.ts"
   },
   "devDependencies": {
     "@angular-devkit/core": "~22.2.0",
@@ -37,10 +38,13 @@
     "@nx/workspace": "24.0.6",
     "@schematics/angular": "~22.2.0",
     "@swc/helpers": "~0.5.18",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/jest": "~30.0.0",
     "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.2",
     "@typescript-eslint/utils": "^8.58.0",
     "angular-eslint": "^22.5.0",
+    "drizzle-kit": "^0.31.11",
     "eslint": "^9.8.0",
     "eslint-config-prettier": "^10.0.0",
     "jest": "~30.3.0",
@@ -68,11 +72,18 @@
     "@angular/material": "~22.2.0",
     "@angular/platform-browser": "~22.2.0",
     "@angular/router": "~22.2.0",
+    "@anthropic-ai/claude-agent-sdk": "~0.3.322",
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/platform-ws": "^11.0.0",
     "@nestjs/serve-static": "^5.0.5",
+    "@nestjs/websockets": "^11.0.0",
+    "better-sqlite3": "^13.1.1",
+    "drizzle-orm": "^0.45.4",
+    "marked": "^18.2.0",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "~7.8.0"
+    "rxjs": "~7.8.0",
+    "ws": "^8.23.0"
   }
 }
