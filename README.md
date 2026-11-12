@@ -46,6 +46,10 @@ docker compose up -d --build           # builds the image and starts it on http:
 curl http://localhost:8080/api/health
 ```
 
+The compose file publishes the port on `127.0.0.1` only. The app has no login of its own (in
+production it sits behind Cloudflare Access) and runs Claude with broad tool permissions, so do
+not expose it on other interfaces without an authenticating proxy or tunnel in front of it.
+
 Or without Compose:
 
 ```sh

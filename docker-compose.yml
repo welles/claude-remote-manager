@@ -7,7 +7,10 @@ services:
     container_name: claude-remote-manager
     restart: unless-stopped
     ports:
-      - '8080:8080'
+      # Loopback only: the app has no login of its own (in production it sits
+      # behind Cloudflare Access) and runs an agent with broad tool permissions.
+      # Expose it further only through an authenticating proxy or tunnel.
+      - '127.0.0.1:8080:8080'
     environment:
       TZ: ${TZ:-UTC}
     volumes:
