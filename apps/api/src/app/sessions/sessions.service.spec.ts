@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type {
+  CreateSessionRequest,
   SessionDto,
   SessionEvent,
 } from '@claude-remote-manager/shared-types';
@@ -27,6 +28,9 @@ import {
   resultMessage,
 } from './testing/fake-agent';
 import { UsageRepository } from './usage.repository';
+
+const MSG_2 = '2b1f4c2e-8f3a-4d6b-9c1e-0a7d5e3f2b10';
+const MSG_3 = '3c2e5d3f-9a4b-4e7c-8d2f-1b8e6f4a3c21';
 
 describe('SessionsService', () => {
   let dir: string;
@@ -151,8 +155,40 @@ describe('SessionsService', () => {
           prompt: 'x',
           permissionMode: 'bypassPermissions' as never,
         }),
-      ).rejects.toThrow('permission mode');
+      ).rejects.toThrow('permissionMode must be one of');
+      const invalid: unknown[] = [
+        null,
+        'prompt',
+        [],
+        { prompt: 5 },
+        { prompt: 'x', title: 5 },
+        { prompt: 'x', model: {} },
+        { prompt: 'x', permissionMode: 1 },
+      ];
+      for (const request of invalid) {
+        await expect(
+          service.create(request as CreateSessionRequest),
+        ).rejects.toThrow(BadRequestException);
+      }
       expect(runner.runs).toHaveLength(0);
+    });
+
+    it('validates messages', async () => {
+      const session = await startSession();
+      const invalid: unknown[] = [
+        null,
+        { text: 5 },
+        { text: ' ' },
+        { text: 'x', id: 'not-a-uuid' },
+        { text: 'x', id: 7 },
+      ];
+      for (const message of invalid) {
+        await expect(
+          service.send(session.id, message as { text: string }),
+        ).rejects.toThrow(BadRequestException);
+      }
+      await service.send(session.id, { text: 'no id' });
+      expect(runner.last.sent.at(-1)?.id).toMatch(/^[0-9a-f-]{36}$/);
     });
 
     it('marks the session failed when the process cannot start', async () => {
@@ -282,13 +318,13 @@ describe('SessionsService', () => {
       runner.last.emit(resultMessage(10, 0.01));
       await flush();
 
-      await service.send(session.id, { id: 'msg-2', text: 'Again' });
+      await service.send(session.id, { id: MSG_2, text: 'Again' });
 
       expect(runner.runs).toHaveLength(1);
-      expect(runner.last.sent.at(-1)).toEqual({ id: 'msg-2', text: 'Again' });
+      expect(runner.last.sent.at(-1)).toEqual({ id: MSG_2, text: 'Again' });
       expect(service.get(session.id).status).toBe('running');
       expect(lastEvent('user.message')).toMatchObject({
-        id: 'msg-2',
+        id: MSG_2,
         text: 'Again',
       });
 
@@ -430,7 +466,7 @@ describe('SessionsService', () => {
       await flush();
       expect(service.get(session.id).status).toBe('finished');
 
-      await service.send(session.id, { id: 'msg-2', text: 'Still there?' });
+      await service.send(session.id, { id: MSG_2, text: 'Still there?' });
       await flush();
 
       expect(runner.runs).toHaveLength(2);
@@ -438,7 +474,7 @@ describe('SessionsService', () => {
         resume: 'sdk-1',
         sessionId: null,
       });
-      expect(runner.last.sent).toEqual([{ id: 'msg-2', text: 'Still there?' }]);
+      expect(runner.last.sent).toEqual([{ id: MSG_2, text: 'Still there?' }]);
       expect(service.get(session.id).status).toBe('running');
 
       // A resumed process continues the cumulative totals of the transcript.
@@ -466,7 +502,7 @@ describe('SessionsService', () => {
       });
       expect(lastEvent('error')?.message).toContain('exited');
 
-      await service.send(session.id, { id: 'm', text: 'retry' });
+      await service.send(session.id, { id: MSG_3, text: 'retry' });
       await flush();
       expect(service.get(session.id)).toMatchObject({
         status: 'running',
@@ -531,7 +567,7 @@ describe('SessionsService', () => {
         }),
       ]);
 
-      await service.send(session.id, { id: 'm3', text: 'Once more' });
+      await service.send(session.id, { id: MSG_3, text: 'Once more' });
       await flush();
       expect(runner.last.options.resume).toBe('sdk-1');
       expect(

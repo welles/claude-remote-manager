@@ -12,6 +12,7 @@ import {
   type ServerMessage,
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
+import { parseClientFrame } from './client-frames';
 import { SessionsService } from './sessions.service';
 
 /** Path of the WebSocket endpoint (outside Nest's global `/api` prefix). */
@@ -78,30 +79,32 @@ export class SessionsGateway
   }
 
   private async handleFrame(client: WebSocket, data: RawData): Promise<void> {
-    let message: ClientMessage;
+    let raw: unknown;
     try {
-      message = JSON.parse(data.toString()) as ClientMessage;
-      if (typeof message?.type !== 'string') {
-        throw new Error('missing type');
-      }
+      raw = JSON.parse(data.toString());
     } catch {
       this.send(client, {
         type: 'error',
         requestId: null,
-        message: 'Invalid frame',
+        message: 'Invalid frame: not JSON',
       });
       return;
     }
+    // Echo the request ID in errors even if the rest of the frame is invalid.
+    const rawRequestId = (raw as { requestId?: unknown } | null)?.requestId;
     const requestId =
-      typeof message.requestId === 'string' ? message.requestId : null;
+      typeof rawRequestId === 'string' && rawRequestId.length <= 100
+        ? rawRequestId
+        : null;
     try {
+      const message = parseClientFrame(raw);
       await this.dispatch(client, message);
       if (requestId) {
         this.send(client, { type: 'ack', requestId });
       }
     } catch (error) {
       if (!(error instanceof HttpException)) {
-        this.logger.error(`Handling ${message.type} failed`, error);
+        this.logger.error('Handling a frame failed', error);
       }
       this.send(client, {
         type: 'error',
@@ -143,11 +146,8 @@ export class SessionsGateway
         await this.sessions.interrupt(message.sessionId);
         return;
       case 'permission.respond':
-        throw new Error('Permission requests are not supported yet');
-      default:
-        throw new Error(
-          `Unknown frame type ${(message as { type: string }).type}`,
-        );
+        // Rejected by parseClientFrame until approvals exist.
+        return;
     }
   }
 

@@ -22,6 +22,13 @@ import {
   type SessionStatus,
 } from '@claude-remote-manager/shared-types';
 import { AgentRunner, type AgentRun } from '../agent/agent-runner';
+import {
+  optionalEnum,
+  optionalString,
+  optionalUuid,
+  requireObject,
+  requireString,
+} from '../common/validation';
 import { TranscriptReader } from '../agent/transcript-reader';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { LimitsService } from '../limits/limits.service';
@@ -135,23 +142,21 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async create(request: CreateSessionRequest): Promise<SessionDto> {
-    const prompt = this.validateText(request?.prompt, 'prompt');
-    const title = request.title?.trim() || titleFromPrompt(prompt);
-    if (title && title.length > MAX_TITLE_LENGTH) {
-      throw new BadRequestException(
-        `title is longer than ${MAX_TITLE_LENGTH} characters`,
-      );
-    }
-    const model = request.model?.trim() || null;
+    const body = requireObject(request);
+    const prompt = requireString(body, 'prompt', {
+      notBlank: true,
+      maxLength: MAX_MESSAGE_LENGTH,
+    });
+    const title =
+      optionalString(body, 'title', { maxLength: MAX_TITLE_LENGTH })?.trim() ||
+      titleFromPrompt(prompt);
+    const model = optionalString(body, 'model')?.trim() || null;
     if (model && !MODEL_PATTERN.test(model)) {
       throw new BadRequestException('model is not a valid model name');
     }
-    const permissionMode = request.permissionMode ?? 'default';
-    if (!SESSION_PERMISSION_MODES.includes(permissionMode)) {
-      throw new BadRequestException(
-        `unsupported permission mode ${permissionMode}`,
-      );
-    }
+    const permissionMode =
+      optionalEnum(body, 'permissionMode', SESSION_PERMISSION_MODES) ??
+      'default';
 
     await mkdir(this.config.sessionCwd, { recursive: true });
     const record = this.sessions.create({
@@ -180,11 +185,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   async send(
     sessionId: string,
-    message: { id: string; text: string },
+    message: { id?: string; text: string },
   ): Promise<void> {
-    const text = this.validateText(message?.text, 'text');
-    const id =
-      typeof message.id === 'string' && message.id ? message.id : randomUUID();
+    const body = requireObject(message);
+    const text = requireString(body, 'text', {
+      notBlank: true,
+      maxLength: MAX_MESSAGE_LENGTH,
+    });
+    // The ID goes to Claude Code as the message UUID.
+    const id = optionalUuid(body, 'id') ?? randomUUID();
     const record = this.requireRecord(sessionId);
     const live = this.liveSession(sessionId);
     await this.ensureHistory(live, record);
@@ -558,18 +567,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException(`Session ${id} not found`);
     }
     return record;
-  }
-
-  private validateText(value: unknown, name: string): string {
-    if (typeof value !== 'string' || !value.trim()) {
-      throw new BadRequestException(`${name} must not be empty`);
-    }
-    if (value.length > MAX_MESSAGE_LENGTH) {
-      throw new BadRequestException(
-        `${name} is longer than ${MAX_MESSAGE_LENGTH} characters`,
-      );
-    }
-    return value;
   }
 
   private toDto(

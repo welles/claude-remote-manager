@@ -1,5 +1,4 @@
 import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
 import type {
   CreateSessionRequest,
   SessionDto,
@@ -36,10 +35,7 @@ export class SessionsController {
     @Param('id') id: string,
     @Body() body: { id?: string; text: string },
   ): Promise<void> {
-    await this.sessions.send(id, {
-      id: body?.id ?? randomUUID(),
-      text: body?.text,
-    });
+    await this.sessions.send(id, body);
   }
 
   @Post(':id/interrupt')

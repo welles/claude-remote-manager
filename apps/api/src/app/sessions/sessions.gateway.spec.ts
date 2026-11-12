@@ -63,6 +63,9 @@ class TestClient {
   }
 }
 
+const MSG_2 = '2b1f4c2e-8f3a-4d6b-9c1e-0a7d5e3f2b10';
+const MSG_3 = '3c2e5d3f-9a4b-4e7c-8d2f-1b8e6f4a3c21';
+
 describe('SessionsGateway', () => {
   let testApp: TestApp;
   let runner: FakeAgentRunner;
@@ -133,26 +136,57 @@ describe('SessionsGateway', () => {
     client.send({
       type: 'message.send',
       sessionId: session.id,
-      id: 'msg-2',
+      id: MSG_2,
       text: 'Again',
       requestId: 'r2',
     });
     await client.next('ack', (ack) => ack.requestId === 'r2');
-    expect(runner.last.sent.at(-1)).toEqual({ id: 'msg-2', text: 'Again' });
+    expect(runner.last.sent.at(-1)).toEqual({ id: MSG_2, text: 'Again' });
 
-    client.send({ type: 'subscribe', sessionId: 'missing', requestId: 'r3' });
+    client.send({
+      type: 'subscribe',
+      sessionId: '00000000-0000-4000-8000-000000000000',
+      requestId: 'r3',
+    });
     expect(
       await client.next('error', (error) => error.requestId === 'r3'),
     ).toMatchObject({
-      message: 'Session missing not found',
+      message: 'Session 00000000-0000-4000-8000-000000000000 not found',
     });
 
     client.send('not json');
     expect(
       await client.next('error', (error) => error.requestId === null),
     ).toMatchObject({
-      message: 'Invalid frame',
+      message: 'Invalid frame: not JSON',
     });
+
+    // Malformed frames get a 400-style error instead of crashing a handler.
+    const malformed: [string, Record<string, unknown>][] = [
+      [
+        'r5',
+        { type: 'message.send', sessionId: session.id, id: 'x', text: 'a' },
+      ],
+      [
+        'r6',
+        { type: 'message.send', sessionId: session.id, id: MSG_3, text: 5 },
+      ],
+      ['r7', { type: 'subscribe', sessionId: 42 }],
+      ['r8', { type: 'interrupt' }],
+      ['r9', { type: 'nonsense' }],
+    ];
+    for (const [requestId, frame] of malformed) {
+      client.send({ ...frame, requestId });
+      expect(
+        (await client.next('error', (error) => error.requestId === requestId))
+          .message,
+      ).toMatch(/must be|Unknown frame type/);
+    }
+    client.send('[1, 2]');
+    expect(
+      await client.next('error', (error) => error.requestId === null),
+    ).toMatchObject({ message: 'frame must be a JSON object' });
+    expect(runner.last.sent).toHaveLength(2);
 
     client.send({
       type: 'permission.respond',
@@ -183,6 +217,28 @@ describe('SessionsGateway', () => {
         })
       ).status,
     ).toBe(400);
+    for (const body of [
+      '[1]',
+      '{"prompt": 1}',
+      '{"prompt": "x", "title": 2}',
+      'null',
+    ]) {
+      const response = await fetch(`${url}/api/sessions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      });
+      expect(response.status).toBe(400);
+    }
+    const badMessage = await fetch(
+      `${url}/api/sessions/${session.id}/messages`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'x', id: 'nope' }),
+      },
+    );
+    expect(badMessage.status).toBe(400);
     expect(await (await fetch(`${url}/api/limits`)).json()).toEqual({
       windows: [],
       subscriptionType: null,
