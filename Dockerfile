@@ -82,16 +82,17 @@ COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/app-entrypoint
 # Data layout, see README.md. The directories are created here so that named
 # volumes start with the right owner.
 ENV DATA_DIR=/data \
-    REPOS_DIR=/data/repos \
-    WORKTREES_DIR=/data/worktrees \
-    PROJECTS_DIR=/data/projects \
+    WORKSPACE_DIR=/data/workspace \
     DB_DIR=/data/db \
     CLAUDE_CONFIG_DIR=/data/claude \
     GIT_CONFIG_GLOBAL=/data/git/gitconfig \
     DISABLE_AUTOUPDATER=1 \
     PATH=/home/${USER_NAME}/.nix-profile/bin:${PATH} \
     NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-RUN mkdir -p /data/repos /data/worktrees /data/projects /data/db /data/claude /data/git/ssh \
+# The workspace holds mirrors, session clones and scratch directories on
+# one filesystem, so that session clones can hardlink the mirrors' objects.
+RUN mkdir -p /data/workspace/repos /data/workspace/sessions /data/workspace/scratch \
+        /data/db /data/claude /data/git/ssh \
     && chmod 0700 /data/claude /data/git /data/git/ssh \
     && ln -s /data/git/ssh "/home/${USER_NAME}/.ssh" \
     && chown -R "${USER_UID}:${USER_GID}" /data "/home/${USER_NAME}/.ssh"
@@ -122,7 +123,7 @@ ENV APP_VERSION=${VERSION} \
     APP_COMMIT_TIME=${COMMIT_TIME}
 
 USER ${USER_NAME}
-VOLUME ["/data/repos", "/data/worktrees", "/data/projects", "/data/claude", "/data/git", "/data/db", "/nix"]
+VOLUME ["/data/workspace", "/data/claude", "/data/git", "/data/db", "/nix"]
 EXPOSE 8080
 # The start period covers seeding an empty /nix on the first start.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --start-interval=2s --retries=3 \

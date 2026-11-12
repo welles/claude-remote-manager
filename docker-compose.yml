@@ -17,12 +17,9 @@ services:
       # API refuses other Host headers except loopback names.
       # ALLOWED_HOSTS: crm.example.com
     volumes:
-      # Shared clones of repositories (bare): <owner>/<repo>
-      - repos:/data/repos
-      # Session worktrees: <owner>/<repo>/<session>
-      - worktrees:/data/worktrees
-      # New projects without an existing repository
-      - projects:/data/projects
+      # Session workspace on one filesystem: repos/ (mirrors), sessions/
+      # (one clone per session and repository, hardlinked), scratch/
+      - workspace:/data/workspace
       # Claude Code configuration: login, settings, session transcripts
       - claude:/data/claude
       # SSH key (ssh/), git config and credentials
@@ -33,9 +30,7 @@ services:
       - nix:/nix
 
 volumes:
-  repos:
-  worktrees:
-  projects:
+  workspace:
   claude:
   git:
   db:

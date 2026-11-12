@@ -30,7 +30,8 @@ mkdir -p /nix/var/nix/user-cache
 
 # --- Data directories --------------------------------------------------------
 # Bind mounts may start empty; create the expected layout.
-mkdir -p "$REPOS_DIR" "$WORKTREES_DIR" "$PROJECTS_DIR" "$DB_DIR" "$CLAUDE_CONFIG_DIR" /data/git/ssh
+mkdir -p "$WORKSPACE_DIR/repos" "$WORKSPACE_DIR/sessions" "$WORKSPACE_DIR/scratch" \
+  "$DB_DIR" "$CLAUDE_CONFIG_DIR" /data/git/ssh
 chmod 0700 "$CLAUDE_CONFIG_DIR" /data/git /data/git/ssh 2>/dev/null || true
 touch "$GIT_CONFIG_GLOBAL"
 
