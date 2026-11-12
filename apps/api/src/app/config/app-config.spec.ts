@@ -7,8 +7,10 @@ describe('loadAppConfig', () => {
     const devData = join(homedir(), '.local/share/claude-remote-manager');
     expect(loadAppConfig({})).toEqual({
       dbDir: resolve('data/db'),
-      sessionCwd: join(devData, 'projects', 'scratch'),
-      sessionAdditionalDirectories: [],
+      reposDir: join(devData, 'repos'),
+      worktreesDir: join(devData, 'worktrees'),
+      projectsDir: join(devData, 'projects'),
+      setupScriptTimeoutMs: 15 * 60_000,
       sessionIdleTimeoutMs: 60 * 60_000,
       claudeExecutable: null,
       allowedOrigins: DEV_ORIGINS,
@@ -20,8 +22,10 @@ describe('loadAppConfig', () => {
     expect(
       loadAppConfig({
         DB_DIR: '/data/db',
+        REPOS_DIR: '/data/repos',
+        WORKTREES_DIR: '/data/worktrees/',
         PROJECTS_DIR: '/data/projects',
-        SESSION_ADDITIONAL_DIRS: '/data/a: /data/b :',
+        SETUP_SCRIPT_TIMEOUT_MINUTES: '5',
         SESSION_IDLE_TIMEOUT_MINUTES: '0',
         CLAUDE_CODE_EXECUTABLE: '/usr/local/bin/claude',
         NODE_ENV: 'production',
@@ -30,20 +34,15 @@ describe('loadAppConfig', () => {
       }),
     ).toEqual({
       dbDir: '/data/db',
-      sessionCwd: '/data/projects/scratch',
-      sessionAdditionalDirectories: ['/data/a', '/data/b'],
+      reposDir: '/data/repos',
+      worktreesDir: '/data/worktrees',
+      projectsDir: '/data/projects',
+      setupScriptTimeoutMs: 5 * 60_000,
       sessionIdleTimeoutMs: 0,
       claudeExecutable: '/usr/local/bin/claude',
       allowedOrigins: ['https://crm.example.com', 'https://other.example:8443'],
       allowedHosts: ['crm.example.com', 'crm.internal'],
     });
-  });
-
-  it('prefers an explicit session working directory', () => {
-    expect(
-      loadAppConfig({ PROJECTS_DIR: '/p', SESSION_CWD: '/elsewhere' })
-        .sessionCwd,
-    ).toBe('/elsewhere');
   });
 
   it('rejects invalid allowed origins', () => {
@@ -56,5 +55,8 @@ describe('loadAppConfig', () => {
     expect(() =>
       loadAppConfig({ SESSION_IDLE_TIMEOUT_MINUTES: 'soon' }),
     ).toThrow('SESSION_IDLE_TIMEOUT_MINUTES');
+    expect(() => loadAppConfig({ SETUP_SCRIPT_TIMEOUT_MINUTES: '0' })).toThrow(
+      'SETUP_SCRIPT_TIMEOUT_MINUTES',
+    );
   });
 });

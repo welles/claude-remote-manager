@@ -179,3 +179,17 @@ export function resultMessage(
 
 /** Lets pending promises and async iteration steps run. */
 export const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+/** Polls until the condition holds (for work that runs real processes). */
+export async function waitFor(
+  condition: () => boolean,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error('Condition not met in time');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}

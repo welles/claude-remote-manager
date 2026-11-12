@@ -19,6 +19,9 @@ export const STORED_EVENT_TYPES: ReadonlySet<SessionEventInput['type']> =
     'context.usage',
     'notice',
     'error',
+    'prepare.progress',
+    'setup.output',
+    'setup.result',
   ]);
 
 /** Where an event happened relative to the transcript. */

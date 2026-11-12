@@ -10,6 +10,7 @@ import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './db/database.module';
 import { HealthController } from './health/health.controller';
 import { LimitsModule } from './limits/limits.module';
+import { RepositoriesModule } from './repositories/repositories.module';
 import {
   REQUEST_GUARD_EXEMPT_ROUTES,
   RequestGuardMiddleware,
@@ -29,6 +30,7 @@ const webRoot = resolve(process.env.WEB_ROOT || join(__dirname, 'public'));
     DatabaseModule,
     SecurityModule,
     LimitsModule,
+    RepositoriesModule,
     SessionsModule,
     ...(existsSync(webRoot)
       ? [

@@ -4,6 +4,7 @@ import type {
 } from '@claude-remote-manager/shared-types';
 
 export const STATUS_LABELS: Record<SessionStatus, string> = {
+  preparing: 'Preparing',
   running: 'Running',
   waiting: 'Waiting',
   finished: 'Finished',

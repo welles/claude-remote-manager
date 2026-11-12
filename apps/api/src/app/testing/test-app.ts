@@ -21,6 +21,8 @@ export interface TestApp {
   runner: FakeAgentRunner;
   transcripts: FakeTranscriptReader;
   config: AppConfig;
+  /** Temporary directory holding the database and data directories. */
+  dir: string;
   port: number;
   /** `127.0.0.1:<port>`, the default Host header. */
   host: string;
@@ -35,8 +37,10 @@ export async function startTestApp(
   const transcripts = new FakeTranscriptReader();
   const config: AppConfig = {
     dbDir: join(dir, 'db'),
-    sessionCwd: join(dir, 'scratch'),
-    sessionAdditionalDirectories: [],
+    reposDir: join(dir, 'repos'),
+    worktreesDir: join(dir, 'worktrees'),
+    projectsDir: join(dir, 'projects'),
+    setupScriptTimeoutMs: 60_000,
     sessionIdleTimeoutMs: 0,
     claudeExecutable: null,
     allowedOrigins: [],
@@ -64,6 +68,7 @@ export async function startTestApp(
     runner,
     transcripts,
     config,
+    dir,
     port,
     host: `127.0.0.1:${port}`,
     close: async () => {

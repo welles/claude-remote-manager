@@ -1,5 +1,3 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BadRequestException,
@@ -13,7 +11,13 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import type { AppConfig } from '../config/app-config';
 import { openDatabase, type AppDatabase } from '../db/database';
+import { GitService } from '../git/git.service';
+import { createOrigin, gitSandbox } from '../git/testing/git-fixtures';
 import { LimitsService } from '../limits/limits.service';
+import { RepositoriesService } from '../repositories/repositories.service';
+import { RepositoryRepository } from '../repositories/repository.repository';
+import { SessionWorkspaceService } from '../workspaces/session-workspace.service';
+import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
 import {
@@ -28,15 +32,28 @@ import {
   FakeTranscriptReader,
   flush,
   resultMessage,
+  waitFor,
 } from './testing/fake-agent';
 import { UsageRepository } from './usage.repository';
 
 const MSG_2 = '2b1f4c2e-8f3a-4d6b-9c1e-0a7d5e3f2b10';
 const MSG_3 = '3c2e5d3f-9a4b-4e7c-8d2f-1b8e6f4a3c21';
+const REPO_ID = '7d0a3c2e-1b4f-4e6a-9c8d-2f1e0a9b8c7d';
+
+/** Preparation events; most tests here look at the conversation only. */
+const PREPARATION_TYPES = new Set([
+  'prepare.progress',
+  'setup.output',
+  'setup.result',
+]);
+const conversation = <T extends { type: string }>(events: T[]) =>
+  events.filter((event) => !PREPARATION_TYPES.has(event.type));
 
 describe('SessionsService', () => {
+  let sandbox: ReturnType<typeof gitSandbox>;
   let dir: string;
   let db: AppDatabase;
+  let git: GitService;
   let config: AppConfig;
   let runner: FakeAgentRunner;
   let transcripts: FakeTranscriptReader;
@@ -45,23 +62,37 @@ describe('SessionsService', () => {
   let events: SessionEventEnvelope[];
   let updates: SessionDto[];
 
-  const createService = () => {
+  const createService = async () => {
+    const sessions = new SessionRepository(db);
+    const repositories = new RepositoriesService(
+      config,
+      new RepositoryRepository(db),
+      git,
+    );
     const created = new SessionsService(
       config,
-      new SessionRepository(db),
+      sessions,
       new UsageRepository(db),
       new SessionEventRepository(db),
       runner,
       transcripts,
       limits,
+      new SessionWorkspaceService(
+        config,
+        sessions,
+        repositories,
+        git,
+        new SetupScriptRunner(),
+      ),
     );
-    created.onModuleInit();
+    await created.onModuleInit();
     created.events$.subscribe((event) => events.push(event));
     created.updates$.subscribe((update) => updates.push(update));
     return created;
   };
 
-  const eventTypes = () => events.map(({ event }) => event.type);
+  const eventTypes = () =>
+    conversation(events.map(({ event }) => event)).map((event) => event.type);
   const lastEvent = <T extends SessionEvent['type']>(type: T) =>
     events
       .map(({ event }) => event)
@@ -71,60 +102,93 @@ describe('SessionsService', () => {
       )
       .at(-1);
 
-  /** Creates a session and lets its process start. */
-  const startSession = async () => {
+  /** Waits until the preparation is over and the process started (or not). */
+  const prepared = async (sessionId: string, runsBefore: number) => {
+    await waitFor(
+      () =>
+        runner.runs.length > runsBefore ||
+        !['preparing', 'running'].includes(service.get(sessionId).status),
+    );
+    await flush();
+  };
+
+  /** Creates a session on the test repository and lets its process start. */
+  const startSession = async (request: Partial<CreateSessionRequest> = {}) => {
+    const runsBefore = runner.runs.length;
     const session = await service.create({
       prompt: 'Reply with pong',
       model: 'haiku',
+      repositories: [{ repositoryId: REPO_ID }],
+      ...request,
     });
-    await flush();
+    await prepared(session.id, runsBefore);
     return session;
   };
 
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'crm-sessions-'));
+  /** Worktree of the test repository for a session. */
+  const worktreeOf = (session: SessionDto) =>
+    join(config.worktreesDir, 'acme', 'tool', session.slug ?? '');
+
+  beforeEach(async () => {
+    sandbox = gitSandbox('crm-sessions-');
+    dir = sandbox.dir;
     db = openDatabase(':memory:');
+    git = new GitService();
     config = {
       dbDir: ':memory:',
-      sessionCwd: join(dir, 'scratch'),
-      sessionAdditionalDirectories: ['/extra'],
+      reposDir: join(dir, 'repos'),
+      worktreesDir: join(dir, 'worktrees'),
+      projectsDir: join(dir, 'projects'),
+      setupScriptTimeoutMs: 10_000,
       sessionIdleTimeoutMs: 0,
       claudeExecutable: null,
       allowedOrigins: [],
       allowedHosts: [],
     };
+    const origin = join(dir, 'origin', 'acme', 'tool');
+    await createOrigin(origin);
+    new RepositoryRepository(db).create({
+      id: REPO_ID,
+      owner: 'acme',
+      name: 'tool',
+      cloneUrl: origin,
+      localPath: join(config.reposDir, 'acme', 'tool'),
+      setupScript: null,
+    });
     runner = new FakeAgentRunner();
     transcripts = new FakeTranscriptReader();
     limits = new LimitsService();
     events = [];
     updates = [];
-    service = createService();
+    service = await createService();
   });
 
   afterEach(async () => {
     await service.onModuleDestroy();
     db.$client.close();
-    rmSync(dir, { recursive: true, force: true });
+    sandbox.cleanup();
   });
 
   describe('create', () => {
-    it('starts a Claude Code process in the configured directory', async () => {
+    it('starts a Claude Code process in the worktree of the main repository', async () => {
       const session = await startSession();
 
       expect(session).toMatchObject({
-        status: 'running',
+        status: 'preparing',
         title: 'Reply with pong',
         model: 'haiku',
         permissionMode: 'default',
-        cwd: config.sessionCwd,
-        additionalDirectories: ['/extra'],
+        slug: expect.stringMatching(/^reply-with-pong-[a-z0-9]{6}$/),
+        cwd: worktreeOf(session),
+        additionalDirectories: [],
         sdkSessionId: null,
         usage: { inputTokens: 0, costUsd: 0 },
       });
+      expect(service.get(session.id).status).toBe('running');
       expect(runner.runs).toHaveLength(1);
       expect(runner.last.options).toMatchObject({
-        cwd: config.sessionCwd,
-        additionalDirectories: ['/extra'],
+        cwd: worktreeOf(session),
+        additionalDirectories: [],
         model: 'haiku',
         permissionMode: 'default',
         resume: null,
@@ -133,7 +197,17 @@ describe('SessionsService', () => {
       expect(runner.last.sent).toEqual([
         { id: expect.any(String), text: 'Reply with pong' },
       ]);
-      expect(eventTypes()).toEqual(['session.status', 'user.message']);
+      expect(eventTypes()).toEqual([
+        'session.status',
+        'user.message',
+        'session.status',
+      ]);
+      expect(
+        events
+          .map(({ event }) => event)
+          .filter((event) => event.type === 'session.status')
+          .map((event) => event.type === 'session.status' && event.status),
+      ).toEqual(['preparing', 'running']);
       expect(updates.at(-1)?.id).toBe(session.id);
     });
 
@@ -142,8 +216,9 @@ describe('SessionsService', () => {
         'Fix the build',
       );
       expect(titleFromPrompt('x'.repeat(100))).toHaveLength(80);
-      const session = await service.create({ prompt: 'p', title: ' Mine ' });
+      const session = await startSession({ prompt: 'p', title: ' Mine ' });
       expect(session.title).toBe('Mine');
+      expect(session.slug).toMatch(/^mine-/);
     });
 
     it('validates the request', async () => {
@@ -265,6 +340,7 @@ describe('SessionsService', () => {
       expect(eventTypes()).toEqual([
         'session.status',
         'user.message',
+        'session.status',
         'assistant.delta',
         'assistant.delta',
         'assistant.text',
@@ -303,17 +379,18 @@ describe('SessionsService', () => {
 
       // The log replaces streamed deltas by the complete text.
       const history = await service.subscribe(session.id);
-      expect(history.events.map((event) => event.type)).toEqual([
+      const logged = conversation(history.events);
+      expect(logged.map((event) => event.type)).toEqual([
         'session.status',
         'user.message',
+        'session.status',
         'assistant.text',
         'turn.result',
         'session.status',
         'context.usage',
       ]);
-      expect(history.events.map((event) => event.seq)).toEqual([
-        1, 2, 5, 6, 7, 8,
-      ]);
+      // The two deltas between the running status and the text are gone.
+      expect(logged[3].seq - logged[2].seq).toBe(3);
     });
 
     it('sends follow-up messages into the running process', async () => {
@@ -516,11 +593,15 @@ describe('SessionsService', () => {
 
     it('loads the history from the transcript after a server restart', async () => {
       const session = await startSession();
-      runner.last.emit({
-        type: 'system',
-        subtype: 'init',
-        session_id: 'sdk-1',
-      });
+      runner.last.emit(
+        { type: 'system', subtype: 'init', session_id: 'sdk-1' },
+        {
+          type: 'assistant',
+          uuid: 'a1',
+          parent_tool_use_id: null,
+          message: { id: 'm1', content: [{ type: 'text', text: 'pong' }] },
+        },
+      );
       await flush();
       await service.onModuleDestroy();
       expect(runner.last.closed).toBe(true);
@@ -532,7 +613,8 @@ describe('SessionsService', () => {
       transcripts.transcripts.set('sdk-1', [
         {
           type: 'user',
-          uuid: 'u1',
+          // Claude Code uses the message ID as the entry's UUID.
+          uuid: runner.last.sent[0].id,
           session_id: 'sdk-1',
           parent_tool_use_id: null,
           parent_agent_id: null,
@@ -551,14 +633,24 @@ describe('SessionsService', () => {
           },
         },
       ]);
-      service = createService();
+      service = await createService();
 
       const history = await service.subscribe(session.id);
       expect(transcripts.reads).toEqual([
-        { sdkSessionId: 'sdk-1', cwd: config.sessionCwd },
+        { sdkSessionId: 'sdk-1', cwd: worktreeOf(session) },
       ]);
       expect(history.session.status).toBe('waiting');
-      expect(history.events).toEqual([
+      // The preparation events follow the first message.
+      expect(history.events.slice(1, 3)).toEqual([
+        expect.objectContaining({ type: 'prepare.progress', step: 'fetch' }),
+        expect.objectContaining({ type: 'prepare.progress', step: 'fetch' }),
+      ]);
+      expect(
+        conversation(history.events).map((event, index) => ({
+          ...event,
+          seq: index + 1,
+        })),
+      ).toEqual([
         expect.objectContaining({
           seq: 1,
           type: 'user.message',
@@ -579,16 +671,18 @@ describe('SessionsService', () => {
       await service.send(session.id, { id: MSG_3, text: 'Once more' });
       await flush();
       expect(runner.last.options.resume).toBe('sdk-1');
-      expect(
-        (await service.subscribe(session.id)).events.map((e) => e.seq),
-      ).toEqual([1, 2, 3, 4, 5]);
+      const seqs = (await service.subscribe(session.id)).events.map(
+        (e) => e.seq,
+      );
+      expect(seqs).toEqual(seqs.map((_, index) => index + 1));
+      expect(seqs).toHaveLength(history.events.length + 2);
       expect(transcripts.reads).toHaveLength(1);
     });
 
     it('marks sessions left running by a crash as waiting, with a notice', async () => {
       const session = await startSession();
       // Simulate a server that died without shutting down.
-      const fresh = createService();
+      const fresh = await createService();
       expect(fresh.get(session.id).status).toBe('waiting');
       const history = await fresh.subscribe(session.id);
       expect(history.events.at(-1)).toMatchObject({
@@ -659,15 +753,22 @@ describe('SessionsService', () => {
     });
 
     it('waits for a starting process before interrupting', async () => {
-      const session = await service.create({ prompt: 'Reply with pong' });
-      // No flush: the process is still starting.
+      const session = await service.create({
+        prompt: 'Reply with pong',
+        repositories: [{ repositoryId: REPO_ID }],
+      });
+      await expect(service.interrupt(session.id)).rejects.toThrow(
+        'still being prepared',
+      );
+      await waitFor(() => service.get(session.id).status === 'running');
+      // The process is still starting.
       await service.interrupt(session.id);
       expect(runner.last.interrupted).toBe(1);
     });
 
     it('closes idle processes', async () => {
       config.sessionIdleTimeoutMs = 20;
-      service = createService();
+      service = await createService();
       const session = await startSession();
       runner.last.emit(resultMessage(1, 0));
       await flush();
@@ -835,7 +936,7 @@ describe('SessionsService', () => {
       ]);
 
       const rebuilt = await service.subscribe(session.id);
-      expect(rebuilt.events.map((event) => event.type)).toEqual([
+      expect(conversation(rebuilt.events).map((event) => event.type)).toEqual([
         'user.message',
         'tool.call',
         'permission.denied',
@@ -844,15 +945,9 @@ describe('SessionsService', () => {
         'turn.result',
         'context.usage',
       ]);
-      expect(rebuilt.events.map((event) => event.at === null)).toEqual([
-        true,
-        true,
-        false,
-        true,
-        true,
-        false,
-        false,
-      ]);
+      expect(
+        conversation(rebuilt.events).map((event) => event.at === null),
+      ).toEqual([true, true, false, true, true, false, false]);
       expect(rebuilt.session.context).toMatchObject({ usedTokens: 1200 });
 
       // Kept while subscribed, released after the last unsubscribe.
@@ -866,7 +961,10 @@ describe('SessionsService', () => {
       const session = await startSession();
       expect(service.liveCount).toBe(0);
       const history = await service.subscribe(session.id);
-      expect(history.events.map((event) => event.type)).toEqual(['error']);
+      expect(conversation(history.events).map((event) => event.type)).toEqual([
+        // The first message never reached Claude Code: no transcript.
+        'error',
+      ]);
       expect(transcripts.reads).toHaveLength(0);
     });
   });

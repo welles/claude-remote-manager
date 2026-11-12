@@ -165,6 +165,57 @@ export interface ErrorEvent extends SessionEventBase {
   message: string;
 }
 
+/**
+ * A step of preparing the session's directories (status `preparing`):
+ * - `fetch`: update the repository's shared clone (clone it on first use);
+ * - `worktree`: create the session's worktree and branch;
+ * - `project`: create the new project directory with `git init`;
+ * - `rollback`: remove the worktrees again after a failure;
+ * - `done`: preparation finished, the first message goes to Claude.
+ */
+export interface PrepareProgressEvent extends SessionEventBase {
+  type: 'prepare.progress';
+  step: 'fetch' | 'worktree' | 'project' | 'rollback' | 'done';
+  state: 'started' | 'succeeded' | 'failed';
+  /** `owner/name` of the repository, or the project name. */
+  target: string | null;
+  /** Directory concerned, e.g. the new worktree. */
+  path: string | null;
+  /** Detail such as the base commit or the error. */
+  message: string | null;
+}
+
+/**
+ * Output (stdout and stderr interleaved) of a repository's setup script,
+ * in chunks as it runs. Stored output is capped; see `setup.result`.
+ */
+export interface SetupOutputEvent extends SessionEventBase {
+  type: 'setup.output';
+  /** `owner/name` of the repository. */
+  repository: string;
+  text: string;
+}
+
+/** A setup script started or ended. */
+export interface SetupResultEvent extends SessionEventBase {
+  type: 'setup.result';
+  repository: string;
+  /** Worktree the script ran in. */
+  path: string;
+  state: 'started' | 'succeeded' | 'failed' | 'timed_out' | 'skipped';
+  exitCode: number | null;
+  /** Signal that ended the script, e.g. after the timeout. */
+  signal: string | null;
+  durationMs: number | null;
+  /** Error when the script could not run at all. */
+  message: string | null;
+  /**
+   * Set when the output exceeded the limit and later `setup.output` chunks
+   * were dropped: the last lines of the output.
+   */
+  outputTail: string | null;
+}
+
 export type SessionEvent =
   | UserMessageEvent
   | AssistantDeltaEvent
@@ -178,7 +229,10 @@ export type SessionEvent =
   | TurnResultEvent
   | ContextUsageEvent
   | NoticeEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | PrepareProgressEvent
+  | SetupOutputEvent
+  | SetupResultEvent;
 
 export type SessionEventType = SessionEvent['type'];
 

@@ -10,6 +10,7 @@ import { SESSIONS_WS_PATH } from './sessions.gateway';
 import {
   flush,
   resultMessage,
+  waitFor,
   type FakeAgentRunner,
 } from './testing/fake-agent';
 
@@ -85,13 +86,20 @@ describe('SessionsGateway', () => {
     await testApp.close();
   });
 
+  let projects = 0;
+  /** Creates a session in a new project and waits until Claude started. */
   const createSession = async (): Promise<SessionDto> => {
+    const runs = runner.runs.length;
     const response = await fetch(`${url}/api/sessions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ prompt: 'Reply with pong' }),
+      body: JSON.stringify({
+        prompt: 'Reply with pong',
+        newProject: { name: `project-${++projects}` },
+      }),
     });
     expect(response.status).toBe(201);
+    await waitFor(() => runner.runs.length > runs);
     await flush();
     return (await response.json()) as SessionDto;
   };
@@ -113,6 +121,10 @@ describe('SessionsGateway', () => {
     expect(history.events.map((event) => event.type)).toEqual([
       'session.status',
       'user.message',
+      'prepare.progress',
+      'prepare.progress',
+      'prepare.progress',
+      'session.status',
     ]);
     await client.next('ack', (ack) => ack.requestId === 'r1');
 
@@ -124,7 +136,7 @@ describe('SessionsGateway', () => {
     const live = await client.next('session.event');
     expect(live).toMatchObject({
       sessionId: session.id,
-      event: { type: 'assistant.text', text: 'pong', seq: 3 },
+      event: { type: 'assistant.text', text: 'pong', seq: 7 },
     });
   });
 
@@ -293,8 +305,8 @@ describe('SessionsGateway', () => {
   it('stops running sessions when the application shuts down', async () => {
     const session = await createSession();
     const run = runner.last;
+    expect(session.status).toBe('preparing');
     await testApp.close();
     expect(run.closed).toBe(true);
-    expect(session.status).toBe('running');
   });
 });

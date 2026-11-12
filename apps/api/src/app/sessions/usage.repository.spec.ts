@@ -1,5 +1,6 @@
 import { openDatabase, type AppDatabase } from '../db/database';
 import { SessionRepository } from './session.repository';
+import { newSessionRecord } from './testing/records';
 import { EMPTY_USAGE, UsageRepository } from './usage.repository';
 
 describe('UsageRepository', () => {
@@ -19,15 +20,7 @@ describe('UsageRepository', () => {
     usage = new UsageRepository(db);
     const sessions = new SessionRepository(db);
     for (const id of ['s1', 's2']) {
-      sessions.create({
-        id,
-        title: null,
-        model: null,
-        permissionMode: 'default',
-        status: 'running',
-        cwd: '/work',
-        additionalDirectories: [],
-      });
+      sessions.create(newSessionRecord({ id }));
     }
   });
 

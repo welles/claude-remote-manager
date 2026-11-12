@@ -15,6 +15,13 @@
       "when": 1794522980297,
       "tag": "0001_session_events",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794524835567,
+      "tag": "0002_worktrees",
+      "breakpoints": true
     }
   ]
 }

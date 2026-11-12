@@ -1,4 +1,3 @@
-import { mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
@@ -19,6 +18,7 @@ import {
   type LogPosition,
   type SessionDto,
   type SessionEvent,
+  type SessionDirectoryDto,
   type SessionEventInput,
   type SessionStatus,
 } from '@claude-remote-manager/shared-types';
@@ -33,6 +33,7 @@ import {
 import { TranscriptReader } from '../agent/transcript-reader';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { LimitsService } from '../limits/limits.service';
+import { SessionWorkspaceService } from '../workspaces/session-workspace.service';
 import { SdkEventMapper, transcriptEntries } from './sdk-event-mapper';
 import {
   SessionEventRepository,
@@ -40,7 +41,12 @@ import {
   type EventAnchor,
 } from './session-event.repository';
 import { buildHistory, SessionLog, type LogSnapshot } from './session-log';
-import { SessionRepository, type SessionRecord } from './session.repository';
+import {
+  additionalDirectories,
+  SessionRepository,
+  workingDirectory,
+  type SessionRecord,
+} from './session.repository';
 import { EMPTY_USAGE, UsageRepository } from './usage.repository';
 import { sumUsage, UsageTracker } from './usage-tracker';
 
@@ -88,8 +94,10 @@ export interface SessionSnapshot extends LogSnapshot {
 interface LiveSession {
   id: string;
   run: AgentRun | null;
-  /** Set while a process is being started. */
+  /** Set while the session is prepared or a process is being started. */
   starting: Promise<void> | null;
+  /** Stops a running preparation (the session was ended). */
+  preparation: AbortController | null;
   mapper: SdkEventMapper;
   tracker: UsageTracker;
   log: SessionLog;
@@ -113,6 +121,14 @@ export const SHUTDOWN_GRACE_MS = 5000;
 /** Notice stored when a server stop interrupts a running turn. */
 export const RESTART_NOTICE =
   'The response was interrupted because the server stopped. Send a message to continue.';
+
+/** Error of a session whose preparation a server stop cut off. */
+export const PREPARATION_INTERRUPTED =
+  'The preparation was interrupted because the server stopped; the worktrees were removed again. Start a new session.';
+
+/** Notice when a session is ended before its first message reached Claude. */
+export const ENDED_WHILE_PREPARING =
+  'The session was ended during the preparation; the first message was not sent to Claude.';
 
 /**
  * Runs sessions: starts Claude Code processes, keeps them for follow-up
@@ -140,13 +156,34 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly runner: AgentRunner,
     private readonly transcripts: TranscriptReader,
     private readonly limits: LimitsService,
+    private readonly workspaces: SessionWorkspaceService,
   ) {}
 
   /**
    * Sessions still marked running were cut off by a server stop that did not
-   * shut down cleanly; they wait for the user again.
+   * shut down cleanly; they wait for the user again. Preparations that were
+   * cut off are rolled back and their sessions marked failed.
    */
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
+    for (const record of this.sessions.listByStatus('preparing')) {
+      const anchor = {
+        uuid: record.pendingMessage?.id ?? null,
+        userId: record.pendingMessage?.id ?? null,
+      };
+      await this.workspaces.rollback(record.id, (event) =>
+        this.storedEvents.add(record.id, event, anchor),
+      );
+      this.storedEvents.add(
+        record.id,
+        { type: 'error', message: PREPARATION_INTERRUPTED },
+        anchor,
+      );
+      this.sessions.update(record.id, {
+        status: 'failed',
+        lastError: PREPARATION_INTERRUPTED,
+      });
+      this.logger.warn(`The preparation of ${record.id} was interrupted`);
+    }
     const ids = this.sessions.stopRunningSessions();
     for (const id of ids) {
       // Where in the conversation is unknown: placed at the end.
@@ -172,6 +209,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const exits: Promise<void>[] = [];
     for (const live of this.live.values()) {
       this.clearIdleTimer(live);
+      if (live.preparation) {
+        // Stays `preparing`; rolled back on the next start.
+        live.preparation.abort();
+        if (live.starting) {
+          exits.push(live.starting);
+        }
+        continue;
+      }
       if (!live.run) {
         continue;
       }
@@ -215,6 +260,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return this.toDto(this.requireRecord(id));
   }
 
+  /**
+   * Creates a session in status `preparing` and returns it; the worktrees,
+   * the new project and the setup scripts are prepared in the background,
+   * then the prompt goes to Claude.
+   */
   async create(request: CreateSessionRequest): Promise<SessionDto> {
     const body = requireObject(request);
     const prompt = requireString(body, 'prompt', {
@@ -232,24 +282,39 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       optionalEnum(body, 'permissionMode', SESSION_PERMISSION_MODES) ??
       'default';
 
-    await mkdir(this.config.sessionCwd, { recursive: true });
-    const record = this.sessions.create({
-      id: randomUUID(),
-      title,
-      model,
-      permissionMode,
-      status: 'running',
-      cwd: this.config.sessionCwd,
-      additionalDirectories: this.config.sessionAdditionalDirectories,
-    });
+    const plan = await this.workspaces.plan(request, title);
+    const message = { id: randomUUID(), text: prompt };
+    let record: SessionRecord;
+    try {
+      record = this.sessions.create({
+        id: randomUUID(),
+        title,
+        model,
+        permissionMode,
+        status: 'preparing',
+        slug: plan.slug,
+        pendingMessage: message,
+        directories: plan.directories,
+      });
+    } catch (error) {
+      if (
+        String((error as { code?: unknown }).code).startsWith(
+          'SQLITE_CONSTRAINT',
+        )
+      ) {
+        throw new ConflictException(
+          'A session or project with this name was created at the same time; try again',
+        );
+      }
+      throw error;
+    }
     const live = this.liveSession(record.id);
     live.historyLoaded = Promise.resolve();
-    this.append(live, { type: 'session.status', status: 'running' });
-    const message = { id: randomUUID(), text: prompt };
+    this.append(live, { type: 'session.status', status: 'preparing' });
     this.appendUserMessage(live, message);
     const dto = this.toDto(record);
     this.updates.next(dto);
-    this.startRun(live, record, message);
+    this.startPreparation(live, message);
     return dto;
   }
 
@@ -269,6 +334,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // The ID goes to Claude Code as the message UUID.
     const id = optionalUuid(body, 'id') ?? randomUUID();
     const record = this.requireRecord(sessionId);
+    this.requireUsable(record);
     const live = this.liveSession(sessionId);
     await this.ensureHistory(live, record);
     if (live.starting) {
@@ -286,7 +352,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /** Stops the running turn of a session. */
   async interrupt(sessionId: string): Promise<void> {
-    this.requireRecord(sessionId);
+    if (this.requireRecord(sessionId).status === 'preparing') {
+      throw new ConflictException('The session is still being prepared');
+    }
     const live = this.live.get(sessionId);
     if (live?.starting) {
       // The process is still starting; the interrupt applies to its turn.
@@ -307,6 +375,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   async end(sessionId: string): Promise<SessionDto> {
     const record = this.requireRecord(sessionId);
     const live = this.live.get(sessionId);
+    // Stops setup scripts; worktrees being created are finished first.
+    live?.preparation?.abort();
     if (live?.starting) {
       await live.starting;
     }
@@ -371,6 +441,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         id,
         run: null,
         starting: null,
+        preparation: null,
         mapper: new SdkEventMapper(),
         tracker: new UsageTracker(),
         log: new SessionLog(),
@@ -402,7 +473,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (record.sdkSessionId) {
         try {
           entries = transcriptEntries(
-            await this.transcripts.read(record.sdkSessionId, record.cwd),
+            await this.transcripts.read(
+              record.sdkSessionId,
+              workingDirectory(record),
+            ),
           );
         } catch (error) {
           failed = true;
@@ -412,6 +486,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         }
       }
       // Nothing else is logged before the history is loaded.
+      if (record.pendingMessage) {
+        // Not sent to Claude (yet), so not in the transcript.
+        live.log.append(
+          { type: 'user.message', ...record.pendingMessage },
+          record.createdAt.toISOString(),
+        );
+      }
       for (const item of buildHistory(
         entries,
         this.storedEvents.list(record.id),
@@ -440,33 +521,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return live.historyLoaded;
   }
 
-  private startRun(
-    live: LiveSession,
-    record: SessionRecord,
-    firstMessage: { id: string; text: string },
-  ): void {
-    this.clearIdleTimer(live);
-    live.mapper = new SdkEventMapper();
-    live.tracker = new UsageTracker(this.usage.totalsByModel(record.id));
-    live.interruptRequested = false;
-    live.closing = null;
+  /** Runs a start-up task (preparation, process start) as `starting`. */
+  private track(live: LiveSession, task: () => Promise<void>): void {
     live.starting = (async () => {
       try {
-        const run = await this.runner.start(
-          {
-            cwd: record.cwd,
-            additionalDirectories: record.additionalDirectories,
-            model: record.model,
-            permissionMode: record.permissionMode,
-            ...(await this.resumeTarget(record)),
-            canUseTool: this.canUseTool(live),
-          },
-          firstMessage,
-        );
-        live.run = run;
-        live.consuming = this.consume(live, run);
-      } catch (error) {
-        this.failRun(live, error);
+        await task();
       } finally {
         live.starting = null;
       }
@@ -474,6 +533,96 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         this.releaseIfUnused(live);
       }
     })();
+  }
+
+  /**
+   * Prepares the directories of a new session, then sends the first
+   * message. Ending the session meanwhile stops the setup scripts and keeps
+   * the message from being sent.
+   */
+  private startPreparation(
+    live: LiveSession,
+    message: { id: string; text: string },
+  ): void {
+    const preparation = new AbortController();
+    live.preparation = preparation;
+    this.track(live, async () => {
+      try {
+        await this.workspaces.prepare(
+          live.id,
+          (event) => this.append(live, event),
+          preparation.signal,
+        );
+      } catch (error) {
+        live.preparation = null;
+        if (!this.shuttingDown) {
+          this.failRun(live, error);
+        }
+        return;
+      }
+      live.preparation = null;
+      if (this.shuttingDown) {
+        return;
+      }
+      if (preparation.signal.aborted) {
+        this.sessions.update(live.id, { pendingMessage: null });
+        this.append(live, {
+          type: 'notice',
+          level: 'warning',
+          text: ENDED_WHILE_PREPARING,
+        });
+        return;
+      }
+      const record = this.sessions.update(live.id, { pendingMessage: null });
+      this.append(live, {
+        type: 'prepare.progress',
+        step: 'done',
+        state: 'succeeded',
+        target: null,
+        path: null,
+        message: null,
+      });
+      this.setStatus(live, 'running');
+      await this.launch(live, record, message);
+    });
+  }
+
+  private startRun(
+    live: LiveSession,
+    record: SessionRecord,
+    firstMessage: { id: string; text: string },
+  ): void {
+    this.track(live, () => this.launch(live, record, firstMessage));
+  }
+
+  /** Starts a Claude Code process with the first message of its run. */
+  private async launch(
+    live: LiveSession,
+    record: SessionRecord,
+    firstMessage: { id: string; text: string },
+  ): Promise<void> {
+    this.clearIdleTimer(live);
+    live.mapper = new SdkEventMapper();
+    live.tracker = new UsageTracker(this.usage.totalsByModel(record.id));
+    live.interruptRequested = false;
+    live.closing = null;
+    try {
+      const run = await this.runner.start(
+        {
+          cwd: workingDirectory(record),
+          additionalDirectories: additionalDirectories(record),
+          model: record.model,
+          permissionMode: record.permissionMode,
+          ...(await this.resumeTarget(record)),
+          canUseTool: this.canUseTool(live),
+        },
+        firstMessage,
+      );
+      live.run = run;
+      live.consuming = this.consume(live, run);
+    } catch (error) {
+      this.failRun(live, error);
+    }
   }
 
   /**
@@ -490,7 +639,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     let exists = false;
     try {
-      exists = await this.transcripts.exists(record.id, record.cwd);
+      exists = await this.transcripts.exists(
+        record.id,
+        workingDirectory(record),
+      );
     } catch (error) {
       this.logger.warn(`Transcript lookup failed: ${String(error)}`);
     }
@@ -765,6 +917,23 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.anchor = { uuid: message.id, userId: message.id };
   }
 
+  /**
+   * Refuses messages while the session is prepared, and for sessions whose
+   * directories are not all there (failed preparation, removed worktrees).
+   */
+  private requireUsable(record: SessionRecord): void {
+    if (record.status === 'preparing') {
+      throw new ConflictException(
+        'The session is still being prepared; send the message when it is ready',
+      );
+    }
+    if (record.directories.some((directory) => directory.state !== 'ready')) {
+      throw new ConflictException(
+        "The session's worktrees are not available (not created or removed); start a new session",
+      );
+    }
+  }
+
   private requireRecord(id: string): SessionRecord {
     const record = this.sessions.get(id);
     if (!record) {
@@ -784,8 +953,33 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       model: record.model,
       permissionMode: record.permissionMode,
       status: record.status,
-      cwd: record.cwd,
-      additionalDirectories: record.additionalDirectories,
+      slug: record.slug,
+      directories: record.directories.map(
+        (directory): SessionDirectoryDto => ({
+          role: directory.position === 0 ? 'main' : 'additional',
+          kind: directory.repositoryId
+            ? 'worktree'
+            : directory.projectId
+              ? 'project'
+              : 'directory',
+          path: directory.path,
+          state: directory.state,
+          repository:
+            directory.repositoryId && directory.repositoryName
+              ? {
+                  id: directory.repositoryId,
+                  fullName: directory.repositoryName,
+                }
+              : null,
+          projectName: directory.projectName,
+          branch: directory.branch,
+          baseBranch: directory.baseBranch,
+          baseCommit: directory.baseCommit,
+          setupStatus: directory.setupStatus,
+        }),
+      ),
+      cwd: workingDirectory(record),
+      additionalDirectories: additionalDirectories(record),
       lastError: record.lastError,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),

