@@ -5,8 +5,9 @@ work on several repositories at once, each in its own git worktree, with live ch
 cleanup. Everything runs in one Docker container. See [docs/specification.md](docs/specification.md)
 (German) for the full specification.
 
-Current state: project skeleton. The API serves the web app and a health endpoint; sessions,
-worktrees and the GitHub integration follow.
+Current state: sessions run through the Claude Agent SDK in one fixed working directory and
+stream to a minimal chat view; usage is recorded per request. Worktrees, the GitHub
+integration, approval dialogs and the full chat view follow.
 
 ## Workspace layout
 
@@ -32,12 +33,83 @@ npm run start:api      # API only
 npm run check          # lint, test and build all projects, as in CI
 npm run lint           # or: npm test, npm run build
 npm run format         # Prettier
+npm run db:generate    # SQL migration after changing apps/api/src/app/db/schema.ts
 ```
 
 The scripts wrap Nx; use `npx nx <target> <project>` for a single project, e.g. `npx nx test web`.
 
-The Angular dev server proxies `/api` to the API (`apps/web/proxy.conf.json`). In production the
-API serves the built web app itself from `WEB_ROOT`.
+The Angular dev server proxies `/api`, including the WebSocket, to the API
+(`apps/web/proxy.conf.json`). In production the API serves the built web app itself from
+`WEB_ROOT`.
+
+### Trying it locally
+
+Sessions use the Claude account that Claude Code is logged in with (`claude auth status`; the
+config directory is `~/.claude` or `CLAUDE_CONFIG_DIR`). Never an API key.
+
+```sh
+npm start                        # then open http://localhost:4200
+```
+
+Start a session with a short prompt (choose Haiku to keep it cheap), watch the answer stream in,
+send a follow-up, restart the API and send another message: the session is resumed. Sessions
+work in `~/.local/share/claude-remote-manager/projects/scratch` by default, outside this
+repository; the database lives in `data/db` of the workspace (gitignored).
+
+Start the API from a normal shell. Started from inside a Claude Code session it inherits that
+session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions it runs.
+
+### Environment variables of the API
+
+| Variable                       | Default (development)                                  | Purpose                                                    |
+| ------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------- |
+| `PORT`                         | `3000` (image: `8080`)                                 | HTTP and WebSocket port                                    |
+| `DB_DIR`                       | `data/db` in the working directory (image: `/data/db`) | SQLite database `claude-remote-manager.sqlite`             |
+| `PROJECTS_DIR`                 | `~/.local/share/claude-remote-manager/projects`        | Base of the default session working directory              |
+| `SESSION_CWD`                  | `$PROJECTS_DIR/scratch`                                | Working directory of new sessions (created if missing)     |
+| `SESSION_ADDITIONAL_DIRS`      | none                                                   | Colon-separated extra directories new sessions may access  |
+| `SESSION_IDLE_TIMEOUT_MINUTES` | `60`                                                   | Close Claude Code processes idle this long; `0` keeps them |
+| `CLAUDE_CODE_EXECUTABLE`       | the binary bundled with the Agent SDK                  | Other Claude Code executable for the sessions              |
+| `CLAUDE_CONFIG_DIR`            | `~/.claude` (image: `/data/claude`)                    | Read by Claude Code: login, settings, transcripts          |
+| `WEB_ROOT`                     | `public` next to the bundle (image: `/app/public`)     | Built web app served by the API                            |
+
+## Sessions
+
+```
+browser ──REST /api/sessions──▶ SessionsController ─┐
+   ▲                                                ▼
+   └──WebSocket /api/ws──── SessionsGateway ◀── SessionsService ──▶ AgentRunner (Agent SDK query)
+                                                    │                     │
+                                     SQLite (sessions, usage)    Claude Code process per session
+```
+
+- `POST /api/sessions` creates a session in the configured working directory and starts a
+  Claude Code process through the Agent SDK in streaming-input mode. The process stays alive
+  for follow-up messages until it is idle for `SESSION_IDLE_TIMEOUT_MINUTES` or the server
+  stops; several sessions run side by side.
+- SDK messages are mapped to session events (`libs/shared-types/src/lib/session-events.ts`):
+  streamed text deltas, complete text blocks, tool calls and results, permission denials,
+  notices, errors, turn results with usage, and context usage. The server keeps an event log
+  per session; a client that subscribes gets the whole log, then live events. After a server
+  restart the log is rebuilt from Claude Code's transcript.
+- Status: `running` (turn in progress), `waiting` (process alive, waiting for the user),
+  `finished` (no process; idle timeout, restart or normal end) and `failed` (the process
+  ended with an error). Sending a message to a finished or failed session resumes it with the
+  stored Claude Code session ID.
+- Usage: every result message's tokens (input, output, cache write, cache read) and the SDK's
+  theoretical cost in USD are stored per request and model in `usage_records`; the session
+  shows the totals. Context window usage and the account's rate limits are captured after
+  each turn (`GET /api/limits`).
+- Permissions: sessions run in permission mode `default`. Until approval dialogs exist, every
+  tool use that needs approval is denied and shown as such in the chat.
+- Settings: sessions get Claude Code's own system prompt and the user, project and local
+  settings, including `CLAUDE.md` files of the working directory and the user's; the managed
+  policy `/etc/claude-code/CLAUDE.md` is always loaded.
+
+REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
+`POST /api/sessions/:id/messages`, `POST /api/sessions/:id/interrupt`, `GET /api/limits`,
+`GET /api/health`. WebSocket: `/api/ws` with the versioned protocol in
+`libs/shared-types/src/lib/session-events.ts`.
 
 ## Container
 
@@ -65,7 +137,8 @@ the image to `ghcr.io/<owner>/claude-remote-manager` (tags: branch, PR, semver f
 commit SHA, `latest` on `main`). `VERSION`, `COMMIT` and `COMMIT_TIME` end up in `/api/health`.
 
 The image (linux/amd64, Debian based) contains Node.js 24, git, openssh-client, curl, the
-Claude Code CLI and Nix (single-user, flakes enabled). The app runs as the non-root user
+Claude Code CLI and Nix (single-user, flakes enabled). The `claude` command is the native
+binary that ships with the Agent SDK, so the CLI and the sessions always use the same version. The app runs as the non-root user
 `claude` (UID/GID 1000, changeable with the build args `USER_UID`/`USER_GID`) on port 8080.
 
 ### Volumes
