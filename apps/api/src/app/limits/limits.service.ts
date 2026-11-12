@@ -30,6 +30,18 @@ function epochSecondsToIso(value: number | undefined): string | null {
   return new Date(value * 1000).toISOString();
 }
 
+/**
+ * The plan usage request reports times like `2026-11-13T02:10:00.492006+00:00`;
+ * normalized to the ISO form used everywhere else.
+ */
+function normalizeIso(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const time = new Date(value);
+  return Number.isNaN(time.getTime()) ? value : time.toISOString();
+}
+
 /** `rate_limit_event` reports utilization as a fraction (0-1). */
 function fractionToPercent(value: number | undefined): number | null {
   if (value === undefined || !Number.isFinite(value)) {
@@ -102,7 +114,7 @@ export class LimitsService {
             label: LABELS[type] ?? null,
             status: null,
             utilization: window.utilization,
-            resetsAt: window.resets_at,
+            resetsAt: normalizeIso(window.resets_at),
             source: 'usage',
             updatedAt,
           });
@@ -115,7 +127,7 @@ export class LimitsService {
           label: `Week (${window.display_name})`,
           status: null,
           utilization: window.utilization,
-          resetsAt: window.resets_at,
+          resetsAt: normalizeIso(window.resets_at),
           source: 'usage',
           updatedAt,
         });

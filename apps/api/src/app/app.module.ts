@@ -46,6 +46,6 @@ export class AppModule implements NestModule {
     consumer
       .apply(RequestGuardMiddleware)
       .exclude(...REQUEST_GUARD_EXEMPT_ROUTES)
-      .forRoutes('*');
+      .forRoutes('{*path}');
   }
 }

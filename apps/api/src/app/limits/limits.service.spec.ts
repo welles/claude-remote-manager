@@ -70,7 +70,10 @@ describe('LimitsService', () => {
     );
     service.updateFromPlanUsage(
       planUsage({
-        five_hour: { utilization: 12, resets_at: '2026-03-01T15:00:00Z' },
+        five_hour: {
+          utilization: 12,
+          resets_at: '2026-03-01T15:00:00.492006+00:00',
+        },
         seven_day: { utilization: 40, resets_at: '2026-03-05T00:00:00Z' },
         seven_day_opus: null,
         model_scoped: [
@@ -87,6 +90,7 @@ describe('LimitsService', () => {
         expect.objectContaining({
           type: 'five_hour',
           utilization: 12,
+          resetsAt: '2026-03-01T15:00:00.492Z',
           source: 'usage',
         }),
         // The status from the stream survives a usage update without one.
