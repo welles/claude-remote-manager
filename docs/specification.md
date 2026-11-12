@@ -82,7 +82,17 @@ Das Angular-Frontend nutzt als installierbare PWA zusätzlich:
 - **Nachrichten einreihen:** Während Claude arbeitet, lassen sich weitere Nachrichten schreiben; sie werden eingereiht und nach dem aktuellen Schritt verarbeitet.
 - **To-do-Liste und Kontext:** Claudes Aufgabenliste wird live angezeigt, ebenso die Auslastung des Kontextfensters.
 - **Setup-Skripte pro Repo:** Pro Repository ein konfigurierbares Skript (z. B. `npm install`), das nach dem Anlegen eines Worktrees läuft.
-- **Sitzungen verwalten:** Umbenennen, archivieren, durchsuchen; Anzeige der verbleibenden Abo-Limits.
+- **Sitzungen verwalten:** Umbenennen, archivieren, durchsuchen.
+
+## Anzeige von Kontext- und Abo-Limits
+
+Die Oberfläche zeigt jederzeit, wie viel Spielraum noch bleibt. Drei Werte sind sichtbar:
+
+- **Kontextlimit:** Auslastung des Kontextfensters der jeweiligen Sitzung (belegte und maximale Tokens, Prozent), live in der Sitzungsansicht.
+- **Session-Limit:** Verbrauch im aktuellen 5-Stunden-Fenster des Abos, mit Prozentwert und Zeitpunkt des Zurücksetzens.
+- **Wochenlimit:** Verbrauch im aktuellen Wochenfenster des Abos, mit Prozentwert und Zeitpunkt des Zurücksetzens; falls das Abo getrennte Wochenlimits pro Modell ausweist, werden diese einzeln angezeigt.
+
+Session- und Wochenlimit gelten für das ganze Konto und sind deshalb global sichtbar (z. B. in der Kopfzeile bzw. Sitzungsliste), nicht nur innerhalb einer Sitzung. Die Werte stammen aus den Limit-Informationen, die Claude Code bzw. das Agent SDK liefert, und werden bei jeder Anfrage aktualisiert.
 
 ## Statistik und Kosten
 
@@ -162,4 +172,4 @@ Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
 8. **GitHub-Referenzen im Prompt.**
 9. **PR-Automatik:** Webhooks mit Bypass-Regel und Signaturprüfung, Autofix mit Versuchslimit, Autoclose.
 10. **Dev-Server-Vorschau:** `expose_port`-Tool, Reverse Proxy mit WebSockets, Wildcard-Subdomains.
-11. **Sitzungen verwalten und aufräumen:** Umbenennen, Archivieren, Suche, Abo-Limits, Worktree-Aufräumen und verwaiste Worktrees; Statistik und theoretische Kosten (die Erfassung der Verbrauchsdaten läuft schon ab Schritt 2 mit).
+11. **Sitzungen verwalten und aufräumen:** Umbenennen, Archivieren, Suche, Anzeige von Session- und Wochenlimit, Worktree-Aufräumen und verwaiste Worktrees; Statistik und theoretische Kosten (die Erfassung der Verbrauchsdaten läuft schon ab Schritt 2 mit).
