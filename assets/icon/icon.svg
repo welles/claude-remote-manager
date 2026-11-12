@@ -9,7 +9,8 @@
       <stop offset="1" stop-color="#e2683c"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="#1B1F2A"/>
+  <g transform="translate(256 256) scale(1.42) translate(-256 -256)">
 
   <!-- three parallel sessions branching from one repository -->
   <g fill="none" stroke-linecap="round" stroke-width="22">
@@ -31,5 +32,6 @@
     <path d="M377 137 L 391 150 L 377 163"/>
     <path d="M377 243 L 391 256 L 377 269"/>
     <path d="M377 349 L 391 362 L 377 375"/>
+  </g>
   </g>
 </svg>
