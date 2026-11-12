@@ -29,7 +29,7 @@ describe('SetupScriptRunner', () => {
     return { result, output: output.join('') };
   };
 
-  it('runs in the worktree with the session variables and streams output', async () => {
+  it('runs in the session clone with the session variables and streams output', async () => {
     process.env['CLAUDE_CODE_OAUTH_TOKEN'] = 'secret';
     process.env['CRM_SECRET_TEST_KEY'] = 'registered by prefix';
     try {

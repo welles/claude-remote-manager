@@ -76,12 +76,13 @@ export class SessionList implements OnInit {
     });
   }
 
-  /** Repositories of a session, e.g. `acme/app + acme/lib`. */
+  /** Repositories of a session, e.g. `acme/app + acme/lib`, or `Scratch`. */
   protected workspaceLabel(session: SessionDto): string {
     return session.directories
-      .map(
-        (directory) =>
-          directory.repository?.fullName ?? directory.projectName ?? null,
+      .map((directory) =>
+        directory.kind === 'scratch'
+          ? 'Scratch'
+          : (directory.repository?.fullName ?? null),
       )
       .filter((name): name is string => name !== null)
       .join(' + ');

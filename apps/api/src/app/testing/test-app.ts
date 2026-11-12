@@ -8,7 +8,11 @@ import { Test } from '@nestjs/testing';
 import { AgentRunner } from '../agent/agent-runner';
 import { TranscriptReader } from '../agent/transcript-reader';
 import { AppModule } from '../app.module';
-import { APP_CONFIG, type AppConfig } from '../config/app-config';
+import {
+  APP_CONFIG,
+  type AppConfig,
+  workspaceLayout,
+} from '../config/app-config';
 import { configureApp } from '../configure-app';
 import {
   FakeAgentRunner,
@@ -37,9 +41,7 @@ export async function startTestApp(
   const transcripts = new FakeTranscriptReader();
   const config: AppConfig = {
     dbDir: join(dir, 'db'),
-    reposDir: join(dir, 'repos'),
-    worktreesDir: join(dir, 'worktrees'),
-    projectsDir: join(dir, 'projects'),
+    ...workspaceLayout(join(dir, 'workspace')),
     setupScriptTimeoutMs: 60_000,
     sessionIdleTimeoutMs: 0,
     claudeExecutable: null,

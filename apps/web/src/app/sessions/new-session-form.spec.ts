@@ -24,6 +24,7 @@ const repository = (
     name,
     fullName,
     cloneUrl: `https://github.com/${fullName}.git`,
+    local: false,
     defaultBranch,
     localPath: `/repos/${fullName}`,
     setupScript: null,
@@ -31,7 +32,7 @@ const repository = (
     fetchedAt: '2026-01-01T00:00:00.000Z',
     lastError: null,
     activity: null,
-    worktrees: [],
+    clones: [],
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };
@@ -42,9 +43,9 @@ interface FormInternals {
   prompt: string;
   model: string;
   projectName: string;
-  mode(): 'repository' | 'project';
+  mode(): 'repository' | 'project' | 'scratch';
   choices(): RepositoryChoice[];
-  setMode(mode: 'repository' | 'project'): void;
+  setMode(mode: 'repository' | 'project' | 'scratch'): void;
   addRepository(): void;
   removeRepository(index: number): void;
   chooseRepository(index: number, id: string): void;
@@ -186,5 +187,34 @@ describe('NewSessionForm', () => {
     expect(
       element.querySelector('[data-testid="create-error"]')?.textContent,
     ).toContain('model is not a valid model name');
+  });
+
+  it('starts a scratch session without repository', async () => {
+    const { form } = await render([repository('r1', 'acme/app')]);
+    form.prompt = 'Quick question';
+    form.setMode('scratch');
+    expect(form.choices()).toEqual([]);
+    expect(form.canStart()).toBe(true);
+
+    form.create();
+    expect(
+      http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
+    ).toEqual({ prompt: 'Quick question', scratch: true });
+  });
+
+  it('marks local projects in the repository list', async () => {
+    const { form, fixture } = await render([
+      { ...repository('p1', 'local/tool'), cloneUrl: null, local: true },
+    ]);
+    form.chooseRepository(0, 'p1');
+    http
+      .expectOne('/api/repositories/p1/branches')
+      .flush({ defaultBranch: 'main', branches: [] });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const select = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="repository-select"]',
+    );
+    expect(select?.textContent).toContain('local/tool (local project)');
   });
 });

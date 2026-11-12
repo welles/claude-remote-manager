@@ -1,8 +1,9 @@
 import type { NewSession, NewSessionDirectory } from '../session.repository';
 
-/** A plain directory of a session (no worktree, no project). */
+/** A plain directory of a session (no clone, no scratch directory). */
 export const plainDirectory = (path: string): NewSessionDirectory => ({
   path,
+  kind: 'directory',
   repositoryId: null,
   branch: null,
   baseBranch: null,

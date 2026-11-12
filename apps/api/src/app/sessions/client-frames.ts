@@ -45,6 +45,8 @@ export function parseClientFrame(raw: unknown): ClientMessage {
     case 'unsubscribe':
     case 'interrupt':
     case 'session.end':
+    case 'pending.send':
+    case 'setup.rerun':
       return { type, sessionId: requireUuid(frame, 'sessionId'), ...base };
     case 'message.send':
       return {

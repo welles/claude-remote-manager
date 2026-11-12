@@ -45,6 +45,20 @@ export class SessionsController {
     return this.sessions.end(id);
   }
 
+  /** Sends the first message held back after a failed setup script. */
+  @Post(':id/pending-message/send')
+  @HttpCode(200)
+  sendPending(@Param('id') id: string): Promise<SessionDto> {
+    return this.sessions.sendPending(id);
+  }
+
+  /** Runs the failed setup scripts again, then sends the first message. */
+  @Post(':id/setup/rerun')
+  @HttpCode(200)
+  rerunSetup(@Param('id') id: string): Promise<SessionDto> {
+    return this.sessions.rerunSetup(id);
+  }
+
   @Post(':id/interrupt')
   @HttpCode(202)
   interrupt(@Param('id') id: string): Promise<void> {

@@ -1,15 +1,20 @@
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import type { CreateSessionRequest } from '@claude-remote-manager/shared-types';
+import type {
+  CreateSessionRequest,
+  SessionDto,
+} from '@claude-remote-manager/shared-types';
 import { commitFile, git } from '../git/testing/git-fixtures';
 import { SessionEventRepository } from '../sessions/session-event.repository';
 import {
   ENDED_WHILE_PREPARING,
   PREPARATION_INTERRUPTED,
+  setupFailedNotice,
 } from '../sessions/sessions.service';
 import { waitFor } from '../sessions/testing/fake-agent';
+import { ageInWords } from './session-workspace.service';
 import { WorkspaceHarness } from './testing/workspace-harness';
 
 describe('session preparation', () => {
@@ -29,11 +34,13 @@ describe('session preparation', () => {
       ...request,
     });
 
+  const clonePath = (session: SessionDto, owner: string, name: string) =>
+    join(harness.config.sessionsDir, session.slug ?? '', owner, name);
   const head = (path: string) => git(path, 'rev-parse', 'HEAD');
   const branchOf = (path: string) =>
     git(path, 'symbolic-ref', '--short', 'HEAD');
 
-  it('creates a worktree per repository; the first is the working directory', async () => {
+  it('clones each repository for the session; the first is the working directory', async () => {
     const main = await harness.addRepository('acme', 'app');
     const library = await harness.addRepository('acme', 'lib');
     await git(library.origin, 'checkout', '--quiet', '-b', 'release');
@@ -46,35 +53,30 @@ describe('session preparation', () => {
         { repositoryId: library.id, baseBranch: 'release' },
       ],
     });
-    expect(session.status).toBe('preparing');
+    expect(session).toMatchObject({
+      status: 'preparing',
+      pendingMessage: 'Do the work',
+    });
     expect(session.slug).toMatch(/^add-the-export-[a-z0-9]{6}$/);
     expect(harness.runner.runs).toHaveLength(0);
     await harness.prepared(session.id);
 
-    const mainPath = join(
-      harness.config.worktreesDir,
-      'acme',
-      'app',
-      session.slug ?? '',
-    );
-    const libPath = join(
-      harness.config.worktreesDir,
-      'acme',
-      'lib',
-      session.slug ?? '',
-    );
+    const mainPath = clonePath(session, 'acme', 'app');
+    const libPath = clonePath(session, 'acme', 'lib');
     const dto = harness.service.get(session.id);
-    expect(dto.status).toBe('running');
-    expect(dto.cwd).toBe(mainPath);
-    expect(dto.additionalDirectories).toEqual([libPath]);
+    expect(dto).toMatchObject({
+      status: 'running',
+      pendingMessage: null,
+      cwd: mainPath,
+      additionalDirectories: [libPath],
+    });
     expect(dto.directories).toEqual([
       {
         role: 'main',
-        kind: 'worktree',
+        kind: 'clone',
         path: mainPath,
         state: 'ready',
-        repository: { id: main.id, fullName: 'acme/app' },
-        projectName: null,
+        repository: { id: main.id, fullName: 'acme/app', local: false },
         branch: `claude/${session.slug}`,
         baseBranch: 'main',
         baseCommit: await git(main.origin, 'rev-parse', 'main'),
@@ -90,6 +92,9 @@ describe('session preparation', () => {
     ]);
     expect(await branchOf(mainPath)).toBe(`claude/${session.slug}`);
     expect(await head(libPath)).toBe(release);
+    expect(await git(mainPath, 'remote', 'get-url', 'origin')).toBe(
+      main.origin,
+    );
     expect(harness.runner.last.options).toMatchObject({
       cwd: mainPath,
       additionalDirectories: [libPath],
@@ -104,39 +109,78 @@ describe('session preparation', () => {
       expect.arrayContaining([
         'fetch:started:acme/app',
         'fetch:succeeded:acme/app',
-        'worktree:succeeded:acme/app',
-        'worktree:succeeded:acme/lib',
+        'clone:succeeded:acme/app',
+        'clone:succeeded:acme/lib',
       ]),
     );
     expect(steps.at(-1)).toBe('done:succeeded:');
-    expect(harness.sessions.require(session.id).pendingMessage).toBeNull();
   });
 
-  it('starts a new project with git init, plus further repositories', async () => {
+  it('creates a local project; later sessions get their own clones of it', async () => {
     const library = await harness.addRepository('acme', 'lib');
 
-    const session = await create({
+    const first = await create({
       newProject: { name: 'new-app' },
       repositories: [{ repositoryId: library.id }],
     });
-    await harness.prepared(session.id);
+    await harness.prepared(first.id);
 
-    const projectPath = join(harness.config.projectsDir, 'new-app');
-    const dto = harness.service.get(session.id);
-    expect(dto.status).toBe('running');
-    expect(dto.directories.map((d) => [d.role, d.kind, d.projectName])).toEqual(
-      [
-        ['main', 'project', 'new-app'],
-        ['additional', 'worktree', null],
-      ],
-    );
-    expect(harness.runner.last.options.cwd).toBe(projectPath);
-    expect(await branchOf(projectPath)).toBe('main');
-    await expect(git(projectPath, 'remote')).resolves.toBe('');
+    const project = harness.service.get(first.id).directories[0];
+    expect(project).toMatchObject({
+      role: 'main',
+      kind: 'clone',
+      repository: { fullName: 'local/new-app', local: true },
+      baseBranch: 'main',
+      baseCommit: null,
+    });
+    const mirror = join(harness.config.reposDir, 'local', 'new-app');
+    expect(await git(project.path, 'remote', 'get-url', 'origin')).toBe(mirror);
+    expect(await branchOf(project.path)).toBe(`claude/${first.slug}`);
+    expect(harness.runner.last.options.cwd).toBe(project.path);
+    await commitFile(project.path, 'app.txt', 'first');
 
+    // The project is a repository like the others; it is taken by name.
     await expect(create({ newProject: { name: 'new-app' } })).rejects.toThrow(
       ConflictException,
     );
+    const second = await create({
+      repositories: [{ repositoryId: project.repository?.id ?? '' }],
+    });
+    await harness.prepared(second.id);
+    const secondPath = harness.service.get(second.id).cwd;
+    expect(secondPath).toBe(clonePath(second, 'local', 'new-app'));
+    expect(await branchOf(secondPath)).toBe(`claude/${second.slug}`);
+    // The first session's work is not integrated into main yet.
+    expect(existsSync(join(secondPath, 'app.txt'))).toBe(false);
+    const listed = await harness.repositories.get(project.repository?.id ?? '');
+    expect(listed).toMatchObject({ local: true, cloneUrl: null });
+    expect(listed.clones.map((clone) => clone.sessionId).sort()).toEqual(
+      [first.id, second.id].sort(),
+    );
+  });
+
+  it('gives a scratch session an empty directory of its own', async () => {
+    const one = await create({ scratch: true, title: 'Quick question' });
+    const two = await create({ scratch: true, title: 'Quick question' });
+    await Promise.all([harness.prepared(one.id), harness.prepared(two.id)]);
+
+    const dto = harness.service.get(one.id);
+    expect(dto.directories).toEqual([
+      expect.objectContaining({
+        role: 'main',
+        kind: 'scratch',
+        path: join(harness.config.scratchDir, one.slug ?? ''),
+        state: 'ready',
+        repository: null,
+        branch: null,
+      }),
+    ]);
+    expect(dto.status).toBe('running');
+    expect(harness.service.get(two.id).cwd).not.toBe(dto.cwd);
+    expect(existsSync(join(dto.cwd, '.git'))).toBe(false);
+    await expect(
+      create({ scratch: true, newProject: { name: 'x' } }),
+    ).rejects.toThrow('no repositories or project');
   });
 
   it('lets many sessions work in the same repository without touching each other', async () => {
@@ -159,27 +203,24 @@ describe('session preparation', () => {
 
     const slugs = sessions.map((session) => session.slug ?? '');
     expect(new Set(slugs).size).toBe(5);
-    const paths = slugs.map((slug) =>
-      join(harness.config.worktreesDir, 'acme', 'app', slug),
-    );
+    const paths = sessions.map((session) => clonePath(session, 'acme', 'app'));
     for (const [index, path] of paths.entries()) {
       expect(harness.service.get(sessions[index].id).status).toBe('running');
       expect(await branchOf(path)).toBe(`claude/${slugs[index]}`);
-      // The setup script ran in the session's own worktree only.
       expect(await readFile(join(path, 'owner.txt'), 'utf8')).toBe(
         `${slugs[index]}\n`,
       );
     }
-    expect((await harness.git.listWorktrees(repo.localPath)).length).toBe(5);
 
-    // One session commits; a new remote commit arrives; a sixth session
-    // starts (fetching again); the first session's worktree is removed.
+    // One session commits and stashes; a remote commit arrives; a sixth
+    // session starts (fetching again); the first session's clone is removed.
     const before = await head(paths[1]);
     await commitFile(paths[0], 'work.txt', 'work');
+    await git(paths[0], 'stash', 'push', '--include-untracked', '--quiet');
     const remote = await commitFile(repo.origin, 'remote.txt', 'remote');
     const sixth = await create({ repositories: [{ repositoryId: repo.id }] });
     await harness.prepared(sixth.id);
-    await harness.git.removeWorktree(repo.localPath, paths[0], { force: true });
+    await harness.git.removeSessionClone(paths[0]);
 
     expect(harness.service.get(sixth.id).directories[0].baseCommit).toBe(
       remote,
@@ -187,10 +228,11 @@ describe('session preparation', () => {
     for (const path of paths.slice(1)) {
       expect(await head(path)).toBe(before);
       expect(await git(path, 'status', '--porcelain')).toBe('?? owner.txt');
+      expect(await git(path, 'stash', 'list')).toBe('');
     }
   });
 
-  it('removes the other worktrees again when one cannot be created', async () => {
+  it('removes the other clones again when one cannot be created', async () => {
     const first = await harness.addRepository('acme', 'one');
     const second = await harness.addRepository('acme', 'two');
     const third = await harness.addRepository('acme', 'three');
@@ -207,22 +249,16 @@ describe('session preparation', () => {
     const dto = harness.service.get(session.id);
     expect(dto.status).toBe('failed');
     expect(dto.lastError).toBe(
-      "Could not create the worktree of acme/two: Branch missing does not exist. The session's other directories were removed again.",
+      "Could not create the clone of acme/two: Branch missing does not exist. The session's other directories were removed again.",
     );
     expect(dto.directories.map((d) => d.state)).toEqual([
       'removed',
       'failed',
       'removed',
     ]);
-    for (const repo of [first, third]) {
-      expect(await harness.git.listWorktrees(repo.localPath)).toEqual([]);
-      expect(
-        await harness.git.branchExists(
-          repo.localPath,
-          `claude/${session.slug}`,
-        ),
-      ).toBe(false);
-    }
+    expect(
+      existsSync(join(harness.config.sessionsDir, session.slug ?? '')),
+    ).toBe(false);
     expect(harness.runner.runs).toHaveLength(0);
     expect(
       harness
@@ -237,11 +273,10 @@ describe('session preparation', () => {
     await expect(
       harness.service.send(session.id, { text: 'Try again' }),
     ).rejects.toThrow('not available');
-    const listed = await harness.repositories.get(first.id);
-    expect(listed.worktrees).toEqual([]);
+    expect((await harness.repositories.get(first.id)).clones).toEqual([]);
   });
 
-  it('reports a repository that cannot be cloned', async () => {
+  it('fails a repository that was never cloned and cannot be', async () => {
     const broken = harness.repositoryRecords.create({
       id: '0b8f6a3e-6f2d-4e1a-8b7c-5d4e3f2a1b0c',
       owner: 'acme',
@@ -267,11 +302,34 @@ describe('session preparation', () => {
     );
   });
 
-  it('runs setup scripts after the worktrees, streams and stores their output', async () => {
+  it('starts from the last fetched state when the remote cannot be reached', async () => {
+    const repo = await harness.addRepository('acme', 'app');
+    await harness.repositories.update(repo.id);
+    harness.repositoryRecords.update(repo.id, {
+      fetchedAt: new Date(Date.now() - 3 * 3_600_000),
+    });
+    await rename(repo.origin, `${repo.origin}-offline`);
+
+    const session = await create({ repositories: [{ repositoryId: repo.id }] });
+    await harness.prepared(session.id);
+
+    expect(harness.service.get(session.id).status).toBe('running');
+    expect(harness.eventsOfType(session.id, 'notice').at(-1)?.text).toBe(
+      'acme/app could not be fetched; the session starts from the state fetched 3 hours ago.',
+    );
+    expect(
+      harness
+        .eventsOfType(session.id, 'prepare.progress')
+        .find((event) => event.step === 'fetch' && event.state === 'failed')
+        ?.message,
+    ).toMatch(/^Could not update acme\/app: /);
+  });
+
+  it('holds the first message back when a setup script fails; it can be sent anyway', async () => {
     const ok = await harness.addRepository(
       'acme',
       'ok',
-      'echo "setting up $CRM_REPOSITORY"; test -d .git || test -f .git',
+      'echo "setting up $CRM_REPOSITORY"; test -d .git',
     );
     const broken = await harness.addRepository(
       'acme',
@@ -285,13 +343,18 @@ describe('session preparation', () => {
     await harness.prepared(session.id);
 
     const dto = harness.service.get(session.id);
-    // A failing setup script is reported, the session goes on.
-    expect(dto.status).toBe('running');
-    expect(harness.runner.runs).toHaveLength(1);
+    expect(dto).toMatchObject({
+      status: 'waiting',
+      pendingMessage: 'Do the work',
+    });
+    expect(harness.runner.runs).toHaveLength(0);
     expect(dto.directories.map((d) => d.setupStatus)).toEqual([
       'succeeded',
       'failed',
     ]);
+    expect(harness.eventsOfType(session.id, 'notice').at(-1)?.text).toBe(
+      setupFailedNotice(['acme/broken']),
+    );
     const results = harness.eventsOfType(session.id, 'setup.result');
     expect(
       results.map((r) => `${r.repository}:${r.state}:${r.exitCode}`),
@@ -301,23 +364,11 @@ describe('session preparation', () => {
       'acme/broken:started:null',
       'acme/broken:failed:3',
     ]);
-    const output = harness.eventsOfType(session.id, 'setup.output');
-    expect(output.map((o) => `${o.repository}:${o.text}`)).toEqual([
-      'acme/ok:setting up acme/ok\n',
-      'acme/broken:missing tool\n',
-    ]);
-    // Setup ran after both worktrees existed.
-    const types = harness
-      .eventsOf(session.id)
-      .map((event) =>
-        event.type === 'prepare.progress'
-          ? `${event.step}:${event.state}`
-          : event.type,
-      );
-    expect(types.lastIndexOf('worktree:succeeded')).toBeLessThan(
-      types.indexOf('setup.result'),
-    );
-    // Stored like the other app events.
+    expect(
+      harness
+        .eventsOfType(session.id, 'setup.output')
+        .map((o) => `${o.repository}:${o.text}`),
+    ).toEqual(['acme/ok:setting up acme/ok\n', 'acme/broken:missing tool\n']);
     const stored = new SessionEventRepository(harness.db)
       .list(session.id)
       .map((item) => item.event.type);
@@ -328,6 +379,79 @@ describe('session preparation', () => {
         'setup.result',
       ]),
     );
+    await expect(
+      harness.service.send(session.id, { text: 'Something else' }),
+    ).rejects.toThrow('send it anyway');
+
+    // Survives a restart, then the user sends it anyway.
+    await harness.service.onModuleDestroy();
+    await harness.start();
+    expect(harness.service.get(session.id).pendingMessage).toBe('Do the work');
+    const sent = await harness.service.sendPending(session.id);
+    expect(sent.pendingMessage).toBeNull();
+    await waitFor(() => harness.runner.runs.length === 1);
+    expect(harness.runner.last.sent[0].text).toBe('Do the work');
+    expect(harness.service.get(session.id).status).toBe('running');
+    await expect(harness.service.sendPending(session.id)).rejects.toThrow(
+      'no first message waiting',
+    );
+  });
+
+  it('runs failed setup scripts again and then sends the first message', async () => {
+    const repo = await harness.addRepository('acme', 'app', 'test -f ready');
+    const session = await create({ repositories: [{ repositoryId: repo.id }] });
+    await harness.prepared(session.id);
+    expect(harness.service.get(session.id).status).toBe('waiting');
+
+    // Still failing: waits again.
+    await harness.service.rerunSetup(session.id);
+    await harness.prepared(session.id);
+    expect(harness.service.get(session.id)).toMatchObject({
+      status: 'waiting',
+      pendingMessage: 'Do the work',
+    });
+
+    harness.repositoryRecords.update(repo.id, { setupScript: 'touch ready' });
+    const rerun = await harness.service.rerunSetup(session.id);
+    expect(rerun.status).toBe('preparing');
+    await harness.prepared(session.id);
+
+    expect(harness.service.get(session.id)).toMatchObject({
+      status: 'running',
+      pendingMessage: null,
+    });
+    expect(harness.service.get(session.id).directories[0].setupStatus).toBe(
+      'succeeded',
+    );
+    expect(harness.runner.last.sent[0].text).toBe('Do the work');
+    expect(
+      harness
+        .eventsOfType(session.id, 'setup.result')
+        .map((result) => result.state),
+    ).toEqual([
+      'started',
+      'failed',
+      'started',
+      'failed',
+      'started',
+      'succeeded',
+    ]);
+  });
+
+  it('drops the held-back message when the session is ended', async () => {
+    const repo = await harness.addRepository('acme', 'app', 'exit 1');
+    const session = await create({ repositories: [{ repositoryId: repo.id }] });
+    await harness.prepared(session.id);
+
+    const ended = await harness.service.end(session.id);
+
+    expect(ended).toMatchObject({ status: 'finished', pendingMessage: null });
+    expect(harness.eventsOfType(session.id, 'notice').at(-1)?.text).toBe(
+      ENDED_WHILE_PREPARING,
+    );
+    await harness.service.send(session.id, { text: 'Go on' });
+    await waitFor(() => harness.runner.runs.length === 1);
+    expect(harness.runner.last.sent[0].text).toBe('Go on');
   });
 
   it('refuses messages while preparing; ending stops the setup and keeps the message back', async () => {
@@ -347,7 +471,7 @@ describe('session preparation', () => {
     const ended = await harness.service.end(session.id);
 
     expect(Date.now() - started).toBeLessThan(5000);
-    expect(ended.status).toBe('finished');
+    expect(ended).toMatchObject({ status: 'finished', pendingMessage: null });
     expect(ended.directories[0]).toMatchObject({
       state: 'ready',
       setupStatus: 'failed',
@@ -363,7 +487,6 @@ describe('session preparation', () => {
     );
     expect(harness.runner.runs).toHaveLength(0);
 
-    // The worktree is there; a new message starts Claude in it.
     await harness.service.send(session.id, { text: 'Start now' });
     await waitFor(() => harness.runner.runs.length === 1);
     expect(harness.runner.last.sent[0].text).toBe('Start now');
@@ -390,10 +513,6 @@ describe('session preparation', () => {
     });
     expect(dto.directories[0].state).toBe('removed');
     expect(existsSync(path)).toBe(false);
-    expect(
-      await harness.git.branchExists(repo.localPath, `claude/${session.slug}`),
-    ).toBe(false);
-    // The first message is still shown, followed by what happened.
     const history = await harness.service.subscribe(session.id);
     expect(history.events[0]).toMatchObject({
       type: 'user.message',
@@ -406,11 +525,17 @@ describe('session preparation', () => {
     harness.service.unsubscribe(session.id);
   });
 
-  it('validates repositories and projects', async () => {
+  it('validates repositories, projects and scratch', async () => {
     const repo = await harness.addRepository('acme', 'app');
     const invalid: [unknown, string][] = [
-      [{}, 'Choose a main repository or a new project'],
+      [{}, 'Choose a main repository'],
       [{ repositories: [] }, 'Choose a main repository'],
+      [{ scratch: false }, 'Choose a main repository'],
+      [{ scratch: 'yes' }, 'scratch must be a boolean'],
+      [
+        { scratch: true, repositories: [{ repositoryId: repo.id }] },
+        'no repositories',
+      ],
       [{ repositories: 'x' }, 'repositories must be an array'],
       [{ repositories: [{ repositoryId: 'nope' }] }, 'must be a UUID'],
       [{ repositories: [5] }, 'must be a JSON object'],
@@ -448,8 +573,8 @@ describe('session preparation', () => {
         },
         'at most 10',
       ],
-      [{ newProject: { name: '../escape' } }, 'newProject.name'],
-      [{ newProject: { name: '.hidden' } }, 'newProject.name'],
+      [{ newProject: { name: '../escape' } }, 'project name'],
+      [{ newProject: { name: '.hidden' } }, 'project name'],
       [{ newProject: 'app' }, 'newProject must be a JSON object'],
     ];
     for (const [request, message] of invalid) {
@@ -461,5 +586,17 @@ describe('session preparation', () => {
       ).rejects.toThrow(BadRequestException);
     }
     expect(harness.service.list()).toEqual([]);
+  });
+});
+
+describe('ageInWords', () => {
+  const now = new Date('2026-01-10T12:00:00Z');
+  it.each([
+    [0, '0 minutes'],
+    [60_000, '1 minute'],
+    [3 * 3_600_000, '3 hours'],
+    [5 * 86_400_000, '5 days'],
+  ])('%d ms ago is %s', (ms, words) => {
+    expect(ageInWords(new Date(now.getTime() - ms), now)).toBe(words);
   });
 });

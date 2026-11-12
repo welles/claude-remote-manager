@@ -14,7 +14,8 @@ export interface NewRepository {
   id: string;
   owner: string;
   name: string;
-  cloneUrl: string;
+  /** `null` for a local project without remote. */
+  cloneUrl: string | null;
   localPath: string;
   setupScript: string | null;
 }
@@ -26,8 +27,8 @@ export type RepositoryPatch = Partial<
   >
 >;
 
-/** A session's worktree of a repository, as the database knows it. */
-export interface WorktreeLink {
+/** A session's clone of a repository, as the database knows it. */
+export interface CloneLink {
   path: string;
   branch: string | null;
   sessionId: string;
@@ -93,11 +94,11 @@ export class RepositoryRepository {
   }
 
   /**
-   * Worktrees that sessions use or are about to create (state `pending` or
-   * `ready`), per repository.
+   * Session clones that sessions use or are about to create (state
+   * `pending` or `ready`), per repository.
    */
-  worktreeLinks(repositoryIds: string[]): Map<string, WorktreeLink[]> {
-    const links = new Map<string, WorktreeLink[]>();
+  cloneLinks(repositoryIds: string[]): Map<string, CloneLink[]> {
+    const links = new Map<string, CloneLink[]>();
     if (repositoryIds.length === 0) {
       return links;
     }
@@ -113,6 +114,7 @@ export class RepositoryRepository {
       .innerJoin(sessions, eq(sessions.id, sessionDirectories.sessionId))
       .where(
         and(
+          eq(sessionDirectories.kind, 'clone'),
           inArray(sessionDirectories.repositoryId, repositoryIds),
           inArray(sessionDirectories.state, ['pending', 'ready']),
         ),
@@ -124,5 +126,22 @@ export class RepositoryRepository {
       }
     }
     return links;
+  }
+
+  /** Paths of scratch directories that sessions use or are about to create. */
+  activeScratchPaths(): Set<string> {
+    return new Set(
+      this.db
+        .select({ path: sessionDirectories.path })
+        .from(sessionDirectories)
+        .where(
+          and(
+            eq(sessionDirectories.kind, 'scratch'),
+            inArray(sessionDirectories.state, ['pending', 'ready']),
+          ),
+        )
+        .all()
+        .map((row) => row.path),
+    );
   }
 }

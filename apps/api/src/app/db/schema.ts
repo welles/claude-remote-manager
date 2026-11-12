@@ -8,6 +8,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import type {
+  SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
   SessionStatus,
@@ -28,8 +29,10 @@ const createdAt = () =>
 const timestamp = (name: string) => integer(name, { mode: 'timestamp_ms' });
 
 /**
- * Registered repositories. Each has one shared bare clone at `local_path`
- * (`REPOS_DIR/<owner>/<name>`); sessions get worktrees of it.
+ * Registered repositories and local projects. Each has a mirror at
+ * `local_path` (`<workspace>/repos/<owner>/<name>`): a bare repository that
+ * is cloned once and then only fetched; sessions clone it. `clone_url` is
+ * `null` for a local project without remote (owner `local`).
  */
 export const repositories = sqliteTable(
   'repositories',
@@ -37,17 +40,17 @@ export const repositories = sqliteTable(
     id: text('id').primaryKey(),
     owner: text('owner').notNull(),
     name: text('name').notNull(),
-    cloneUrl: text('clone_url').notNull(),
-    /** Default branch of the remote as last fetched. */
+    cloneUrl: text('clone_url'),
+    /** Default branch as last fetched (`main` for local projects). */
     defaultBranch: text('default_branch'),
     localPath: text('local_path').notNull(),
-    /** Shell script run in each new worktree, e.g. `npm ci`. */
+    /** Shell script run in each new session clone, e.g. `npm ci`. */
     setupScript: text('setup_script'),
     /** GitHub repository ID, for the GitHub integration. */
     githubRepositoryId: integer('github_repository_id'),
     /** GitHub App installation that grants access to the repository. */
     githubInstallationId: integer('github_installation_id'),
-    /** When the shared clone was created; `null` while not cloned. */
+    /** When the mirror was created; `null` while it does not exist. */
     clonedAt: timestamp('cloned_at'),
     fetchedAt: timestamp('fetched_at'),
     /** Error of the last clone or fetch. */
@@ -61,18 +64,6 @@ export const repositories = sqliteTable(
   ],
 );
 
-/** New projects without a repository: `PROJECTS_DIR/<name>`. */
-export const projects = sqliteTable('projects', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull().unique(),
-  path: text('path').notNull().unique(),
-  /** Repository created for the project later (GitHub integration). */
-  repositoryId: text('repository_id').references(() => repositories.id, {
-    onDelete: 'set null',
-  }),
-  createdAt: createdAt(),
-});
-
 export const sessions = sqliteTable('sessions', {
   id: text('id').primaryKey(),
   /** Claude Code session ID used for resuming; known after the first start. */
@@ -85,13 +76,13 @@ export const sessions = sqliteTable('sessions', {
     .default('default'),
   status: text('status').$type<SessionStatus>().notNull(),
   /**
-   * Unique readable name for worktree directories and branches
-   * (`claude/<slug>`); `null` for sessions from before worktrees.
+   * Unique readable name for the session's directories and branches
+   * (`claude/<slug>`); `null` for sessions from before session clones.
    */
   slug: text('slug').unique(),
   /**
-   * First message while it waits for the preparation (worktrees, setup
-   * scripts); cleared when it is handed to Claude Code.
+   * First message while it is not sent to Claude Code yet: during the
+   * preparation, and after a failed setup script until the user decides.
    */
   pendingMessage: text('pending_message', { mode: 'json' }).$type<{
     id: string;
@@ -103,12 +94,12 @@ export const sessions = sqliteTable('sessions', {
 });
 
 /**
- * Directories of a session in order: position 0 is the working directory
- * (the main repository's worktree or the new project), the others are
- * additional directories. A row with `repository_id` is a worktree of that
- * repository on `branch`, created from `base_branch` at `base_commit`; a
- * row with `project_id` is a new project; rows with neither are plain
- * directories (sessions from before worktrees).
+ * Directories of a session in order: position 0 is the working directory,
+ * the others are additional directories.
+ * - `clone`: the session's own clone of `repository_id` on `branch`,
+ *   created from `base_branch` of the mirror at `base_commit`;
+ * - `scratch`: an empty directory of the session without git;
+ * - `directory`: a plain directory (sessions from before session clones).
  */
 export const sessionDirectories = sqliteTable(
   'session_directories',
@@ -119,8 +110,11 @@ export const sessionDirectories = sqliteTable(
       .references(() => sessions.id, { onDelete: 'cascade' }),
     position: integer('position').notNull(),
     path: text('path').notNull(),
+    kind: text('kind')
+      .$type<SessionDirectoryKind>()
+      .notNull()
+      .default('directory'),
     repositoryId: text('repository_id').references(() => repositories.id),
-    projectId: text('project_id').references(() => projects.id),
     branch: text('branch'),
     baseBranch: text('base_branch'),
     baseCommit: text('base_commit'),
@@ -141,10 +135,6 @@ export const sessionDirectories = sqliteTable(
     uniqueIndex('session_directories_session_repository').on(
       table.sessionId,
       table.repositoryId,
-    ),
-    uniqueIndex('session_directories_repository_branch').on(
-      table.repositoryId,
-      table.branch,
     ),
   ],
 );
@@ -201,7 +191,6 @@ export const sessionEvents = sqliteTable(
 );
 
 export type RepositoryRow = typeof repositories.$inferSelect;
-export type ProjectRow = typeof projects.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
 export type SessionDirectoryRow = typeof sessionDirectories.$inferSelect;
 export type NewSessionRow = typeof sessions.$inferInsert;

@@ -35,7 +35,6 @@ describe('openDatabase', () => {
 
     expect(existsSync(join(location, DATABASE_FILE_NAME))).toBe(true);
     expect(tables(db)).toEqual([
-      'projects',
       'repositories',
       'session_directories',
       'session_events',
@@ -106,10 +105,10 @@ describe('openDatabase', () => {
       ['/scratch', '/extra/one', '/extra/two'].map((path, position) => ({
         position,
         path,
+        kind: 'directory',
         repositoryId: null,
         repositoryName: null,
-        projectId: null,
-        projectName: null,
+        repositoryLocal: false,
         branch: null,
         baseBranch: null,
         baseCommit: null,

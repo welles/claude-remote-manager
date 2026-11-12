@@ -65,7 +65,7 @@ export function gitEnvironment(
 
 /**
  * Options given to every git command: hooks are disabled, so creating a
- * worktree never runs scripts from a repository (`post-checkout`) in the
+ * session clone never runs scripts from a repository (`post-checkout`) in the
  * API process. Setup scripts are the only code the app runs for a
  * repository, and they run on purpose.
  */
@@ -128,7 +128,7 @@ export function runGit(
 /**
  * Another git process holds a lock git needs (a ref, `packed-refs`, the
  * index or the shallow file). The app serializes its own commands per
- * repository, but sessions run git in their worktrees as well.
+ * mirror, but git may still meet a stale lock or another git process.
  */
 export function isLockContention(error: unknown): boolean {
   return (

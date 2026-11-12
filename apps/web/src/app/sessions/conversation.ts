@@ -308,14 +308,14 @@ export function progressText(
       return item.state === 'started'
         ? `Updating ${target}…`
         : `Updated ${target}${detail}`;
-    case 'worktree':
+    case 'clone':
       return item.state === 'started'
-        ? `Creating the worktree of ${target}…`
-        : `Worktree of ${target}${detail}`;
-    case 'project':
+        ? `Cloning ${target} for this session…`
+        : `Cloned ${target}${detail}`;
+    case 'scratch':
       return item.state === 'started'
-        ? `Creating the project ${target}…`
-        : `Created the project ${target}${detail}`;
+        ? 'Creating the scratch directory…'
+        : `Created the scratch directory ${item.path ?? ''}`;
     case 'rollback':
       return `Removed ${target || item.path || 'the directory'} again`;
     case 'done':

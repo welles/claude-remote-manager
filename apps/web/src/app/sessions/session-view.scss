@@ -245,3 +245,24 @@
 .end {
   margin-left: -12px;
 }
+
+.held-back {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--mat-sys-tertiary-container);
+  color: var(--mat-sys-on-tertiary-container);
+
+  p {
+    margin: 0;
+  }
+
+  .buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}

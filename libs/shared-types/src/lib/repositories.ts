@@ -1,25 +1,30 @@
 /**
- * Repositories registered in the app. Each one has a shared bare clone under
- * `REPOS_DIR/<owner>/<name>`; sessions get their own worktrees of it under
- * `WORKTREES_DIR/<owner>/<name>/<session-slug>` on branch
+ * Repositories registered in the app. Each one has a mirror: a bare
+ * repository under `<workspace>/repos/<owner>/<name>` that is cloned once
+ * and then only fetched; nobody works in it. Every session gets its own
+ * complete clone of it (objects hardlinked) under
+ * `<workspace>/sessions/<session-slug>/<owner>/<name>` on branch
  * `claude/<session-slug>`.
+ *
+ * Local projects are repositories without a remote (owner `local`): their
+ * mirror is the project's main repository.
  */
 
-/** A worktree of a repository as found on disk and in the database. */
-export interface WorktreeDto {
+/** A session clone of a repository as found on disk and in the database. */
+export interface SessionCloneDto {
   path: string;
-  /** Checked-out branch (`claude/<slug>`), `null` if detached or unknown. */
+  /** Session branch (`claude/<slug>`); `null` if unknown. */
   branch: string | null;
-  /** Session the worktree belongs to; `null` for orphaned worktrees. */
+  /** Session the clone belongs to; `null` for orphaned clones. */
   sessionId: string | null;
   sessionTitle: string | null;
-  /** No session uses this worktree (left over or created by hand). */
+  /** No session uses this clone (left over or created by hand). */
   orphaned: boolean;
-  /** A session expects the worktree here, but the directory is missing. */
+  /** A session expects the clone here, but the directory is missing. */
   missing: boolean;
 }
 
-/** Background git work on a repository's shared clone. */
+/** Background git work on a repository's mirror. */
 export type RepositoryActivity = 'cloning' | 'fetching';
 
 export interface RepositoryDto {
@@ -28,23 +33,26 @@ export interface RepositoryDto {
   name: string;
   /** `owner/name`. */
   fullName: string;
-  cloneUrl: string;
-  /** Default branch of the remote; `null` until cloned or if it is empty. */
+  /** URL of the remote; `null` for a local project without remote. */
+  cloneUrl: string | null;
+  /** Local project: no remote, the mirror is the main repository. */
+  local: boolean;
+  /** Default branch; `null` until cloned or if the remote is empty. */
   defaultBranch: string | null;
-  /** Path of the shared bare clone. */
+  /** Path of the mirror (bare repository). */
   localPath: string;
-  /** Shell script run in every new worktree; `null` for none. */
+  /** Shell script run in every new session clone; `null` for none. */
   setupScript: string | null;
-  /** When the clone was created; `null` while it is not cloned yet. */
+  /** When the mirror was created; `null` while it does not exist yet. */
   clonedAt: string | null;
-  /** Last successful fetch (or clone). */
+  /** Last successful fetch (or clone) of the mirror. */
   fetchedAt: string | null;
   /** Error of the last clone or fetch; cleared by the next success. */
   lastError: string | null;
   /** Clone or fetch currently running. */
   activity: RepositoryActivity | null;
-  /** Worktrees of the repository; filled in list and detail responses. */
-  worktrees: WorktreeDto[];
+  /** Session clones of the repository. */
+  clones: SessionCloneDto[];
   createdAt: string;
   updatedAt: string;
 }
@@ -53,21 +61,30 @@ export interface RepositoryDto {
 export interface RepositoryListResponse {
   repositories: RepositoryDto[];
   /**
-   * Directories under the worktrees directory that belong to no registered
-   * repository; orphaned as well.
+   * Directories under the sessions and scratch directories that no session
+   * uses and that belong to no registered repository.
    */
   strayDirectories: string[];
 }
 
-/** Body of `POST /api/repositories`. Starts cloning in the background. */
-export interface CreateRepositoryRequest {
-  /**
-   * `https://host/owner/name(.git)`, `ssh://…`, `git@host:owner/name.git`
-   * or an absolute local path. Credentials in the URL are refused.
-   */
-  cloneUrl: string;
-  setupScript?: string | null;
-}
+/**
+ * Body of `POST /api/repositories`: either a clone URL (cloned in the
+ * background) or the name of a new local project.
+ */
+export type CreateRepositoryRequest =
+  | {
+      /**
+       * `https://host/owner/name(.git)`, `ssh://…`, `git@host:owner/name.git`
+       * or an absolute local path. Credentials in the URL are refused.
+       */
+      cloneUrl: string;
+      setupScript?: string | null;
+    }
+  | {
+      /** New local project `local/<projectName>` without remote. */
+      projectName: string;
+      setupScript?: string | null;
+    };
 
 /** Body of `PATCH /api/repositories/:id`. */
 export interface UpdateRepositoryRequest {
@@ -78,6 +95,6 @@ export interface UpdateRepositoryRequest {
 /** Response of `GET /api/repositories/:id/branches`. */
 export interface RepositoryBranchesResponse {
   defaultBranch: string | null;
-  /** Branches of the remote as last fetched, sorted. */
+  /** Branches of the mirror (the remote's as last fetched), sorted. */
   branches: string[];
 }

@@ -9,7 +9,7 @@ import type {
   SessionDto,
   SessionEvent,
 } from '@claude-remote-manager/shared-types';
-import type { AppConfig } from '../config/app-config';
+import { type AppConfig, workspaceLayout } from '../config/app-config';
 import { openDatabase, type AppDatabase } from '../db/database';
 import { GitService } from '../git/git.service';
 import { createOrigin, gitSandbox } from '../git/testing/git-fixtures';
@@ -125,9 +125,9 @@ describe('SessionsService', () => {
     return session;
   };
 
-  /** Worktree of the test repository for a session. */
-  const worktreeOf = (session: SessionDto) =>
-    join(config.worktreesDir, 'acme', 'tool', session.slug ?? '');
+  /** Clone of the test repository for a session. */
+  const cloneOf = (session: SessionDto) =>
+    join(config.sessionsDir, session.slug ?? '', 'acme', 'tool');
 
   beforeEach(async () => {
     sandbox = gitSandbox('crm-sessions-');
@@ -136,9 +136,7 @@ describe('SessionsService', () => {
     git = new GitService();
     config = {
       dbDir: ':memory:',
-      reposDir: join(dir, 'repos'),
-      worktreesDir: join(dir, 'worktrees'),
-      projectsDir: join(dir, 'projects'),
+      ...workspaceLayout(join(dir, 'workspace')),
       setupScriptTimeoutMs: 10_000,
       sessionIdleTimeoutMs: 0,
       claudeExecutable: null,
@@ -170,7 +168,7 @@ describe('SessionsService', () => {
   });
 
   describe('create', () => {
-    it('starts a Claude Code process in the worktree of the main repository', async () => {
+    it('starts a Claude Code process in the clone of the main repository', async () => {
       const session = await startSession();
 
       expect(session).toMatchObject({
@@ -179,7 +177,7 @@ describe('SessionsService', () => {
         model: 'haiku',
         permissionMode: 'default',
         slug: expect.stringMatching(/^reply-with-pong-[a-z0-9]{6}$/),
-        cwd: worktreeOf(session),
+        cwd: cloneOf(session),
         additionalDirectories: [],
         sdkSessionId: null,
         usage: { inputTokens: 0, costUsd: 0 },
@@ -187,7 +185,7 @@ describe('SessionsService', () => {
       expect(service.get(session.id).status).toBe('running');
       expect(runner.runs).toHaveLength(1);
       expect(runner.last.options).toMatchObject({
-        cwd: worktreeOf(session),
+        cwd: cloneOf(session),
         additionalDirectories: [],
         model: 'haiku',
         permissionMode: 'default',
@@ -637,7 +635,7 @@ describe('SessionsService', () => {
 
       const history = await service.subscribe(session.id);
       expect(transcripts.reads).toEqual([
-        { sdkSessionId: 'sdk-1', cwd: worktreeOf(session) },
+        { sdkSessionId: 'sdk-1', cwd: cloneOf(session) },
       ]);
       expect(history.session.status).toBe('waiting');
       // The preparation events follow the first message.

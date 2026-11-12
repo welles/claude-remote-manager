@@ -298,11 +298,10 @@ describe('SessionView', () => {
           ...sessionDto().directories,
           {
             role: 'additional',
-            kind: 'worktree',
-            path: '/worktrees/acme/lib/reply-with-pong-abc123',
+            kind: 'clone',
+            path: '/workspace/sessions/reply-with-pong-abc123/acme/lib',
             state: 'pending',
-            repository: { id: 'r2', fullName: 'acme/lib' },
-            projectName: null,
+            repository: { id: 'r2', fullName: 'acme/lib', local: false },
             branch: 'claude/reply-with-pong-abc123',
             baseBranch: 'release',
             baseCommit: null,
@@ -314,16 +313,16 @@ describe('SessionView', () => {
         event({ type: 'user.message', id: 'u1', text: 'Reply with pong' }),
         event({
           type: 'prepare.progress',
-          step: 'worktree',
+          step: 'clone',
           state: 'succeeded',
           target: 'acme/app',
-          path: '/worktrees/acme/app/reply-with-pong-abc123',
+          path: '/workspace/sessions/reply-with-pong-abc123/acme/app',
           message: 'claude/reply-with-pong-abc123 from main at 0123456789ab',
         }),
         event({
           type: 'setup.result',
           repository: 'acme/app',
-          path: '/worktrees/acme/app/reply-with-pong-abc123',
+          path: '/workspace/sessions/reply-with-pong-abc123/acme/app',
           state: 'started',
           exitCode: null,
           signal: null,
@@ -346,20 +345,72 @@ describe('SessionView', () => {
       ...element.querySelectorAll('[data-testid="directory"]'),
     ].map((node) => words(node));
     expect(directories).toEqual([
-      'acme/app working directory claude/reply-with-pong-abc123 from main at 0123456789ab /worktrees/acme/app/reply-with-pong-abc123',
-      'acme/lib additional pending setup pending claude/reply-with-pong-abc123 from release /worktrees/acme/lib/reply-with-pong-abc123',
+      'acme/app working directory claude/reply-with-pong-abc123 from main at 0123456789ab /workspace/sessions/reply-with-pong-abc123/acme/app',
+      'acme/lib additional pending setup pending claude/reply-with-pong-abc123 from release /workspace/sessions/reply-with-pong-abc123/acme/lib',
     ]);
     expect(text('progress')).toBe(
-      'Worktree of acme/app · claude/reply-with-pong-abc123 from main at 0123456789ab',
+      'Cloned acme/app · claude/reply-with-pong-abc123 from main at 0123456789ab',
     );
     expect(words(element.querySelector('[data-testid="setup"]'))).toContain(
       'Setup acme/app running',
     );
     expect(text('setup')).toContain('added 3 packages');
-    expect(element.textContent).toContain('Preparing the worktrees');
+    expect(element.textContent).toContain('Preparing the session');
     expect(
       (element.querySelector('[data-testid="send"]') as HTMLButtonElement)
         .disabled,
     ).toBe(true);
+  });
+
+  it('offers the decisions when a setup script failed and the first message waits', async () => {
+    const { harness, socket, element } = await open();
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto({
+        status: 'waiting',
+        pendingMessage: 'Reply with pong',
+      }),
+      events: [
+        event({ type: 'user.message', id: 'u1', text: 'Reply with pong' }),
+      ],
+    });
+    await harness.fixture.whenStable();
+
+    expect(words(element.querySelector('[data-testid="held-back"]'))).toContain(
+      'A setup script failed',
+    );
+    expect(
+      (element.querySelector('[data-testid="send"]') as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    const click = (testId: string) =>
+      (
+        element.querySelector(`[data-testid="${testId}"]`) as HTMLButtonElement
+      ).click();
+    click('rerun-setup');
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'setup.rerun',
+      sessionId: 's1',
+    });
+    click('send-pending');
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'pending.send',
+      sessionId: 's1',
+    });
+    click('end-pending');
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'session.end',
+      sessionId: 's1',
+    });
+
+    socket.receive({
+      type: 'session.updated',
+      session: sessionDto({ status: 'running', pendingMessage: null }),
+    });
+    await harness.fixture.whenStable();
+    expect(element.querySelector('[data-testid="held-back"]')).toBeNull();
   });
 });

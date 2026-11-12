@@ -75,6 +75,11 @@ export class SessionView implements OnInit {
   protected readonly preparing = computed(
     () => this.session()?.status === 'preparing',
   );
+  /** The first message waits for a decision after a failed setup script. */
+  protected readonly heldBack = computed(() => {
+    const session = this.session();
+    return session?.status === 'waiting' && session.pendingMessage !== null;
+  });
   /** Repository names (or project) for the collapsed directory list. */
   protected readonly workspaceSummary = computed(() =>
     (this.session()?.directories ?? [])
@@ -168,6 +173,24 @@ export class SessionView implements OnInit {
       })
     ) {
       this.pending.add(requestId);
+    }
+  }
+
+  /** Sends the first message although a setup script failed. */
+  protected sendPending(): void {
+    this.sendAction('pending.send');
+  }
+
+  /** Runs the failed setup scripts again. */
+  protected rerunSetup(): void {
+    this.sendAction('setup.rerun');
+  }
+
+  private sendAction(type: 'pending.send' | 'setup.rerun'): void {
+    const requestId = newId();
+    if (this.socket.send({ type, sessionId: this.sessionId(), requestId })) {
+      this.pending.add(requestId);
+      this.error.set(null);
     }
   }
 
@@ -301,12 +324,13 @@ export class SessionView implements OnInit {
   }
 }
 
-/** Name of a session directory: repository, project or the directory itself. */
+/** Name of a session directory: repository, scratch or the directory. */
 export function directoryName(directory: SessionDirectoryDto): string {
-  return (
-    directory.repository?.fullName ??
-    directory.projectName ??
-    directory.path.split('/').filter(Boolean).at(-1) ??
-    directory.path
-  );
+  if (directory.repository) {
+    return directory.repository.fullName;
+  }
+  if (directory.kind === 'scratch') {
+    return 'Scratch directory';
+  }
+  return directory.path.split('/').filter(Boolean).at(-1) ?? directory.path;
 }

@@ -7,9 +7,10 @@ describe('loadAppConfig', () => {
     const devData = join(homedir(), '.local/share/claude-remote-manager');
     expect(loadAppConfig({})).toEqual({
       dbDir: resolve('data/db'),
-      reposDir: join(devData, 'repos'),
-      worktreesDir: join(devData, 'worktrees'),
-      projectsDir: join(devData, 'projects'),
+      workspaceDir: join(devData, 'workspace'),
+      reposDir: join(devData, 'workspace', 'repos'),
+      sessionsDir: join(devData, 'workspace', 'sessions'),
+      scratchDir: join(devData, 'workspace', 'scratch'),
       setupScriptTimeoutMs: 15 * 60_000,
       sessionIdleTimeoutMs: 60 * 60_000,
       claudeExecutable: null,
@@ -22,9 +23,7 @@ describe('loadAppConfig', () => {
     expect(
       loadAppConfig({
         DB_DIR: '/data/db',
-        REPOS_DIR: '/data/repos',
-        WORKTREES_DIR: '/data/worktrees/',
-        PROJECTS_DIR: '/data/projects',
+        WORKSPACE_DIR: '/data/workspace/',
         SETUP_SCRIPT_TIMEOUT_MINUTES: '5',
         SESSION_IDLE_TIMEOUT_MINUTES: '0',
         CLAUDE_CODE_EXECUTABLE: '/usr/local/bin/claude',
@@ -34,9 +33,10 @@ describe('loadAppConfig', () => {
       }),
     ).toEqual({
       dbDir: '/data/db',
-      reposDir: '/data/repos',
-      worktreesDir: '/data/worktrees',
-      projectsDir: '/data/projects',
+      workspaceDir: '/data/workspace',
+      reposDir: '/data/workspace/repos',
+      sessionsDir: '/data/workspace/sessions',
+      scratchDir: '/data/workspace/scratch',
       setupScriptTimeoutMs: 5 * 60_000,
       sessionIdleTimeoutMs: 0,
       claudeExecutable: '/usr/local/bin/claude',

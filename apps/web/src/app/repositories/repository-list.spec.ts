@@ -15,6 +15,7 @@ const repository = (overrides: Partial<RepositoryDto> = {}): RepositoryDto => ({
   name: 'app',
   fullName: 'acme/app',
   cloneUrl: 'https://github.com/acme/app.git',
+  local: false,
   defaultBranch: 'main',
   localPath: '/data/repos/acme/app',
   setupScript: 'npm ci',
@@ -22,9 +23,9 @@ const repository = (overrides: Partial<RepositoryDto> = {}): RepositoryDto => ({
   fetchedAt: '2026-01-01T00:00:00.000Z',
   lastError: null,
   activity: null,
-  worktrees: [
+  clones: [
     {
-      path: '/data/worktrees/acme/app/fix-login-abc123',
+      path: '/data/workspace/sessions/fix-login-abc123/acme/app',
       branch: 'claude/fix-login-abc123',
       sessionId: 's1',
       sessionTitle: 'Fix login',
@@ -32,7 +33,7 @@ const repository = (overrides: Partial<RepositoryDto> = {}): RepositoryDto => ({
       missing: false,
     },
     {
-      path: '/data/worktrees/acme/app/leftover',
+      path: '/data/workspace/sessions/leftover/acme/app',
       branch: 'claude/leftover',
       sessionId: null,
       sessionTitle: null,
@@ -47,6 +48,8 @@ const repository = (overrides: Partial<RepositoryDto> = {}): RepositoryDto => ({
 
 interface ListInternals {
   cloneUrl: string;
+  projectName: string;
+  addProject(): void;
   setupDraft: string;
   add(): void;
   fetch(repository: RepositoryDto): void;
@@ -95,20 +98,36 @@ describe('RepositoryList', () => {
     return { fixture, element, all, list };
   };
 
-  it('shows repositories with default branch, setup script and worktrees', async () => {
+  it('shows repositories with default branch, setup script and session clones', async () => {
     const { all } = await render(
-      [repository()],
-      ['/data/worktrees/other/repo/old'],
+      [
+        repository(),
+        repository({
+          id: 'p1',
+          owner: 'local',
+          name: 'tool',
+          fullName: 'local/tool',
+          cloneUrl: null,
+          local: true,
+          localPath: '/data/workspace/repos/local/tool',
+          setupScript: null,
+          clones: [],
+        }),
+      ],
+      ['/data/workspace/scratch/old'],
     );
 
     expect(all('repository')[0]).toContain('acme/app');
     expect(all('repository')[0]).toContain('Default branch main');
     expect(all('setup-script')).toEqual(['npm ci']);
-    expect(all('worktree')).toEqual([
-      'Fix login claude/fix-login-abc123 /data/worktrees/acme/app/fix-login-abc123',
-      'leftover Orphaned claude/leftover /data/worktrees/acme/app/leftover',
+    expect(all('clone')).toEqual([
+      'Fix login claude/fix-login-abc123 /data/workspace/sessions/fix-login-abc123/acme/app',
+      'leftover Orphaned claude/leftover /data/workspace/sessions/leftover/acme/app',
     ]);
-    expect(all('stray')).toEqual(['/data/worktrees/other/repo/old']);
+    expect(all('repository')[1]).toContain(
+      'Local project no remote · /data/workspace/repos/local/tool',
+    );
+    expect(all('stray')).toEqual(['/data/workspace/scratch/old']);
   });
 
   it('adds a repository and polls while it is cloned', async () => {
@@ -127,7 +146,7 @@ describe('RepositoryList', () => {
         activity: 'cloning',
         clonedAt: null,
         defaultBranch: null,
-        worktrees: [],
+        clones: [],
       }),
     );
     fixture.detectChanges();
@@ -136,7 +155,7 @@ describe('RepositoryList', () => {
 
     vi.advanceTimersByTime(ACTIVITY_POLL_MS);
     http.expectOne('/api/repositories').flush({
-      repositories: [repository({ worktrees: [] })],
+      repositories: [repository({ clones: [] })],
       strayDirectories: [],
     });
     fixture.detectChanges();
@@ -195,5 +214,31 @@ describe('RepositoryList', () => {
     });
     fixture.detectChanges();
     expect(all('repository-error')).toEqual(['git fetch failed: offline']);
+  });
+
+  it('creates local projects', async () => {
+    const { list } = await render([]);
+    list.projectName = ' my-tool ';
+    list.addProject();
+    const request = http.expectOne({
+      method: 'POST',
+      url: '/api/repositories',
+    });
+    expect(request.request.body).toEqual({ projectName: 'my-tool' });
+    request.flush(
+      repository({
+        id: 'p1',
+        fullName: 'local/my-tool',
+        cloneUrl: null,
+        local: true,
+        clones: [],
+      }),
+    );
+    expect(list.projectName).toBe('');
+    vi.advanceTimersByTime(ACTIVITY_POLL_MS);
+    http.expectOne('/api/repositories').flush({
+      repositories: [],
+      strayDirectories: [],
+    });
   });
 });

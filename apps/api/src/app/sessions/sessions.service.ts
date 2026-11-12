@@ -33,7 +33,10 @@ import {
 import { TranscriptReader } from '../agent/transcript-reader';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { LimitsService } from '../limits/limits.service';
-import { SessionWorkspaceService } from '../workspaces/session-workspace.service';
+import {
+  SessionWorkspaceService,
+  type SetupOutcome,
+} from '../workspaces/session-workspace.service';
 import { SdkEventMapper, transcriptEntries } from './sdk-event-mapper';
 import {
   SessionEventRepository,
@@ -124,11 +127,19 @@ export const RESTART_NOTICE =
 
 /** Error of a session whose preparation a server stop cut off. */
 export const PREPARATION_INTERRUPTED =
-  'The preparation was interrupted because the server stopped; the worktrees were removed again. Start a new session.';
+  'The preparation was interrupted because the server stopped; its directories were removed again. Start a new session.';
 
 /** Notice when a session is ended before its first message reached Claude. */
 export const ENDED_WHILE_PREPARING =
-  'The session was ended during the preparation; the first message was not sent to Claude.';
+  'The session was ended before its first message was sent to Claude.';
+
+/** Notice when the first message is held back after failed setup scripts. */
+export function setupFailedNotice(repositories: string[]): string {
+  return (
+    `The setup script of ${repositories.join(', ')} failed, so the first message was not sent to Claude yet. ` +
+    'Send it anyway, run the setup again, or end the session.'
+  );
+}
 
 /**
  * Runs sessions: starts Claude Code processes, keeps them for follow-up
@@ -261,8 +272,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Creates a session in status `preparing` and returns it; the worktrees,
-   * the new project and the setup scripts are prepared in the background,
+   * Creates a session in status `preparing` and returns it; its clones (or
+   * scratch directory) and setup scripts are prepared in the background,
    * then the prompt goes to Claude.
    */
   async create(request: CreateSessionRequest): Promise<SessionDto> {
@@ -350,6 +361,29 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Sends the pending first message although a setup script failed. The
+   * message goes to Claude as it is; the setup output stays in the history.
+   */
+  async sendPending(sessionId: string): Promise<SessionDto> {
+    const { live, message } = await this.pendingDecision(sessionId);
+    this.track(live, () => this.deliverPending(live, message));
+    return this.get(sessionId);
+  }
+
+  /**
+   * Runs the failed setup scripts again; if they succeed, the pending first
+   * message goes to Claude.
+   */
+  async rerunSetup(sessionId: string): Promise<SessionDto> {
+    const { live, message } = await this.pendingDecision(sessionId);
+    this.setStatus(live, 'preparing');
+    this.runPreparation(live, message, (emit, signal) =>
+      this.workspaces.rerunFailedSetup(live.id, emit, signal),
+    );
+    return this.get(sessionId);
+  }
+
   /** Stops the running turn of a session. */
   async interrupt(sessionId: string): Promise<void> {
     if (this.requireRecord(sessionId).status === 'preparing') {
@@ -374,8 +408,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   async end(sessionId: string): Promise<SessionDto> {
     const record = this.requireRecord(sessionId);
-    const live = this.live.get(sessionId);
-    // Stops setup scripts; worktrees being created are finished first.
+    let live = this.live.get(sessionId);
+    // Stops setup scripts; clones being created are finished first.
     live?.preparation?.abort();
     if (live?.starting) {
       await live.starting;
@@ -383,6 +417,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live?.run) {
       live.closing = 'end';
       live.run.close();
+    }
+    if (this.requireRecord(sessionId).pendingMessage) {
+      // Waiting after a failed setup script: the message is dropped.
+      live ??= this.liveSession(sessionId);
+      await this.ensureHistory(live, record);
+      this.sessions.update(sessionId, { pendingMessage: null });
+      this.append(live, {
+        type: 'notice',
+        level: 'warning',
+        text: ENDED_WHILE_PREPARING,
+      });
     }
     if (live) {
       this.setStatus(live, 'finished');
@@ -540,16 +585,40 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * message. Ending the session meanwhile stops the setup scripts and keeps
    * the message from being sent.
    */
+  /**
+   * Prepares the directories of a new session, then sends the first
+   * message. Ending the session meanwhile stops the setup scripts and keeps
+   * the message from being sent.
+   */
   private startPreparation(
     live: LiveSession,
     message: { id: string; text: string },
   ): void {
+    this.runPreparation(live, message, (emit, signal) =>
+      this.workspaces.prepare(live.id, emit, signal),
+    );
+  }
+
+  /**
+   * Runs a preparation task (create directories and run setup scripts, or
+   * re-run failed setup scripts). Afterwards the first message goes to
+   * Claude; if a setup script failed, the session waits with the message
+   * pending until the user decides.
+   */
+  private runPreparation(
+    live: LiveSession,
+    message: { id: string; text: string },
+    task: (
+      emit: (event: SessionEventInput) => void,
+      signal: AbortSignal,
+    ) => Promise<SetupOutcome>,
+  ): void {
     const preparation = new AbortController();
     live.preparation = preparation;
     this.track(live, async () => {
+      let outcome: SetupOutcome;
       try {
-        await this.workspaces.prepare(
-          live.id,
+        outcome = await task(
           (event) => this.append(live, event),
           preparation.signal,
         );
@@ -573,7 +642,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         });
         return;
       }
-      const record = this.sessions.update(live.id, { pendingMessage: null });
+      if (outcome.failed.length > 0) {
+        this.append(live, {
+          type: 'notice',
+          level: 'warning',
+          text: setupFailedNotice(outcome.failed),
+        });
+        this.setStatus(live, 'waiting');
+        return;
+      }
       this.append(live, {
         type: 'prepare.progress',
         step: 'done',
@@ -582,9 +659,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         path: null,
         message: null,
       });
-      this.setStatus(live, 'running');
-      await this.launch(live, record, message);
+      await this.deliverPending(live, message);
     });
+  }
+
+  /** Sends the pending first message to Claude. */
+  private async deliverPending(
+    live: LiveSession,
+    message: { id: string; text: string },
+  ): Promise<void> {
+    const record = this.sessions.update(live.id, { pendingMessage: null });
+    this.setStatus(live, 'running');
+    await this.launch(live, record, message);
   }
 
   private startRun(
@@ -919,7 +1005,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Refuses messages while the session is prepared, and for sessions whose
-   * directories are not all there (failed preparation, removed worktrees).
+   * directories are not all there (failed preparation, removed clones).
    */
   private requireUsable(record: SessionRecord): void {
     if (record.status === 'preparing') {
@@ -929,9 +1015,29 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     if (record.directories.some((directory) => directory.state !== 'ready')) {
       throw new ConflictException(
-        "The session's worktrees are not available (not created or removed); start a new session",
+        "The session's directories are not available (not created or removed); start a new session",
       );
     }
+    if (record.pendingMessage) {
+      throw new ConflictException(
+        'The first message has not been sent because a setup script failed: send it anyway, run the setup again, or end the session',
+      );
+    }
+  }
+
+  /** A session waiting with its first message after a failed setup script. */
+  private async pendingDecision(
+    sessionId: string,
+  ): Promise<{ live: LiveSession; message: { id: string; text: string } }> {
+    const record = this.requireRecord(sessionId);
+    if (!record.pendingMessage || record.status !== 'waiting') {
+      throw new ConflictException(
+        'The session has no first message waiting for a decision',
+      );
+    }
+    const live = this.liveSession(sessionId);
+    await this.ensureHistory(live, record);
+    return { live, message: record.pendingMessage };
   }
 
   private requireRecord(id: string): SessionRecord {
@@ -954,14 +1060,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       permissionMode: record.permissionMode,
       status: record.status,
       slug: record.slug,
+      pendingMessage: record.pendingMessage?.text ?? null,
       directories: record.directories.map(
         (directory): SessionDirectoryDto => ({
           role: directory.position === 0 ? 'main' : 'additional',
-          kind: directory.repositoryId
-            ? 'worktree'
-            : directory.projectId
-              ? 'project'
-              : 'directory',
+          kind: directory.kind,
           path: directory.path,
           state: directory.state,
           repository:
@@ -969,9 +1072,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
               ? {
                   id: directory.repositoryId,
                   fullName: directory.repositoryName,
+                  local: directory.repositoryLocal,
                 }
               : null,
-          projectName: directory.projectName,
           branch: directory.branch,
           baseBranch: directory.baseBranch,
           baseCommit: directory.baseCommit,

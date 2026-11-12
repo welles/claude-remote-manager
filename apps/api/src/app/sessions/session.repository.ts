@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type {
+  SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
   SessionStatus,
@@ -8,7 +9,6 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { DATABASE, type AppDatabase } from '../db/database';
 import {
-  projects,
   repositories,
   sessionDirectories,
   sessions,
@@ -19,11 +19,12 @@ import {
 export interface SessionDirectoryRecord {
   position: number;
   path: string;
+  kind: SessionDirectoryKind;
   repositoryId: string | null;
   /** `owner/name` of the repository. */
   repositoryName: string | null;
-  projectId: string | null;
-  projectName: string | null;
+  /** The repository is a local project without remote. */
+  repositoryLocal: boolean;
   branch: string | null;
   baseBranch: string | null;
   baseCommit: string | null;
@@ -50,11 +51,14 @@ export interface SessionRecord {
 
 export type NewSessionDirectory = Pick<
   SessionDirectoryRecord,
-  'path' | 'repositoryId' | 'branch' | 'baseBranch' | 'state' | 'setupStatus'
-> & {
-  /** Set for the directory of the new project. */
-  newProject?: { id: string; name: string };
-};
+  | 'path'
+  | 'kind'
+  | 'repositoryId'
+  | 'branch'
+  | 'baseBranch'
+  | 'state'
+  | 'setupStatus'
+>;
 
 export interface NewSession {
   id: string;
@@ -112,19 +116,9 @@ export class SessionRepository {
       tx.insert(sessions)
         .values({ ...columns, createdAt: now, updatedAt: now })
         .run();
-      directories.forEach(({ newProject, ...directory }, position) => {
-        if (newProject) {
-          tx.insert(projects)
-            .values({ ...newProject, path: directory.path, createdAt: now })
-            .run();
-        }
+      directories.forEach((directory, position) => {
         tx.insert(sessionDirectories)
-          .values({
-            ...directory,
-            sessionId: session.id,
-            position,
-            projectId: newProject?.id ?? null,
-          })
+          .values({ ...directory, sessionId: session.id, position })
           .run();
       });
     });
@@ -170,16 +164,6 @@ export class SessionRepository {
         .select({ id: sessions.id })
         .from(sessions)
         .where(eq(sessions.slug, slug))
-        .get() !== undefined
-    );
-  }
-
-  projectExists(name: string): boolean {
-    return (
-      this.db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(eq(projects.name, name))
         .get() !== undefined
     );
   }
@@ -240,11 +224,11 @@ export class SessionRepository {
         sessionId: sessionDirectories.sessionId,
         position: sessionDirectories.position,
         path: sessionDirectories.path,
+        kind: sessionDirectories.kind,
         repositoryId: sessionDirectories.repositoryId,
         owner: repositories.owner,
         name: repositories.name,
-        projectId: sessionDirectories.projectId,
-        projectName: projects.name,
+        cloneUrl: repositories.cloneUrl,
         branch: sessionDirectories.branch,
         baseBranch: sessionDirectories.baseBranch,
         baseCommit: sessionDirectories.baseCommit,
@@ -256,7 +240,6 @@ export class SessionRepository {
         repositories,
         eq(repositories.id, sessionDirectories.repositoryId),
       )
-      .leftJoin(projects, eq(projects.id, sessionDirectories.projectId))
       .where(
         inArray(
           sessionDirectories.sessionId,
@@ -269,10 +252,23 @@ export class SessionRepository {
       ...row,
       directories: directories
         .filter((directory) => directory.sessionId === row.id)
-        .map(({ sessionId: _sessionId, owner, name, ...directory }) => ({
-          ...directory,
-          repositoryName: owner && name ? `${owner}/${name}` : null,
-        })),
+        .map(
+          ({
+            sessionId,
+            owner,
+            name,
+            cloneUrl,
+            ...directory
+          }): SessionDirectoryRecord => {
+            void sessionId;
+            const known = owner !== null && name !== null;
+            return {
+              ...directory,
+              repositoryName: known ? `${owner}/${name}` : null,
+              repositoryLocal: known && cloneUrl === null,
+            };
+          },
+        ),
     }));
   }
 }

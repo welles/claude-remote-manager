@@ -1,11 +1,17 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
-  GitService,
-  isValidBranchName,
-  parseWorktreeList,
-} from './git.service';
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { join, relative } from 'node:path';
+import { GitService, isValidBranchName, parseRemoteHead } from './git.service';
 import {
   commitFile,
   createOrigin,
@@ -13,126 +19,144 @@ import {
   gitSandbox,
 } from './testing/git-fixtures';
 
+/** Every file, link and directory below `root` with a hash of its content. */
+async function treeSnapshot(root: string): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  const walk = async (dir: string) => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      const key = relative(root, path);
+      if (entry.isDirectory()) {
+        result[key] = 'dir';
+        await walk(path);
+      } else if (entry.isSymbolicLink()) {
+        result[key] = `link:${await readlink(path)}`;
+      } else {
+        result[key] = createHash('sha256')
+          .update(await readFile(path))
+          .digest('hex');
+      }
+    }
+  };
+  await walk(root);
+  return result;
+}
+
+/** Object files (loose objects and packs) below a git directory. */
+async function objectFiles(gitDir: string): Promise<string[]> {
+  const files: string[] = [];
+  const walk = async (dir: string) => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(path);
+      } else if (!entry.name.startsWith('tmp')) {
+        files.push(relative(gitDir, path));
+      }
+    }
+  };
+  await walk(join(gitDir, 'objects'));
+  return files.filter((file) => !file.startsWith('objects/info'));
+}
+
 describe('GitService', () => {
   let sandbox: ReturnType<typeof gitSandbox>;
   let service: GitService;
   let origin: string;
-  let clone: string;
-  let worktrees: string;
+  let mirror: string;
+  let sessions: string;
   let initial: string;
 
-  /** Adds a worktree for a session slug from the fetched `main`. */
+  /** Creates a session clone for a slug from a branch of the mirror. */
   const addSession = async (slug: string, base = 'main') => {
-    const baseCommit = await service.remoteBranchCommit(clone, base);
-    const path = join(worktrees, slug);
-    await service.addWorktree({
-      repoPath: clone,
+    const path = join(sessions, slug, 'acme', 'tool');
+    await service.createSessionClone({
+      mirrorPath: mirror,
       path,
+      remoteUrl: origin,
       branch: `claude/${slug}`,
-      baseCommit,
-      lockReason: `session ${slug}`,
+      baseCommit: await service.branchCommit(mirror, base),
     });
     return path;
   };
 
-  /** Everything that makes up a worktree's state. */
-  const snapshot = async (path: string) => ({
-    head: await git(path, 'rev-parse', 'HEAD'),
-    branch: await git(path, 'symbolic-ref', '--short', 'HEAD'),
-    status: await git(
-      path,
-      'status',
-      '--porcelain=v1',
-      '--untracked-files=all',
-    ),
-    staged: await git(path, 'diff', '--cached', '--name-status'),
-    readme: await readFile(join(path, 'README.md'), 'utf8'),
-  });
-
   beforeEach(async () => {
     sandbox = gitSandbox();
     service = new GitService();
-    origin = join(sandbox.dir, 'origin');
-    clone = join(sandbox.dir, 'repos', 'acme', 'tool');
-    worktrees = join(sandbox.dir, 'worktrees', 'acme', 'tool');
+    origin = join(sandbox.dir, 'remote', 'tool');
+    mirror = join(sandbox.dir, 'workspace', 'repos', 'acme', 'tool');
+    sessions = join(sandbox.dir, 'workspace', 'sessions');
     initial = await createOrigin(origin);
   });
 
   afterEach(() => sandbox.cleanup());
 
-  describe('update', () => {
-    it('clones a bare repository that only has remote-tracking branches', async () => {
+  describe('mirrors', () => {
+    it('clones the remote branches as the mirror’s own branches', async () => {
       await git(origin, 'tag', 'v1');
       await git(origin, 'branch', 'feature');
 
-      const result = await service.update(clone, origin);
+      const result = await service.updateMirror(mirror, origin);
 
-      expect(result).toEqual({ defaultBranch: 'main', cloned: true });
-      expect(await git(clone, 'rev-parse', '--is-bare-repository')).toBe(
+      expect(result).toEqual({ defaultBranch: 'main', created: true });
+      expect(await git(mirror, 'rev-parse', '--is-bare-repository')).toBe(
         'true',
       );
-      expect(await git(clone, 'for-each-ref', '--format=%(refname)')).toBe(
-        [
-          'refs/remotes/origin/HEAD',
-          'refs/remotes/origin/feature',
-          'refs/remotes/origin/main',
-          'refs/tags/v1',
-        ].join('\n'),
+      expect(await git(mirror, 'for-each-ref', '--format=%(refname)')).toBe(
+        ['refs/heads/feature', 'refs/heads/main', 'refs/tags/v1'].join('\n'),
       );
-      expect(await service.remoteBranches(clone)).toEqual(['feature', 'main']);
-      expect(await service.remoteBranchCommit(clone, 'main')).toBe(initial);
-      expect(await service.remoteBranchCommit(clone, 'missing')).toBeNull();
-      expect(await git(clone, 'config', 'core.logAllRefUpdates')).toBe('true');
+      expect(await git(mirror, 'symbolic-ref', 'HEAD')).toBe('refs/heads/main');
+      expect(await service.branches(mirror)).toEqual(['feature', 'main']);
+      expect(await service.branchCommit(mirror, 'main')).toBe(initial);
+      expect(await service.branchCommit(mirror, 'missing')).toBeNull();
+      expect(await git(mirror, 'config', 'receive.denyDeletes')).toBe('true');
     });
 
     it('fetches afterwards, prunes deleted branches and follows the default branch', async () => {
       await git(origin, 'branch', 'old');
-      await service.update(clone, origin);
+      await service.updateMirror(mirror, origin);
       const next = await commitFile(origin, 'a.txt', 'a');
       await git(origin, 'branch', '-D', 'old');
       await git(origin, 'branch', '-m', 'main', 'trunk');
 
-      const result = await service.update(clone, origin);
+      const result = await service.updateMirror(mirror, origin);
 
-      expect(result).toEqual({ defaultBranch: 'trunk', cloned: false });
-      expect(await service.remoteBranches(clone)).toEqual(['trunk']);
-      expect(await service.remoteBranchCommit(clone, 'trunk')).toBe(next);
+      expect(result).toEqual({ defaultBranch: 'trunk', created: false });
+      expect(await service.branches(mirror)).toEqual(['trunk']);
+      expect(await service.branchCommit(mirror, 'trunk')).toBe(next);
     });
 
     it('lets concurrent callers share one update', async () => {
-      const first = service.update(clone, origin);
-      const second = service.update(clone, origin);
+      const first = service.updateMirror(mirror, origin);
+      const second = service.updateMirror(mirror, origin);
 
       expect(second).toBe(first);
-      expect(service.isUpdating(clone)).toBe(true);
+      expect(service.isUpdating(mirror)).toBe(true);
       await first;
-      expect(service.isUpdating(clone)).toBe(false);
+      expect(service.isUpdating(mirror)).toBe(false);
     });
 
     it('leaves nothing behind when cloning fails and cleans up interrupted clones', async () => {
-      await mkdir(join(sandbox.dir, 'repos', 'acme', '.tool.clone-dead'), {
-        recursive: true,
-      });
+      const leftover = join(mirror, '..', '.tool.clone-dead');
+      await mkdir(leftover, { recursive: true });
 
       await expect(
-        service.update(clone, join(sandbox.dir, 'missing')),
+        service.updateMirror(mirror, join(sandbox.dir, 'missing')),
       ).rejects.toThrow('git fetch failed');
 
-      expect(existsSync(clone)).toBe(false);
-      expect(
-        existsSync(join(sandbox.dir, 'repos', 'acme', '.tool.clone-dead')),
-      ).toBe(false);
+      expect(existsSync(mirror)).toBe(false);
+      expect(existsSync(leftover)).toBe(false);
     });
 
-    it('refuses to fetch into a clone of another remote or a foreign directory', async () => {
-      await service.update(clone, origin);
-      await expect(service.update(clone, '/elsewhere/tool')).rejects.toThrow(
-        'is a clone of',
-      );
+    it('refuses to fetch into a mirror of another remote or a foreign directory', async () => {
+      await service.updateMirror(mirror, origin);
+      await expect(
+        service.updateMirror(mirror, '/elsewhere/tool'),
+      ).rejects.toThrow('is a mirror of');
 
-      const plain = join(sandbox.dir, 'repos', 'acme', 'plain');
+      const plain = join(mirror, '..', 'plain');
       await mkdir(plain, { recursive: true });
-      await expect(service.update(plain, origin)).rejects.toThrow(
+      await expect(service.updateMirror(plain, origin)).rejects.toThrow(
         'is not a bare repository',
       );
     });
@@ -141,75 +165,133 @@ describe('GitService', () => {
       const empty = join(sandbox.dir, 'empty');
       await git(sandbox.dir, 'init', '--quiet', '--bare', '--', empty);
 
-      expect(await service.update(clone, empty)).toEqual({
+      expect(await service.updateMirror(mirror, empty)).toEqual({
         defaultBranch: null,
-        cloned: true,
+        created: true,
       });
-      expect(await service.isEmpty(clone)).toBe(true);
+      expect(await service.isEmpty(mirror)).toBe(true);
+    });
+
+    it('creates the mirror of a local project without remote', async () => {
+      const project = join(sandbox.dir, 'workspace', 'repos', 'local', 'app');
+
+      expect(await service.updateMirror(project, null)).toEqual({
+        defaultBranch: 'main',
+        created: true,
+      });
+      expect(await service.updateMirror(project, null)).toEqual({
+        defaultBranch: 'main',
+        created: false,
+      });
+      expect(await service.isEmpty(project)).toBe(true);
+      await expect(git(project, 'remote')).resolves.toBe('');
     });
   });
 
-  describe('worktrees', () => {
-    beforeEach(() => service.update(clone, origin));
+  describe('session clones', () => {
+    beforeEach(() => service.updateMirror(mirror, origin));
 
-    it('creates a locked worktree on a new branch at the base commit', async () => {
+    it('creates an independent clone with hardlinked objects on the session branch', async () => {
+      await git(origin, 'tag', 'v1');
+      await service.updateMirror(mirror, origin);
+
       const path = await addSession('fix-login-abc123');
 
-      expect(await snapshot(path)).toMatchObject({
-        head: initial,
-        branch: 'claude/fix-login-abc123',
-        status: '',
-      });
-      // No upstream: the session branch never pulls or pushes main.
+      expect(await git(path, 'symbolic-ref', '--short', 'HEAD')).toBe(
+        'claude/fix-login-abc123',
+      );
+      expect(await git(path, 'rev-parse', 'HEAD')).toBe(initial);
+      expect(await git(path, 'status', '--porcelain')).toBe('');
+      // origin is the real remote, with the mirror's state as origin/*.
+      expect(await git(path, 'remote', 'get-url', 'origin')).toBe(origin);
+      expect(await git(path, 'rev-parse', 'origin/main')).toBe(initial);
+      expect(await git(path, 'symbolic-ref', 'refs/remotes/origin/HEAD')).toBe(
+        'refs/remotes/origin/main',
+      );
+      expect(await git(path, 'tag')).toBe('v1');
+      expect(await git(path, 'branch', '--format=%(refname:short)')).toBe(
+        'claude/fix-login-abc123',
+      );
       await expect(
         git(path, 'rev-parse', '--abbrev-ref', '@{upstream}'),
       ).rejects.toThrow();
-      expect(await service.listWorktrees(clone)).toEqual([
-        {
-          path,
-          head: initial,
-          branch: 'claude/fix-login-abc123',
-          locked: true,
-          prunable: false,
-        },
-      ]);
+      // Own objects, hardlinked, no alternates.
+      expect(existsSync(join(path, '.git/objects/info/alternates'))).toBe(
+        false,
+      );
+      const files = await objectFiles(mirror);
+      expect(files.length).toBeGreaterThan(0);
+      for (const file of files) {
+        const [inMirror, inClone] = await Promise.all([
+          stat(join(mirror, file)),
+          stat(join(path, '.git', file)),
+        ]);
+        expect(inClone.ino).toBe(inMirror.ino);
+        expect(inMirror.nlink).toBeGreaterThanOrEqual(2);
+      }
+      // The mirror's settings stay in the mirror.
+      await expect(
+        git(path, 'config', '--get', 'receive.denyDeletes'),
+      ).rejects.toThrow();
     });
 
-    it('creates worktrees from another base branch', async () => {
+    it('creates sessions from another base branch', async () => {
       await git(origin, 'checkout', '--quiet', '-b', 'release');
       const release = await commitFile(origin, 'r.txt', 'r');
-      await service.update(clone, origin);
+      await service.updateMirror(mirror, origin);
 
       const path = await addSession('s-1', 'release');
 
       expect(await git(path, 'rev-parse', 'HEAD')).toBe(release);
     });
 
-    it('creates an orphan worktree for an empty repository', async () => {
+    it('starts an unborn session branch in an empty repository', async () => {
       const empty = join(sandbox.dir, 'empty');
-      const emptyClone = join(sandbox.dir, 'repos', 'acme', 'empty');
       await git(sandbox.dir, 'init', '--quiet', '--bare', '--', empty);
-      await service.update(emptyClone, empty);
-      const path = join(sandbox.dir, 'worktrees', 'acme', 'empty', 's');
+      const emptyMirror = join(
+        sandbox.dir,
+        'workspace',
+        'repos',
+        'acme',
+        'empty',
+      );
+      await service.updateMirror(emptyMirror, empty);
+      const path = join(sessions, 's', 'acme', 'empty');
 
-      await service.addWorktree({
-        repoPath: emptyClone,
+      await service.createSessionClone({
+        mirrorPath: emptyMirror,
         path,
+        remoteUrl: empty,
         branch: 'claude/s',
         baseCommit: null,
-        lockReason: 'session s',
       });
 
-      expect(await git(path, 'symbolic-ref', '--short', 'HEAD')).toBe(
-        'claude/s',
-      );
+      expect(await service.currentBranch(path)).toBe('claude/s');
       await commitFile(path, 'first.txt', '1');
-      expect(await service.branchExists(emptyClone, 'claude/s')).toBe(true);
+      expect(await git(path, 'log', '--format=%s')).toBe('Change first.txt');
+    });
+
+    it('refuses existing directories and removes the clone when it fails', async () => {
+      const taken = await addSession('taken');
+      await expect(addSession('taken')).rejects.toThrow('already exists');
+      expect(await service.currentBranch(taken)).toBe('claude/taken');
+
+      const path = join(sessions, 'broken', 'acme', 'tool');
+      await expect(
+        service.createSessionClone({
+          mirrorPath: mirror,
+          path,
+          remoteUrl: origin,
+          branch: 'claude/broken',
+          baseCommit: '0'.repeat(40),
+        }),
+      ).rejects.toThrow('git checkout failed');
+      expect(existsSync(path)).toBe(false);
     });
 
     it('does not run repository hooks', async () => {
       const marker = join(sandbox.dir, 'hook-ran');
-      const hook = join(clone, 'hooks', 'post-checkout');
+      const hook = join(mirror, 'hooks', 'post-checkout');
       await writeFile(hook, `#!/bin/sh\ntouch '${marker}'\n`);
       await chmod(hook, 0o755);
 
@@ -218,88 +300,18 @@ describe('GitService', () => {
       expect(existsSync(marker)).toBe(false);
     });
 
-    it('refuses an existing branch and leaves no branch behind on failure', async () => {
-      await addSession('taken');
-      await expect(addSession('taken')).rejects.toThrow('already exists');
-
-      const occupied = join(worktrees, 'occupied');
-      await mkdir(occupied, { recursive: true });
-      await writeFile(join(occupied, 'file'), 'x');
-      await expect(addSession('occupied')).rejects.toThrow(
-        'git worktree failed',
-      );
-      expect(await service.branchExists(clone, 'claude/occupied')).toBe(false);
-      expect(await readFile(join(occupied, 'file'), 'utf8')).toBe('x');
-    });
-
-    it('removes a worktree, refusing dirty ones unless forced', async () => {
+    it('removes a session clone by deleting it', async () => {
       const path = await addSession('remove-me');
-      await writeFile(join(path, 'scratch.txt'), 'untracked');
-
-      await expect(service.removeWorktree(clone, path)).rejects.toThrow(
-        'git worktree failed',
-      );
-      // Still there and locked again.
-      expect((await service.listWorktrees(clone))[0]).toMatchObject({
-        path,
-        locked: true,
-      });
-
-      await service.removeWorktree(clone, path, { force: true });
+      await service.removeSessionClone(path);
       expect(existsSync(path)).toBe(false);
-      expect(await service.listWorktrees(clone)).toEqual([]);
-      // The branch is kept until it is deleted explicitly.
-      expect(await service.branchExists(clone, 'claude/remove-me')).toBe(true);
-      await service.deleteBranch(clone, 'claude/remove-me');
-      expect(await service.branchExists(clone, 'claude/remove-me')).toBe(false);
-      // Removing again is a no-op.
-      await service.removeWorktree(clone, path);
-    });
-
-    it('unregisters a worktree whose directory is gone without pruning locked ones', async () => {
-      const gone = await addSession('gone');
-      const away = await addSession('away');
-      await rename(gone, `${gone}-deleted`);
-      await rename(away, `${away}-unmounted`);
-      // What `git gc` does; locked worktrees survive it.
-      await git(clone, 'worktree', 'prune');
-      expect(
-        (await service.listWorktrees(clone)).map((entry) => entry.path).sort(),
-      ).toEqual([away, gone].sort());
-
-      await service.removeWorktree(clone, gone);
-
-      const remaining = await service.listWorktrees(clone);
-      expect(remaining).toEqual([
-        // Git does not even report locked worktrees as prunable.
-        expect.objectContaining({ path: away, locked: true, prunable: false }),
-      ]);
-    });
-
-    it('refuses to remove a directory that is not a worktree', async () => {
-      const foreign = join(worktrees, 'foreign');
-      await mkdir(foreign, { recursive: true });
-      await expect(service.removeWorktree(clone, foreign)).rejects.toThrow(
-        'is not a worktree',
-      );
-      expect(existsSync(foreign)).toBe(true);
-    });
-
-    it('refuses to delete a branch that a worktree has checked out', async () => {
-      await addSession('busy');
-      await expect(service.deleteBranch(clone, 'claude/busy')).rejects.toThrow(
-        'git branch failed',
-      );
-      await expect(service.deleteBranch(clone, '--force')).rejects.toThrow(
-        'not a valid branch name',
-      );
+      await service.removeSessionClone(path);
     });
   });
 
   describe('isolation of sessions in the same repository', () => {
-    beforeEach(() => service.update(clone, origin));
+    beforeEach(() => service.updateMirror(mirror, origin));
 
-    it('creates many worktrees concurrently, with fetches in between', async () => {
+    it('creates many session clones concurrently while the mirror fetches', async () => {
       const slugs = Array.from(
         { length: 8 },
         (_, index) => `parallel-${index}`,
@@ -308,106 +320,192 @@ describe('GitService', () => {
 
       const results = await Promise.allSettled([
         ...slugs.map((slug) => addSession(slug)),
-        service.update(clone, origin),
-        remoteCommit.then(() => service.update(clone, origin)),
+        service.updateMirror(mirror, origin),
+        remoteCommit.then(() => service.updateMirror(mirror, origin)),
       ]);
 
       expect(results.filter((result) => result.status === 'rejected')).toEqual(
         [],
       );
-      const listed = await service.listWorktrees(clone);
-      expect(listed.map((entry) => entry.branch).sort()).toEqual(
-        slugs.map((slug) => `claude/${slug}`).sort(),
-      );
-      expect(new Set(listed.map((entry) => entry.path)).size).toBe(
-        slugs.length,
-      );
-      expect(await service.remoteBranchCommit(clone, 'main')).toBe(
+      for (const slug of slugs) {
+        const path = join(sessions, slug, 'acme', 'tool');
+        expect(await service.currentBranch(path)).toBe(`claude/${slug}`);
+        expect(await git(path, 'status', '--porcelain')).toBe('');
+        await git(path, 'fsck', '--no-progress');
+      }
+      expect(await service.branchCommit(mirror, 'main')).toBe(
         await remoteCommit,
       );
-      for (const entry of listed) {
-        expect(await git(entry.path, 'status', '--porcelain')).toBe('');
-      }
     });
 
-    it('keeps files, index, HEAD and branch of one session untouched by the others', async () => {
+    it('keeps the mirror and other sessions byte-for-byte unchanged by shared-state commands in one session', async () => {
       const a = await addSession('session-a');
       const b = await addSession('session-b');
       await writeFile(join(b, 'README.md'), '# Changed by B, not committed\n');
       await writeFile(join(b, 'staged.txt'), 'staged in B');
       await git(b, 'add', 'staged.txt');
-      const before = await snapshot(b);
+      await git(b, 'stash', 'list');
+      const beforeB = await treeSnapshot(b);
+      const beforeMirror = await treeSnapshot(mirror);
 
-      // Session A works: commits, stages, creates and switches branches.
-      await commitFile(a, 'README.md', '# A\n', 'A changes README');
-      await writeFile(join(a, 'only-a.txt'), 'a');
-      await git(a, 'add', 'only-a.txt');
-      await git(a, 'checkout', '--quiet', '-b', 'claude/session-a-2');
-      // A cannot take over B's branch.
-      await expect(
-        git(a, 'checkout', '--quiet', 'claude/session-b'),
-      ).rejects.toThrow();
-      // The app fetches new remote commits and creates a third session.
-      await commitFile(origin, 'README.md', '# Remote\n');
-      await service.update(clone, origin);
-      const c = await addSession('session-c');
-      // And removes A with its branch.
-      await service.removeWorktree(clone, a, { force: true });
-      await service.deleteBranch(clone, 'claude/session-a-2');
+      // Session A does everything that linked worktrees would share.
+      await writeFile(join(a, 'README.md'), '# work in progress\n');
+      await git(a, 'stash', 'push', '--quiet');
+      await git(a, 'tag', 'v1');
+      await git(a, 'tag', '-f', 'v1', 'HEAD');
+      await git(a, 'tag', '-d', 'v1');
+      await git(a, 'config', 'core.hooksPath', '.husky');
+      await git(a, 'config', 'user.name', 'Somebody else');
+      await writeFile(
+        join(a, '.git', 'hooks', 'pre-commit'),
+        '#!/bin/sh\nexit 1\n',
+      );
+      await git(a, 'branch', 'claude/session-b');
+      await git(a, 'branch', 'main', 'origin/main');
+      await git(a, 'branch', '-D', 'claude/session-b');
+      await git(a, 'checkout', '--quiet', 'main');
+      await commitFile(a, 'a.txt', 'a', 'Commit on A’s main');
+      await git(a, 'worktree', 'add', '--quiet', join(sandbox.dir, 'a-extra'));
+      await git(a, 'worktree', 'remove', join(sandbox.dir, 'a-extra'));
+      await git(a, 'reflog', 'expire', '--expire=now', '--all');
+      await git(a, 'gc', '--quiet', '--prune=now');
+      await git(a, 'remote', 'set-url', 'origin', '/somewhere/else');
 
-      expect(await snapshot(b)).toEqual(before);
+      expect(await treeSnapshot(b)).toEqual(beforeB);
+      expect(await treeSnapshot(mirror)).toEqual(beforeMirror);
+      expect(await git(b, 'stash', 'list')).toBe('');
+      expect(await git(b, 'tag')).toBe('');
       expect(await git(b, 'rev-parse', 'HEAD')).toBe(initial);
-      expect(await readFile(join(c, 'README.md'), 'utf8')).toBe('# Remote\n');
-      expect(await git(clone, 'rev-parse', 'refs/heads/claude/session-b')).toBe(
-        initial,
-      );
+      expect(await service.currentBranch(b)).toBe('claude/session-b');
+      await git(b, 'fsck', '--no-progress');
     });
 
-    it('keeps session branches when fetching, also if the remote has a branch of that name', async () => {
-      const a = await addSession('same-name');
-      const local = await commitFile(a, 'local.txt', 'local');
-      await git(origin, 'branch', 'claude/same-name');
-      await commitFile(origin, 'remote.txt', 'remote');
-
-      await service.update(clone, origin);
-
-      expect(await git(clone, 'rev-parse', 'refs/heads/claude/same-name')).toBe(
-        local,
-      );
-      expect(await git(a, 'rev-parse', 'HEAD')).toBe(local);
-      expect(await service.remoteBranches(clone)).toContain('claude/same-name');
-    });
-
-    it('removes one session worktree while another keeps working', async () => {
-      const a = await addSession('stay');
-      const b = await addSession('leave');
-      await writeFile(join(a, 'work.txt'), 'in progress');
+    it('lets one session work while another session’s clone is deleted', async () => {
+      const a = await addSession('leave');
+      const b = await addSession('stay');
+      await writeFile(join(b, 'work.txt'), 'in progress');
 
       await Promise.all([
-        service.removeWorktree(clone, b, { force: true }),
-        commitFile(a, 'work.txt', 'in progress'),
-        service.update(clone, origin),
+        service.removeSessionClone(a),
+        commitFile(b, 'work.txt', 'in progress'),
+        service.updateMirror(mirror, origin),
       ]);
 
-      expect(existsSync(b)).toBe(false);
-      expect(await git(a, 'status', '--porcelain')).toBe('');
-      expect(await git(a, 'log', '--format=%s', '-1')).toBe('Change work.txt');
-      expect((await service.listWorktrees(clone)).map((w) => w.path)).toEqual([
-        a,
-      ]);
+      expect(existsSync(a)).toBe(false);
+      expect(await git(b, 'log', '--format=%s', '-1')).toBe('Change work.txt');
+      await git(b, 'fsck', '--no-progress');
+    });
+
+    it('keeps existing session clones intact when the mirror is garbage-collected', async () => {
+      const path = await addSession('before-gc');
+      await commitFile(origin, 'more.txt', 'more');
+      await service.updateMirror(mirror, origin);
+      await git(mirror, 'repack', '-a', '-d', '--quiet');
+      await git(mirror, 'gc', '--quiet', '--prune=now');
+
+      await git(path, 'fsck', '--full', '--no-progress');
+      expect(await git(path, 'log', '--format=%s')).toBe('Initial commit');
+      const after = await addSession('after-gc');
+      expect(await git(after, 'log', '--format=%s', '-1')).toBe(
+        'Change more.txt',
+      );
     });
   });
 
-  describe('initProject', () => {
-    it('creates an empty repository on main and refuses existing directories', async () => {
-      const path = join(sandbox.dir, 'projects', 'new-app');
+  describe('local projects', () => {
+    let project: string;
+    const addProjectSession = async (slug: string) => {
+      const path = join(sessions, slug, 'local', 'app');
+      await service.createSessionClone({
+        mirrorPath: project,
+        path,
+        remoteUrl: null,
+        branch: `claude/${slug}`,
+        baseCommit: await service.branchCommit(project, 'main'),
+      });
+      return path;
+    };
 
-      await service.initProject(path);
-
-      expect(await git(path, 'symbolic-ref', '--short', 'HEAD')).toBe('main');
-      expect(await git(path, 'rev-parse', '--show-toplevel')).toBe(path);
-      await expect(service.initProject(path)).rejects.toThrow('EEXIST');
+    beforeEach(async () => {
+      project = join(sandbox.dir, 'workspace', 'repos', 'local', 'app');
+      await service.updateMirror(project, null);
     });
+
+    it('shows a session’s work to later sessions only after it was integrated', async () => {
+      const first = await addProjectSession('first');
+      expect(await git(first, 'remote', 'get-url', 'origin')).toBe(project);
+      const work = await commitFile(first, 'app.txt', 'v1', 'First version');
+      const second = await addProjectSession('second');
+      expect(existsSync(join(second, 'app.txt'))).toBe(false);
+
+      expect(
+        await service.fastForwardMirror({
+          mirrorPath: project,
+          clonePath: first,
+          sourceBranch: 'claude/first',
+          targetBranch: 'main',
+        }),
+      ).toBe(work);
+
+      const third = await addProjectSession('third');
+      expect(await readFile(join(third, 'app.txt'), 'utf8')).toBe('v1');
+      expect(existsSync(join(second, 'app.txt'))).toBe(false);
+    });
+
+    it('refuses to integrate what is not a fast-forward, and pushes that rewrite or delete', async () => {
+      const first = await addProjectSession('first');
+      await commitFile(first, 'app.txt', 'v1');
+      await service.fastForwardMirror({
+        mirrorPath: project,
+        clonePath: first,
+        sourceBranch: 'claude/first',
+        targetBranch: 'main',
+      });
+      const second = await addProjectSession('second');
+      await commitFile(first, 'app.txt', 'v2');
+      await service.fastForwardMirror({
+        mirrorPath: project,
+        clonePath: first,
+        sourceBranch: 'claude/first',
+        targetBranch: 'main',
+      });
+      await commitFile(second, 'other.txt', 'diverged');
+
+      await expect(
+        service.fastForwardMirror({
+          mirrorPath: project,
+          clonePath: second,
+          sourceBranch: 'claude/second',
+          targetBranch: 'main',
+        }),
+      ).rejects.toThrow('git fetch failed');
+      await expect(
+        git(second, 'push', '--quiet', '--force', 'origin', 'HEAD:main'),
+      ).rejects.toThrow();
+      await expect(
+        git(first, 'push', '--quiet', 'origin', ':main'),
+      ).rejects.toThrow();
+    });
+
+    it('refuses to integrate into a repository with a remote', async () => {
+      await service.updateMirror(mirror, origin);
+      const path = await addSession('remote');
+      await expect(
+        service.fastForwardMirror({
+          mirrorPath: mirror,
+          clonePath: path,
+          sourceBranch: 'claude/remote',
+          targetBranch: 'main',
+        }),
+      ).rejects.toThrow('pushing to it');
+    });
+  });
+
+  it('keeps clones usable after their files are removed from the mirror', async () => {
+    await service.updateMirror(mirror, origin);
+    const path = await addSession('survivor');
+    await rm(mirror, { recursive: true, force: true });
+    await git(path, 'fsck', '--full', '--no-progress');
   });
 });
 
@@ -438,39 +536,11 @@ describe('isValidBranchName', () => {
   ])('refuses %j', (name) => expect(isValidBranchName(name)).toBe(false));
 });
 
-describe('parseWorktreeList', () => {
-  it('reads the porcelain format without the bare entry', () => {
-    const output = [
-      'worktree /repos/a',
-      'bare',
-      '',
-      'worktree /wt/a/one',
-      'HEAD 1111111111111111111111111111111111111111',
-      'branch refs/heads/claude/one',
-      'locked session one',
-      '',
-      'worktree /wt/a/two',
-      'HEAD 2222222222222222222222222222222222222222',
-      'detached',
-      'prunable gitdir file points to non-existent location',
-      '',
-    ].join('\n');
-
-    expect(parseWorktreeList(output)).toEqual([
-      {
-        path: '/wt/a/one',
-        head: '1111111111111111111111111111111111111111',
-        branch: 'claude/one',
-        locked: true,
-        prunable: false,
-      },
-      {
-        path: '/wt/a/two',
-        head: '2222222222222222222222222222222222222222',
-        branch: null,
-        locked: false,
-        prunable: true,
-      },
-    ]);
+describe('parseRemoteHead', () => {
+  it('reads the default branch from ls-remote --symref', () => {
+    expect(parseRemoteHead('ref: refs/heads/trunk\tHEAD\nabc123\tHEAD\n')).toBe(
+      'trunk',
+    );
+    expect(parseRemoteHead('')).toBeNull();
   });
 });

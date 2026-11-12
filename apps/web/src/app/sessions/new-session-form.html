@@ -26,6 +26,9 @@
       <mat-button-toggle value="project" data-testid="mode-project"
         >New project</mat-button-toggle
       >
+      <mat-button-toggle value="scratch" data-testid="mode-scratch"
+        >No repository</mat-button-toggle
+      >
     </mat-button-toggle-group>
 
     @if (mode() === 'project') {
@@ -40,9 +43,17 @@
         spellcheck="false"
         data-testid="project-name"
       />
-      <mat-hint>New directory with an empty git repository</mat-hint>
+      <mat-hint
+        >New local repository without remote; later sessions can work on it
+        too</mat-hint
+      >
     </mat-form-field>
-    } @if (repositoriesLoaded() && repositories().length === 0) {
+    } @if (mode() === 'scratch') {
+    <p class="hint">
+      The session gets an empty directory of its own, without git.
+    </p>
+    } @if (mode() !== 'scratch' && repositoriesLoaded() && repositories().length
+    === 0) {
     <p class="hint">
       No repositories registered yet.
       <a routerLink="/repositories">Add one</a> to work on it.
@@ -72,7 +83,8 @@
                 repository.id !== choice.repositoryId &&
                 chosenIds().has(repository.id)
               "
-              >{{ repository.fullName }}</mat-option
+              >{{ repository.fullName }}@if (repository.local) { (local project)
+              }</mat-option
             >
             }
           </mat-select>
@@ -109,7 +121,7 @@
         }
       </div>
     </div>
-    } @if (repositories().length > choices().length) {
+    } @if (mode() !== 'scratch' && repositories().length > choices().length) {
     <button
       matButton
       type="button"

@@ -61,13 +61,13 @@ describe('SessionRepository', () => {
     expect(repository.get('session-1')).toEqual(created);
   });
 
-  it('creates worktree and project directories with their repository and project', () => {
+  it('creates clone and scratch directories with their repository', () => {
     new RepositoryRepository(db).create({
       id: REPO_ID,
-      owner: 'acme',
-      name: 'tool',
-      cloneUrl: 'https://github.com/acme/tool.git',
-      localPath: '/repos/acme/tool',
+      owner: 'local',
+      name: 'app',
+      cloneUrl: null,
+      localPath: '/workspace/repos/local/app',
       setupScript: null,
     });
     const created = repository.create(
@@ -77,17 +77,18 @@ describe('SessionRepository', () => {
         pendingMessage: { id: 'm1', text: 'Fix it' },
         directories: [
           {
-            ...plainDirectory('/projects/new-app'),
-            state: 'pending',
-            newProject: { id: 'p1', name: 'new-app' },
-          },
-          {
-            path: '/worktrees/acme/tool/fix-it-abc123',
+            path: '/workspace/sessions/fix-it-abc123/local/app',
+            kind: 'clone',
             repositoryId: REPO_ID,
             branch: 'claude/fix-it-abc123',
             baseBranch: 'release',
             state: 'pending',
             setupStatus: 'pending',
+          },
+          {
+            ...plainDirectory('/workspace/scratch/fix-it-abc123'),
+            kind: 'scratch',
+            state: 'pending',
           },
         ],
       }),
@@ -96,22 +97,24 @@ describe('SessionRepository', () => {
     expect(created.pendingMessage).toEqual({ id: 'm1', text: 'Fix it' });
     expect(created.directories).toEqual([
       expect.objectContaining({
-        projectId: 'p1',
-        projectName: 'new-app',
-        repositoryId: null,
-        state: 'pending',
-      }),
-      expect.objectContaining({
+        kind: 'clone',
         repositoryId: REPO_ID,
-        repositoryName: 'acme/tool',
+        repositoryName: 'local/app',
+        repositoryLocal: true,
         branch: 'claude/fix-it-abc123',
         baseBranch: 'release',
         baseCommit: null,
         setupStatus: 'pending',
       }),
+      expect.objectContaining({
+        kind: 'scratch',
+        repositoryId: null,
+        repositoryName: null,
+        repositoryLocal: false,
+        state: 'pending',
+      }),
     ]);
     expect(repository.slugExists('fix-it-abc123')).toBe(true);
-    expect(repository.projectExists('new-app')).toBe(true);
     expect(repository.listByStatus('preparing').map((s) => s.id)).toEqual([
       'session-1',
     ]);
@@ -119,31 +122,26 @@ describe('SessionRepository', () => {
     const later = new Date('2026-01-02T00:00:00Z');
     const updated = repository.updateDirectory(
       'session-1',
-      1,
+      0,
       { state: 'ready', baseCommit: 'abc', setupStatus: 'succeeded' },
       later,
     );
-    expect(updated.directories[1]).toMatchObject({
+    expect(updated.directories[0]).toMatchObject({
       state: 'ready',
       baseCommit: 'abc',
       setupStatus: 'succeeded',
     });
     expect(updated.updatedAt).toEqual(later);
 
-    // The same branch of a repository cannot belong to two sessions.
+    // A session cannot have the same repository twice.
+    const clone = updated.directories[0];
     expect(() =>
       repository.create(
         newSessionRecord({
           id: 'session-2',
           directories: [
-            {
-              path: '/elsewhere',
-              repositoryId: REPO_ID,
-              branch: 'claude/fix-it-abc123',
-              baseBranch: null,
-              state: 'pending',
-              setupStatus: 'none',
-            },
+            { ...clone, path: '/a' },
+            { ...clone, path: '/b' },
           ],
         }),
       ),

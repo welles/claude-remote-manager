@@ -3,16 +3,18 @@
  * internal detail: it is closed when idle or when the server stops and
  * restarted (resumed) with the next message without a status change.
  *
- * - `preparing`: the session's worktrees (or new project) are being created
- *   and the setup scripts run; the first message goes to Claude afterwards.
- *   Further messages are refused until then. Progress arrives as
+ * - `preparing`: the session's clones (or scratch directory) are being
+ *   created and the setup scripts run; the first message goes to Claude
+ *   afterwards. Messages are refused until then. Progress arrives as
  *   `prepare.progress`, `setup.output` and `setup.result` events. Ends in
- *   `running`, or in `failed` if a worktree could not be created (all
- *   worktrees of the session are removed again then). A failing setup script
- *   does not fail the session.
+ *   `running`; in `failed` if a clone could not be created (all of the
+ *   session's directories are removed again then); or in `waiting` with
+ *   `pendingMessage` set if a setup script failed.
  * - `running`: Claude is working on a turn.
  * - `waiting`: waits for the next user message (later also for a
- *   permission answer).
+ *   permission answer). With `pendingMessage` set, the first message has
+ *   not been sent because a setup script failed: the user sends it anyway,
+ *   runs the failed setup scripts again, or ends the session.
  * - `finished`: ended explicitly (later also by PR autoclose). Sending a
  *   message resumes the session.
  * - `failed`: the process could not start or ended with an error during a
@@ -76,7 +78,7 @@ export interface ContextUsage {
 export type SessionDirectoryState = 'pending' | 'ready' | 'failed' | 'removed';
 
 /**
- * Setup script of a worktree: `none` without script, `pending` before it
+ * Setup script of a session clone: `none` without script, `pending` before it
  * runs, then `running` and `succeeded`, `failed` (non-zero exit or could not
  * start), `timed_out`, or `skipped` (preparation stopped before it ran).
  */
@@ -90,27 +92,29 @@ export type SetupStatus =
   | 'skipped';
 
 /**
+ * Kind of a session directory:
+ * - `clone`: the session's own clone of a registered repository (or local
+ *   project) on the session branch;
+ * - `scratch`: an empty directory of its own, without git;
+ * - `directory`: a plain directory (sessions created before session clones
+ *   existed).
+ */
+export type SessionDirectoryKind = 'clone' | 'scratch' | 'directory';
+
+/**
  * A directory of a session. The first (`role: 'main'`) is the working
  * directory; the others are additional directories Claude may access.
- *
- * - `worktree`: worktree of a registered repository on its own branch;
- * - `project`: a new project without repository (`git init` in
- *   `PROJECTS_DIR/<name>`), the session works directly in it;
- * - `directory`: a plain directory (sessions created before worktrees
- *   existed).
  */
 export interface SessionDirectoryDto {
   role: 'main' | 'additional';
-  kind: 'worktree' | 'project' | 'directory';
+  kind: SessionDirectoryKind;
   path: string;
   state: SessionDirectoryState;
-  /** Repository of a worktree. */
-  repository: { id: string; fullName: string } | null;
-  /** Name of a new project. */
-  projectName: string | null;
-  /** Branch of the worktree, `claude/<session-slug>`. */
+  /** Repository of a clone. */
+  repository: { id: string; fullName: string; local: boolean } | null;
+  /** Branch of the clone, `claude/<session-slug>`. */
   branch: string | null;
-  /** Remote branch the worktree was created from. */
+  /** Branch of the mirror the clone's branch was created from. */
   baseBranch: string | null;
   /**
    * Commit the branch started at, for diffs against the session's starting
@@ -135,10 +139,15 @@ export interface SessionDto {
   permissionMode: SessionPermissionMode;
   status: SessionStatus;
   /**
-   * Readable unique name, used for worktree directories and branches;
-   * `null` for sessions created before worktrees existed.
+   * Readable unique name, used for the session's directories and branches;
+   * `null` for sessions created before session clones existed.
    */
   slug: string | null;
+  /**
+   * The first message while it has not been sent to Claude: during the
+   * preparation, and afterwards if a setup script failed.
+   */
+  pendingMessage: string | null;
   /** Directories of the session; the first is the working directory. */
   directories: SessionDirectoryDto[];
   /** Working directory: path of the first directory. */
@@ -158,30 +167,35 @@ export interface SessionDto {
 /** A repository a new session works on. */
 export interface SessionRepositoryRequest {
   repositoryId: string;
-  /** Remote branch to start from; the repository's default branch if unset. */
+  /** Branch to start from; the repository's default branch if unset. */
   baseBranch?: string;
 }
 
 /**
- * Body of `POST /api/sessions`. A session works either in a main
- * repository (the first entry of `repositories`) or in a new project
- * (`newProject`), plus any further repositories. Each repository gets its
- * own worktree on a new branch `claude/<slug>`.
+ * Body of `POST /api/sessions`. A session works in a main repository (the
+ * first entry of `repositories`, or `newProject`), plus any further
+ * repositories; each gets its own clone on a new branch `claude/<slug>`.
+ * Or, with `scratch`, in an empty directory of its own without git.
  */
 export interface CreateSessionRequest {
-  /** First user message; sent once the worktrees are ready. */
+  /** First user message; sent once the session's directories are ready. */
   prompt: string;
   title?: string;
   /** Model name or alias such as `sonnet`, `opus` or `haiku`. */
   model?: string;
   permissionMode?: SessionPermissionMode;
   /**
-   * Repositories in order. Without `newProject` the first one is the main
-   * repository (working directory); the others are additional directories.
+   * Repositories (and local projects) in order. Without `newProject` the
+   * first one is the main repository (working directory).
    */
   repositories?: SessionRepositoryRequest[];
-  /** Start in a new, empty project: `git init` in `PROJECTS_DIR/<name>`. */
+  /**
+   * Create the local project `local/<name>` (a repository without remote)
+   * and make it the main repository.
+   */
   newProject?: { name: string };
+  /** Work in an empty scratch directory without repository. */
+  scratch?: boolean;
 }
 
 /** Response of `GET /api/sessions`, newest first. */

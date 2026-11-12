@@ -52,8 +52,8 @@
             >{{ directory.role === 'main' ? 'working directory' : 'additional'
             }}</span
           >
-          @if (directory.kind === 'project') {
-          <span class="tag">new project</span>
+          @if (directory.repository?.local) {
+          <span class="tag">local project</span>
           } @if (directory.state !== 'ready') {
           <span class="tag tag-{{ directory.state }}"
             >{{ directory.state }}</span
@@ -162,12 +162,45 @@
   } } } @if (running()) {
   <p class="working">Claude is working…</p>
   } @else if (preparing()) {
-  <p class="working">Preparing the worktrees…</p>
+  <p class="working">Preparing the session…</p>
   }
 </section>
 
 <footer class="composer">
-  @if (error(); as message) {
+  @if (heldBack()) {
+  <div class="held-back" data-testid="held-back">
+    <p>
+      A setup script failed, so the first message has not been sent to Claude
+      yet. Check its output above, then decide:
+    </p>
+    <div class="buttons">
+      <button
+        matButton="filled"
+        (click)="sendPending()"
+        [disabled]="!connected()"
+        data-testid="send-pending"
+      >
+        Send anyway
+      </button>
+      <button
+        matButton="outlined"
+        (click)="rerunSetup()"
+        [disabled]="!connected()"
+        data-testid="rerun-setup"
+      >
+        Run setup again
+      </button>
+      <button
+        matButton
+        (click)="end()"
+        [disabled]="!connected()"
+        data-testid="end-pending"
+      >
+        End session
+      </button>
+    </div>
+  </div>
+  } @if (error(); as message) {
   <p class="error" data-testid="error">{{ message }}</p>
   }
   <div class="composer-row">
@@ -195,7 +228,7 @@
       <button
         matButton="filled"
         (click)="send()"
-        [disabled]="!draft().trim() || !connected() || preparing()"
+        [disabled]="!draft().trim() || !connected() || preparing() || heldBack()"
         data-testid="send"
       >
         Send

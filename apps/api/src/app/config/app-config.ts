@@ -5,12 +5,17 @@ import { join, resolve } from 'node:path';
 export interface AppConfig {
   /** Directory of the SQLite database. */
   dbDir: string;
-  /** Shared bare clones: `<reposDir>/<owner>/<name>`. */
+  /**
+   * Volume with everything sessions work on. Its subdirectories must be on
+   * one filesystem, so that session clones hardlink the mirrors' objects.
+   */
+  workspaceDir: string;
+  /** Mirrors (bare): `<reposDir>/<owner>/<name>`; local projects: `local/<name>`. */
   reposDir: string;
-  /** Session worktrees: `<worktreesDir>/<owner>/<name>/<session-slug>`. */
-  worktreesDir: string;
-  /** New projects without repository: `<projectsDir>/<name>`. */
-  projectsDir: string;
+  /** Session clones: `<sessionsDir>/<session-slug>/<owner>/<name>`. */
+  sessionsDir: string;
+  /** Scratch directories of sessions without repository: `<scratchDir>/<slug>`. */
+  scratchDir: string;
   /** Setup scripts are stopped after this many ms. */
   setupScriptTimeoutMs: number;
   /** Close idle Claude Code processes after this many ms; 0 keeps them. */
@@ -39,9 +44,9 @@ type Env = Record<string, string | undefined>;
 /**
  * Reads the configuration. Inside the image all directories come from the
  * environment (see Dockerfile). For local development the defaults keep the
- * database in the gitignored `data/` directory of the workspace and
- * repositories, worktrees and projects outside of it, so Claude never works
- * inside this repository.
+ * database in the gitignored `data/` directory of this repository and the
+ * session workspace (mirrors, session clones, scratch directories) outside
+ * of it, so Claude never works inside this repository.
  */
 export function loadAppConfig(env: Env = process.env): AppConfig {
   const value = (name: string) => env[name]?.trim() || undefined;
@@ -55,11 +60,10 @@ export function loadAppConfig(env: Env = process.env): AppConfig {
     }
     return result * 60_000;
   };
+  const workspaceDir = dir('WORKSPACE_DIR', 'workspace');
   return {
     dbDir: resolve(value('DB_DIR') ?? 'data/db'),
-    reposDir: dir('REPOS_DIR', 'repos'),
-    worktreesDir: dir('WORKTREES_DIR', 'worktrees'),
-    projectsDir: dir('PROJECTS_DIR', 'projects'),
+    ...workspaceLayout(workspaceDir),
     setupScriptTimeoutMs: minutes('SETUP_SCRIPT_TIMEOUT_MINUTES', 15, 0.1),
     sessionIdleTimeoutMs: minutes('SESSION_IDLE_TIMEOUT_MINUTES', 60, 0),
     claudeExecutable: value('CLAUDE_CODE_EXECUTABLE') ?? null,
@@ -74,5 +78,17 @@ export function loadAppConfig(env: Env = process.env): AppConfig {
       }),
     ],
     allowedHosts: list(value('ALLOWED_HOSTS')),
+  };
+}
+
+/** The fixed subdirectories of the workspace directory. */
+export function workspaceLayout(
+  workspaceDir: string,
+): Pick<AppConfig, 'workspaceDir' | 'reposDir' | 'sessionsDir' | 'scratchDir'> {
+  return {
+    workspaceDir,
+    reposDir: join(workspaceDir, 'repos'),
+    sessionsDir: join(workspaceDir, 'sessions'),
+    scratchDir: join(workspaceDir, 'scratch'),
   };
 }

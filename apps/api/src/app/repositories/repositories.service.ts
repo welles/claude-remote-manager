@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readdir } from 'node:fs/promises';
+import { mkdir, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   BadRequestException,
@@ -8,26 +8,34 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  type OnModuleInit,
 } from '@nestjs/common';
 import type {
   CreateRepositoryRequest,
   RepositoryBranchesResponse,
   RepositoryDto,
   RepositoryListResponse,
+  SessionCloneDto,
   UpdateRepositoryRequest,
-  WorktreeDto,
 } from '@claude-remote-manager/shared-types';
 import { requireObject, requireString } from '../common/validation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
-import { InvalidCloneUrlError, parseCloneUrl } from '../git/clone-url';
-import { GitService, type GitWorktree } from '../git/git.service';
+import {
+  InvalidCloneUrlError,
+  NAME_PATTERN,
+  parseCloneUrl,
+} from '../git/clone-url';
+import { GitService } from '../git/git.service';
 import {
   RepositoryRepository,
+  type CloneLink,
   type RepositoryRecord,
-  type WorktreeLink,
 } from './repository.repository';
 
 export const MAX_SETUP_SCRIPT_LENGTH = 20_000;
+
+/** Owner of local projects (repositories without remote). */
+export const LOCAL_OWNER = 'local';
 
 /** Subdirectories of a directory; none if it does not exist. */
 async function subdirectories(path: string): Promise<string[]> {
@@ -58,11 +66,29 @@ function parseSetupScript(body: Record<string, unknown>): string | null {
 }
 
 /**
- * Registered repositories: their shared clones, setup scripts and the
- * worktrees sessions have of them.
+ * Warning if the directories are on different filesystems: session clones
+ * then copy the mirrors' objects instead of hardlinking them.
+ */
+export function filesystemWarning(
+  devices: Record<string, number>,
+): string | null {
+  const distinct = new Set(Object.values(devices));
+  if (distinct.size <= 1) {
+    return null;
+  }
+  return (
+    `${Object.keys(devices).join(', ')} are on different filesystems; ` +
+    'session clones will copy repository objects instead of hardlinking ' +
+    'them (correct, but slow and large). Put them on one volume.'
+  );
+}
+
+/**
+ * Registered repositories and local projects: their mirrors, setup scripts
+ * and the session clones made from them.
  */
 @Injectable()
-export class RepositoriesService {
+export class RepositoriesService implements OnModuleInit {
   private readonly logger = new Logger(RepositoriesService.name);
 
   constructor(
@@ -71,46 +97,90 @@ export class RepositoriesService {
     private readonly git: GitService,
   ) {}
 
+  /** Creates the workspace directories and checks they share a filesystem. */
+  async onModuleInit(): Promise<void> {
+    const { reposDir, sessionsDir, scratchDir } = this.config;
+    const devices: Record<string, number> = {};
+    for (const dir of [reposDir, sessionsDir, scratchDir]) {
+      await mkdir(dir, { recursive: true });
+      devices[dir] = (await stat(dir)).dev;
+    }
+    const warning = filesystemWarning(devices);
+    if (warning) {
+      this.logger.warn(warning);
+    }
+  }
+
   async list(): Promise<RepositoryListResponse> {
     const records = this.repositories.list();
-    const links = this.repositories.worktreeLinks(
+    const links = this.repositories.cloneLinks(
       records.map((record) => record.id),
     );
+    // Session clones on disk: <sessionsDir>/<slug>/<owner>/<name>.
+    const onDisk = new Map<string, string[]>();
+    for (const slug of await subdirectories(this.config.sessionsDir)) {
+      const sessionDir = join(this.config.sessionsDir, slug);
+      for (const owner of await subdirectories(sessionDir)) {
+        for (const name of await subdirectories(join(sessionDir, owner))) {
+          const key = `${owner}/${name}`;
+          onDisk.set(key, [
+            ...(onDisk.get(key) ?? []),
+            join(sessionDir, owner, name),
+          ]);
+        }
+      }
+    }
     const known = new Set(
       records.map((record) => `${record.owner}/${record.name}`),
     );
-    const strayDirectories: string[] = [];
-    for (const owner of await subdirectories(this.config.worktreesDir)) {
-      for (const name of await subdirectories(
-        join(this.config.worktreesDir, owner),
-      )) {
-        if (!known.has(`${owner}/${name}`)) {
-          const dir = join(this.config.worktreesDir, owner, name);
-          for (const slug of await subdirectories(dir)) {
-            strayDirectories.push(join(dir, slug));
-          }
-        }
+    const strayDirectories = [...onDisk.entries()]
+      .filter(([key]) => !known.has(key))
+      .flatMap(([, paths]) => paths);
+    const scratch = this.repositories.activeScratchPaths();
+    for (const slug of await subdirectories(this.config.scratchDir)) {
+      const path = join(this.config.scratchDir, slug);
+      if (!scratch.has(path)) {
+        strayDirectories.push(path);
       }
     }
     return {
       repositories: await Promise.all(
-        records.map((record) => this.toDto(record, links.get(record.id) ?? [])),
+        records.map((record) =>
+          this.toDto(
+            record,
+            links.get(record.id) ?? [],
+            onDisk.get(`${record.owner}/${record.name}`) ?? [],
+          ),
+        ),
       ),
-      strayDirectories,
+      strayDirectories: strayDirectories.sort(),
     };
   }
 
   async get(id: string): Promise<RepositoryDto> {
-    const record = this.require(id);
-    return this.toDto(
-      record,
-      this.repositories.worktreeLinks([id]).get(id) ?? [],
-    );
+    const list = await this.list();
+    const found = list.repositories.find((repository) => repository.id === id);
+    if (!found) {
+      throw new NotFoundException(`Repository ${id} not found`);
+    }
+    return found;
   }
 
-  /** Registers a repository and starts cloning it in the background. */
+  /**
+   * Registers a repository by clone URL and starts cloning its mirror, or
+   * creates a local project; both in the background.
+   */
   async register(request: CreateRepositoryRequest): Promise<RepositoryDto> {
     const body = requireObject(request);
+    const setupScript = parseSetupScript(body);
+    if ('projectName' in body) {
+      const record = this.createProject(
+        requireString(body, 'projectName'),
+        setupScript,
+      );
+      this.updateInBackground(record.id);
+      return this.get(record.id);
+    }
     let parsed;
     try {
       parsed = parseCloneUrl(requireString(body, 'cloneUrl'));
@@ -120,13 +190,7 @@ export class RepositoriesService {
       }
       throw error;
     }
-    const setupScript = parseSetupScript(body);
-    const existing = this.repositories.findByName(parsed.owner, parsed.name);
-    if (existing) {
-      throw new ConflictException(
-        `${existing.owner}/${existing.name} is already registered`,
-      );
-    }
+    this.requireFreeName(parsed.owner, parsed.name);
     const record = this.repositories.create({
       id: randomUUID(),
       owner: parsed.owner,
@@ -137,6 +201,31 @@ export class RepositoriesService {
     });
     this.updateInBackground(record.id);
     return this.get(record.id);
+  }
+
+  /**
+   * Registers a local project `local/<name>` without remote. Its mirror is
+   * created on first use.
+   */
+  createProject(
+    name: string,
+    setupScript: string | null = null,
+  ): RepositoryRecord {
+    const trimmed = name.trim();
+    if (!NAME_PATTERN.test(trimmed)) {
+      throw new BadRequestException(
+        'The project name may contain letters, digits, ".", "_" and "-" (at most 100 characters)',
+      );
+    }
+    this.requireFreeName(LOCAL_OWNER, trimmed);
+    return this.repositories.create({
+      id: randomUUID(),
+      owner: LOCAL_OWNER,
+      name: trimmed,
+      cloneUrl: null,
+      localPath: join(this.config.reposDir, LOCAL_OWNER, trimmed),
+      setupScript,
+    });
   }
 
   async updateSettings(
@@ -164,22 +253,25 @@ export class RepositoriesService {
   async branches(id: string): Promise<RepositoryBranchesResponse> {
     const record = this.require(id);
     if (!record.clonedAt) {
-      return { defaultBranch: null, branches: [] };
+      return { defaultBranch: record.defaultBranch, branches: [] };
     }
     return {
       defaultBranch: record.defaultBranch,
-      branches: await this.git.remoteBranches(record.localPath),
+      branches: await this.git.branches(record.localPath),
     };
   }
 
   /**
-   * Clones the repository on first use, otherwise fetches it, and records
-   * the outcome. Concurrent calls share one fetch. Throws on failure.
+   * Creates the mirror on first use, otherwise fetches it, and records the
+   * outcome. Concurrent calls share one fetch. Throws on failure.
    */
   async update(id: string): Promise<RepositoryRecord> {
     const record = this.require(id);
     try {
-      const result = await this.git.update(record.localPath, record.cloneUrl);
+      const result = await this.git.updateMirror(
+        record.localPath,
+        record.cloneUrl,
+      );
       const now = new Date();
       return this.repositories.update(id, {
         defaultBranch: result.defaultBranch,
@@ -203,6 +295,15 @@ export class RepositoriesService {
 
   // -------------------------------------------------------------------------
 
+  private requireFreeName(owner: string, name: string): void {
+    const existing = this.repositories.findByName(owner, name);
+    if (existing) {
+      throw new ConflictException(
+        `${existing.owner}/${existing.name} is already registered`,
+      );
+    }
+  }
+
   private updateInBackground(id: string): void {
     this.update(id).catch((error: unknown) =>
       this.logger.warn(`Updating repository ${id} failed: ${errorText(error)}`),
@@ -210,55 +311,38 @@ export class RepositoriesService {
   }
 
   /**
-   * Worktrees of a repository from three sources: what sessions use (the
-   * database), what git has registered, and the directories under
-   * `WORKTREES_DIR/<owner>/<name>`. Anything without a session is orphaned.
+   * Session clones of a repository from the database and from disk.
+   * Anything without a session is orphaned; a clone a session expects but
+   * that is gone is missing.
    */
-  private async worktrees(
-    record: RepositoryRecord,
-    links: WorktreeLink[],
-  ): Promise<WorktreeDto[]> {
-    let registered: GitWorktree[] = [];
-    if (record.clonedAt) {
-      try {
-        registered = await this.git.listWorktrees(record.localPath);
-      } catch (error) {
-        this.logger.warn(
-          `Listing worktrees of ${record.owner}/${record.name} failed: ${errorText(error)}`,
-        );
-      }
-    }
-    const dir = join(this.config.worktreesDir, record.owner, record.name);
-    const onDisk = new Set(
-      (await subdirectories(dir)).map((slug) => join(dir, slug)),
-    );
+  private async clones(
+    links: CloneLink[],
+    onDisk: string[],
+  ): Promise<SessionCloneDto[]> {
     const byPath = new Map(links.map((link) => [link.path, link]));
-    const gitByPath = new Map(registered.map((entry) => [entry.path, entry]));
-    const paths = [
-      ...new Set([...byPath.keys(), ...gitByPath.keys(), ...onDisk]),
-    ].sort();
-    return paths.map((path) => {
-      const link = byPath.get(path);
-      const entry = gitByPath.get(path);
-      // Outside the worktrees directory only git knows (worktrees made by
-      // hand); locked worktrees are never reported prunable, though.
-      const exists = path.startsWith(`${dir}/`)
-        ? onDisk.has(path)
-        : entry !== undefined && !entry.prunable;
-      return {
-        path,
-        branch: entry?.branch ?? link?.branch ?? null,
-        sessionId: link?.sessionId ?? null,
-        sessionTitle: link?.sessionTitle ?? null,
-        orphaned: !link,
-        missing: link !== undefined && !exists,
-      };
-    });
+    const present = new Set(onDisk);
+    const paths = [...new Set([...byPath.keys(), ...onDisk])].sort();
+    return Promise.all(
+      paths.map(async (path) => {
+        const link = byPath.get(path);
+        return {
+          path,
+          branch:
+            link?.branch ??
+            (present.has(path) ? await this.git.currentBranch(path) : null),
+          sessionId: link?.sessionId ?? null,
+          sessionTitle: link?.sessionTitle ?? null,
+          orphaned: !link,
+          missing: link !== undefined && !present.has(path),
+        };
+      }),
+    );
   }
 
   private async toDto(
     record: RepositoryRecord,
-    links: WorktreeLink[],
+    links: CloneLink[],
+    onDisk: string[],
   ): Promise<RepositoryDto> {
     const iso = (date: Date | null) => date?.toISOString() ?? null;
     return {
@@ -267,6 +351,7 @@ export class RepositoriesService {
       name: record.name,
       fullName: `${record.owner}/${record.name}`,
       cloneUrl: record.cloneUrl,
+      local: record.cloneUrl === null,
       defaultBranch: record.defaultBranch,
       localPath: record.localPath,
       setupScript: record.setupScript,
@@ -278,7 +363,7 @@ export class RepositoriesService {
           ? 'fetching'
           : 'cloning'
         : null,
-      worktrees: await this.worktrees(record, links),
+      clones: await this.clones(links, onDisk),
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };

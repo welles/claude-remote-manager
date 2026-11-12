@@ -261,7 +261,7 @@ describe('toolSummary', () => {
 
   it('shows preparation steps, updating each step in place', () => {
     const progress = (
-      step: 'fetch' | 'worktree' | 'rollback' | 'done',
+      step: 'fetch' | 'clone' | 'scratch' | 'rollback' | 'done',
       state: 'started' | 'succeeded' | 'failed',
       target: string | null,
       message: string | null = null,
@@ -278,12 +278,7 @@ describe('toolSummary', () => {
       progress('fetch', 'started', 'acme/app'),
       progress('fetch', 'started', 'acme/lib'),
       progress('fetch', 'succeeded', 'acme/app', 'Default branch main'),
-      progress(
-        'worktree',
-        'succeeded',
-        'acme/app',
-        'claude/x from main at abc',
-      ),
+      progress('clone', 'succeeded', 'acme/app', 'claude/x from main at abc'),
       progress(
         'fetch',
         'failed',
@@ -301,7 +296,7 @@ describe('toolSummary', () => {
     ).toEqual([
       'Updated acme/app · Default branch main',
       'Could not update acme/lib: offline',
-      'Worktree of acme/app · claude/x from main at abc',
+      'Cloned acme/app · claude/x from main at abc',
       'Removed acme/app again',
       'Ready. The message went to Claude.',
     ]);

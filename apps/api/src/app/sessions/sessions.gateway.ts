@@ -164,6 +164,12 @@ export class SessionsGateway
       case 'session.end':
         await this.sessions.end(message.sessionId);
         return;
+      case 'pending.send':
+        await this.sessions.sendPending(message.sessionId);
+        return;
+      case 'setup.rerun':
+        await this.sessions.rerunSetup(message.sessionId);
+        return;
       case 'permission.respond':
         // Rejected by parseClientFrame until approvals exist.
         return;

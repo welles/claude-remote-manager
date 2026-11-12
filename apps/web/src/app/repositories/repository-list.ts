@@ -16,22 +16,23 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { RouterLink } from '@angular/router';
 import type {
+  CreateRepositoryRequest,
   RepositoryDto,
-  WorktreeDto,
+  SessionCloneDto,
 } from '@claude-remote-manager/shared-types';
 import { RepositoriesApi, errorMessage } from './repositories-api';
 
 /** How often the page reloads while a clone or fetch runs. */
 export const ACTIVITY_POLL_MS = 2000;
 
-/** Last path segment, e.g. the session slug of a worktree. */
-export const baseName = (path: string) =>
-  path.split('/').filter(Boolean).at(-1) ?? path;
+/** Session slug of a clone path `<sessions>/<slug>/<owner>/<name>`. */
+export const cloneSlug = (path: string) =>
+  path.split('/').filter(Boolean).at(-3) ?? path;
 
 /**
- * Registered repositories with their default branch, worktrees and
- * sessions; orphaned worktrees are marked. Repositories are added by clone
- * URL; each has an editable setup script.
+ * Registered repositories and local projects with their default branch and
+ * session clones; orphaned clones are marked. Repositories are added by
+ * clone URL, local projects by name; each has an editable setup script.
  */
 @Component({
   selector: 'app-repository-list',
@@ -53,7 +54,6 @@ export class RepositoryList implements OnInit {
   private readonly api = inject(RepositoriesApi);
   private readonly destroyRef = inject(DestroyRef);
 
-  protected readonly baseName = baseName;
   protected readonly loading = signal(true);
   protected readonly loadError = signal<string | null>(null);
   protected readonly repositories = signal<RepositoryDto[]>([]);
@@ -63,6 +63,7 @@ export class RepositoryList implements OnInit {
   );
 
   protected cloneUrl = '';
+  protected projectName = '';
   protected readonly adding = signal(false);
   protected readonly addError = signal<string | null>(null);
 
@@ -84,15 +85,28 @@ export class RepositoryList implements OnInit {
 
   protected add(): void {
     const cloneUrl = this.cloneUrl.trim();
-    if (!cloneUrl || this.adding()) {
+    if (cloneUrl) {
+      this.register({ cloneUrl }, () => (this.cloneUrl = ''));
+    }
+  }
+
+  protected addProject(): void {
+    const projectName = this.projectName.trim();
+    if (projectName) {
+      this.register({ projectName }, () => (this.projectName = ''));
+    }
+  }
+
+  private register(request: CreateRepositoryRequest, done: () => void): void {
+    if (this.adding()) {
       return;
     }
     this.adding.set(true);
     this.addError.set(null);
-    this.api.create({ cloneUrl }).subscribe({
+    this.api.create(request).subscribe({
       next: (repository) => {
         this.adding.set(false);
-        this.cloneUrl = '';
+        done();
         this.upsert(repository);
         this.schedulePoll();
       },
@@ -149,8 +163,8 @@ export class RepositoryList implements OnInit {
     });
   }
 
-  protected worktreeLabel(worktree: WorktreeDto): string {
-    return worktree.sessionTitle || baseName(worktree.path);
+  protected cloneLabel(clone: SessionCloneDto): string {
+    return clone.sessionTitle || cloneSlug(clone.path);
   }
 
   private load(): void {

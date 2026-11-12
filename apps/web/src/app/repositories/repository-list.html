@@ -28,6 +28,34 @@
     Add
   </button>
 </form>
+<form class="add" (ngSubmit)="addProject()">
+  <mat-form-field
+    appearance="outline"
+    class="clone-url"
+    subscriptSizing="dynamic"
+  >
+    <mat-label>New local project</mat-label>
+    <input
+      matInput
+      name="projectName"
+      [(ngModel)]="projectName"
+      placeholder="my-tool"
+      autocomplete="off"
+      autocapitalize="off"
+      spellcheck="false"
+      data-testid="project-name"
+    />
+    <mat-hint>A repository without remote; sessions clone it</mat-hint>
+  </mat-form-field>
+  <button
+    matButton="outlined"
+    type="submit"
+    [disabled]="!projectName.trim() || adding()"
+    data-testid="add-project"
+  >
+    Create
+  </button>
+</form>
 @if (addError(); as error) {
 <p class="error" data-testid="add-error">{{ error }}</p>
 } @if (loading()) {
@@ -70,7 +98,12 @@
         }
       </div>
       <div class="paths">
+        @if (repository.cloneUrl) {
         <code>{{ repository.cloneUrl }}</code>
+        } @else {
+        <span class="tag tag-local">Local project</span> no remote ·
+        <code>{{ repository.localPath }}</code>
+        }
       </div>
       @if (repository.lastError) {
       <p class="error" data-testid="repository-error">
@@ -95,8 +128,8 @@
             data-testid="setup-input"
           ></textarea>
           <mat-hint
-            >Runs with bash in each new worktree, e.g. <code>npm ci</code>;
-            stops at the first failing command.</mat-hint
+            >Runs with bash in each new clone, e.g. <code>npm ci</code>; stops
+            at the first failing command.</mat-hint
           >
         </mat-form-field>
         <div class="setup-actions">
@@ -135,34 +168,33 @@
         }
       </section>
 
-      <section class="worktrees">
-        <span class="label">Worktrees</span>
-        @if (repository.worktrees.length === 0) {
+      <section class="clones">
+        <span class="label">Session clones</span>
+        @if (repository.clones.length === 0) {
         <span class="muted">none</span>
         } @else {
         <ul>
-          @for (worktree of repository.worktrees; track worktree.path) {
+          @for (clone of repository.clones; track clone.path) {
           <li
-            class="worktree"
-            [class.orphaned]="worktree.orphaned"
-            data-testid="worktree"
+            class="clone"
+            [class.orphaned]="clone.orphaned"
+            data-testid="clone"
           >
-            <span class="worktree-name">
-              @if (worktree.sessionId) {
-              <a [routerLink]="['/sessions', worktree.sessionId]"
-                >{{ worktreeLabel(worktree) }}</a
+            <span class="clone-name">
+              @if (clone.sessionId) {
+              <a [routerLink]="['/sessions', clone.sessionId]"
+                >{{ cloneLabel(clone) }}</a
               >
-              } @else { {{ worktreeLabel(worktree) }} } @if (worktree.orphaned)
-              {
+              } @else { {{ cloneLabel(clone) }} } @if (clone.orphaned) {
               <span class="tag tag-warning">Orphaned</span>
-              } @if (worktree.missing) {
+              } @if (clone.missing) {
               <span class="tag tag-error">Missing</span>
               }
             </span>
-            @if (worktree.branch) {
-            <code class="branch">{{ worktree.branch }}</code>
+            @if (clone.branch) {
+            <code class="branch">{{ clone.branch }}</code>
             }
-            <code class="path">{{ worktree.path }}</code>
+            <code class="path">{{ clone.path }}</code>
           </li>
           }
         </ul>
@@ -174,10 +206,10 @@
 </div>
 } @if (strayDirectories().length > 0) {
 <section class="stray">
-  <h2 class="heading">Other worktree directories</h2>
+  <h2 class="heading">Other clone directories</h2>
   <p class="muted">
-    Directories under the worktrees directory of repositories that are not
-    registered. No session uses them.
+    Session clones of repositories that are not registered and scratch
+    directories. No session uses them.
   </p>
   <ul>
     @for (path of strayDirectories(); track path) {

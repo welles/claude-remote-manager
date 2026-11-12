@@ -28,6 +28,11 @@ describe('parseClientFrame', () => {
     expect(parseClientFrame({ type: 'interrupt', sessionId: SESSION })).toEqual(
       { type: 'interrupt', sessionId: SESSION },
     );
+    for (const type of ['pending.send', 'setup.rerun'] as const) {
+      expect(
+        parseClientFrame({ type, sessionId: SESSION, requestId: 'r' }),
+      ).toEqual({ type, sessionId: SESSION, requestId: 'r' });
+    }
   });
 
   it.each([

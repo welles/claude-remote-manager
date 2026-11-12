@@ -4,7 +4,7 @@ import { childEnvironment } from '../common/child-environment';
 
 export interface SetupScriptOptions {
   script: string;
-  /** The new worktree. */
+  /** The new session clone. */
   cwd: string;
   /** Added to the API's environment (without the app's secrets). */
   env: Record<string, string>;

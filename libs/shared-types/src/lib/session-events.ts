@@ -168,18 +168,19 @@ export interface ErrorEvent extends SessionEventBase {
 /**
  * A step of preparing the session's directories (status `preparing`):
  * - `fetch`: update the repository's shared clone (clone it on first use);
- * - `worktree`: create the session's worktree and branch;
- * - `project`: create the new project directory with `git init`;
- * - `rollback`: remove the worktrees again after a failure;
- * - `done`: preparation finished, the first message goes to Claude.
+ * - `clone`: create the session's clone of the mirror and its branch;
+ * - `scratch`: create the session's scratch directory;
+ * - `rollback`: remove the session's directories again after a failure;
+ * - `done`: preparation finished, the first message goes to Claude (not
+ *   sent if a setup script failed; a warning `notice` says so instead).
  */
 export interface PrepareProgressEvent extends SessionEventBase {
   type: 'prepare.progress';
-  step: 'fetch' | 'worktree' | 'project' | 'rollback' | 'done';
+  step: 'fetch' | 'clone' | 'scratch' | 'rollback' | 'done';
   state: 'started' | 'succeeded' | 'failed';
-  /** `owner/name` of the repository, or the project name. */
+  /** `owner/name` of the repository. */
   target: string | null;
-  /** Directory concerned, e.g. the new worktree. */
+  /** Directory concerned, e.g. the new clone. */
   path: string | null;
   /** Detail such as the base commit or the error. */
   message: string | null;
@@ -200,7 +201,7 @@ export interface SetupOutputEvent extends SessionEventBase {
 export interface SetupResultEvent extends SessionEventBase {
   type: 'setup.result';
   repository: string;
-  /** Worktree the script ran in. */
+  /** Session clone the script ran in. */
   path: string;
   state: 'started' | 'succeeded' | 'failed' | 'timed_out' | 'skipped';
   exitCode: number | null;
@@ -393,10 +394,32 @@ export interface PermissionResponseMessage {
   message?: string;
 }
 
+/**
+ * Send the pending first message (`SessionDto.pendingMessage`) although a
+ * setup script failed.
+ */
+export interface SendPendingMessage {
+  type: 'pending.send';
+  sessionId: string;
+  requestId?: string;
+}
+
+/**
+ * Run the failed setup scripts again; on success the pending first message
+ * goes to Claude.
+ */
+export interface RerunSetupMessage {
+  type: 'setup.rerun';
+  sessionId: string;
+  requestId?: string;
+}
+
 export type ClientMessage =
   | SubscribeMessage
   | UnsubscribeMessage
   | SendMessageMessage
   | InterruptMessage
   | EndSessionMessage
+  | SendPendingMessage
+  | RerunSetupMessage
   | PermissionResponseMessage;

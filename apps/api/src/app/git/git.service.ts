@@ -4,53 +4,43 @@ import { basename, dirname, join } from 'node:path';
 import { Injectable } from '@nestjs/common';
 import {
   GIT_NETWORK_TIMEOUT_MS,
-  GitError,
   retryOnLockContention,
   runGit,
 } from './git-runner';
 import { KeyedMutex } from './keyed-mutex';
 
-/** A worktree as `git worktree list` reports it (without the bare clone). */
-export interface GitWorktree {
-  path: string;
-  /** Commit checked out; `null` for an unborn branch. */
-  head: string | null;
-  /** Short branch name, `null` when detached. */
-  branch: string | null;
-  locked: boolean;
-  /** Git considers the worktree prunable (e.g. its directory is missing). */
-  prunable: boolean;
-}
-
-export interface AddWorktreeOptions {
-  /** Shared clone (bare repository). */
-  repoPath: string;
-  /** New directory for the worktree; must not exist. */
-  path: string;
-  /** New branch, e.g. `claude/<slug>`; must not exist. */
-  branch: string;
-  /** Commit the branch starts at; `null` for an empty repository. */
-  baseCommit: string | null;
-  /** Why the worktree is locked, e.g. the session it belongs to. */
-  lockReason: string;
-}
-
-export interface UpdateResult {
-  /** Default branch of the remote; `null` if the remote has no HEAD. */
+export interface MirrorState {
+  /**
+   * Default branch: the remote's HEAD, or `main` for a local project;
+   * `null` for an empty remote.
+   */
   defaultBranch: string | null;
-  /** Whether this call cloned the repository. */
-  cloned: boolean;
+  /** Whether this call created the mirror. */
+  created: boolean;
+}
+
+export interface CreateSessionCloneOptions {
+  mirrorPath: string;
+  /** New directory for the clone; must not exist. */
+  path: string;
+  /**
+   * URL `origin` of the clone points to: the real remote. `null` for a
+   * local project, whose clones keep the mirror as `origin`.
+   */
+  remoteUrl: string | null;
+  /** New session branch, e.g. `claude/<slug>`. */
+  branch: string;
+  /** Commit the branch starts at; `null` for an unborn (orphan) branch. */
+  baseCommit: string | null;
 }
 
 /**
- * Fetch remote branches (pruning deleted ones) and tags. Tags are shared by
- * all worktrees; the remote's tags win over local tags of the same name, and
- * local-only tags are kept (`--prune` does not apply to `--tags`).
+ * The mirror keeps the remote's branches as its own `refs/heads/*`, so a
+ * plain local clone of it sees them as `origin/*`. Deleted remote branches
+ * are pruned. Tags of the remote overwrite local ones of the same name.
  */
+const MIRROR_FETCH_REFSPEC = '+refs/heads/*:refs/heads/*';
 const FETCH_OPTIONS = ['--prune', '--tags', '--force', '--quiet'];
-
-/** Remote branches as fetched: `refs/remotes/origin/<branch>`. */
-const REMOTE_PREFIX = 'refs/remotes/origin/';
 
 /**
  * Branch names accepted from users (base branches): git's rules for ref
@@ -72,129 +62,99 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-/** Parses `git worktree list --porcelain`, without the bare entry. */
-export function parseWorktreeList(output: string): GitWorktree[] {
-  const worktrees: GitWorktree[] = [];
-  for (const block of output.split('\n\n')) {
-    const lines = block.split('\n').filter(Boolean);
-    if (lines.length === 0 || !lines[0].startsWith('worktree ')) {
-      continue;
-    }
-    if (lines.includes('bare')) {
-      continue;
-    }
-    const field = (name: string) =>
-      lines.find((line) => line === name || line.startsWith(`${name} `));
-    const value = (name: string) => field(name)?.slice(name.length + 1);
-    const head = value('HEAD');
-    const branch = value('branch');
-    worktrees.push({
-      path: lines[0].slice('worktree '.length),
-      head: head && !/^0+$/.test(head) ? head : null,
-      branch: branch?.startsWith('refs/heads/')
-        ? branch.slice('refs/heads/'.length)
-        : null,
-      locked: field('locked') !== undefined,
-      prunable: field('prunable') !== undefined,
-    });
-  }
-  return worktrees;
+/** `ref: refs/heads/main\tHEAD` from `git ls-remote --symref`. */
+export function parseRemoteHead(output: string): string | null {
+  const match = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(output);
+  return match ? match[1] : null;
 }
 
 /**
- * Git operations on the shared clones and the session worktrees.
+ * Git operations on the mirrors and the session clones.
  *
- * Every repository has one shared clone: a bare repository whose remote
- * branches are fetched into `refs/remotes/origin/*` only. Nobody works in
- * it, so a fetch never touches a branch that a worktree has checked out, and
- * there is no working tree, index or HEAD in it that a session could
- * change. Each session gets a linked worktree on its own branch.
+ * A mirror is a bare repository per registered repository; it is cloned
+ * once from the remote and then only fetched (local projects have no
+ * remote: their mirror is the project's main repository). Nobody works in
+ * it. Each session gets its own complete clone of it: `git clone --local`
+ * hardlinks the objects (no alternates, so the mirror's gc cannot affect
+ * the clone), and refs, stash, tags, config, hooks and index belong to the
+ * clone alone. Removing a session clone is deleting its directory.
  *
- * Commands that write to a shared clone (clone, fetch, adding and removing
- * worktrees, deleting branches) run one at a time per clone; clones of
- * different repositories do not wait for each other. Concurrent updates of
- * the same clone share one fetch.
+ * Commands that read or write a whole mirror (clone, fetch, cloning a
+ * session clone from it, integrating a session branch) run one at a time
+ * per mirror; mirrors of different repositories do not wait for each
+ * other. Concurrent updates of the same mirror share one fetch.
  */
 @Injectable()
 export class GitService {
   private readonly locks = new KeyedMutex();
-  private readonly updates = new Map<string, Promise<UpdateResult>>();
+  private readonly updates = new Map<string, Promise<MirrorState>>();
 
-  /** Whether a clone or fetch of this clone is running or queued. */
-  isUpdating(repoPath: string): boolean {
-    return this.updates.has(repoPath);
+  /** Whether a clone or fetch of this mirror is running or queued. */
+  isUpdating(mirrorPath: string): boolean {
+    return this.updates.has(mirrorPath);
   }
 
   /**
-   * Clones the repository if `repoPath` does not exist yet, otherwise
-   * fetches. Joins an update of the same clone that has not finished yet.
+   * Creates the mirror if it does not exist yet (clone from `remoteUrl`, or
+   * an empty repository on `main` for a local project), otherwise fetches
+   * (nothing to do for a local project). Joins an update of the same
+   * mirror that has not finished yet.
    */
-  update(repoPath: string, url: string): Promise<UpdateResult> {
-    let update = this.updates.get(repoPath);
+  updateMirror(
+    mirrorPath: string,
+    remoteUrl: string | null,
+  ): Promise<MirrorState> {
+    let update = this.updates.get(mirrorPath);
     if (!update) {
       update = this.locks
-        .run(repoPath, async () => {
-          const cloned = !(await this.isBareRepository(repoPath));
-          if (cloned) {
-            await this.cloneLocked(repoPath, url);
+        .run(mirrorPath, async () => {
+          const created = !(await this.isBareRepository(mirrorPath));
+          if (remoteUrl === null) {
+            if (created) {
+              await this.initLocalMirror(mirrorPath);
+            }
+            return {
+              defaultBranch: await this.headBranch(mirrorPath),
+              created,
+            };
+          }
+          if (created) {
+            await this.cloneMirror(mirrorPath, remoteUrl);
           } else {
-            await this.checkOrigin(repoPath, url);
+            await this.checkOrigin(mirrorPath, remoteUrl);
             await retryOnLockContention(() =>
-              this.git(repoPath, ['fetch', ...FETCH_OPTIONS, 'origin'], {
+              this.git(mirrorPath, ['fetch', ...FETCH_OPTIONS, 'origin'], {
                 timeoutMs: GIT_NETWORK_TIMEOUT_MS,
               }),
             );
           }
           return {
-            defaultBranch: await this.refreshDefaultBranch(repoPath),
-            cloned,
+            defaultBranch: await this.followRemoteHead(mirrorPath),
+            created,
           };
         })
-        .finally(() => this.updates.delete(repoPath));
-      this.updates.set(repoPath, update);
+        .finally(() => this.updates.delete(mirrorPath));
+      this.updates.set(mirrorPath, update);
     }
     return update;
   }
 
-  /** Remote branches of the clone as last fetched, sorted. */
-  async remoteBranches(repoPath: string): Promise<string[]> {
-    const output = await this.git(repoPath, [
+  /** Branches of the mirror, sorted. */
+  async branches(mirrorPath: string): Promise<string[]> {
+    const output = await this.git(mirrorPath, [
       'for-each-ref',
-      '--format=%(refname)',
-      REMOTE_PREFIX,
+      '--format=%(refname:lstrip=2)',
+      'refs/heads/',
     ]);
-    return output
-      .split('\n')
-      .filter((ref) => ref.startsWith(REMOTE_PREFIX))
-      .map((ref) => ref.slice(REMOTE_PREFIX.length))
-      .filter((branch) => branch !== 'HEAD')
-      .sort();
-  }
-
-  /** Default branch as last fetched; `null` if unknown. */
-  async defaultBranch(repoPath: string): Promise<string | null> {
-    try {
-      const ref = (
-        await this.git(repoPath, [
-          'symbolic-ref',
-          '--quiet',
-          `${REMOTE_PREFIX}HEAD`,
-        ])
-      ).trim();
-      return ref.startsWith(REMOTE_PREFIX)
-        ? ref.slice(REMOTE_PREFIX.length)
-        : null;
-    } catch {
-      return null;
-    }
+    return output.split('\n').filter(Boolean).sort();
   }
 
   /**
-   * Commit of a remote branch as last fetched, or `null` if the branch does
-   * not exist. Throws for names that are not valid branch names.
+   * Commit of a branch of the mirror, or `null` if it does not exist (or is
+   * unborn). Throws for names that are not valid branch names.
    */
-  async remoteBranchCommit(
-    repoPath: string,
+  async branchCommit(
+    mirrorPath: string,
     branch: string,
   ): Promise<string | null> {
     if (!isValidBranchName(branch)) {
@@ -202,11 +162,11 @@ export class GitService {
     }
     try {
       return (
-        await this.git(repoPath, [
+        await this.git(mirrorPath, [
           'rev-parse',
           '--verify',
           '--quiet',
-          `${REMOTE_PREFIX}${branch}^{commit}`,
+          `refs/heads/${branch}^{commit}`,
         ])
       ).trim();
     } catch {
@@ -214,138 +174,114 @@ export class GitService {
     }
   }
 
-  /** Whether the remote had no branches at all when last fetched. */
-  async isEmpty(repoPath: string): Promise<boolean> {
-    return (await this.remoteBranches(repoPath)).length === 0;
+  /** Whether the mirror has no branches (empty remote or new project). */
+  async isEmpty(mirrorPath: string): Promise<boolean> {
+    return (await this.branches(mirrorPath)).length === 0;
   }
 
   /**
-   * Creates a locked worktree on a new branch. Locking keeps
-   * `git worktree prune` (also run by `git gc`) from dropping it while its
-   * volume is unavailable, and `git worktree remove` without the app from
-   * removing it. On failure, a branch the call created is deleted again.
+   * Creates a session clone: a local clone of the mirror with hardlinked
+   * objects, `origin` pointing to the real remote (or staying the mirror
+   * for local projects), and the new session branch checked out at the base
+   * commit, without upstream. Removes the directory again on failure.
    */
-  async addWorktree(options: AddWorktreeOptions): Promise<void> {
-    const { repoPath, path, branch, baseCommit, lockReason } = options;
-    await this.locks.run(repoPath, async () => {
-      if (await this.branchExistsLocked(repoPath, branch)) {
-        throw new Error(`Branch ${branch} already exists`);
-      }
-      await mkdir(dirname(path), { recursive: true });
-      const args = ['worktree', 'add', '--lock', '--reason', lockReason];
-      try {
-        await retryOnLockContention(() =>
-          this.git(
-            repoPath,
-            baseCommit
-              ? [...args, '-b', branch, '--', path, baseCommit]
-              : [...args, '--orphan', '-b', branch, '--', path],
-          ),
-        );
-      } catch (error) {
-        const registered = (await this.listWorktreesLocked(repoPath)).some(
-          (worktree) => worktree.path === path,
-        );
-        if (registered) {
-          await this.git(repoPath, ['worktree', 'unlock', '--', path]).catch(
-            () => undefined,
-          );
-          await this.git(repoPath, [
-            'worktree',
-            'remove',
-            '--force',
-            '--',
-            path,
-          ]).catch(() => undefined);
-        }
-        if (await this.branchExistsLocked(repoPath, branch)) {
-          await this.git(repoPath, ['branch', '-D', '--', branch]).catch(
-            () => undefined,
-          );
-        }
-        throw error;
-      }
-    });
-  }
-
-  /**
-   * Removes a worktree of the clone. Without `force`, git refuses if it has
-   * modified or untracked files. A worktree whose directory is already gone
-   * is unregistered. Does nothing if the path is neither registered nor on
-   * disk; refuses to touch a directory that is not a worktree of the clone.
-   */
-  async removeWorktree(
-    repoPath: string,
-    path: string,
-    { force = false }: { force?: boolean } = {},
-  ): Promise<void> {
-    await this.locks.run(repoPath, async () => {
-      const worktree = (await this.listWorktreesLocked(repoPath)).find(
-        (entry) => entry.path === path,
-      );
-      if (!worktree) {
-        if (await exists(path)) {
-          throw new Error(`${path} is not a worktree of ${repoPath}`);
-        }
-        return;
-      }
-      if (worktree.locked) {
-        await this.git(repoPath, ['worktree', 'unlock', '--', path]);
-      }
-      try {
-        if (await exists(path)) {
-          await retryOnLockContention(() =>
-            this.git(repoPath, [
-              'worktree',
-              'remove',
-              ...(force ? ['--force'] : []),
-              '--',
-              path,
-            ]),
-          );
-        } else {
-          // Only unlocked worktrees with missing directories are pruned:
-          // this one and none of the (locked) session worktrees.
-          await this.git(repoPath, ['worktree', 'prune']);
-        }
-      } catch (error) {
-        if (worktree.locked && (await exists(path))) {
-          await this.git(repoPath, [
-            'worktree',
-            'lock',
-            '--reason',
-            'restored after a failed removal',
-            '--',
-            path,
-          ]).catch(() => undefined);
-        }
-        throw error;
-      }
-    });
-  }
-
-  /**
-   * Deletes a local branch, also if it is not merged. Git refuses to delete
-   * a branch that a worktree has checked out.
-   */
-  async deleteBranch(repoPath: string, branch: string): Promise<void> {
+  async createSessionClone(options: CreateSessionCloneOptions): Promise<void> {
+    const { mirrorPath, path, remoteUrl, branch, baseCommit } = options;
     if (!isValidBranchName(branch)) {
       throw new Error(`"${branch}" is not a valid branch name`);
     }
-    await this.locks.run(repoPath, () =>
-      retryOnLockContention(() =>
-        this.git(repoPath, ['branch', '-D', '--', branch]),
-      ),
-    );
+    if (await exists(path)) {
+      throw new Error(`${path} already exists`);
+    }
+    await mkdir(dirname(path), { recursive: true });
+    try {
+      await this.locks.run(mirrorPath, () =>
+        runGit([
+          'clone',
+          '--local',
+          '--no-checkout',
+          '--quiet',
+          '--',
+          mirrorPath,
+          path,
+        ]),
+      );
+      const inClone = (args: string[]) => runGit(args, { cwd: path });
+      if (remoteUrl !== null) {
+        await inClone(['config', '--', 'remote.origin.url', remoteUrl]);
+      }
+      if (baseCommit) {
+        // The clone created a local branch for origin/HEAD; the session
+        // works on its own branch only.
+        const initial = await this.currentBranch(path);
+        await inClone([
+          'checkout',
+          '--quiet',
+          '--no-track',
+          '-b',
+          branch,
+          baseCommit,
+        ]);
+        if (initial && initial !== branch) {
+          await inClone(['branch', '--quiet', '-D', '--', initial]);
+        }
+      } else {
+        // Empty repository or project: the first commit starts the branch.
+        await inClone(['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
+      }
+    } catch (error) {
+      await rm(path, { recursive: true, force: true });
+      throw error;
+    }
   }
 
-  async branchExists(repoPath: string, branch: string): Promise<boolean> {
-    return this.branchExistsLocked(repoPath, branch);
+  /**
+   * Removes a session clone. It is independent of the mirror and of other
+   * sessions, so this is deleting its directory.
+   */
+  async removeSessionClone(path: string): Promise<void> {
+    await rm(path, { recursive: true, force: true });
   }
 
-  /** Worktrees registered in the clone. */
-  listWorktrees(repoPath: string): Promise<GitWorktree[]> {
-    return this.listWorktreesLocked(repoPath);
+  /**
+   * Brings a session branch into a local project: fast-forwards
+   * `targetBranch` of the mirror (creating it if unborn) to `sourceBranch`
+   * of the session clone. Git refuses if that is not a fast-forward; merge
+   * the target into the session branch first. Repositories with a remote
+   * are integrated by pushing to the remote instead (their mirror follows
+   * the remote). Returns the new commit of the target branch.
+   */
+  async fastForwardMirror(options: {
+    mirrorPath: string;
+    clonePath: string;
+    sourceBranch: string;
+    targetBranch: string;
+  }): Promise<string> {
+    const { mirrorPath, clonePath, sourceBranch, targetBranch } = options;
+    for (const branch of [sourceBranch, targetBranch]) {
+      if (!isValidBranchName(branch)) {
+        throw new Error(`"${branch}" is not a valid branch name`);
+      }
+    }
+    return this.locks.run(mirrorPath, async () => {
+      if (await this.hasRemote(mirrorPath)) {
+        throw new Error(
+          'This repository has a remote; integrate the session branch by pushing to it',
+        );
+      }
+      await this.git(mirrorPath, [
+        'fetch',
+        '--no-tags',
+        '--quiet',
+        '--',
+        clonePath,
+        // Without "+": only a fast-forward is accepted.
+        `refs/heads/${sourceBranch}:refs/heads/${targetBranch}`,
+      ]);
+      return (
+        await this.git(mirrorPath, ['rev-parse', `refs/heads/${targetBranch}`])
+      ).trim();
+    });
   }
 
   /** Whether `path` is a bare repository (and not inside another one). */
@@ -363,30 +299,60 @@ export class GitService {
     }
   }
 
-  /**
-   * Creates a new project directory with an empty repository on `main`.
-   * Fails if the directory exists.
-   */
-  async initProject(path: string): Promise<void> {
-    await mkdir(dirname(path), { recursive: true });
-    await mkdir(path);
+  /** Branch checked out in a (non-bare) repository, `null` if unknown. */
+  async currentBranch(path: string): Promise<string | null> {
     try {
-      await runGit(['init', '--quiet', '--initial-branch=main'], { cwd: path });
-    } catch (error) {
-      await rm(path, { recursive: true, force: true });
-      throw error;
+      return (
+        (
+          await runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+            cwd: path,
+          })
+        ).trim() || null
+      );
+    } catch {
+      return null;
     }
   }
 
   // -------------------------------------------------------------------------
 
-  /** git on a shared clone, addressed with `--git-dir` (no discovery). */
+  /** git on a mirror, addressed with `--git-dir` (no discovery). */
   private git(
-    repoPath: string,
+    mirrorPath: string,
     args: string[],
     options: { timeoutMs?: number } = {},
   ): Promise<string> {
-    return runGit([`--git-dir=${repoPath}`, ...args], options);
+    return runGit([`--git-dir=${mirrorPath}`, ...args], options);
+  }
+
+  /** Settings every mirror gets. */
+  private async configureMirror(path: string): Promise<void> {
+    const config = (name: string, value: string) =>
+      this.git(path, ['config', '--', name, value]);
+    // Reflogs for all refs, as in non-bare repositories.
+    await config('core.logAllRefUpdates', 'true');
+    // Pushes from session clones (local projects) may only fast-forward
+    // and never delete branches.
+    await config('receive.denyNonFastForwards', 'true');
+    await config('receive.denyDeletes', 'true');
+  }
+
+  private async initLocalMirror(path: string): Promise<void> {
+    if (await exists(path)) {
+      throw new Error(
+        `${path} exists but is not a bare repository; move it away first`,
+      );
+    }
+    await mkdir(dirname(path), { recursive: true });
+    await runGit([
+      'init',
+      '--quiet',
+      '--bare',
+      '--initial-branch=main',
+      '--',
+      path,
+    ]);
+    await this.configureMirror(path);
   }
 
   /**
@@ -394,14 +360,14 @@ export class GitService {
    * so an interrupted clone never looks like a finished one. Leftovers of
    * earlier interrupted clones of the same repository are removed.
    */
-  private async cloneLocked(repoPath: string, url: string): Promise<void> {
-    if (await exists(repoPath)) {
+  private async cloneMirror(path: string, url: string): Promise<void> {
+    if (await exists(path)) {
       throw new Error(
-        `${repoPath} exists but is not a bare repository; move it away first`,
+        `${path} exists but is not a bare repository; move it away first`,
       );
     }
-    const parent = dirname(repoPath);
-    const prefix = `.${basename(repoPath)}.clone-`;
+    const parent = dirname(path);
+    const prefix = `.${basename(path)}.clone-`;
     await mkdir(parent, { recursive: true });
     for (const entry of await readdir(parent)) {
       if (entry.startsWith(prefix)) {
@@ -411,81 +377,84 @@ export class GitService {
     const temporary = join(parent, prefix + randomBytes(4).toString('hex'));
     try {
       await runGit(['init', '--quiet', '--bare', '--', temporary]);
+      await this.configureMirror(temporary);
       const config = (name: string, value: string) =>
         this.git(temporary, ['config', '--', name, value]);
       await config('remote.origin.url', url);
-      await config(
-        'remote.origin.fetch',
-        '+refs/heads/*:refs/remotes/origin/*',
-      );
-      // Reflogs for all refs, as in non-bare repositories: lets commits of
-      // deleted or reset session branches be recovered.
-      await config('core.logAllRefUpdates', 'true');
+      await config('remote.origin.fetch', MIRROR_FETCH_REFSPEC);
       await this.git(temporary, ['fetch', ...FETCH_OPTIONS, 'origin'], {
         timeoutMs: GIT_NETWORK_TIMEOUT_MS,
       });
-      await rename(temporary, repoPath);
+      await rename(temporary, path);
     } catch (error) {
       await rm(temporary, { recursive: true, force: true });
       throw error;
     }
   }
 
-  /** Refuses to fetch into a clone of another remote. */
-  private async checkOrigin(repoPath: string, url: string): Promise<void> {
-    let origin = '';
+  private async hasRemote(mirrorPath: string): Promise<boolean> {
     try {
-      origin = (
-        await this.git(repoPath, ['config', '--get', 'remote.origin.url'])
-      ).trim();
-    } catch {
-      // no origin configured
-    }
-    if (origin !== url) {
-      throw new Error(
-        `${repoPath} is a clone of ${origin || 'an unknown remote'}, not of ${url}`,
-      );
-    }
-  }
-
-  /**
-   * Updates `refs/remotes/origin/HEAD` from the remote (its default branch
-   * may have changed) and returns the branch.
-   */
-  private async refreshDefaultBranch(repoPath: string): Promise<string | null> {
-    try {
-      await this.git(repoPath, ['remote', 'set-head', 'origin', '--auto'], {
-        timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-      });
-    } catch (error) {
-      if (!(error instanceof GitError)) {
-        throw error;
-      }
-      // Empty remote: no HEAD to follow. Keep what is known.
-    }
-    return this.defaultBranch(repoPath);
-  }
-
-  private async branchExistsLocked(
-    repoPath: string,
-    branch: string,
-  ): Promise<boolean> {
-    try {
-      await this.git(repoPath, [
-        'show-ref',
-        '--verify',
-        '--quiet',
-        `refs/heads/${branch}`,
-      ]);
+      await this.git(mirrorPath, ['config', '--get', 'remote.origin.url']);
       return true;
     } catch {
       return false;
     }
   }
 
-  private async listWorktreesLocked(repoPath: string): Promise<GitWorktree[]> {
-    return parseWorktreeList(
-      await this.git(repoPath, ['worktree', 'list', '--porcelain']),
+  /** Refuses to fetch into a mirror of another remote. */
+  private async checkOrigin(mirrorPath: string, url: string): Promise<void> {
+    let origin = '';
+    try {
+      origin = (
+        await this.git(mirrorPath, ['config', '--get', 'remote.origin.url'])
+      ).trim();
+    } catch {
+      // no origin configured
+    }
+    if (origin !== url) {
+      throw new Error(
+        `${mirrorPath} is a mirror of ${origin || 'nothing'}, not of ${url}`,
+      );
+    }
+  }
+
+  /**
+   * Points the mirror's HEAD at the remote's default branch (it may have
+   * changed), so session clones get `origin/HEAD`. Returns the branch, or
+   * `null` if the remote has none (empty repository).
+   */
+  private async followRemoteHead(mirrorPath: string): Promise<string | null> {
+    const branch = parseRemoteHead(
+      await this.git(mirrorPath, ['ls-remote', '--symref', 'origin', 'HEAD'], {
+        timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+      }),
     );
+    if (branch && isValidBranchName(branch)) {
+      await this.git(mirrorPath, [
+        'symbolic-ref',
+        'HEAD',
+        `refs/heads/${branch}`,
+      ]);
+      return branch;
+    }
+    return null;
+  }
+
+  /** Branch HEAD of the mirror points to (may be unborn). */
+  private async headBranch(mirrorPath: string): Promise<string | null> {
+    try {
+      return (
+        (
+          await this.git(mirrorPath, [
+            'symbolic-ref',
+            '--quiet',
+            '--short',
+            'HEAD',
+          ])
+        ).trim() || null
+      );
+    } catch {
+      return null;
+    }
   }
 }

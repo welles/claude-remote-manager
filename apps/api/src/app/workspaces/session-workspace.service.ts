@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, rmdir, stat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import {
   BadRequestException,
   ConflictException,
@@ -11,6 +10,7 @@ import {
 import type {
   CreateSessionRequest,
   SessionEventInput,
+  SetupResultEvent,
 } from '@claude-remote-manager/shared-types';
 import {
   isUuid,
@@ -19,7 +19,6 @@ import {
   requireString,
 } from '../common/validation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
-import { NAME_PATTERN } from '../git/clone-url';
 import { GitService, isValidBranchName } from '../git/git.service';
 import { newSlug } from '../git/slug';
 import { RepositoriesService } from '../repositories/repositories.service';
@@ -42,7 +41,13 @@ export interface WorkspacePlan {
   directories: NewSessionDirectory[];
 }
 
-/** Preparation failed; the session's worktrees were removed again. */
+/** Outcome of the setup scripts. */
+export interface SetupOutcome {
+  /** A setup script failed or timed out (not: was stopped by ending). */
+  failed: string[];
+}
+
+/** Preparation failed; the session's directories were removed again. */
 export class PreparationError extends Error {
   constructor(message: string) {
     super(message);
@@ -65,14 +70,32 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-const isWorktree = (directory: SessionDirectoryRecord) =>
-  directory.repositoryId !== null && directory.branch !== null;
+/** Age of a point in time in words, e.g. `5 minutes`, `3 hours`. */
+export function ageInWords(since: Date, now = new Date()): string {
+  const minutes = Math.max(
+    0,
+    Math.round((now.getTime() - since.getTime()) / 60_000),
+  );
+  const plural = (value: number, unit: string) =>
+    `${value} ${unit}${value === 1 ? '' : 's'}`;
+  if (minutes < 60) {
+    return plural(minutes, 'minute');
+  }
+  const hours = Math.round(minutes / 60);
+  return hours < 48
+    ? plural(hours, 'hour')
+    : plural(Math.round(hours / 24), 'day');
+}
+
+const isClone = (directory: SessionDirectoryRecord) =>
+  directory.kind === 'clone' && directory.repositoryId !== null;
 
 /**
- * Plans and prepares the directories of sessions: the new project, one
- * worktree per repository on the session branch `claude/<slug>`, and the
- * repositories' setup scripts. If a worktree cannot be created, the ones
- * already created are removed again and the session gets a clear error.
+ * Plans and prepares the directories of sessions: one clone per repository
+ * (made from its mirror) on the session branch `claude/<slug>`, or a
+ * scratch directory, and the repositories' setup scripts. If a clone cannot
+ * be created, the session's other directories are removed again and the
+ * session gets a clear error.
  */
 @Injectable()
 export class SessionWorkspaceService {
@@ -88,8 +111,8 @@ export class SessionWorkspaceService {
 
   /**
    * Validates the workspace part of a session request and picks a slug
-   * that no session, worktree directory or branch uses yet. No side
-   * effects.
+   * that no session or directory uses yet. Its only side effect: a
+   * requested new project is registered.
    */
   async plan(
     request: CreateSessionRequest,
@@ -97,10 +120,23 @@ export class SessionWorkspaceService {
   ): Promise<WorkspacePlan> {
     const body = requireObject(request);
     const selections = this.parseRepositories(body['repositories']);
-    const project = this.parseProject(body['newProject']);
-    if (!project && selections.length === 0) {
+    const projectName = this.parseProject(body['newProject']);
+    const scratch = body['scratch'];
+    if (
+      scratch !== undefined &&
+      scratch !== null &&
+      typeof scratch !== 'boolean'
+    ) {
+      throw new BadRequestException('scratch must be a boolean');
+    }
+    if (scratch && (projectName !== null || selections.length > 0)) {
       throw new BadRequestException(
-        'Choose a main repository or a new project',
+        'A scratch session has no repositories or project',
+      );
+    }
+    if (!scratch && projectName === null && selections.length === 0) {
+      throw new BadRequestException(
+        'Choose a main repository, a new project or a scratch directory',
       );
     }
     const repositories = selections.map(({ repositoryId, baseBranch }) => {
@@ -113,96 +149,96 @@ export class SessionWorkspaceService {
       return { record, baseBranch };
     });
 
-    let projectPath: string | null = null;
-    if (project) {
-      projectPath = join(this.config.projectsDir, project);
-      if (this.sessions.projectExists(project) || (await exists(projectPath))) {
-        throw new ConflictException(
-          `A project named ${project} already exists`,
-        );
-      }
+    const slug = await this.uniqueSlug(title);
+    if (scratch) {
+      return {
+        slug,
+        directories: [
+          {
+            path: join(this.config.scratchDir, slug),
+            kind: 'scratch',
+            repositoryId: null,
+            branch: null,
+            baseBranch: null,
+            state: 'pending',
+            setupStatus: 'none',
+          },
+        ],
+      };
     }
-
-    const slug = await this.uniqueSlug(
-      title,
-      repositories.map(({ record }) => record),
-    );
-    const directories: NewSessionDirectory[] = [];
-    if (project && projectPath) {
-      directories.push({
-        path: projectPath,
-        repositoryId: null,
-        branch: null,
+    if (projectName !== null) {
+      repositories.unshift({
+        record: this.repositories.createProject(projectName),
         baseBranch: null,
-        state: 'pending',
-        setupStatus: 'none',
-        newProject: { id: randomUUID(), name: project },
       });
     }
-    for (const { record, baseBranch } of repositories) {
-      directories.push({
-        path: this.worktreePath(record, slug),
+    return {
+      slug,
+      directories: repositories.map(({ record, baseBranch }) => ({
+        path: this.clonePath(record, slug),
+        kind: 'clone',
         repositoryId: record.id,
         branch: `claude/${slug}`,
         baseBranch,
         state: 'pending',
         setupStatus: record.setupScript ? 'pending' : 'none',
-      });
-    }
-    return { slug, directories };
+      })),
+    };
   }
 
   /**
    * Creates the session's directories and runs the setup scripts. Throws a
    * {@link PreparationError} after rolling back if a directory could not
-   * be created; a failing setup script is only reported. Aborting skips the
-   * setup scripts that have not finished.
+   * be created. Aborting skips the setup scripts that have not finished.
    */
   async prepare(
     sessionId: string,
     emit: Emit,
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<SetupOutcome> {
     const session = this.sessions.require(sessionId);
-    const failures: string[] = [];
-    for (const directory of session.directories) {
-      if (directory.projectId && directory.state === 'pending') {
-        try {
-          await this.createProject(session, directory, emit);
-        } catch (error) {
-          failures.push(errorText(error));
-        }
-      }
-    }
-    if (failures.length === 0) {
-      const results = await Promise.allSettled(
-        session.directories
-          .filter(
-            (directory) =>
-              isWorktree(directory) && directory.state === 'pending',
-          )
-          .map((directory) => this.createWorktree(session, directory, emit)),
-      );
-      for (const result of results) {
-        if (result.status === 'rejected') {
-          failures.push(errorText(result.reason));
-        }
-      }
-    }
+    const pending = session.directories.filter(
+      (directory) => directory.state === 'pending',
+    );
+    const results = await Promise.allSettled(
+      pending.map((directory) =>
+        directory.kind === 'scratch'
+          ? this.createScratch(session, directory, emit)
+          : this.createClone(session, directory, emit),
+      ),
+    );
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [errorText(result.reason)] : [],
+    );
     if (failures.length > 0) {
       await this.rollback(sessionId, emit);
       throw new PreparationError(
         `${failures.join('; ')}. The session's other directories were removed again.`,
       );
     }
-    await this.runSetupScripts(sessionId, emit, signal);
+    return this.runSetupScripts(sessionId, emit, signal, () => true);
+  }
+
+  /** Runs the setup scripts that failed or timed out once more. */
+  rerunFailedSetup(
+    sessionId: string,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<SetupOutcome> {
+    return this.runSetupScripts(
+      sessionId,
+      emit,
+      signal,
+      (directory) =>
+        directory.setupStatus === 'failed' ||
+        directory.setupStatus === 'timed_out',
+    );
   }
 
   /**
-   * Removes everything a failed or interrupted preparation created:
-   * worktrees with their branches (they have no commits yet) and the new
-   * project directory. Directories end as `removed`, or `failed` if they
-   * were never created.
+   * Removes everything a failed or interrupted preparation created: the
+   * session's clones and scratch directory. Directories end as `removed`,
+   * or `failed` if they were never created.
    */
   async rollback(
     sessionId: string,
@@ -210,40 +246,17 @@ export class SessionWorkspaceService {
   ): Promise<void> {
     const session = this.sessions.require(sessionId);
     for (const directory of session.directories) {
-      if (directory.state !== 'pending' && directory.state !== 'ready') {
+      if (
+        (directory.state !== 'pending' && directory.state !== 'ready') ||
+        directory.kind === 'directory'
+      ) {
         continue;
       }
-      const target = directory.repositoryName ?? directory.projectName;
+      // Paths contain the session's unique slug: nobody else created them.
+      const created = await exists(directory.path);
       try {
-        if (
-          isWorktree(directory) &&
-          directory.repositoryId &&
-          directory.branch
-        ) {
-          const repository = this.repositories.require(directory.repositoryId);
-          if (await this.git.isBareRepository(repository.localPath)) {
-            await this.git.removeWorktree(
-              repository.localPath,
-              directory.path,
-              {
-                force: true,
-              },
-            );
-            if (
-              await this.git.branchExists(
-                repository.localPath,
-                directory.branch,
-              )
-            ) {
-              await this.git.deleteBranch(
-                repository.localPath,
-                directory.branch,
-              );
-            }
-          }
-        } else if (directory.projectId && directory.state === 'ready') {
-          await rm(directory.path, { recursive: true, force: true });
-        }
+        await this.git.removeSessionClone(directory.path);
+        await this.removeEmptyParents(directory.path);
         this.sessions.updateDirectory(sessionId, directory.position, {
           state: directory.state === 'ready' ? 'removed' : 'failed',
           setupStatus:
@@ -251,12 +264,12 @@ export class SessionWorkspaceService {
               ? 'skipped'
               : directory.setupStatus,
         });
-        if (directory.state === 'ready') {
+        if (created) {
           emit(
             progress(
               'rollback',
               'succeeded',
-              target,
+              directory.repositoryName,
               directory.path,
               'Removed',
             ),
@@ -266,8 +279,6 @@ export class SessionWorkspaceService {
         this.logger.error(
           `Rolling back ${directory.path} of session ${sessionId} failed: ${errorText(error)}`,
         );
-        // Not used by the session any more; shown as orphaned if it is
-        // still on disk.
         this.sessions.updateDirectory(sessionId, directory.position, {
           state: 'failed',
         });
@@ -275,7 +286,7 @@ export class SessionWorkspaceService {
           progress(
             'rollback',
             'failed',
-            target,
+            directory.repositoryName,
             directory.path,
             errorText(error),
           ),
@@ -330,51 +341,27 @@ export class SessionWorkspaceService {
     if (value === undefined || value === null) {
       return null;
     }
-    const name = requireString(
-      requireObject(value, 'newProject'),
-      'name',
-    ).trim();
-    if (!NAME_PATTERN.test(name) || name === '..') {
-      throw new BadRequestException(
-        'newProject.name may contain letters, digits, ".", "_" and "-" (at most 100 characters)',
-      );
-    }
-    return name;
+    return requireString(requireObject(value, 'newProject'), 'name').trim();
   }
 
-  private worktreePath(repository: RepositoryRecord, slug: string): string {
+  /** `<sessions>/<slug>/<owner>/<name>`: one directory per session. */
+  private clonePath(repository: RepositoryRecord, slug: string): string {
     return join(
-      this.config.worktreesDir,
+      this.config.sessionsDir,
+      slug,
       repository.owner,
       repository.name,
-      slug,
     );
   }
 
-  private async uniqueSlug(
-    title: string,
-    repositories: RepositoryRecord[],
-  ): Promise<string> {
+  private async uniqueSlug(title: string): Promise<string> {
     for (let attempt = 0; attempt < SLUG_ATTEMPTS; attempt++) {
       const slug = newSlug(title);
-      if (this.sessions.slugExists(slug)) {
-        continue;
-      }
-      let free = true;
-      for (const repository of repositories) {
-        if (
-          (await exists(this.worktreePath(repository, slug))) ||
-          (repository.clonedAt &&
-            (await this.git.branchExists(
-              repository.localPath,
-              `claude/${slug}`,
-            )))
-        ) {
-          free = false;
-          break;
-        }
-      }
-      if (free) {
+      if (
+        !this.sessions.slugExists(slug) &&
+        !(await exists(join(this.config.sessionsDir, slug))) &&
+        !(await exists(join(this.config.scratchDir, slug)))
+      ) {
         return slug;
       }
     }
@@ -383,38 +370,49 @@ export class SessionWorkspaceService {
     );
   }
 
-  private async createProject(
+  /** Removes the session's directory `<sessions>/<slug>` once it is empty. */
+  private async removeEmptyParents(path: string): Promise<void> {
+    for (
+      let dir = dirname(path);
+      dir.startsWith(`${this.config.sessionsDir}/`);
+      dir = dirname(dir)
+    ) {
+      try {
+        await rmdir(dir);
+      } catch {
+        return;
+      }
+    }
+  }
+
+  private async createScratch(
     session: SessionRecord,
     directory: SessionDirectoryRecord,
     emit: Emit,
   ): Promise<void> {
-    const name = directory.projectName;
-    emit(progress('project', 'started', name, directory.path, null));
+    emit(progress('scratch', 'started', null, directory.path, null));
     try {
-      await this.git.initProject(directory.path);
+      await mkdir(dirname(directory.path), { recursive: true });
+      await mkdir(directory.path);
     } catch (error) {
-      const message = `Could not create the project ${name}: ${errorText(error)}`;
+      const message = `Could not create the scratch directory: ${errorText(error)}`;
       this.sessions.updateDirectory(session.id, directory.position, {
         state: 'failed',
       });
-      emit(progress('project', 'failed', name, directory.path, message));
+      emit(progress('scratch', 'failed', null, directory.path, message));
       throw new Error(message);
     }
     this.sessions.updateDirectory(session.id, directory.position, {
       state: 'ready',
     });
-    emit(
-      progress(
-        'project',
-        'succeeded',
-        name,
-        directory.path,
-        'Empty repository on main',
-      ),
-    );
+    emit(progress('scratch', 'succeeded', null, directory.path, null));
   }
 
-  private async createWorktree(
+  /**
+   * Updates the mirror (falling back to its last fetched state if the
+   * remote cannot be reached), then clones it for the session.
+   */
+  private async createClone(
     session: SessionRecord,
     directory: SessionDirectoryRecord,
     emit: Emit,
@@ -422,43 +420,32 @@ export class SessionWorkspaceService {
     const name = directory.repositoryName;
     const repositoryId = directory.repositoryId as string;
     const branch = directory.branch as string;
-    let step: 'fetch' | 'worktree' = 'fetch';
+    let step: 'fetch' | 'clone' = 'fetch';
     try {
       emit(progress('fetch', 'started', name, null, null));
-      const repository = await this.repositories.update(repositoryId);
-      emit(
-        progress(
-          'fetch',
-          'succeeded',
-          name,
-          null,
-          repository.defaultBranch
-            ? `Default branch ${repository.defaultBranch}`
-            : 'The repository has no branches yet',
-        ),
-      );
+      const repository = await this.updateMirror(repositoryId, name, emit);
 
-      step = 'worktree';
-      emit(progress('worktree', 'started', name, directory.path, null));
+      step = 'clone';
+      emit(progress('clone', 'started', name, directory.path, null));
       const baseBranch = directory.baseBranch ?? repository.defaultBranch;
       let baseCommit: string | null = null;
       if (baseBranch) {
-        baseCommit = await this.git.remoteBranchCommit(
+        baseCommit = await this.git.branchCommit(
           repository.localPath,
           baseBranch,
         );
-        if (!baseCommit) {
+        if (!baseCommit && !(await this.git.isEmpty(repository.localPath))) {
           throw new Error(`Branch ${baseBranch} does not exist`);
         }
       } else if (!(await this.git.isEmpty(repository.localPath))) {
         throw new Error('The default branch is unknown; choose a base branch');
       }
-      await this.git.addWorktree({
-        repoPath: repository.localPath,
+      await this.git.createSessionClone({
+        mirrorPath: repository.localPath,
         path: directory.path,
+        remoteUrl: repository.cloneUrl,
         branch,
         baseCommit,
-        lockReason: `claude-remote-manager session ${session.slug ?? session.id}`,
       });
       this.sessions.updateDirectory(session.id, directory.position, {
         state: 'ready',
@@ -467,17 +454,17 @@ export class SessionWorkspaceService {
       });
       emit(
         progress(
-          'worktree',
+          'clone',
           'succeeded',
           name,
           directory.path,
           baseCommit
             ? `${branch} from ${baseBranch} at ${baseCommit.slice(0, 12)}`
-            : `${branch} (empty repository)`,
+            : `${branch} (no commits yet)`,
         ),
       );
     } catch (error) {
-      const message = `${step === 'fetch' ? 'Could not update' : 'Could not create the worktree of'} ${name}: ${errorText(error)}`;
+      const message = `${step === 'fetch' ? 'Could not update' : 'Could not create the clone of'} ${name}: ${errorText(error)}`;
       this.sessions.updateDirectory(session.id, directory.position, {
         state: 'failed',
       });
@@ -494,22 +481,76 @@ export class SessionWorkspaceService {
     }
   }
 
+  /**
+   * Fetches the mirror. If that fails but a mirror exists, the session
+   * starts from its last fetched state with a visible warning.
+   */
+  private async updateMirror(
+    repositoryId: string,
+    name: string | null,
+    emit: Emit,
+  ): Promise<RepositoryRecord> {
+    try {
+      const repository = await this.repositories.update(repositoryId);
+      emit(
+        progress(
+          'fetch',
+          'succeeded',
+          name,
+          null,
+          repository.defaultBranch
+            ? `Default branch ${repository.defaultBranch}`
+            : 'The repository has no branches yet',
+        ),
+      );
+      return repository;
+    } catch (error) {
+      const repository = this.repositories.require(repositoryId);
+      if (
+        !repository.clonedAt ||
+        !(await this.git.isBareRepository(repository.localPath))
+      ) {
+        throw error;
+      }
+      const age = repository.fetchedAt
+        ? `${ageInWords(repository.fetchedAt)} ago`
+        : 'at an unknown time';
+      emit(
+        progress(
+          'fetch',
+          'failed',
+          name,
+          null,
+          `Could not update ${name}: ${errorText(error)}`,
+        ),
+      );
+      emit({
+        type: 'notice',
+        level: 'warning',
+        text: `${name} could not be fetched; the session starts from the state fetched ${age}.`,
+      });
+      return repository;
+    }
+  }
+
   private async runSetupScripts(
     sessionId: string,
     emit: Emit,
     signal: AbortSignal,
-  ): Promise<void> {
+    select: (directory: SessionDirectoryRecord) => boolean,
+  ): Promise<SetupOutcome> {
     const session = this.sessions.require(sessionId);
-    for (const directory of session.directories.filter(isWorktree)) {
+    const failed: string[] = [];
+    for (const directory of session.directories.filter(
+      (entry) => isClone(entry) && select(entry),
+    )) {
       const repository = this.repositories.require(
         directory.repositoryId as string,
       );
       const name = directory.repositoryName as string;
       const result = (
-        state: 'started' | 'succeeded' | 'failed' | 'timed_out' | 'skipped',
-        details: Partial<
-          Omit<Extract<SessionEventInput, { type: 'setup.result' }>, 'type'>
-        > = {},
+        state: SetupResultEvent['state'],
+        details: Partial<Omit<SetupResultEvent, 'type' | 'seq' | 'at'>> = {},
       ): SessionEventInput => ({
         type: 'setup.result',
         repository: name,
@@ -546,7 +587,7 @@ export class SessionWorkspaceService {
           CRM_SESSION_ID: sessionId,
           CRM_SESSION_SLUG: session.slug ?? '',
           CRM_REPOSITORY: name,
-          CRM_WORKTREE: directory.path,
+          CRM_CLONE: directory.path,
         },
         timeoutMs: this.config.setupScriptTimeoutMs,
         signal,
@@ -556,6 +597,9 @@ export class SessionWorkspaceService {
       this.sessions.updateDirectory(sessionId, directory.position, {
         setupStatus: outcome.state,
       });
+      if (outcome.state !== 'succeeded' && !signal.aborted) {
+        failed.push(name);
+      }
       emit(
         result(outcome.state, {
           exitCode: outcome.exitCode,
@@ -566,6 +610,7 @@ export class SessionWorkspaceService {
         }),
       );
     }
+    return { failed };
   }
 }
 

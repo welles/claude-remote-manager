@@ -37,6 +37,12 @@ export const MODEL_OPTIONS = [
 /** Same rule as the API: letters, digits, `.`, `_`, `-`. */
 export const PROJECT_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/;
 
+/**
+ * Where the session works: a main repository (or local project), a new
+ * local project, or an empty scratch directory without repository.
+ */
+export type SessionMode = 'repository' | 'project' | 'scratch';
+
 /** A repository of the new session; `baseBranch: ''` uses the default. */
 export interface RepositoryChoice {
   repositoryId: string;
@@ -85,7 +91,7 @@ export class NewSessionForm implements OnInit {
   protected prompt = '';
   protected model = '';
   protected projectName = '';
-  protected readonly mode = signal<'repository' | 'project'>('repository');
+  protected readonly mode = signal<SessionMode>('repository');
   protected readonly choices = signal<RepositoryChoice[]>([emptyChoice()]);
   protected readonly creating = signal(false);
   protected readonly createError = signal<string | null>(null);
@@ -107,9 +113,12 @@ export class NewSessionForm implements OnInit {
     });
   }
 
-  protected setMode(mode: 'repository' | 'project'): void {
+  protected setMode(mode: SessionMode): void {
     this.mode.set(mode);
     this.choices.update((choices) => {
+      if (mode === 'scratch') {
+        return [];
+      }
       const chosen = choices.filter((choice) => choice.repositoryId);
       return mode === 'repository' && chosen.length === 0
         ? [emptyChoice()]
@@ -159,9 +168,14 @@ export class NewSessionForm implements OnInit {
     if (!this.prompt.trim() || this.creating()) {
       return false;
     }
-    return this.mode() === 'project'
-      ? PROJECT_NAME_PATTERN.test(this.projectName.trim())
-      : this.choices()[0]?.repositoryId !== '';
+    switch (this.mode()) {
+      case 'scratch':
+        return true;
+      case 'project':
+        return PROJECT_NAME_PATTERN.test(this.projectName.trim());
+      default:
+        return (this.choices()[0]?.repositoryId ?? '') !== '';
+    }
   }
 
   protected create(): void {
@@ -181,6 +195,7 @@ export class NewSessionForm implements OnInit {
       ...(this.mode() === 'project'
         ? { newProject: { name: this.projectName.trim() } }
         : {}),
+      ...(this.mode() === 'scratch' ? { scratch: true } : {}),
     };
     this.creating.set(true);
     this.createError.set(null);

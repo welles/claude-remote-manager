@@ -75,7 +75,7 @@ h2.heading {
 }
 
 .setup,
-.worktrees {
+.clones {
   margin-top: 12px;
 }
 
@@ -118,14 +118,14 @@ pre.script {
   margin-top: 8px;
 }
 
-.worktrees ul,
+.clones ul,
 .stray ul {
   list-style: none;
   margin: 4px 0 0;
   padding: 0;
 }
 
-.worktree {
+.clone {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -133,7 +133,7 @@ pre.script {
   border-top: 1px solid var(--mat-sys-outline-variant);
 }
 
-.worktree-name {
+.clone-name {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -146,6 +146,11 @@ pre.script {
   border-radius: 999px;
   font: var(--mat-sys-label-medium);
   line-height: 20px;
+}
+
+.tag-local {
+  background: var(--mat-sys-secondary-container);
+  color: var(--mat-sys-on-secondary-container);
 }
 
 .tag-warning {

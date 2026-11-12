@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
@@ -78,7 +79,8 @@ describe('repositories REST API', () => {
       cloneUrl: origin,
       localPath: join(testApp.config.reposDir, 'acme', 'tool'),
       setupScript: 'npm ci\n',
-      worktrees: [],
+      local: false,
+      clones: [],
     });
 
     let repository = created;
@@ -181,7 +183,38 @@ describe('repositories REST API', () => {
     });
   });
 
-  it('lists worktrees per repository and marks orphaned and missing ones', async () => {
+  it('creates local projects', async () => {
+    const response = await postJson(testApp.port, '/api/repositories', {
+      projectName: 'new-app',
+    });
+    expect(response.status).toBe(201);
+    const project = response.json<RepositoryDto>();
+    expect(project).toMatchObject({
+      owner: 'local',
+      name: 'new-app',
+      fullName: 'local/new-app',
+      cloneUrl: null,
+      local: true,
+      localPath: join(testApp.config.reposDir, 'local', 'new-app'),
+    });
+    await waitFor(() => existsSync(join(project.localPath, 'HEAD')));
+    expect(
+      (
+        await postJson(testApp.port, '/api/repositories', {
+          projectName: 'new-app',
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await postJson(testApp.port, '/api/repositories', {
+          projectName: '../x',
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it('lists session clones per repository and marks orphaned and missing ones', async () => {
     const repository = await register();
     const created = await postJson(testApp.port, '/api/sessions', {
       prompt: 'Work',
@@ -191,56 +224,54 @@ describe('repositories REST API', () => {
     const session = created.json<SessionDto>();
     await waitFor(() => testApp.runner.runs.length === 1);
     const sessionPath = join(
-      testApp.config.worktreesDir,
+      testApp.config.sessionsDir,
+      session.slug ?? '',
       'acme',
       'tool',
-      session.slug ?? '',
     );
 
-    // A worktree without session (e.g. left over from a deleted database),
-    // and a directory of an unregistered repository.
-    const orphan = join(
-      testApp.config.worktreesDir,
-      'acme',
-      'tool',
-      'leftover',
-    );
-    const gitService = new GitService();
-    await gitService.addWorktree({
-      repoPath: repository.localPath,
+    // A clone without session (e.g. left over from a deleted database), a
+    // clone of an unregistered repository and an unused scratch directory.
+    const orphan = join(testApp.config.sessionsDir, 'leftover', 'acme', 'tool');
+    await new GitService().createSessionClone({
+      mirrorPath: repository.localPath,
       path: orphan,
+      remoteUrl: origin,
       branch: 'claude/leftover',
       baseCommit: await git(origin, 'rev-parse', 'main'),
-      lockReason: 'test',
     });
-    const stray = join(testApp.config.worktreesDir, 'other', 'repo', 'old');
+    const stray = join(testApp.config.sessionsDir, 'old', 'other', 'repo');
     await mkdir(stray, { recursive: true });
+    const scratch = join(testApp.config.scratchDir, 'forgotten');
+    await mkdir(scratch, { recursive: true });
 
     let list = (await get<RepositoryListResponse>('/api/repositories')).body;
-    expect(list.strayDirectories).toEqual([stray]);
-    expect(list.repositories[0].worktrees).toEqual([
-      {
-        path: orphan,
-        branch: 'claude/leftover',
-        sessionId: null,
-        sessionTitle: null,
-        orphaned: true,
-        missing: false,
-      },
-      {
-        path: sessionPath,
-        branch: `claude/${session.slug}`,
-        sessionId: session.id,
-        sessionTitle: 'Work',
-        orphaned: false,
-        missing: false,
-      },
-    ]);
+    expect(list.strayDirectories).toEqual([scratch, stray].sort());
+    expect(list.repositories[0].clones).toEqual(
+      [
+        {
+          path: orphan,
+          branch: 'claude/leftover',
+          sessionId: null,
+          sessionTitle: null,
+          orphaned: true,
+          missing: false,
+        },
+        {
+          path: sessionPath,
+          branch: `claude/${session.slug}`,
+          sessionId: session.id,
+          sessionTitle: 'Work',
+          orphaned: false,
+          missing: false,
+        },
+      ].sort((a, b) => a.path.localeCompare(b.path)),
+    );
 
     await rename(sessionPath, `${sessionPath}-moved`);
     list = (await get<RepositoryListResponse>('/api/repositories')).body;
     expect(
-      list.repositories[0].worktrees.find((w) => w.path === sessionPath),
+      list.repositories[0].clones.find((clone) => clone.path === sessionPath),
     ).toMatchObject({ orphaned: false, missing: true });
   });
 });

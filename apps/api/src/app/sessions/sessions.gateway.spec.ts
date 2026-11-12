@@ -121,6 +121,9 @@ describe('SessionsGateway', () => {
     expect(history.events.map((event) => event.type)).toEqual([
       'session.status',
       'user.message',
+      // fetch (creates the project's mirror), clone, done
+      'prepare.progress',
+      'prepare.progress',
       'prepare.progress',
       'prepare.progress',
       'prepare.progress',
@@ -136,7 +139,7 @@ describe('SessionsGateway', () => {
     const live = await client.next('session.event');
     expect(live).toMatchObject({
       sessionId: session.id,
-      event: { type: 'assistant.text', text: 'pong', seq: 7 },
+      event: { type: 'assistant.text', text: 'pong', seq: 9 },
     });
   });
 
@@ -264,6 +267,24 @@ describe('SessionsGateway', () => {
     expect(list.sessions.map((s) => s.id)).toEqual([session.id]);
     expect((await fetch(`${url}/api/sessions/${session.id}`)).status).toBe(200);
     expect((await fetch(`${url}/api/sessions/unknown`)).status).toBe(404);
+    // No first message is waiting for a decision.
+    for (const action of ['pending-message/send', 'setup/rerun']) {
+      expect(
+        (
+          await fetch(`${url}/api/sessions/${session.id}/${action}`, {
+            method: 'POST',
+          })
+        ).status,
+      ).toBe(409);
+    }
+    client.send({
+      type: 'pending.send',
+      sessionId: session.id,
+      requestId: 'p1',
+    });
+    expect(
+      (await client.next('error', (m) => m.requestId === 'p1')).message,
+    ).toContain('no first message waiting');
     expect(
       (
         await fetch(`${url}/api/sessions`, {
