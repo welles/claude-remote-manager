@@ -9,6 +9,14 @@ ENV NX_DAEMON=false \
     NX_NO_CLOUD=true \
     NX_SKIP_NX_CACHE=true
 
+# better-sqlite3 ships prebuilt binaries. Depending on npm's install-script
+# policy, npm still runs its implicit node-gyp step, which then compiles
+# nothing but needs Python and a toolchain. Build stage only; the runtime
+# image gets no build tools.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies first for better layer caching.
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -21,12 +29,12 @@ WORKDIR /src/dist/apps/api
 RUN npm ci --omit=dev --no-audit --no-fund
 
 # ---------------------------------------------------------------------------
-# Runtime: Node.js, git, ssh, Claude Code and single-user Nix, as a non-root user.
+# Runtime: Node.js, git, ssh and single-user Nix, as a non-root user. Claude
+# Code comes with the Agent SDK in the API's dependencies.
 # ---------------------------------------------------------------------------
 FROM node:24-trixie-slim
 
 ARG NIX_VERSION=2.35.6
-ARG CLAUDE_CODE_VERSION=2.1.322
 ARG USER_NAME=claude
 ARG USER_UID=1000
 ARG USER_GID=1000
@@ -40,12 +48,6 @@ RUN apt-get update \
 # container user has a meaningful name and home directory.
 RUN groupmod -n "${USER_NAME}" -g "${USER_GID}" node \
     && usermod -l "${USER_NAME}" -u "${USER_UID}" -g "${USER_GID}" -d "/home/${USER_NAME}" -m node
-
-# Claude Code CLI (used by the Agent SDK and for logging in). Auto-updates are
-# disabled because the global npm directory is not writable for the app user;
-# bump CLAUDE_CODE_VERSION instead.
-RUN npm install -g --no-audit --no-fund "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-    && npm cache clean --force
 
 # Nix, single-user, owned by the app user, with flakes enabled.
 COPY docker/nix.conf /etc/nix/nix.conf
@@ -97,6 +99,14 @@ RUN mkdir -p /data/repos /data/worktrees /data/projects /data/db /data/claude /d
 WORKDIR /app
 COPY --from=build /src/dist/apps/api ./
 COPY --from=build /src/dist/apps/web/browser ./public
+
+# The Agent SDK runs the Claude Code binary of its platform package. Link it as
+# `claude` for logging in, so the CLI and the sessions always use the same
+# version (updated with the SDK); DISABLE_AUTOUPDATER keeps it that way.
+RUN claude="$(ls /app/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude | head -n 1)" \
+    && test -x "${claude}" \
+    && ln -s "${claude}" /usr/local/bin/claude \
+    && claude --version
 
 ENV NODE_ENV=production \
     PORT=8080 \
