@@ -19,6 +19,8 @@ export interface AgentStartOptions {
   sessionId: string | null;
   /** Decides tool uses that need the user's approval. */
   canUseTool: CanUseTool;
+  /** Variables added to the process environment (without app secrets). */
+  env?: Record<string, string>;
 }
 
 /** A user message sent into a running Claude Code process. */

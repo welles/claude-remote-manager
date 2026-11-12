@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
 import { Injectable } from '@nestjs/common';
+import { childEnvironment } from '../common/child-environment';
 
 export interface SetupScriptOptions {
   script: string;
   /** The new worktree. */
   cwd: string;
-  /** Added to the API's environment. */
+  /** Added to the API's environment (without the app's secrets). */
   env: Record<string, string>;
   timeoutMs: number;
   /** Aborting stops the script (e.g. the session was ended). */
@@ -38,9 +39,6 @@ const KILL_GRACE_MS = 5000;
  */
 const CLOSE_GRACE_MS = 2000;
 
-/** Secrets of the app that setup scripts (repository code) do not need. */
-const HIDDEN_VARIABLES = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
-
 /**
  * Runs a repository's setup script with bash (`-e -o pipefail`: it stops
  * at the first failing command) in its own process group, so that the
@@ -51,10 +49,7 @@ const HIDDEN_VARIABLES = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
 export class SetupScriptRunner {
   run(options: SetupScriptOptions): Promise<SetupScriptResult> {
     const started = Date.now();
-    const env: NodeJS.ProcessEnv = { ...process.env, ...options.env };
-    for (const name of HIDDEN_VARIABLES) {
-      delete env[name];
-    }
+    const env = childEnvironment(options.env);
     return new Promise((resolve) => {
       let forwarded = 0;
       let pending = '';

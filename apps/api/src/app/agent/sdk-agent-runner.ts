@@ -1,5 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
+import {
+  CLAUDE_CODE_SECRETS,
+  childEnvironment,
+} from '../common/child-environment';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import type {
   AgentRun,
@@ -46,8 +50,15 @@ export function buildQueryOptions(
   options: AgentStartOptions,
   config: Pick<AppConfig, 'claudeExecutable'>,
   stderr: (data: string) => void,
+  baseEnv: NodeJS.ProcessEnv = process.env,
 ): Sdk.Options {
   return {
+    // Replaces the inherited environment: no app secrets except Claude
+    // Code's own login.
+    env: childEnvironment(options.env, {
+      keep: CLAUDE_CODE_SECRETS,
+      base: baseEnv,
+    }),
     cwd: options.cwd,
     additionalDirectories: options.additionalDirectories,
     ...(options.model ? { model: options.model } : {}),

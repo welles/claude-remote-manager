@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { childEnvironment } from '../common/child-environment';
 
 /** A git command that failed; `message` ends with git's last error lines. */
 export class GitError extends Error {
@@ -48,7 +49,7 @@ const REPOSITORY_VARIABLES = [
 export function gitEnvironment(
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...base };
+  const env: NodeJS.ProcessEnv = childEnvironment({}, { base });
   for (const name of REPOSITORY_VARIABLES) {
     delete env[name];
   }

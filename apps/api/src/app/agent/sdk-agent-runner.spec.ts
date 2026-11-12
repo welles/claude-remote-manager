@@ -19,8 +19,16 @@ describe('buildQueryOptions', () => {
   const stderr = () => undefined;
 
   it('loads Claude Code settings, prompt and CLAUDE.md files', () => {
-    const options = buildQueryOptions(base, { claudeExecutable: null }, stderr);
+    const options = buildQueryOptions(
+      base,
+      { claudeExecutable: null },
+      stderr,
+      {
+        PATH: '/bin',
+      },
+    );
     expect(options).toEqual({
+      env: { PATH: '/bin' },
       cwd: '/work',
       additionalDirectories: ['/extra'],
       permissionMode: 'default',
@@ -45,6 +53,25 @@ describe('buildQueryOptions', () => {
       pathToClaudeCodeExecutable: '/usr/local/bin/claude',
     });
     expect(options).not.toHaveProperty('sessionId');
+  });
+
+  it('passes the environment without app secrets, except Claude Code’s login', () => {
+    const options = buildQueryOptions(
+      { ...base, env: { CRM_SESSION_ID: 's1' } },
+      { claudeExecutable: null },
+      stderr,
+      {
+        PATH: '/bin',
+        CRM_SECRET_GITHUB_APP_KEY: 'key',
+        ANTHROPIC_API_KEY: 'sk',
+        CLAUDE_CODE_OAUTH_TOKEN: 'oauth',
+      },
+    );
+    expect(options.env).toEqual({
+      PATH: '/bin',
+      CLAUDE_CODE_OAUTH_TOKEN: 'oauth',
+      CRM_SESSION_ID: 's1',
+    });
   });
 
   it('never bypasses permissions', () => {

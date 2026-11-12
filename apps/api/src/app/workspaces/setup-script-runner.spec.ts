@@ -31,9 +31,10 @@ describe('SetupScriptRunner', () => {
 
   it('runs in the worktree with the session variables and streams output', async () => {
     process.env['CLAUDE_CODE_OAUTH_TOKEN'] = 'secret';
+    process.env['CRM_SECRET_TEST_KEY'] = 'registered by prefix';
     try {
       const { result, output } = await run(
-        'pwd; echo "$CRM_REPOSITORY"; echo "token=${CLAUDE_CODE_OAUTH_TOKEN:-}"; echo err >&2',
+        'pwd; echo "$CRM_REPOSITORY"; echo "token=${CLAUDE_CODE_OAUTH_TOKEN:-}${CRM_SECRET_TEST_KEY:-}"; echo err >&2',
       );
       expect(result).toMatchObject({
         state: 'succeeded',
@@ -44,6 +45,7 @@ describe('SetupScriptRunner', () => {
       expect(output).toBe(`${dir}\nacme/tool\ntoken=\nerr\n`);
     } finally {
       delete process.env['CLAUDE_CODE_OAUTH_TOKEN'];
+      delete process.env['CRM_SECRET_TEST_KEY'];
     }
   });
 
