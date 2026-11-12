@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 
 /** Length of the readable part of a slug. */
 const MAX_BASE_LENGTH = 40;
@@ -33,10 +33,12 @@ export function slugBase(text: string): string {
   ).replace(/-+$/, '');
 }
 
-/** Random suffix from a CSPRNG, base 36. */
+/** Random suffix from a CSPRNG, uniform over base 36. */
 export function randomSuffix(length = RANDOM_LENGTH): string {
-  const bytes = randomBytes(length);
-  return [...bytes].map((byte) => ALPHABET[byte % ALPHABET.length]).join('');
+  return Array.from(
+    { length },
+    () => ALPHABET[randomInt(ALPHABET.length)],
+  ).join('');
 }
 
 /**
