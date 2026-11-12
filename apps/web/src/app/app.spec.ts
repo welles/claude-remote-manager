@@ -10,8 +10,12 @@ describe('App', () => {
     }).compileComponents();
   });
 
-  it('should create the app', () => {
+  it('shows the application name in the toolbar', async () => {
     const fixture = TestBed.createComponent(App);
-    expect(fixture.componentInstance).toBeTruthy();
+    await fixture.whenStable();
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.querySelector('mat-toolbar')?.textContent).toContain(
+      'Claude Remote Manager',
+    );
   });
 });

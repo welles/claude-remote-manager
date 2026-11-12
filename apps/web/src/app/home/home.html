@@ -1,0 +1,30 @@
+<mat-card appearance="outlined">
+  <mat-card-header>
+    <mat-card-title>Server status</mat-card-title>
+  </mat-card-header>
+  <mat-card-content>
+    @if (health.isLoading()) {
+    <mat-progress-spinner mode="indeterminate" diameter="32" />
+    } @else if (health.error()) {
+    <p class="error">The server is not reachable.</p>
+    } @else if (health.value(); as value) {
+    <dl class="facts">
+      <dt>Status</dt>
+      <dd data-testid="status">{{ value.status }}</dd>
+      <dt>Version</dt>
+      <dd data-testid="version">{{ value.version }}</dd>
+      <dt>Commit</dt>
+      <dd data-testid="commit">
+        {{ value.commit ? value.commit.slice(0, 7) : 'local build' }}
+      </dd>
+      @if (value.commitTime) {
+      <dt>Commit time</dt>
+      <dd>{{ value.commitTime | date: 'medium' }}</dd>
+      }
+    </dl>
+    }
+  </mat-card-content>
+  <mat-card-actions>
+    <button matButton (click)="health.reload()">Refresh</button>
+  </mat-card-actions>
+</mat-card>
