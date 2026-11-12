@@ -17,6 +17,7 @@ import { SessionRepository } from './session.repository';
 import {
   NO_APPROVAL_UI_MESSAGE,
   SessionsService,
+  titleFromPrompt,
   type SessionEventEnvelope,
 } from './sessions.service';
 import {
@@ -103,6 +104,7 @@ describe('SessionsService', () => {
 
       expect(session).toMatchObject({
         status: 'running',
+        title: 'Reply with pong',
         model: 'haiku',
         permissionMode: 'default',
         cwd: config.sessionCwd,
@@ -124,6 +126,15 @@ describe('SessionsService', () => {
       ]);
       expect(eventTypes()).toEqual(['session.status', 'user.message']);
       expect(updates.at(-1)?.id).toBe(session.id);
+    });
+
+    it('derives a title from the first line of the prompt', async () => {
+      expect(titleFromPrompt('  Fix the build\nDetails follow')).toBe(
+        'Fix the build',
+      );
+      expect(titleFromPrompt('x'.repeat(100))).toHaveLength(80);
+      const session = await service.create({ prompt: 'p', title: ' Mine ' });
+      expect(session.title).toBe('Mine');
     });
 
     it('validates the request', async () => {
@@ -317,6 +328,30 @@ describe('SessionsService', () => {
       );
       await flush();
       expect(lastEvent('error')?.message).toBe('Prompt is too long');
+
+      // Not repeated when the assistant already said it.
+      const errors = () => events.filter(({ event }) => event.type === 'error');
+      const before = errors().length;
+      runner.last.emit(
+        {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          error: 'authentication_failed',
+          message: {
+            id: 'm9',
+            content: [{ type: 'text', text: 'Failed to authenticate' }],
+          },
+        },
+        resultMessage(1, 0, {
+          is_error: true,
+          result: 'Failed to authenticate',
+        }),
+      );
+      await flush();
+      expect(errors()).toHaveLength(before);
+      expect(lastEvent('notice')?.text).toBe(
+        'API error: authentication_failed',
+      );
     });
   });
 

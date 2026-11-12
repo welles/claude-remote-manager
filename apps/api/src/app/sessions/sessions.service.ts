@@ -40,6 +40,12 @@ const MAX_MESSAGE_LENGTH = 100_000;
 const MAX_TITLE_LENGTH = 200;
 const MODEL_PATTERN = /^[\w.[\]-]{1,100}$/;
 
+/** Default title: the first line of the first message, shortened. */
+export function titleFromPrompt(prompt: string): string {
+  const line = prompt.trim().split('\n')[0].trim();
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+}
+
 /** A session event together with the session it belongs to. */
 export interface SessionEventEnvelope {
   sessionId: string;
@@ -130,7 +136,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   async create(request: CreateSessionRequest): Promise<SessionDto> {
     const prompt = this.validateText(request?.prompt, 'prompt');
-    const title = request.title?.trim() || null;
+    const title = request.title?.trim() || titleFromPrompt(prompt);
     if (title && title.length > MAX_TITLE_LENGTH) {
       throw new BadRequestException(
         `title is longer than ${MAX_TITLE_LENGTH} characters`,
@@ -395,10 +401,20 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     });
     if (!interrupted) {
       if (result.subtype === 'success' && result.is_error) {
-        this.append(live, {
-          type: 'error',
-          message: result.result || 'The request failed.',
-        });
+        // API errors usually arrive as assistant text already; do not
+        // repeat the same text.
+        const lastText = live.log.findLast(
+          (event) => event.type === 'assistant.text',
+        );
+        if (
+          lastText?.type !== 'assistant.text' ||
+          lastText.text !== result.result
+        ) {
+          this.append(live, {
+            type: 'error',
+            message: result.result || 'The request failed.',
+          });
+        }
       } else if (result.subtype !== 'success') {
         this.append(live, {
           type: 'error',
