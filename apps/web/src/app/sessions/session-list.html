@@ -1,0 +1,81 @@
+<mat-card appearance="outlined" class="new-session">
+  <mat-card-header>
+    <mat-card-title>New session</mat-card-title>
+  </mat-card-header>
+  <mat-card-content>
+    <form (ngSubmit)="create()" class="new-session-form">
+      <mat-form-field appearance="outline" class="prompt">
+        <mat-label>What should Claude do?</mat-label>
+        <textarea
+          matInput
+          name="prompt"
+          [(ngModel)]="prompt"
+          (keydown)="onPromptKeydown($event)"
+          cdkTextareaAutosize
+          rows="3"
+          data-testid="new-prompt"
+        ></textarea>
+        <mat-hint>Ctrl+Enter to start</mat-hint>
+      </mat-form-field>
+      <div class="new-session-actions">
+        <mat-form-field
+          appearance="outline"
+          class="model"
+          subscriptSizing="dynamic"
+        >
+          <mat-label>Model</mat-label>
+          <mat-select name="model" [(ngModel)]="model">
+            @for (option of modelOptions; track option.value) {
+            <mat-option [value]="option.value">{{ option.label }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <button
+          matButton="filled"
+          type="submit"
+          [disabled]="!prompt.trim() || creating()"
+          data-testid="start"
+        >
+          Start session
+        </button>
+      </div>
+      @if (createError(); as error) {
+      <p class="error">{{ error }}</p>
+      }
+    </form>
+  </mat-card-content>
+</mat-card>
+
+<h2 class="heading">Sessions</h2>
+@if (loading()) {
+<mat-progress-spinner mode="indeterminate" diameter="32" />
+} @else if (loadError(); as error) {
+<p class="error">{{ error }}</p>
+} @else if (sessions().length === 0) {
+<p class="empty">No sessions yet.</p>
+} @else {
+<nav class="sessions">
+  @for (session of sessions(); track session.id) {
+  <a
+    class="session"
+    [routerLink]="['/sessions', session.id]"
+    data-testid="session"
+  >
+    <span class="title">{{ session.title || 'Untitled session' }}</span>
+    <span class="meta">
+      <span class="status status-{{ session.status }}"
+        >{{ statusLabels[session.status] }}</span
+      >
+      <span>{{ session.updatedAt | date: 'short' }}</span>
+      @if (session.model) {
+      <span>{{ session.model }}</span>
+      }
+      <span>
+        {{ formatTokens(totalTokens(session.usage)) }} tokens · {{
+        formatCost(session.usage.costUsd) }}
+      </span>
+    </span>
+  </a>
+  }
+</nav>
+}

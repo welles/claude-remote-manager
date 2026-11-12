@@ -1,0 +1,128 @@
+<header class="header">
+  <a matButton routerLink="/" class="back">← Sessions</a>
+  @if (session(); as s) {
+  <h1 class="title">{{ s.title || 'Untitled session' }}</h1>
+  <div class="facts">
+    <span class="status status-{{ s.status }}" data-testid="status"
+      >{{ statusLabels[s.status] }}</span
+    >
+    @if (s.model) {
+    <span>{{ s.model }}</span>
+    }
+    <span
+      data-testid="usage"
+      title="Input {{ s.usage.inputTokens }} · Output {{ s.usage.outputTokens }} · Cache write {{ s.usage.cacheCreationInputTokens }} · Cache read {{ s.usage.cacheReadInputTokens }}"
+    >
+      {{ formatTokens(totalTokens(s.usage)) }} tokens · {{
+      formatCost(s.usage.costUsd) }}
+    </span>
+    @if (context(); as c) {
+    <span data-testid="context" title="Context window of {{ c.model }}">
+      Context {{ formatTokens(c.usedTokens) }} / {{ formatTokens(c.maxTokens) }}
+      ({{ c.percentage | number: '1.0-1' }}%)
+    </span>
+    }
+  </div>
+  <div class="usage-detail">
+    In {{ formatTokens(s.usage.inputTokens) }} · Out {{
+    formatTokens(s.usage.outputTokens) }} · Cache write {{
+    formatTokens(s.usage.cacheCreationInputTokens) }} · Cache read {{
+    formatTokens(s.usage.cacheReadInputTokens) }}
+  </div>
+  } @if (incompatible()) {
+  <p class="banner error">The server uses a newer protocol. Reload the page.</p>
+  } @else if (!connected()) {
+  <p class="banner">Connecting to the server…</p>
+  }
+</header>
+
+<section class="conversation" data-testid="conversation">
+  @if (!loaded() && !error()) {
+  <mat-progress-bar mode="indeterminate" />
+  } @for (item of items(); track item.key) { @switch (item.kind) { @case
+  ('user') {
+  <div class="user-message">{{ item.text }}</div>
+  } @case ('assistant') {
+  <div
+    class="assistant-text markdown"
+    [class.nested]="item.nested"
+    [class.streaming]="item.streaming"
+    [innerHTML]="item.text | markdown"
+  ></div>
+  } @case ('tool') {
+  <details class="tool" [class.nested]="item.nested">
+    <summary>
+      <span class="tool-name">{{ item.name }}</span>
+      <code class="tool-summary">{{ item.summary }}</code>
+      <span class="tool-state tool-state-{{ toolState(item) }}"
+        >{{ toolState(item) }}</span
+      >
+    </summary>
+    @if (item.denied) {
+    <p class="tool-denied">{{ item.denied }}</p>
+    }
+    <pre class="tool-io">{{ inputJson(item.input) }}</pre>
+    @if (item.result; as result) {
+    <pre class="tool-io" [class.tool-error]="result.isError">
+{{ result.content }}@if (result.truncated) {
+…(truncated)}</pre
+    >
+    }
+  </details>
+  } @case ('notice') {
+  <p class="notice notice-{{ item.level }}">{{ item.text }}</p>
+  } @case ('error') {
+  <p class="error-message">{{ item.text }}</p>
+  } @case ('turn') {
+  <p class="turn">
+    @if (item.interrupted) { Interrupted · } {{ item.durationMs / 1000 | number:
+    '1.1-1' }} s · {{ formatTokens(totalTokens(item.usage)) }} tokens · {{
+    formatCost(item.usage.costUsd) }}
+  </p>
+  } } } @if (running()) {
+  <p class="working">Claude is working…</p>
+  }
+</section>
+
+<footer class="composer">
+  @if (error(); as message) {
+  <p class="error" data-testid="error">{{ message }}</p>
+  }
+  <div class="composer-row">
+    <mat-form-field
+      appearance="outline"
+      class="input"
+      subscriptSizing="dynamic"
+    >
+      <mat-label>{{ running() ? 'Queue a message' : 'Message' }}</mat-label>
+      <textarea
+        matInput
+        [(ngModel)]="draft"
+        (keydown)="onKeydown($event)"
+        cdkTextareaAutosize
+        cdkAutosizeMinRows="1"
+        cdkAutosizeMaxRows="8"
+        data-testid="message-input"
+      ></textarea>
+    </mat-form-field>
+    <div class="buttons">
+      <button
+        matButton="filled"
+        (click)="send()"
+        [disabled]="!draft.trim() || !connected()"
+        data-testid="send"
+      >
+        Send
+      </button>
+      @if (running()) {
+      <button
+        matButton="outlined"
+        (click)="interrupt()"
+        data-testid="interrupt"
+      >
+        Stop
+      </button>
+      }
+    </div>
+  </div>
+</footer>

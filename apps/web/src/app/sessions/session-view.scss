@@ -1,0 +1,166 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.back {
+  margin-left: -12px;
+}
+
+.title {
+  font: var(--mat-sys-title-large);
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.usage-detail {
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-on-surface-variant);
+  margin-top: 2px;
+}
+
+.banner {
+  margin: 8px 0 0;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.conversation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 40vh;
+}
+
+.user-message {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--mat-sys-primary-container);
+  color: var(--mat-sys-on-primary-container);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.assistant-text {
+  overflow-wrap: anywhere;
+
+  &.streaming::after {
+    content: '▍';
+    color: var(--mat-sys-primary);
+  }
+}
+
+.nested {
+  margin-left: 16px;
+  padding-left: 8px;
+  border-left: 2px solid var(--mat-sys-outline-variant);
+}
+
+.tool {
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font: var(--mat-sys-body-small);
+
+  summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    min-width: 0;
+  }
+}
+
+.tool-name {
+  font-weight: 600;
+}
+
+.tool-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-state {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.tool-state-error,
+.tool-state-denied {
+  color: var(--mat-sys-error);
+}
+
+.tool-denied {
+  color: var(--mat-sys-error);
+  margin: 4px 0;
+}
+
+.tool-io {
+  max-height: 240px;
+  overflow: auto;
+  margin: 4px 0;
+  padding: 6px;
+  border-radius: 4px;
+  background: var(--mat-sys-surface-container);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-error {
+  color: var(--mat-sys-error);
+}
+
+.notice,
+.turn,
+.working {
+  margin: 0;
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.notice-warning {
+  color: var(--mat-sys-error);
+}
+
+.error-message,
+.error {
+  margin: 0;
+  color: var(--mat-sys-error);
+}
+
+.composer {
+  position: sticky;
+  bottom: 0;
+  padding: 8px 0 12px;
+  background: var(--mat-sys-surface);
+}
+
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+}
+
+.buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 4px;
+}

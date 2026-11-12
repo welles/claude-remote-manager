@@ -1,5 +1,7 @@
 <mat-toolbar class="toolbar">
-  <span>Claude Remote Manager</span>
+  <a routerLink="/" class="brand">Claude Remote Manager</a>
+  <span class="spacer"></span>
+  <a matButton routerLink="/status" class="status-link">Server</a>
 </mat-toolbar>
 <main class="content">
   <router-outlet />

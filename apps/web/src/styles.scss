@@ -40,3 +40,29 @@ body {
   color: var(--mat-sys-on-surface);
   font: var(--mat-sys-body-medium);
 }
+
+/* Session status badge, used in the session list and the session view. */
+.status {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 999px;
+  font: var(--mat-sys-label-medium);
+  line-height: 20px;
+  background: var(--mat-sys-surface-container-highest);
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.status-running {
+  background: var(--mat-sys-primary-container);
+  color: var(--mat-sys-on-primary-container);
+}
+
+.status-waiting {
+  background: var(--mat-sys-tertiary-container);
+  color: var(--mat-sys-on-tertiary-container);
+}
+
+.status-failed {
+  background: var(--mat-sys-error-container);
+  color: var(--mat-sys-on-error-container);
+}

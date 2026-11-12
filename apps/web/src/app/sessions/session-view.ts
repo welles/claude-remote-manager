@@ -1,0 +1,230 @@
+import { TextFieldModule } from '@angular/cdk/text-field';
+import { DecimalPipe } from '@angular/common';
+import {
+  Component,
+  DestroyRef,
+  afterRenderEffect,
+  computed,
+  inject,
+  signal,
+  type OnInit,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { FormsModule } from '@angular/forms';
+import { MatButtonModule } from '@angular/material/button';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { ActivatedRoute, RouterLink } from '@angular/router';
+import type {
+  ContextUsage,
+  ServerMessage,
+  SessionDto,
+} from '@claude-remote-manager/shared-types';
+import {
+  applyEvent,
+  buildConversation,
+  type ConversationItem,
+} from './conversation';
+import { formatCost, formatTokens, STATUS_LABELS, totalTokens } from './format';
+import { MarkdownPipe } from './markdown.pipe';
+import { SessionSocket } from './session-socket';
+import { newId } from './sessions-api';
+
+/** One session: the streamed conversation, input and usage. */
+@Component({
+  selector: 'app-session-view',
+  imports: [
+    DecimalPipe,
+    FormsModule,
+    MarkdownPipe,
+    MatButtonModule,
+    MatFormFieldModule,
+    MatInputModule,
+    MatProgressBarModule,
+    RouterLink,
+    TextFieldModule,
+  ],
+  templateUrl: './session-view.html',
+  styleUrl: './session-view.scss',
+})
+export class SessionView implements OnInit {
+  private readonly route = inject(ActivatedRoute);
+  private readonly socket = inject(SessionSocket);
+  private readonly destroyRef = inject(DestroyRef);
+
+  protected readonly statusLabels = STATUS_LABELS;
+  protected readonly formatCost = formatCost;
+  protected readonly formatTokens = formatTokens;
+  protected readonly totalTokens = totalTokens;
+  protected readonly connected = this.socket.connected;
+  protected readonly incompatible = this.socket.incompatible;
+
+  protected readonly sessionId = signal('');
+  protected readonly session = signal<SessionDto | null>(null);
+  protected readonly items = signal<ConversationItem[]>([]);
+  protected readonly context = signal<ContextUsage | null>(null);
+  protected readonly error = signal<string | null>(null);
+  protected readonly loaded = signal(false);
+  protected readonly running = computed(
+    () => this.session()?.status === 'running',
+  );
+  protected draft = '';
+
+  /** Request IDs of frames this view sent, to show their errors. */
+  private readonly pending = new Set<string>();
+  /** Whether the page is scrolled to the end; then new content stays in view. */
+  private stickToBottom = true;
+
+  constructor() {
+    afterRenderEffect(() => {
+      this.items();
+      if (this.stickToBottom) {
+        window.scrollTo({ top: document.documentElement.scrollHeight });
+      }
+    });
+    const onScroll = () => {
+      const { scrollHeight } = document.documentElement;
+      this.stickToBottom =
+        window.innerHeight + window.scrollY >= scrollHeight - 80;
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    this.destroyRef.onDestroy(() =>
+      window.removeEventListener('scroll', onScroll),
+    );
+  }
+
+  ngOnInit(): void {
+    this.socket.messages$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((message) => this.handle(message));
+    this.route.paramMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((params) => {
+        const previous = this.sessionId();
+        if (previous) {
+          this.socket.unsubscribe(previous);
+        }
+        const id = params.get('id') ?? '';
+        this.sessionId.set(id);
+        this.session.set(null);
+        this.items.set([]);
+        this.context.set(null);
+        this.loaded.set(false);
+        this.socket.subscribe(id);
+      });
+    this.destroyRef.onDestroy(() => this.socket.unsubscribe(this.sessionId()));
+  }
+
+  protected send(): void {
+    const text = this.draft.trim();
+    if (!text) {
+      return;
+    }
+    const requestId = newId();
+    const sent = this.socket.send({
+      type: 'message.send',
+      sessionId: this.sessionId(),
+      id: newId(),
+      text,
+      requestId,
+    });
+    if (!sent) {
+      this.error.set('Not connected to the server. Try again in a moment.');
+      return;
+    }
+    this.pending.add(requestId);
+    this.error.set(null);
+    this.draft = '';
+    this.stickToBottom = true;
+  }
+
+  protected interrupt(): void {
+    const requestId = newId();
+    if (
+      this.socket.send({
+        type: 'interrupt',
+        sessionId: this.sessionId(),
+        requestId,
+      })
+    ) {
+      this.pending.add(requestId);
+    }
+  }
+
+  protected onKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      this.send();
+    }
+  }
+
+  protected toolState(
+    item: Extract<ConversationItem, { kind: 'tool' }>,
+  ): string {
+    if (item.denied) {
+      return 'denied';
+    }
+    if (!item.result) {
+      return this.running() ? 'running' : 'no result';
+    }
+    return item.result.isError ? 'error' : 'done';
+  }
+
+  protected inputJson(input: unknown): string {
+    return JSON.stringify(input, null, 2);
+  }
+
+  private handle(message: ServerMessage): void {
+    const id = this.sessionId();
+    switch (message.type) {
+      case 'session.history':
+        if (message.session.id === id) {
+          this.session.set(message.session);
+          this.items.set(buildConversation(message.events));
+          const lastContext = message.events.findLast(
+            (event) => event.type === 'context.usage',
+          );
+          this.context.set(
+            message.session.context ??
+              (lastContext?.type === 'context.usage'
+                ? lastContext.context
+                : null),
+          );
+          this.loaded.set(true);
+        }
+        return;
+      case 'session.event':
+        if (message.sessionId === id) {
+          const event = message.event;
+          this.items.update((items) => applyEvent(items, event));
+          if (event.type === 'context.usage') {
+            this.context.set(event.context);
+          } else if (event.type === 'session.status') {
+            this.session.update((session) =>
+              session ? { ...session, status: event.status } : session,
+            );
+          }
+        }
+        return;
+      case 'session.updated':
+        if (message.session.id === id) {
+          this.session.set(message.session);
+        }
+        return;
+      case 'error':
+        if (message.requestId && this.pending.has(message.requestId)) {
+          this.pending.delete(message.requestId);
+          this.error.set(message.message);
+        } else if (message.requestId === null) {
+          this.error.set(message.message);
+        }
+        return;
+      case 'ack':
+        this.pending.delete(message.requestId);
+        return;
+      default:
+        return;
+    }
+  }
+}
