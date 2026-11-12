@@ -1,4 +1,5 @@
 import type {
+  AssistantDraft,
   SessionEvent,
   UsageTotals,
 } from '@claude-remote-manager/shared-types';
@@ -205,6 +206,23 @@ export function applyEvent(
       // elsewhere or not yet.
       return items;
   }
+}
+
+/** Shows the streamed text of a block, replacing what the client had. */
+export function applyDraft(
+  items: ConversationItem[],
+  draft: AssistantDraft,
+): ConversationItem[] {
+  const key = `text:${draft.messageId}:${draft.blockIndex}`;
+  const item: ConversationItem = {
+    kind: 'assistant',
+    key,
+    text: draft.text,
+    streaming: true,
+    nested: draft.parentToolUseId !== null,
+  };
+  const index = items.findIndex((existing) => existing.key === key);
+  return index >= 0 ? replaceAt(items, index, item) : [...items, item];
 }
 
 export function buildConversation(events: SessionEvent[]): ConversationItem[] {

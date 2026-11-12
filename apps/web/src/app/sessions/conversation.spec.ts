@@ -2,7 +2,12 @@ import type {
   SessionEvent,
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
-import { applyEvent, buildConversation, toolSummary } from './conversation';
+import {
+  applyDraft,
+  applyEvent,
+  buildConversation,
+  toolSummary,
+} from './conversation';
 
 let seq = 0;
 const event = (input: SessionEventInput): SessionEvent =>
@@ -190,6 +195,46 @@ describe('conversation', () => {
       durationMs: 1200,
       usage,
     });
+  });
+
+  it('replaces the text of a streaming block with a draft', () => {
+    let items = buildConversation([
+      event({
+        type: 'assistant.delta',
+        messageId: 'm1',
+        blockIndex: 0,
+        text: 'He',
+        parentToolUseId: null,
+      }),
+    ]);
+    items = applyDraft(items, {
+      messageId: 'm1',
+      blockIndex: 0,
+      text: 'Hello',
+      parentToolUseId: null,
+    });
+    items = applyDraft(items, {
+      messageId: 'm1',
+      blockIndex: 1,
+      text: 'More',
+      parentToolUseId: 'task',
+    });
+    expect(items).toEqual([
+      {
+        kind: 'assistant',
+        key: 'text:m1:0',
+        text: 'Hello',
+        streaming: true,
+        nested: false,
+      },
+      {
+        kind: 'assistant',
+        key: 'text:m1:1',
+        text: 'More',
+        streaming: true,
+        nested: true,
+      },
+    ]);
   });
 
   it('returns the same array when nothing changes', () => {

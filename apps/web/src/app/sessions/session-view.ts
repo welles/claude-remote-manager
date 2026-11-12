@@ -18,10 +18,12 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import type {
   ContextUsage,
+  LogPosition,
   ServerMessage,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import {
+  applyDraft,
   applyEvent,
   buildConversation,
   type ConversationItem,
@@ -73,6 +75,8 @@ export class SessionView implements OnInit {
 
   /** Request IDs of frames this view sent, to show their errors. */
   private readonly pending = new Set<string>();
+  /** How far this view has seen the session's log, for reconnects. */
+  private position: LogPosition | null = null;
   /** Whether the page is scrolled to the end; then new content stays in view. */
   private stickToBottom = true;
 
@@ -111,7 +115,8 @@ export class SessionView implements OnInit {
         this.items.set([]);
         this.context.set(null);
         this.loaded.set(false);
-        this.socket.subscribe(id);
+        this.position = null;
+        this.socket.subscribe(id, () => this.position);
       });
     this.destroyRef.onDestroy(() => this.socket.unsubscribe(this.sessionId()));
   }
@@ -181,7 +186,18 @@ export class SessionView implements OnInit {
       case 'session.history':
         if (message.session.id === id) {
           this.session.set(message.session);
-          this.items.set(buildConversation(message.events));
+          let items = message.complete
+            ? buildConversation(message.events)
+            : message.events.reduce(applyEvent, this.items());
+          items = message.drafts.reduce(applyDraft, items);
+          this.items.set(items);
+          this.position = {
+            logId: message.logId,
+            seq: Math.max(
+              message.complete ? 0 : (this.position?.seq ?? 0),
+              message.events.at(-1)?.seq ?? 0,
+            ),
+          };
           const lastContext = message.events.findLast(
             (event) => event.type === 'context.usage',
           );
@@ -189,7 +205,9 @@ export class SessionView implements OnInit {
             message.session.context ??
               (lastContext?.type === 'context.usage'
                 ? lastContext.context
-                : null),
+                : message.complete
+                  ? null
+                  : this.context()),
           );
           this.loaded.set(true);
         }
@@ -197,6 +215,9 @@ export class SessionView implements OnInit {
       case 'session.event':
         if (message.sessionId === id) {
           const event = message.event;
+          if (this.position) {
+            this.position = { ...this.position, seq: event.seq };
+          }
           this.items.update((items) => applyEvent(items, event));
           if (event.type === 'context.usage') {
             this.context.set(event.context);

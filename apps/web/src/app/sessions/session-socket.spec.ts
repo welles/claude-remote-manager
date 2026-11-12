@@ -84,6 +84,22 @@ describe('SessionSocket', () => {
     ]);
   });
 
+  it('resubscribes from the position the subscriber reports', () => {
+    let position: { logId: string; seq: number } | null = null;
+    socket.subscribe('s1', () => position);
+    FakeWebSocket.last.open();
+    expect(FakeWebSocket.last.sent).toEqual([
+      { type: 'subscribe', sessionId: 's1' },
+    ]);
+    position = { logId: 'log', seq: 7 };
+    FakeWebSocket.last.close();
+    vi.advanceTimersByTime(RECONNECT_DELAYS[0]);
+    FakeWebSocket.last.open();
+    expect(FakeWebSocket.last.sent).toEqual([
+      { type: 'subscribe', sessionId: 's1', after: { logId: 'log', seq: 7 } },
+    ]);
+  });
+
   it('stops on an unknown protocol version', () => {
     socket.connect();
     FakeWebSocket.last.open();

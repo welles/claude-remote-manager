@@ -3,8 +3,12 @@ import { Subject } from 'rxjs';
 import {
   SESSION_PROTOCOL_VERSION,
   type ClientMessage,
+  type LogPosition,
   type ServerMessage,
 } from '@claude-remote-manager/shared-types';
+
+/** Tells the socket how far a subscriber has seen a session's log. */
+export type PositionSource = () => LogPosition | null;
 
 /** Creates the WebSocket; replaced in tests. */
 export const WEBSOCKET_FACTORY = new InjectionToken<(url: string) => WebSocket>(
@@ -17,8 +21,8 @@ export const RECONNECT_DELAYS = [500, 1000, 2000, 5000, 10000];
 
 /**
  * The WebSocket connection to the API (`/api/ws`). Connects on first use,
- * reconnects automatically and subscribes to the same sessions again, so
- * the server sends their full history once more.
+ * reconnects automatically and subscribes to the same sessions again; with
+ * a known log position the server sends only the newer events.
  */
 @Injectable({ providedIn: 'root' })
 export class SessionSocket {
@@ -26,7 +30,7 @@ export class SessionSocket {
   private socket: WebSocket | null = null;
   private attempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly subscriptions = new Set<string>();
+  private readonly subscriptions = new Map<string, PositionSource>();
   private readonly incoming = new Subject<ServerMessage>();
 
   /** Whether the connection is open. */
@@ -47,8 +51,8 @@ export class SessionSocket {
     socket.onopen = () => {
       this.attempt = 0;
       this.connected.set(true);
-      for (const sessionId of this.subscriptions) {
-        this.send({ type: 'subscribe', sessionId });
+      for (const [sessionId, position] of this.subscriptions) {
+        this.sendSubscribe(sessionId, position);
       }
     };
     socket.onmessage = (event: MessageEvent<string>) => {
@@ -78,11 +82,14 @@ export class SessionSocket {
     };
   }
 
-  /** Receive the history and live events of a session (also after reconnects). */
-  subscribe(sessionId: string): void {
-    this.subscriptions.add(sessionId);
+  /**
+   * Receive the history and live events of a session, also after
+   * reconnects. `position` reports what the subscriber has seen so far.
+   */
+  subscribe(sessionId: string, position: PositionSource = () => null): void {
+    this.subscriptions.set(sessionId, position);
     this.connect();
-    this.send({ type: 'subscribe', sessionId });
+    this.sendSubscribe(sessionId, position);
   }
 
   unsubscribe(sessionId: string): void {
@@ -97,6 +104,15 @@ export class SessionSocket {
     }
     this.socket.send(JSON.stringify(message));
     return true;
+  }
+
+  private sendSubscribe(sessionId: string, position: PositionSource): void {
+    const after = position();
+    this.send(
+      after
+        ? { type: 'subscribe', sessionId, after }
+        : { type: 'subscribe', sessionId },
+    );
   }
 
   private scheduleReconnect(): void {

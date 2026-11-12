@@ -9,12 +9,14 @@ import { SessionView } from './session-view';
 import { FakeWebSocket, fakeWebSocketFactory } from './testing/fake-websocket';
 import { sessionDto } from './testing/session-dto';
 
+const LOG = 'log-1';
 let seq = 0;
 const event = (input: SessionEventInput): SessionEvent =>
   ({ ...input, seq: ++seq, at: '2026-01-01T00:00:00Z' }) as SessionEvent;
 
 describe('SessionView', () => {
   beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     FakeWebSocket.instances = [];
     window.scrollTo = vi.fn();
     await TestBed.configureTestingModule({
@@ -24,6 +26,8 @@ describe('SessionView', () => {
       ],
     }).compileComponents();
   });
+
+  afterEach(() => vi.useRealTimers());
 
   const open = async () => {
     const router = TestBed.inject(Router);
@@ -48,6 +52,9 @@ describe('SessionView', () => {
 
     socket.receive({
       type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
       session: sessionDto({ status: 'running' }),
       events: [
         event({ type: 'user.message', id: 'u1', text: 'Reply with pong' }),
@@ -114,10 +121,85 @@ describe('SessionView', () => {
     expect(text('interrupt')).toBeUndefined();
   });
 
+  it('catches up after a reconnect with only the newer events', async () => {
+    const { harness, socket, element } = await open();
+    const first = event({
+      type: 'user.message',
+      id: 'u1',
+      text: 'Reply with pong',
+    });
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      session: sessionDto({ status: 'running' }),
+      events: [first],
+      drafts: [],
+    });
+    const delta = event({
+      type: 'assistant.delta',
+      messageId: 'm1',
+      blockIndex: 0,
+      text: 'p',
+      parentToolUseId: null,
+    });
+    socket.receive({ type: 'session.event', sessionId: 's1', event: delta });
+    await harness.fixture.whenStable();
+
+    socket.close();
+    vi.advanceTimersByTime(1000);
+    const reconnected = FakeWebSocket.last;
+    expect(reconnected).not.toBe(socket);
+    reconnected.open();
+    expect(reconnected.sent).toEqual([
+      {
+        type: 'subscribe',
+        sessionId: 's1',
+        after: { logId: LOG, seq: delta.seq },
+      },
+    ]);
+
+    reconnected.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: false,
+      session: sessionDto({ status: 'running' }),
+      events: [event({ type: 'notice', level: 'info', text: 'Compacted' })],
+      drafts: [
+        { messageId: 'm1', blockIndex: 0, text: 'pon', parentToolUseId: null },
+      ],
+    });
+    await harness.fixture.whenStable();
+    expect(element.querySelector('.user-message')?.textContent).toBe(
+      'Reply with pong',
+    );
+    expect(element.querySelectorAll('.assistant-text')).toHaveLength(1);
+    expect(element.querySelector('.assistant-text')?.textContent?.trim()).toBe(
+      'pon',
+    );
+    expect(element.querySelector('.notice')?.textContent).toBe('Compacted');
+
+    // A new log (server restart) replaces everything.
+    reconnected.receive({
+      type: 'session.history',
+      logId: 'log-2',
+      complete: true,
+      session: sessionDto(),
+      events: [first],
+      drafts: [],
+    });
+    await harness.fixture.whenStable();
+    expect(element.querySelectorAll('.assistant-text')).toHaveLength(0);
+    expect(element.querySelector('.notice')).toBeNull();
+  });
+
   it('sends messages and interrupts', async () => {
     const { harness, socket, element, text } = await open();
     socket.receive({
       type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
       session: sessionDto({ status: 'running' }),
       events: [],
     });
@@ -157,6 +239,9 @@ describe('SessionView', () => {
     const { harness, socket, element } = await open();
     socket.receive({
       type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
       session: sessionDto(),
       events: [
         event({
