@@ -10,10 +10,12 @@ by clone URL), local projects by name; sessions run through the Claude Agent SDK
 clones of one or more repositories (or in a scratch directory) and stream to the chat view,
 where Claude's approval requests, questions and plans are answered; model and permission mode
 are chosen per session and switchable while it runs; messages sent while Claude works are
-queued; Claude's task list, the context window and the account's plan limits are shown; session
+queued; Claude's task list, the context window and the account's plan limits are shown; every
+file change appears as a diff in the history and in approvals, and a changes page shows the
+whole session's diff per repository and file; images can be attached to messages, files of the
+session referenced with `@`, and Claude shows files to the user with `show_file`; session
 branches are pushed and pull requests created by button, or by Claude after the user's
-approval; usage is recorded per request. Diffs in the history, images, `@` file references,
-`show_file` and the cleanup of sessions follow.
+approval; usage is recorded per request. The cleanup of sessions follows.
 
 ## Workspace layout
 
@@ -84,6 +86,7 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | ----------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                                            |
 | `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                                     |
+| `FILES_DIR`                         | `$DB_DIR/files`                                                                                  | The API's own files: attached images, snapshots of shown files (not for sessions)  |
 | `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem                                |
 | `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                          |
 | `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them                         |
@@ -164,7 +167,10 @@ WebSocket upgrade passes a guard (`apps/api/src/app/security`):
   as cross-site (`Sec-Fetch-Site`). Non-browser clients such as curl or the container health
   check work unchanged.
 - Request bodies must be `application/json` (415 otherwise), so HTML forms on other sites
-  cannot post to the API.
+  cannot post to the API. The only exception is the image upload (`POST /api/attachments`),
+  which takes `image/png`, `image/jpeg`, `image/gif` or `image/webp` bodies and nothing else
+  (`RAW_BODY_ROUTES`): forms cannot send these types, and a foreign page's `fetch` with them
+  needs a CORS preflight, which the API never answers.
 
 Routes that need another protection (e.g. a signed webhook) are exempted in
 `REQUEST_GUARD_EXEMPT_ROUTES`.
@@ -246,9 +252,15 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   it no longer lists. Changes go to all clients as `account.limits`. The header shows them with
   percent, reset time and when they were last updated.
 - Integrations: each Claude Code process gets a session token and the API URL for the git
-  credential helper, the tool `create_pull_request` (in-process MCP server `crm`) when the
-  session has a GitHub repository, a permission rule that makes `git push` always ask, and the
-  auto-memory directory of its main repository.
+  credential helper, the tools `show_file` (always) and `create_pull_request` (when the
+  session has a GitHub repository; both in the in-process MCP server `crm`), a permission rule
+  that makes `git push` always ask, and the auto-memory directory of its main repository.
+- Session files are read by the API only through `apps/api/src/assets/session-files.cjs`, run
+  as the session user: it opens the file, checks the real path of what it opened
+  (`/proc/self/fd`) against the session's directories and refuses everything else (symlinks
+  or `..` out, absolute paths elsewhere, directories, FIFOs, devices). Approval diffs, `@`
+  listings of scratch directories and `show_file` use it; git in clones runs as the session
+  user as well.
 - Settings: sessions get Claude Code's own system prompt and the user, project and local
   settings, including `CLAUDE.md` files of the working directory and the user's; the managed
   policy `/etc/claude-code/CLAUDE.md` is always loaded.
@@ -273,8 +285,72 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `POST /api/repositories/:id/fetch`, `POST /api/repositories/:id/github`,
 `GET /api/repositories/:id/branches`, `GET /api/github/status`, `GET /api/github/repositories`,
 `GET /api/settings`, `PUT /api/settings`, `POST /api/git/credentials` (credential helper only),
-`GET /api/models`, `GET /api/limits`, `GET /api/health`. WebSocket: `/api/ws` with the versioned protocol in
+`GET /api/models`, `GET /api/limits`, `GET /api/health`, `GET /api/sessions/:id/diff`,
+`GET /api/sessions/:id/diff/file`, `GET /api/sessions/:id/files`, `POST /api/attachments`,
+`GET /api/attachments/:id`, `GET /api/shown-files/:id`, `GET /api/shown-files/:id/content`,
+`GET /api/shown-files/:id/live`. WebSocket: `/api/ws` with the versioned protocol in
 `libs/shared-types/src/lib/session-events.ts`.
+
+### Diffs
+
+- In the history: every `Edit`, `Write` and `NotebookEdit` gets a `tool.diff` event with the
+  change from Claude Code's structured tool result (`structuredPatch`, with the file's line
+  numbers), at most 2000 lines. The events are stored, because the transcript the Agent SDK
+  returns lacks the structured results; histories from before get a diff rebuilt from the
+  tool's input, marked approximate (line numbers count from the changed text). Changes made
+  through Bash are not diffed per call; the session diff covers them.
+- In approvals: a request for a file change carries the change against the file's current
+  content (read as the session user, up to 1 MB, only inside the session's directories;
+  otherwise from the input).
+- Whole session: `GET /api/sessions/:id/diff` compares every clone with its `base_commit`:
+  commits of the session, uncommitted changes and untracked files that are not ignored,
+  renames, binary files. git runs in the clone as the session user, with external diff tools
+  and text conversions off and hooks disabled; untracked files are added as intent-to-add
+  entries to a temporary copy of the clone's index (in its git directory, removed afterwards),
+  so the clone's index and objects stay untouched. Paths come from `-z` output, so any file
+  name works. Limits: 1000 files listed per repository, 3000 diff lines per file and 20000 in
+  total; files left out are marked `too_large` or `omitted` and loaded one at a time
+  (`GET /api/sessions/:id/diff/file?repositoryId=&path=&oldPath=`, up to 20000 lines). The
+  web app shows it on the session's changes page (`/sessions/:id/changes`), unified or side by
+  side (kept per browser; unified by default on narrow screens); the component is meant for
+  the cleanup dialog too. A clone that merged newer base changes shows them as well (the diff
+  is against the commit the session started from).
+
+### Images, `@` references and shown files
+
+- Images: pasted, dropped or picked in the input (or the new-session form), each uploaded
+  right away (`POST /api/attachments`, body = the image; PNG, JPEG, GIF or WebP checked by
+  content, at most 5 MB, at most 10 per message) into `FILES_DIR/attachments` (`0600`, API
+  user only), and named by the message (`attachmentIds` on `message.send`,
+  `POST /api/sessions/:id/messages` and `POST /api/sessions`, also with an empty text). They
+  go to Claude Code as base64 image blocks before the text (also for queued messages and a
+  first message held back after a failed setup script) and are served at
+  `GET /api/attachments/:id` (nosniff, sandboxing CSP). The `attachments` table ties them to
+  their message, so reloaded histories show them; uploads no message took are removed after a
+  day.
+- `@` references: `GET /api/sessions/:id/files?query=` lists the files of all the session's
+  directories (in clones `git ls-files` of tracked and untracked, not ignored files; scratch
+  directories walked without `.git` and `node_modules`), as the session user, cached 30 s,
+  ranked by path fragments, at most 50. The input inserts `@path` (relative to the working
+  directory), `@/absolute/path` for other directories, quoted as `@"..."` with spaces. Claude
+  Code expands these itself when the message arrives (it reads the files into the turn as
+  attachments; checked with the bundled Claude Code for relative and absolute quoted paths).
+- `show_file` (path, optional caption): reads the file as the session user, only inside the
+  session's directories, and keeps a snapshot (up to 20 MB) in `FILES_DIR/shown`; larger
+  files keep only their metadata and are served from the session while it exists
+  (`.../live`). It never asks (allowed by rule and in `canUseTool`) and causes no
+  notification. A `file.shown` event (stored) puts a card on the tool call; images Claude reads
+  (`Read` returning image content) or writes (`Write` of an image file) get thumbnails the same
+  way; images made by Bash commands do not, unless Claude shows them. Served at
+  `GET /api/shown-files/:id/content`: images, PDFs, HTML and text inline, anything else (and
+  `?download=1`) as attachment, always `nosniff` and with a CSP: `sandbox` (an opaque origin
+  even when opened directly: no cookies, storage or API of the app; `Origin: null` is refused
+  by the request guard), `default-src 'none'` (loads and sends nothing); HTML may run its own
+  inline scripts (`sandbox allow-scripts`) and is shown in an `<iframe sandbox="allow-scripts">`;
+  PDFs are not sandboxed, because browser PDF viewers do not render sandboxed documents. The
+  viewer renders Markdown (sanitized), highlights code (highlight.js, loaded on first use) and
+  embeds PDFs. Snapshots and attachments belong to their session (database cascade, and
+  removal of files without a row at startup); there is no session deletion yet (cleanup step).
 
 ### Approval requests
 
@@ -656,7 +732,7 @@ All state lives in volumes under `/data`, plus the Nix store, which has to stay 
 | `/data/workspace` | `repos/` (mirrors), `sessions/<slug>/<owner>/<repo>` (session clones), `scratch/<slug>`         |
 | `/data/claude`    | Claude Code configuration dir (`CLAUDE_CONFIG_DIR`): login, settings, transcripts               |
 | `/data/git`       | the API's `ssh/` (linked as `~crm/.ssh`: key, `known_hosts`), `gitconfig` (`GIT_CONFIG_GLOBAL`) |
-| `/data/db`        | SQLite database                                                                                 |
+| `/data/db`        | SQLite database, `files/` (attached images, snapshots of shown files; API user only)            |
 | `/nix`            | Nix store and Nix's user cache, so tools are downloaded only once                               |
 
 The paths are also available to the app as `DATA_DIR`, `WORKSPACE_DIR`, `DB_DIR`,

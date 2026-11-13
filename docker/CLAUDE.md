@@ -42,6 +42,15 @@ sessions.
 - You run as the user `claude`, not as the session manager: the session manager's API, its
   database and keys are out of reach, and `sudo`/`su` do not work.
 
+## Showing files to the user
+
+- When you produce a file the user should look at (a screenshot, an image, a report, an HTML
+  page, a PDF), show it with the tool `show_file` (path, optional caption) instead of only
+  naming the path. The user sees it in the session view with the content it had at that
+  moment. Do not show every file you touch: file changes appear as diffs anyway.
+- Only files in your session's directories can be shown. HTML pages are shown sandboxed and
+  cannot load anything from the network: keep them self-contained (inline CSS and scripts).
+
 ## Git and GitHub
 
 - Commit on the session branch. You may commit on your own; commits are made with the user's
