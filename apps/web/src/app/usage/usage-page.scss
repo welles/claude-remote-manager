@@ -5,25 +5,13 @@
 }
 
 .viz {
-  --series-0: #8a8984;
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --series-4: #eda100;
-  --series-5: #e87ba4;
-  --series-6: #008300;
-}
-
-@media (prefers-color-scheme: dark) {
-  .viz {
-    --series-0: #75746f;
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --series-3: #199e70;
-    --series-4: #c98500;
-    --series-5: #d55181;
-    --series-6: #008300;
-  }
+  --series-0: var(--app-chart-0);
+  --series-1: var(--app-chart-1);
+  --series-2: var(--app-chart-2);
+  --series-3: var(--app-chart-3);
+  --series-4: var(--app-chart-4);
+  --series-5: var(--app-chart-5);
+  --series-6: var(--app-chart-6);
 }
 
 @for $slot from 0 through 6 {
@@ -64,7 +52,7 @@
   flex-direction: column;
   min-width: 120px;
   padding: 8px 12px;
-  border-radius: 12px;
+  border-radius: var(--mat-sys-corner-medium);
   background: var(--mat-sys-surface-container);
 }
 
@@ -99,7 +87,7 @@ svg {
 }
 
 .axis {
-  font-size: 11px;
+  font: var(--mat-sys-label-small);
   fill: var(--mat-sys-on-surface-variant);
 }
 
@@ -149,7 +137,7 @@ svg {
   width: 10px;
   height: 10px;
   margin-right: 6px;
-  border-radius: 2px;
+  border-radius: var(--mat-sys-corner-extra-small);
 }
 
 .table {
@@ -188,7 +176,7 @@ svg {
 .tag {
   margin-left: 6px;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: var(--mat-sys-corner-small);
   background: var(--mat-sys-surface-container-highest);
 }
 

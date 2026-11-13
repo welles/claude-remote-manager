@@ -62,7 +62,7 @@ const KIND_LABELS: Record<ShownFileDto['kind'], string> = {
       display: block;
       padding: 0;
       border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: 8px;
+      border-radius: var(--mat-sys-corner-small);
       overflow: hidden;
       cursor: zoom-in;
       background: var(--mat-sys-surface-container);
@@ -79,7 +79,7 @@ const KIND_LABELS: Record<ShownFileDto['kind'], string> = {
       justify-content: space-between;
       gap: 12px;
       padding: 8px 12px;
-      border-radius: 8px;
+      border-radius: var(--mat-sys-corner-small);
       background: var(--mat-sys-surface-container);
     }
     .text {

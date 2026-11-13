@@ -133,13 +133,13 @@ import { SessionsApi } from './sessions-api';
       max-height: 90dvh;
       box-sizing: border-box;
       border: none;
-      border-radius: 16px;
+      border-radius: var(--mat-sys-corner-large);
       padding: 16px 20px;
       background: var(--mat-sys-surface-container-high);
       color: var(--mat-sys-on-surface);
     }
     .dialog::backdrop {
-      background: rgb(0 0 0 / 40%);
+      background: var(--app-scrim);
     }
     h2 {
       font: var(--mat-sys-headline-small);

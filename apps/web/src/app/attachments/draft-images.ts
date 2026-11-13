@@ -47,7 +47,7 @@ import type { AttachmentDrafts } from './attachment-drafts';
       position: relative;
       width: 64px;
       height: 64px;
-      border-radius: 8px;
+      border-radius: var(--mat-sys-corner-small);
       overflow: hidden;
       background: var(--mat-sys-surface-container);
     }

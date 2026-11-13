@@ -7,7 +7,7 @@
 .backdrop {
   position: absolute;
   inset: 0;
-  background: rgb(0 0 0 / 40%);
+  background: var(--app-scrim);
 }
 
 /* A side sheet; the whole screen on phones. */
@@ -98,12 +98,7 @@ h2 {
 
 .code {
   margin: 0;
-  font:
-    13px/1.5 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
+  font: var(--app-font-code);
   white-space: pre;
 }
 
@@ -126,7 +121,7 @@ h2 {
   .hljs-string,
   .hljs-regexp,
   .hljs-addition {
-    color: var(--mat-sys-tertiary);
+    color: var(--app-success);
   }
   .hljs-number,
   .hljs-attr,

@@ -1,24 +1,19 @@
 :host {
   display: block;
-  --diff-add: rgb(46 160 67 / 18%);
-  --diff-del: rgb(248 81 73 / 18%);
+  --diff-add: var(--app-diff-add-bg);
+  --diff-del: var(--app-diff-del-bg);
 }
 
 .scroll {
   overflow-x: auto;
-  border-radius: 6px;
+  border-radius: var(--mat-sys-corner-small);
   background: var(--mat-sys-surface-container-low);
 }
 
 .diff {
   border-collapse: collapse;
   min-width: 100%;
-  font:
-    12px/1.45 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
+  font: var(--app-font-code);
 }
 
 td {
@@ -41,13 +36,12 @@ td {
   background: var(--mat-sys-surface-container);
 }
 
-.add,
-.add .code {
+// On the row (or the cell, side by side) only: layered they double up.
+.add {
   background: var(--diff-add);
 }
 
-.del,
-.del .code {
+.del {
   background: var(--diff-del);
 }
 

@@ -13,7 +13,7 @@
   margin: 0 0 4px;
   padding: 4px 0;
   list-style: none;
-  border-radius: 8px;
+  border-radius: var(--mat-sys-corner-small);
   background: var(--mat-sys-surface-container-high);
   box-shadow: var(--mat-sys-level2);
 
@@ -33,9 +33,7 @@
 .mention-path {
   min-width: 0;
   overflow-wrap: anywhere;
-  font:
-    13px ui-monospace,
-    monospace;
+  font: var(--app-font-code);
 }
 
 .mention-repository {

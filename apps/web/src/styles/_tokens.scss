@@ -1,0 +1,78 @@
+// App tokens on top of Material's `--mat-sys-*` system tokens. Hand-made CSS
+// uses only these two families: no hex values in components.
+@mixin tokens {
+  // Spacing: a 4 px grid.
+  --app-space-1: 4px;
+  --app-space-2: 8px;
+  --app-space-3: 12px;
+  --app-space-4: 16px;
+  --app-space-5: 24px;
+  --app-space-6: 32px;
+  // Page gutter: 16 px on phones, 24 px from tablets on.
+  --app-gutter: 16px;
+
+  // Shell measures.
+  --app-bar-height: 52px;
+  --app-nav-height: 60px;
+  --app-rail-width: 80px;
+
+  --app-font-mono:
+    ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, Consolas,
+    'DejaVu Sans Mono', monospace;
+  // Code in tools, diffs and commands.
+  --app-font-code: 400 0.8125rem / 1.125rem var(--app-font-mono);
+
+  // Motion (M3 standard easing). Only inside
+  // `@media (prefers-reduced-motion: no-preference)`.
+  --app-motion-fast: 120ms;
+  --app-motion: 200ms;
+  --app-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  // Session states. Attention (amber) is the only warm colour: it means
+  // "needs you" and nothing else.
+  --app-status-attention: var(--mat-sys-tertiary);
+  --app-status-attention-container: var(--mat-sys-tertiary-container);
+  --app-status-on-attention-container: var(--mat-sys-on-tertiary-container);
+  --app-status-running: var(--mat-sys-primary);
+  --app-status-running-container: var(--mat-sys-primary-container);
+  --app-status-on-running-container: var(--mat-sys-on-primary-container);
+  --app-status-failed: var(--mat-sys-error);
+  --app-status-failed-container: var(--mat-sys-error-container);
+  --app-status-on-failed-container: var(--mat-sys-on-error-container);
+  --app-status-idle: var(--mat-sys-on-surface-variant);
+  --app-status-idle-container: var(--mat-sys-surface-container-highest);
+  --app-status-on-idle-container: var(--mat-sys-on-surface);
+  --app-status-done: var(--mat-sys-outline);
+
+  // Success (checks passed, added lines) and removal, readable on both
+  // schemes (text: at least 4.5:1 on the surfaces).
+  --app-success: light-dark(#1a7f37, #6fd99a);
+  --app-diff-add-fg: var(--app-success);
+  --app-diff-del-fg: light-dark(#c8232e, #ff8f86);
+  --app-diff-add-bg: light-dark(rgb(46 160 67 / 14%), rgb(46 160 67 / 20%));
+  --app-diff-del-bg: light-dark(rgb(248 81 73 / 14%), rgb(248 81 73 / 20%));
+
+  // GitHub issue and pull request states (backgrounds of small labels with
+  // white text, and dots).
+  --app-gh-open: light-dark(#1a7f37, #238636);
+  --app-gh-merged: light-dark(#8250df, #8957e5);
+  --app-gh-closed: light-dark(#cf222e, #da3633);
+  --app-gh-draft: light-dark(#59636e, #656d76);
+  --app-gh-on-state: #ffffff;
+
+  // Overlays.
+  --app-scrim: rgb(0 0 0 / 45%);
+
+  // Usage chart series (validated categorical palette, per scheme).
+  --app-chart-0: light-dark(#8a8984, #75746f);
+  --app-chart-1: light-dark(#2a78d6, #3987e5);
+  --app-chart-2: light-dark(#eb6834, #d95926);
+  --app-chart-3: light-dark(#1baf7a, #199e70);
+  --app-chart-4: light-dark(#eda100, #c98500);
+  --app-chart-5: light-dark(#e87ba4, #d55181);
+  --app-chart-6: #008300;
+
+  @media (min-width: 600px) {
+    --app-gutter: 24px;
+  }
+}

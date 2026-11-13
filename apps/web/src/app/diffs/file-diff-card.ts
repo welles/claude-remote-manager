@@ -59,10 +59,10 @@ const STATUS_LABELS: Record<FileDiff['status'], string> = {
       margin: 0 0 4px;
     }
     .added {
-      color: rgb(26 127 55);
+      color: var(--app-diff-add-fg);
     }
     .removed {
-      color: rgb(207 34 46);
+      color: var(--app-diff-del-fg);
     }
   `,
 })

@@ -1,0 +1,163 @@
+// The Material theme of the "Console" direction: graphite neutrals, one cool
+// accent (primary), amber as the only warm colour (tertiary = "needs you"),
+// small radii and a compact type scale. Light and dark come from one
+// definition (`color-scheme: light dark`, values use `light-dark()`).
+@use 'sass:map';
+@use '@angular/material' as mat;
+@use 'theme-colors' as colors;
+
+$font: (system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif);
+
+// A type role with its shorthand, which Material does not derive from the
+// single values.
+@function _role($name, $weight, $size, $line, $tracking: 0) {
+  @return (
+    #{$name}: #{$weight} #{$size}#{'/'}#{$line} #{$font},
+    #{$name}-size: $size,
+    #{$name}-line-height: $line,
+    #{$name}-weight: $weight,
+    #{$name}-tracking: $tracking
+  );
+}
+
+// name, weight, size, line height, tracking
+$_roles: (
+  (headline-large, 600, 1.375rem, 1.75rem),
+  (headline-medium, 600, 1.25rem, 1.625rem),
+  // Dialog titles: never larger than page titles.
+  (headline-small, 600, 1.125rem, 1.5rem),
+  // Page title in the app bar.
+  (title-large, 600, 1.0625rem, 1.5rem),
+  (title-medium, 600, 0.9375rem, 1.375rem, 0.01em),
+  // Row and card titles.
+  (title-small, 500, 0.875rem, 1.25rem, 0.005em),
+  // Conversation text.
+  (body-large, 400, 0.9375rem, 1.375rem),
+  (body-medium, 400, 0.875rem, 1.25rem),
+  (body-small, 400, 0.75rem, 1rem, 0.01em),
+  (label-medium, 500, 0.75rem, 1rem, 0.02em),
+  (label-small, 600, 0.6875rem, 1rem, 0.04em)
+);
+
+$type: ();
+@each $role in $_roles {
+  $type: map.merge($type, _role($role...));
+}
+
+$shape: (
+  corner-extra-small: 4px,
+  corner-extra-small-top: (
+    4px 4px 0 0,
+  ),
+  corner-small: 6px,
+  corner-medium: 10px,
+  corner-large: 12px,
+  corner-large-top: (
+    12px 12px 0 0,
+  ),
+  corner-large-start: (
+    12px 0 0 12px,
+  ),
+  corner-large-end: (
+    0 12px 12px 0,
+  ),
+  corner-extra-large: 16px,
+  corner-extra-large-top: (
+    16px 16px 0 0,
+  ),
+);
+
+// Hairlines: the generated outline-variant (tone 30 in dark) is too loud
+// for borders between dense rows.
+$color: (
+  outline-variant: light-dark(#d5dae2, #2f353c),
+);
+
+@mixin theme {
+  @include mat.theme(
+    (
+      color: (
+        primary: colors.$primary-palette,
+        tertiary: colors.$tertiary-palette,
+        theme-type: color-scheme,
+      ),
+      typography: (
+        plain-family: $font,
+        brand-family: $font,
+      ),
+      density: 0,
+    ),
+    map.merge(map.merge($type, $shape), $color)
+  );
+
+  // Small radii on all buttons (Material's default is fully round).
+  @include mat.button-overrides(
+    (
+      filled-container-shape: var(--mat-sys-corner-small),
+      outlined-container-shape: var(--mat-sys-corner-small),
+      text-container-shape: var(--mat-sys-corner-small),
+      tonal-container-shape: var(--mat-sys-corner-small),
+      protected-container-shape: var(--mat-sys-corner-small),
+      filled-horizontal-padding: 16px,
+      outlined-horizontal-padding: 16px,
+      tonal-horizontal-padding: 16px,
+      outlined-outline-color: var(--mat-sys-outline-variant),
+      outlined-label-text-color: var(--mat-sys-on-surface),
+    )
+  );
+  @include mat.icon-button-overrides(
+    (
+      container-shape: var(--mat-sys-corner-small),
+    )
+  );
+  @include mat.button-toggle-overrides(
+    (
+      shape: var(--mat-sys-corner-small),
+      selected-state-background-color: var(--mat-sys-surface-container-highest),
+      selected-state-text-color: var(--mat-sys-on-surface),
+      divider-color: var(--mat-sys-outline-variant),
+    )
+  );
+  // One card style: hairline border on the low container, medium radius.
+  @include mat.card-overrides(
+    (
+      outlined-container-color: var(--mat-sys-surface-container-low),
+      outlined-container-shape: var(--mat-sys-corner-medium),
+      outlined-outline-color: var(--mat-sys-outline-variant),
+      title-text-font: var(--mat-sys-title-medium-font),
+      title-text-size: var(--mat-sys-title-medium-size),
+      title-text-weight: var(--mat-sys-title-medium-weight),
+      title-text-line-height: var(--mat-sys-title-medium-line-height),
+    )
+  );
+  @include mat.form-field-overrides(
+    (
+      outlined-container-shape: var(--mat-sys-corner-small),
+      outlined-outline-color: var(--mat-sys-outline-variant),
+    )
+  );
+  @include mat.menu-overrides(
+    (
+      container-shape: var(--mat-sys-corner-medium),
+      container-color: var(--mat-sys-surface-container-high),
+    )
+  );
+  @include mat.select-overrides(
+    (
+      panel-background-color: var(--mat-sys-surface-container-high),
+    )
+  );
+  @include mat.progress-bar-overrides(
+    (
+      track-height: 2px,
+      active-indicator-height: 2px,
+    )
+  );
+}
+
+// Compact containers (filters, inline settings, side forms): -2 density
+// for form fields only; buttons keep their touch targets.
+@mixin compact {
+  @include mat.form-field-density(-2);
+  @include mat.select-density(-2);
+}

@@ -86,7 +86,7 @@ import { PREVIEW_STATE_LABELS, PreviewsApi, previewHref } from './previews-api';
       justify-content: space-between;
       gap: 8px 12px;
       padding: 8px 12px;
-      border-radius: 8px;
+      border-radius: var(--mat-sys-corner-small);
       background: var(--mat-sys-surface-container);
     }
     .text {

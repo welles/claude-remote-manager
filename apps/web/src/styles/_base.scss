@@ -1,0 +1,283 @@
+// Element defaults and the few global classes shared by all screens.
+
+@mixin base {
+  html,
+  body {
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--mat-sys-surface);
+    color: var(--mat-sys-on-surface);
+    font: var(--mat-sys-body-medium);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  // Links: the accent, underlined on hover and focus (always in prose).
+  a {
+    color: var(--mat-sys-primary);
+    text-decoration: none;
+
+    &:hover,
+    &:focus-visible {
+      text-decoration: underline;
+    }
+  }
+
+  // One visible focus ring for everything the keyboard reaches.
+  :focus-visible {
+    outline: 2px solid var(--mat-sys-primary);
+    outline-offset: 2px;
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--app-font-mono);
+  }
+
+  pre {
+    font: var(--app-font-code);
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--mat-sys-primary) 35%, transparent);
+  }
+
+  // Calm, thin scrollbars on desktop.
+  * {
+    scrollbar-color: var(--mat-sys-outline-variant) transparent;
+    scrollbar-width: thin;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  // Text for screen readers only.
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  // Monospace inline text: paths, branches, repositories, commands.
+  .mono {
+    font-family: var(--app-font-mono);
+    font-size: 0.92em;
+  }
+
+  // Uppercase micro-label above a group (list sections, panel sections).
+  .app-section-label {
+    margin: var(--app-space-4) 0 var(--app-space-2);
+    font: var(--mat-sys-label-small);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--mat-sys-on-surface-variant);
+  }
+
+  // Destructive confirmation buttons (filled) and menu items.
+  .app-danger {
+    --mat-button-filled-container-color: var(--mat-sys-error);
+    --mat-button-filled-label-text-color: var(--mat-sys-on-error);
+    --mat-button-text-label-text-color: var(--mat-sys-error);
+    --mat-button-outlined-label-text-color: var(--mat-sys-error);
+    --mat-button-text-state-layer-color: var(--mat-sys-error);
+    --mat-button-outlined-state-layer-color: var(--mat-sys-error);
+    --mat-menu-item-label-text-color: var(--mat-sys-error);
+  }
+
+  // Inline error and empty texts.
+  .app-error {
+    color: var(--mat-sys-error);
+  }
+
+  .app-muted {
+    color: var(--mat-sys-on-surface-variant);
+  }
+
+  // Session status badge (see `ui/status-badge.ts`): a small square tag in
+  // the state's colour; "needs you" is the only amber one.
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--app-space-1);
+    padding: 0 6px;
+    border-radius: var(--mat-sys-corner-extra-small);
+    font: var(--mat-sys-label-medium);
+    font-weight: 600;
+    line-height: 20px;
+    white-space: nowrap;
+    background: var(--app-status-idle-container);
+    color: var(--mat-sys-on-surface-variant);
+  }
+
+  .status-preparing,
+  .status-running {
+    background: var(--app-status-running-container);
+    color: var(--app-status-on-running-container);
+  }
+
+  .status-finished {
+    background: transparent;
+    color: var(--mat-sys-on-surface-variant);
+    box-shadow: inset 0 0 0 1px var(--mat-sys-outline-variant);
+  }
+
+  .status-failed {
+    background: var(--app-status-failed-container);
+    color: var(--app-status-on-failed-container);
+  }
+
+  // Blocked on the user: approval, question, plan, failed setup.
+  .status-permission {
+    background: var(--app-status-attention-container);
+    color: var(--app-status-on-attention-container);
+  }
+
+  // Neutral small tag ("Archived", "subagent", PR state).
+  .app-tag {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: var(--mat-sys-corner-extra-small);
+    background: var(--mat-sys-surface-container-highest);
+    color: var(--mat-sys-on-surface-variant);
+    font: var(--mat-sys-label-medium);
+    line-height: 20px;
+    white-space: nowrap;
+  }
+}
+
+// Markdown rendered with [innerHTML] (assistant text, plans, shown files):
+// component styles do not reach it, so its rules are global. Wide code
+// blocks and tables scroll inside themselves instead of widening the page.
+@mixin markdown {
+  .markdown {
+    min-width: 0;
+    overflow-wrap: anywhere;
+
+    > :first-child {
+      margin-top: 0;
+    }
+
+    > :last-child {
+      margin-bottom: 0;
+    }
+
+    p,
+    ul,
+    ol,
+    blockquote,
+    table,
+    pre {
+      margin: 0 0 var(--app-space-2);
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+      margin: var(--app-space-4) 0 var(--app-space-2);
+      font: var(--mat-sys-title-medium);
+    }
+
+    h1 {
+      font: var(--mat-sys-headline-small);
+    }
+
+    h4,
+    h5,
+    h6 {
+      font: var(--mat-sys-title-small);
+      font-weight: 600;
+    }
+
+    ul,
+    ol {
+      padding-left: 1.4em;
+    }
+
+    li + li {
+      margin-top: 2px;
+    }
+
+    a {
+      text-decoration: underline;
+    }
+
+    code {
+      padding: 1px 4px;
+      border-radius: var(--mat-sys-corner-extra-small);
+      background: var(--mat-sys-surface-container-high);
+      font-size: 0.875em;
+    }
+
+    pre {
+      max-width: 100%;
+      overflow-x: auto;
+      overflow-wrap: normal;
+      padding: var(--app-space-2) var(--app-space-3);
+      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: var(--mat-sys-corner-small);
+      background: var(--mat-sys-surface-container-low);
+
+      code {
+        padding: 0;
+        background: none;
+        font-size: inherit;
+      }
+    }
+
+    blockquote {
+      padding-left: var(--app-space-3);
+      border-left: 3px solid var(--mat-sys-outline-variant);
+      color: var(--mat-sys-on-surface-variant);
+    }
+
+    table {
+      display: block;
+      max-width: 100%;
+      overflow-x: auto;
+      border-collapse: collapse;
+      font: var(--mat-sys-body-medium);
+    }
+
+    th,
+    td {
+      padding: 4px 10px;
+      border: 1px solid var(--mat-sys-outline-variant);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--mat-sys-surface-container);
+      font-weight: 600;
+    }
+
+    hr {
+      border: 0;
+      border-top: 1px solid var(--mat-sys-outline-variant);
+    }
+
+    img {
+      max-width: 100%;
+    }
+  }
+}

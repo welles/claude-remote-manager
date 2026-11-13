@@ -103,7 +103,7 @@ import {
       max-height: 60vh;
       overflow: auto;
       padding: 12px;
-      border-radius: 8px;
+      border-radius: var(--mat-sys-corner-small);
       background: var(--mat-sys-surface-container-high);
       color: var(--mat-sys-on-surface);
       box-shadow: var(--mat-sys-level2);
@@ -119,28 +119,28 @@ import {
       color: var(--mat-sys-on-surface-variant);
     }
     .note {
-      color: var(--mat-sys-tertiary);
+      color: var(--mat-sys-secondary);
     }
     .title {
       font: var(--mat-sys-title-small);
     }
     .badge {
       padding: 0 6px;
-      border-radius: 8px;
-      color: #fff;
-      background: #6b7280;
+      border-radius: var(--mat-sys-corner-extra-small);
+      color: var(--app-gh-on-state);
+      background: var(--app-gh-draft);
     }
     .state-open {
-      background: #1a7f37;
+      background: var(--app-gh-open);
     }
     .state-merged {
-      background: #8250df;
+      background: var(--app-gh-merged);
     }
     .state-closed {
-      background: #cf222e;
+      background: var(--app-gh-closed);
     }
     .state-draft {
-      background: #59636e;
+      background: var(--app-gh-draft);
     }
     .error {
       color: var(--mat-sys-error);

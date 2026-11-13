@@ -1,112 +1,14 @@
-@use '@angular/material' as mat;
+// Global styles: the Material theme and the app's tokens (see styles/).
+// Components use `--mat-sys-*` and `--app-*` variables only.
+@use 'styles/theme';
+@use 'styles/tokens';
+@use 'styles/base';
 
 html {
   color-scheme: light dark;
-  @include mat.theme(
-    (
-      color: (
-        primary: mat.$azure-palette,
-        tertiary: mat.$blue-palette,
-      ),
-      typography: (
-        plain-family: (
-          system-ui,
-          -apple-system,
-          'Segoe UI',
-          Roboto,
-          sans-serif,
-        ),
-        brand-family: (
-          system-ui,
-          -apple-system,
-          'Segoe UI',
-          Roboto,
-          sans-serif,
-        ),
-      ),
-      density: 0,
-    )
-  );
+  @include theme.theme;
+  @include tokens.tokens;
 }
 
-html,
-body {
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  background: var(--mat-sys-surface);
-  color: var(--mat-sys-on-surface);
-  font: var(--mat-sys-body-medium);
-}
-
-/* Session status badge, used in the session list and the session view. */
-.status {
-  display: inline-block;
-  padding: 0 8px;
-  border-radius: 999px;
-  font: var(--mat-sys-label-medium);
-  line-height: 20px;
-  background: var(--mat-sys-surface-container-highest);
-  color: var(--mat-sys-on-surface-variant);
-}
-
-.status-preparing,
-.status-running {
-  background: var(--mat-sys-primary-container);
-  color: var(--mat-sys-on-primary-container);
-}
-
-.status-waiting {
-  background: var(--mat-sys-tertiary-container);
-  color: var(--mat-sys-on-tertiary-container);
-}
-
-.status-failed {
-  background: var(--mat-sys-error-container);
-  color: var(--mat-sys-on-error-container);
-}
-
-/* Waits for an approval, an answer or a plan decision: needs the user. */
-.status-permission {
-  background: var(--mat-sys-tertiary);
-  color: var(--mat-sys-on-tertiary);
-  font-weight: 600;
-}
-
-/* Text for screen readers only. */
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-}
-
-/*
- * Markdown rendered with [innerHTML] (assistant text, plans, shown files):
- * component styles do not reach it, so its layout rules are global. Wide
- * code blocks and tables scroll inside themselves instead of widening the
- * page.
- */
-.markdown {
-  min-width: 0;
-  overflow-wrap: anywhere;
-
-  pre {
-    max-width: 100%;
-    overflow-x: auto;
-    overflow-wrap: normal;
-  }
-
-  table {
-    display: block;
-    max-width: 100%;
-    overflow-x: auto;
-  }
-
-  img {
-    max-width: 100%;
-  }
-}
+@include base.base;
+@include base.markdown;

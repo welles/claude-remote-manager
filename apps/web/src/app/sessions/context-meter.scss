@@ -16,7 +16,7 @@
   flex: 1 1 120px;
   max-width: 240px;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--mat-sys-corner-extra-small);
   background: var(--mat-sys-surface-container-highest);
   overflow: hidden;
 }

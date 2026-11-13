@@ -92,8 +92,8 @@ h2.heading {
 }
 
 .script {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-family: var(--app-font-mono);
+  font: var(--app-font-code);
 }
 
 pre.script {
@@ -101,7 +101,7 @@ pre.script {
   order: 3;
   margin: 0;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: var(--mat-sys-corner-small);
   background: var(--mat-sys-surface-container);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -143,7 +143,7 @@ pre.script {
 
 .tag {
   padding: 0 8px;
-  border-radius: 999px;
+  border-radius: var(--mat-sys-corner-full);
   font: var(--mat-sys-label-medium);
   line-height: 20px;
 }

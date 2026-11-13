@@ -84,7 +84,7 @@ const canHover = () =>
       padding: 1px 8px;
       vertical-align: bottom;
       border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: 12px;
+      border-radius: var(--mat-sys-corner-medium);
       background: var(--mat-sys-surface-container-high);
       color: var(--mat-sys-on-surface);
       font: var(--mat-sys-body-medium);
@@ -100,16 +100,16 @@ const canHover = () =>
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: #6b7280;
+      background: var(--app-gh-draft);
     }
     .state-open .dot {
-      background: #1a7f37;
+      background: var(--app-gh-open);
     }
     .state-merged .dot {
-      background: #8250df;
+      background: var(--app-gh-merged);
     }
     .state-closed .dot {
-      background: #cf222e;
+      background: var(--app-gh-closed);
     }
     .state-failed {
       border-style: dashed;

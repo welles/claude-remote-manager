@@ -56,23 +56,21 @@ summary {
 }
 
 .letter {
-  font:
-    600 12px/1 ui-monospace,
-    monospace;
+  font: 600 12px/1 var(--app-font-mono);
   width: 1.5ch;
 }
 
 .letter-added {
-  color: rgb(26 127 55);
+  color: var(--app-diff-add-fg);
 }
 
 .letter-deleted {
-  color: rgb(207 34 46);
+  color: var(--app-diff-del-fg);
 }
 
 .letter-renamed,
 .letter-copied {
-  color: var(--mat-sys-tertiary);
+  color: var(--mat-sys-secondary);
 }
 
 .counts {
@@ -81,11 +79,11 @@ summary {
 }
 
 .added {
-  color: rgb(26 127 55);
+  color: var(--app-diff-add-fg);
 }
 
 .removed {
-  color: rgb(207 34 46);
+  color: var(--app-diff-del-fg);
 }
 
 .file {

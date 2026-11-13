@@ -109,7 +109,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
     .backdrop {
       position: absolute;
       inset: 0;
-      background: rgb(0 0 0 / 40%);
+      background: var(--app-scrim);
     }
     .sheet {
       position: absolute;

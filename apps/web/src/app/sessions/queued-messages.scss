@@ -16,7 +16,7 @@
   align-items: center;
   gap: 8px;
   padding: 2px 4px 2px 12px;
-  border-radius: 12px;
+  border-radius: var(--mat-sys-corner-medium);
   border: 1px dashed var(--mat-sys-primary);
   font: var(--mat-sys-body-small);
 }

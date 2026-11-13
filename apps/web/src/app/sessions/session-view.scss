@@ -38,9 +38,8 @@
   align-self: flex-end;
   max-width: 85%;
   padding: 8px 12px;
-  border-radius: 12px;
-  background: var(--mat-sys-primary-container);
-  color: var(--mat-sys-on-primary-container);
+  border-radius: var(--mat-sys-corner-medium);
+  background: var(--mat-sys-surface-container-high);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -50,20 +49,20 @@
   max-width: none;
   background: var(--mat-sys-surface-container-high);
   color: var(--mat-sys-on-surface);
-  border-left: 4px solid var(--mat-sys-tertiary);
+  border-left: 3px solid var(--mat-sys-secondary);
 }
 
 .tool-by-app {
   margin: 4px 0;
   font: var(--mat-sys-body-small);
-  color: var(--mat-sys-tertiary);
+  color: var(--mat-sys-secondary);
 }
 
 .message-origin {
   display: block;
   margin-bottom: 4px;
   font: var(--mat-sys-label-medium);
-  color: var(--mat-sys-tertiary);
+  color: var(--mat-sys-secondary);
   white-space: normal;
 }
 
@@ -85,7 +84,7 @@
 .tool,
 .setup {
   border: 1px solid var(--mat-sys-outline-variant);
-  border-radius: 8px;
+  border-radius: var(--mat-sys-corner-small);
   padding: 4px 8px;
   font: var(--mat-sys-body-small);
 
@@ -131,7 +130,7 @@
   overflow: auto;
   margin: 4px 0;
   padding: 6px;
-  border-radius: 4px;
+  border-radius: var(--mat-sys-corner-extra-small);
   background: var(--mat-sys-surface-container);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -194,9 +193,9 @@
   gap: 8px;
   margin-bottom: 8px;
   padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--mat-sys-tertiary-container);
-  color: var(--mat-sys-on-tertiary-container);
+  border-radius: var(--mat-sys-corner-small);
+  background: var(--app-status-attention-container);
+  color: var(--app-status-on-attention-container);
 
   p {
     margin: 0;
@@ -227,7 +226,7 @@
 .permission-line {
   margin: -4px 0 0 8px;
   font: var(--mat-sys-body-small);
-  color: var(--mat-sys-tertiary);
+  color: var(--mat-sys-secondary);
   overflow-wrap: anywhere;
 }
 
@@ -263,7 +262,7 @@
   align-items: flex-end;
   max-width: 85%;
   padding: 6px 12px;
-  border-radius: 12px;
+  border-radius: var(--mat-sys-corner-medium);
   border: 1px dashed var(--mat-sys-outline);
   overflow-wrap: anywhere;
 }
@@ -299,6 +298,6 @@
 }
 
 .search-target {
-  outline: 2px solid var(--mat-sys-tertiary);
+  outline: 2px solid var(--mat-sys-primary);
   outline-offset: 4px;
 }

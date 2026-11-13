@@ -5,7 +5,7 @@
 .todos {
   margin-top: 8px;
   padding: 4px 8px;
-  border-radius: 8px;
+  border-radius: var(--mat-sys-corner-small);
   background: var(--mat-sys-surface-container);
   font: var(--mat-sys-body-medium);
 

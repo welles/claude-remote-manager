@@ -9,8 +9,8 @@
 .tag {
   margin-left: 8px;
   padding: 0 6px;
-  border-radius: 4px;
-  font-size: 0.75rem;
+  border-radius: var(--mat-sys-corner-extra-small);
+  font: var(--mat-sys-label-medium);
   background: var(--mat-sys-surface-container-high);
   color: var(--mat-sys-on-surface-variant);
 }

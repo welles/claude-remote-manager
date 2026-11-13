@@ -176,13 +176,13 @@ export function snippetParts(
       display: inline-block;
       margin-right: 6px;
       padding: 0 6px;
-      border-radius: 8px;
+      border-radius: var(--mat-sys-corner-small);
       background: var(--mat-sys-surface-container-highest);
       font: var(--mat-sys-label-small);
     }
     mark {
-      background: var(--mat-sys-tertiary-container);
-      color: var(--mat-sys-on-tertiary-container);
+      background: color-mix(in srgb, var(--mat-sys-primary) 30%, transparent);
+      color: inherit;
     }
     .error {
       color: var(--mat-sys-error);

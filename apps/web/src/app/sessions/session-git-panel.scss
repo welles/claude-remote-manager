@@ -7,7 +7,7 @@
 
 .clone {
   border: 1px solid var(--mat-sys-outline-variant);
-  border-radius: 8px;
+  border-radius: var(--mat-sys-corner-small);
   padding: 4px 12px;
 }
 
@@ -74,19 +74,19 @@
 
 .state {
   padding: 0 6px;
-  border-radius: 4px;
-  font-size: 0.75rem;
+  border-radius: var(--mat-sys-corner-extra-small);
+  font: var(--mat-sys-label-medium);
   background: var(--mat-sys-surface-container-high);
 }
 
-.state-open {
-  background: var(--mat-sys-primary-container);
-  color: var(--mat-sys-on-primary-container);
+.state-open,
+.state-merged {
+  background: var(--app-gh-open);
+  color: var(--app-gh-on-state);
 }
 
 .state-merged {
-  background: var(--mat-sys-tertiary-container);
-  color: var(--mat-sys-on-tertiary-container);
+  background: var(--app-gh-merged);
 }
 
 .pull-automation {
@@ -96,7 +96,7 @@
 .kept {
   margin-top: 8px;
   padding: 4px 12px;
-  border-radius: 8px;
+  border-radius: var(--mat-sys-corner-small);
   background: var(--mat-sys-error-container);
   color: var(--mat-sys-on-error-container);
 }

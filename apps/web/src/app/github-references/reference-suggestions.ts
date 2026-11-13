@@ -62,7 +62,7 @@ import type { ReferenceAutocomplete } from './reference-autocomplete';
       margin: 0 0 4px;
       padding: 4px 0;
       list-style: none;
-      border-radius: 8px;
+      border-radius: var(--mat-sys-corner-small);
       background: var(--mat-sys-surface-container-high);
       box-shadow: var(--mat-sys-level2);
     }
@@ -87,16 +87,16 @@ import type { ReferenceAutocomplete } from './reference-autocomplete';
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: #6b7280;
+      background: var(--app-gh-draft);
     }
     .state-open {
-      background: #1a7f37;
+      background: var(--app-gh-open);
     }
     .state-merged {
-      background: #8250df;
+      background: var(--app-gh-merged);
     }
     .state-closed {
-      background: #cf222e;
+      background: var(--app-gh-closed);
     }
     .number {
       flex-shrink: 0;

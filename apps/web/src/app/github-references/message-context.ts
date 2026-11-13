@@ -36,7 +36,7 @@ import { ReferencesApi } from './references-api';
       max-height: 50vh;
       overflow: auto;
       padding: 8px;
-      border-radius: 8px;
+      border-radius: var(--mat-sys-corner-small);
       background: var(--mat-sys-surface-container);
       white-space: pre-wrap;
       overflow-wrap: anywhere;

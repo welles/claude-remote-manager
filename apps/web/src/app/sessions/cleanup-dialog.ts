@@ -231,13 +231,13 @@ export function lossOf(
       max-height: 90dvh;
       box-sizing: border-box;
       border: none;
-      border-radius: 16px;
+      border-radius: var(--mat-sys-corner-large);
       padding: 16px 20px;
       background: var(--mat-sys-surface-container-high);
       color: var(--mat-sys-on-surface);
     }
     .dialog::backdrop {
-      background: rgb(0 0 0 / 40%);
+      background: var(--app-scrim);
     }
     h2 {
       font: var(--mat-sys-headline-small);
@@ -245,7 +245,7 @@ export function lossOf(
     }
     .directory {
       border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: 12px;
+      border-radius: var(--mat-sys-corner-medium);
       margin: 12px 0;
       padding: 8px 12px;
       min-width: 0;

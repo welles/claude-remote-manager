@@ -161,7 +161,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
       gap: 4px;
       padding: 12px;
       border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: 12px;
+      border-radius: var(--mat-sys-corner-medium);
     }
     .head {
       display: flex;

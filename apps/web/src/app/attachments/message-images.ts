@@ -29,7 +29,7 @@ import { attachmentUrl } from './attachments-api';
       display: block;
       max-width: 160px;
       max-height: 120px;
-      border-radius: 6px;
+      border-radius: var(--mat-sys-corner-small);
       object-fit: contain;
       background: var(--mat-sys-surface-container);
     }
