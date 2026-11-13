@@ -1,7 +1,8 @@
-import type {
-  SessionDto,
-  SessionStatus,
-  UsageTotals,
+import {
+  needsUser,
+  type SessionDto,
+  type SessionStatus,
+  type UsageTotals,
 } from '@claude-remote-manager/shared-types';
 
 export const STATUS_LABELS: Record<SessionStatus, string> = {
@@ -29,13 +30,15 @@ export function statusLabel(
   return STATUS_LABELS[session.status];
 }
 
-/** CSS class of the status badge (`status-permission` stands out). */
+/**
+ * CSS class of the status badge. `status-permission` stands out: every
+ * session blocked on the user (see `needsUser`), including a failed setup
+ * script that holds the first message back.
+ */
 export function statusClass(
   session: Pick<SessionDto, 'status' | 'waitingFor'>,
 ): string {
-  return session.waitingFor === 'permission'
-    ? 'status-permission'
-    : `status-${session.status}`;
+  return needsUser(session) ? 'status-permission' : `status-${session.status}`;
 }
 
 /** Compact token count, e.g. `950`, `12.3k`, `1.2M`. */
