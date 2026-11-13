@@ -309,11 +309,10 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   `rate_limit_event` messages of any session and from Claude Code's plan usage request after
   turns; `GET /api/limits` reads them again through a short-lived process when they are unknown
   or older than 5 minutes (the web app asks every 5 minutes), and a later answer drops windows
-  it no longer lists. Changes go to all clients as `account.limits`. The header shows the
-  5-hour and weekly window (on phones only the 5-hour one) and all windows with percent, reset
-  time and when they were last updated in its menu; the session list shows every window,
-  per-model weekly ones included, with its reset time, so the weekly limit is visible on phones
-  too.
+  it no longer lists. Changes go to all clients as `account.limits`. The session list's app
+  bar shows the 5-hour window as a meter (amber from 75 %, red from 90 %); tapping it opens a
+  dialog with every window, per-model weekly ones included, with percent, reset time and when
+  they were last updated.
 - Integrations: each Claude Code process gets a session token and the API URL for the git
   credential helper, the tools `show_file` (always) and `create_pull_request` (when the
   session has a GitHub repository; both in the in-process MCP server `crm`), a permission rule
@@ -564,8 +563,8 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
 ## Managing sessions
 
 All of it is in the session view (Rename, Clean up…, Archive…, Unarchive, Delete…), the
-session list (search, Archived, Usage) and the Workspace cleanup page (linked from
-Repositories). Every route is a management route: Access token required, refused to
+session list (search, the Archived filter) and the Workspace cleanup page (under Settings ›
+Maintenance, also linked from Repositories). Every route is a management route: Access token required, refused to
 session processes (see [Authentication](#authentication)).
 
 - **Rename** (`PATCH /api/sessions/:id` with `title`, 1-200 characters, or the
@@ -986,15 +985,28 @@ web build runs it first):
   back (`needsUser` in the shared types). A session whose turn finished and that waits for
   the next message does not count. Set by the open app and by every push message (Badging
   API, installed app).
-- **App shortcuts**: "New session" (`/?new=1`, the cursor goes into the form) and "Waiting
-  sessions" (`/?waiting=1`): the list filtered to the sessions that need the user ("Needs
-  you", the same sessions the badge counts).
+- **App shortcuts**: "New session" (`/new`, the cursor goes into the form; the older
+  `/?new=1` is forwarded there) and "Waiting sessions" (`/?waiting=1`): the list filtered to
+  the sessions that need the user ("Needs you", the same sessions the badge counts).
 - **Share target**: links, text and images shared to the installed app become a new session's
   prompt and images: the service worker takes the operating system's form post
   (`POST /share-target`, multipart) itself, keeps it in the Cache API (dropped after a day if
-  unused) and opens `/?share=<id>`; the new-session form is filled in and the images are
+  unused) and opens `/new?share=<id>`; the new-session form is filled in and the images are
   uploaded like attached ones (`POST /api/attachments`). The API never sees the form post,
   so its request guard stays JSON-only.
+- **Layout**: on phones a bottom bar with Sessions (with the number of sessions that need
+  the user), Repos, Usage and Settings on the top-level pages; detail pages (a session, its
+  changes, a new session, Settings' Workspace cleanup and Server status) get the whole height
+  and a back arrow in their app bar. From 840 px the destinations are a rail on the left. The
+  start page lists the sessions grouped into Needs you, Running and Recent with search and
+  filters; "New session" (a floating button on phones) opens `/new`. The shell has no Material
+  modules, so the start bundle stays small; pages load lazily.
+- **Look**: one Angular Material M3 theme (`apps/web/src/styles/`): graphite neutrals, one
+  cool accent, amber only for "needs you", small radii, compact type and monospace for paths,
+  branches and commands; light and dark follow the system. Components use the
+  `--mat-sys-*` and `--app-*` tokens only; icons are inline SVG (`app/ui/icon.ts`), dates are
+  formatted with `Intl` in the browser's locale (`app/ui/dates.ts`), and shared pieces
+  (status badge, banner, dialog, page app bar) are in `app/ui/`.
 - The manifest is loaded with credentials (`crossorigin="use-credentials"`), as Cloudflare
   Access needs its cookie for it.
 
