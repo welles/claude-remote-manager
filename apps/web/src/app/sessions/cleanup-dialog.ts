@@ -250,9 +250,17 @@ export function lossOf(
       padding: 8px 12px;
       min-width: 0;
     }
+    /* A floated legend is a normal block inside the border, so a long
+       name can wrap without the border line running through it. */
     legend {
-      padding: 0 4px;
+      float: left;
+      width: 100%;
+      margin: 0 0 4px;
+      padding: 0;
       overflow-wrap: anywhere;
+    }
+    legend + * {
+      clear: left;
     }
     .choices {
       display: flex;
