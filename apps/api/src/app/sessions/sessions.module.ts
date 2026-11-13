@@ -39,6 +39,8 @@ import { SessionRepository } from './session.repository';
 import { SessionsController } from './sessions.controller';
 import { SessionManagementController } from './session-management.controller';
 import { SessionManagementService } from './session-management.service';
+import { WorkspaceController } from '../workspaces/workspace.controller';
+import { WorkspaceOrphansService } from '../workspaces/workspace-orphans.service';
 import { SessionsGateway } from './sessions.gateway';
 import { SessionsService } from './sessions.service';
 import { UsageRepository } from './usage.repository';
@@ -59,6 +61,7 @@ import { ModelsService } from './models.service';
   controllers: [
     SessionsController,
     SessionManagementController,
+    WorkspaceController,
     SessionGitController,
     SessionDiffController,
     SessionFilesController,
@@ -72,6 +75,7 @@ import { ModelsService } from './models.service';
     UsageRepository,
     SessionsService,
     SessionManagementService,
+    WorkspaceOrphansService,
     SessionsGateway,
     { provide: ViewerPresence, useValue: new ViewerPresence() },
     SessionGitService,
