@@ -68,7 +68,9 @@
 } @else if (loadError(); as error) {
 <p class="error">{{ error }}</p>
 } @else if (repositories().length === 0) {
-<p class="empty">No repositories yet. Add one by its clone URL.</p>
+<p class="empty">
+  No repositories yet. Add one from GitHub or by its clone URL.
+</p>
 } @else {
 <div class="repositories">
   @for (repository of repositories(); track repository.id) {
@@ -149,14 +151,14 @@
             <mat-label>How</mat-label>
             <mat-select name="publishMode" [(ngModel)]="publishMode">
               <mat-option value="create" [disabled]="owners().length === 0"
-                >Create a new repository in an organization</mat-option
+                >New repository</mat-option
               >
-              <mat-option value="attach">Use an existing repository</mat-option>
+              <mat-option value="attach">Existing empty repository</mat-option>
             </mat-select>
           </mat-form-field>
           @if (publishMode === 'create') {
           <mat-form-field appearance="outline" subscriptSizing="dynamic">
-            <mat-label>Owner</mat-label>
+            <mat-label>Organization</mat-label>
             <mat-select
               name="publishOwner"
               [(ngModel)]="publishOwner"
@@ -164,8 +166,7 @@
             >
               @for (owner of owners(); track owner.account) {
               <mat-option [value]="owner.account"
-                >{{ owner.account }} ({{ owner.accountType === 'Organization' ?
-                'organization' : 'account' }})</mat-option
+                >{{ owner.account }}</mat-option
               >
               }
             </mat-select>

@@ -14,7 +14,7 @@ import {
 } from './github-repository-picker';
 
 interface PickerInternals {
-  search(query: string): void;
+  search(query: unknown): void;
   choose(repository: GitHubRepositoryDto): void;
   results(): GitHubRepositoryDto[];
   message(): string | null;
@@ -100,6 +100,14 @@ describe('GitHubRepositoryPicker', () => {
     expect(register.request.body).toEqual({ githubRepositoryId: 99 });
     register.flush({ id: 'r1', fullName: 'acme/app' });
     expect(picked.map((repository) => repository.id)).toEqual(['r1']);
+  });
+
+  it('does not search for the chosen option itself', () => {
+    const { picker } = render();
+    // The autocomplete writes the chosen repository into the field.
+    picker.search(githubRepository);
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS);
+    http.expectNone((request) => request.url === '/api/github/repositories');
   });
 
   it('says when GitHub is not configured', () => {

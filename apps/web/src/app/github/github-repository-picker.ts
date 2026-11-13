@@ -87,8 +87,11 @@ export class GitHubRepositoryPicker {
     inject(DestroyRef).onDestroy(() => subscription.unsubscribe());
   }
 
-  protected search(query: string): void {
-    this.searches.next(query.trim());
+  /** The field's value: typed text, or the chosen repository (ignored). */
+  protected search(query: unknown): void {
+    if (typeof query === 'string') {
+      this.searches.next(query.trim());
+    }
   }
 
   protected display(repository: GitHubRepositoryDto | string | null): string {

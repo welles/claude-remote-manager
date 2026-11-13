@@ -23,6 +23,22 @@
   flex: 1;
 }
 
+// The links keep their width; the brand gives way (ellipsis) on phones.
+.toolbar a[matButton] {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .toolbar {
+    padding: 0 8px;
+  }
+
+  .toolbar a[matButton] {
+    padding: 0 8px;
+  }
+}
+
 .content {
   flex: 1;
   width: 100%;
