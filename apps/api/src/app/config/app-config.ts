@@ -54,7 +54,51 @@ export interface AppConfig {
   isolation: ProcessIsolation;
   /** How requests are authenticated, see Authenticator. */
   auth: AuthConfig;
+  /** Notifications (Web Push, ntfy). */
+  notifications: NotificationsConfig;
 }
+
+/**
+ * Configuration of the notifications. Secrets (the ntfy token, the VAPID
+ * private key) are not part of it: they are read from their files or
+ * `CRM_SECRET_*` variables by the channels (see notifications/), so they
+ * cannot end up in logs or dumps of the configuration.
+ */
+export interface NotificationsConfig {
+  /**
+   * Public URL of the web app (`PUBLIC_URL`), e.g. `https://crm.example.com`:
+   * ntfy messages link to the session there. `null` without.
+   */
+  publicUrl: string | null;
+  /** A running turn without events for this long hangs; 0 never. */
+  stallMs: number;
+  /** ntfy server and topic; `null` when ntfy is not configured. */
+  ntfy: NtfyConfig | null;
+  /** VAPID keys from the environment instead of the generated ones. */
+  vapid: VapidConfig;
+}
+
+export interface NtfyConfig {
+  /** Base URL of the server, without trailing slash. */
+  server: string;
+  topic: string;
+  /** File with the access token; `null` to read `CRM_SECRET_NTFY_TOKEN`. */
+  tokenFile: string | null;
+}
+
+export interface VapidConfig {
+  /** Public key (base64url); with it the private key must be given too. */
+  publicKey: string | null;
+  /** File with the private key; `null` to read `CRM_SECRET_VAPID_PRIVATE_KEY`. */
+  privateKeyFile: string | null;
+  /** `mailto:` or `https:` contact of the sender, see RFC 8292. */
+  subject: string | null;
+}
+
+/** Secret variable with the ntfy access token, as alternative to a file. */
+export const NTFY_TOKEN_VARIABLE = 'CRM_SECRET_NTFY_TOKEN';
+/** Secret variable with the VAPID private key, as alternative to a file. */
+export const VAPID_PRIVATE_KEY_VARIABLE = 'CRM_SECRET_VAPID_PRIVATE_KEY';
 
 /**
  * GitHub App settings. The private key itself is not part of the
@@ -154,6 +198,78 @@ export function loadAppConfig(
       passwd,
     ),
     auth: loadAuth(value),
+    notifications: loadNotifications(value, minutes),
+  };
+}
+
+/** `http(s)` URL without trailing slash, or an error naming the variable. */
+function httpUrl(name: string, raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${name} must be an http or https URL`);
+  }
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      `${name} must be an http or https URL without credentials, query or fragment`,
+    );
+  }
+  return url.href.replace(/\/+$/, '');
+}
+
+/** ntfy topics: letters, digits, `_` and `-`, at most 64 characters. */
+const NTFY_TOPIC_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+function loadNotifications(
+  value: (name: string) => string | undefined,
+  minutes: (name: string, fallback: number, min: number) => number,
+): NotificationsConfig {
+  const publicUrl = value('PUBLIC_URL');
+  const ntfyUrl = value('NTFY_URL');
+  const topic = value('NTFY_TOPIC');
+  let ntfy: NtfyConfig | null = null;
+  if (ntfyUrl || topic) {
+    if (!ntfyUrl || !topic) {
+      throw new Error('ntfy needs both NTFY_URL and NTFY_TOPIC');
+    }
+    if (!NTFY_TOPIC_PATTERN.test(topic)) {
+      throw new Error(
+        'NTFY_TOPIC may only contain letters, digits, _ and - (at most 64)',
+      );
+    }
+    const tokenFile = value('NTFY_TOKEN_FILE');
+    if (!tokenFile && !value(NTFY_TOKEN_VARIABLE)) {
+      throw new Error(
+        `ntfy needs an access token: set NTFY_TOKEN_FILE or ${NTFY_TOKEN_VARIABLE}`,
+      );
+    }
+    ntfy = {
+      server: httpUrl('NTFY_URL', ntfyUrl),
+      topic,
+      tokenFile: tokenFile ? resolve(tokenFile) : null,
+    };
+  }
+  const subject = value('VAPID_SUBJECT');
+  if (subject && !/^(mailto:|https:\/\/)/.test(subject)) {
+    throw new Error('VAPID_SUBJECT must be a mailto: or https: URL');
+  }
+  const vapidFile = value('VAPID_PRIVATE_KEY_FILE');
+  return {
+    publicUrl: publicUrl ? httpUrl('PUBLIC_URL', publicUrl) : null,
+    stallMs: minutes('SESSION_STALL_MINUTES', 15, 0),
+    ntfy,
+    vapid: {
+      publicKey: value('VAPID_PUBLIC_KEY') ?? null,
+      privateKeyFile: vapidFile ? resolve(vapidFile) : null,
+      subject: subject ?? null,
+    },
   };
 }
 
@@ -229,6 +345,12 @@ export function testAppConfig(
     github: null,
     isolation: { mode: 'single-user' },
     auth: { mode: 'none' },
+    notifications: {
+      publicUrl: null,
+      stallMs: 15 * 60_000,
+      ntfy: null,
+      vapid: { publicKey: null, privateKeyFile: null, subject: null },
+    },
     ...overrides,
   };
 }

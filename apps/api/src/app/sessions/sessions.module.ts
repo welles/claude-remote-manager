@@ -36,6 +36,7 @@ import { SessionsGateway } from './sessions.gateway';
 import { SessionsService } from './sessions.service';
 import { UsageRepository } from './usage.repository';
 import { UserToolApprover } from './user-tool-approver';
+import { ViewerPresence } from './viewer-presence';
 import { ModelsController } from './models.controller';
 import { ModelsService } from './models.service';
 
@@ -60,6 +61,7 @@ import { ModelsService } from './models.service';
     UsageRepository,
     SessionsService,
     SessionsGateway,
+    { provide: ViewerPresence, useValue: new ViewerPresence() },
     SessionGitService,
     GitCredentialsService,
     { provide: SessionCredentials, useValue: new SessionCredentials() },
@@ -75,6 +77,7 @@ import { ModelsService } from './models.service';
     { provide: AgentRunner, useClass: SdkAgentRunner },
     { provide: TranscriptReader, useClass: SdkTranscriptReader },
   ],
+  exports: [SessionsService, ViewerPresence],
 })
 export class SessionsModule {
   constructor(

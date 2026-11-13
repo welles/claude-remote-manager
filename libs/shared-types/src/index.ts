@@ -5,6 +5,7 @@ export * from './lib/files';
 export * from './lib/github';
 export * from './lib/health';
 export * from './lib/limits';
+export * from './lib/notifications';
 export * from './lib/permissions';
 export * from './lib/repositories';
 export * from './lib/session';

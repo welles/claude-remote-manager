@@ -305,6 +305,23 @@ export const shownFiles = sqliteTable(
   (table) => [index('shown_files_session').on(table.sessionId)],
 );
 
+/**
+ * Browsers and devices that receive Web Push notifications, one row per
+ * push subscription (endpoint and the keys to encrypt for it). Removed
+ * when the push service reports the subscription gone.
+ */
+export const pushSubscriptions = sqliteTable('push_subscriptions', {
+  id: text('id').primaryKey(),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  /** Readable device name from the user agent. */
+  label: text('label').notNull(),
+  createdAt: createdAt(),
+  lastSuccessAt: timestamp('last_success_at'),
+  lastError: text('last_error'),
+});
+
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
 export type SessionDirectoryRow = typeof sessionDirectories.$inferSelect;
@@ -315,3 +332,4 @@ export type UsageRecordRow = typeof usageRecords.$inferSelect;
 export type NewUsageRecordRow = typeof usageRecords.$inferInsert;
 export type AttachmentRow = typeof attachments.$inferSelect;
 export type ShownFileRow = typeof shownFiles.$inferSelect;
+export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;

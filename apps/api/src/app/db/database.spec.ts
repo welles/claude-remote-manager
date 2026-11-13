@@ -38,6 +38,7 @@ describe('openDatabase', () => {
       'app_settings',
       'attachments',
       'pull_requests',
+      'push_subscriptions',
       'repositories',
       'session_directories',
       'session_events',

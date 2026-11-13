@@ -81,6 +81,20 @@ describe('parseClientFrame', () => {
     }
   });
 
+  it('accepts presence frames, also without a session', () => {
+    expect(
+      parseClientFrame({
+        type: 'presence',
+        sessionId: SESSION,
+        active: true,
+        extra: 1,
+      }),
+    ).toEqual({ type: 'presence', sessionId: SESSION, active: true });
+    expect(
+      parseClientFrame({ type: 'presence', sessionId: null, active: false }),
+    ).toEqual({ type: 'presence', sessionId: null, active: false });
+  });
+
   it.each([
     [null, 'frame must be a JSON object'],
     [[], 'frame must be a JSON object'],
@@ -102,6 +116,8 @@ describe('parseClientFrame', () => {
       'permissionRequestId must be a UUID',
     ],
     [{ type: 'message.unqueue', sessionId: SESSION }, 'messageId'],
+    [{ type: 'presence', sessionId: SESSION }, 'active must be a boolean'],
+    [{ type: 'presence', sessionId: 'x', active: true }, 'sessionId'],
     [{ type: 'other' }, 'Unknown frame type other'],
   ])('rejects %j', (frame, message) => {
     expect(() => parseClientFrame(frame)).toThrow(BadRequestException);

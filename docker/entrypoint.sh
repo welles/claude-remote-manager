@@ -135,16 +135,22 @@ as_session env HOME="/home/$SESSION_USER" PATH="$PATH" sh -eu -c '
   mkdir -p /nix/var/nix/user-cache
 '
 
-# --- GitHub App key ----------------------------------------------------------
-# The key must be readable by the API and not by sessions.
-if [ -n "${GITHUB_APP_PRIVATE_KEY_FILE:-}" ]; then
-  if as_session test -r "$GITHUB_APP_PRIVATE_KEY_FILE"; then
-    fail "the session user $SESSION_USER can read $GITHUB_APP_PRIVATE_KEY_FILE; give the file to UID $(id -u "$API_USER") with mode 0400 (or 0600) on the host"
+# --- Secret files ------------------------------------------------------------
+# The GitHub App key, the ntfy token and the VAPID private key must be
+# readable by the API and not by sessions.
+check_secret_file() { # variable-name
+  file="$(eval "printf '%s' \"\${$1:-}\"")"
+  [ -n "$file" ] || return 0
+  if as_session test -r "$file"; then
+    fail "the session user $SESSION_USER can read $file ($1); give the file to UID $(id -u "$API_USER") with mode 0400 (or 0600) on the host"
   fi
-  if ! setpriv --reuid="$API_USER" --regid="$API_USER" --init-groups -- test -r "$GITHUB_APP_PRIVATE_KEY_FILE"; then
-    fail "the API user $API_USER (UID $(id -u "$API_USER")) cannot read $GITHUB_APP_PRIVATE_KEY_FILE"
+  if ! setpriv --reuid="$API_USER" --regid="$API_USER" --init-groups -- test -r "$file"; then
+    fail "the API user $API_USER (UID $(id -u "$API_USER")) cannot read $file ($1)"
   fi
-fi
+}
+check_secret_file GITHUB_APP_PRIVATE_KEY_FILE
+check_secret_file NTFY_TOKEN_FILE
+check_secret_file VAPID_PRIVATE_KEY_FILE
 
 # --- Start the API -----------------------------------------------------------
 # As crm with the capabilities in its ambient set: they survive the exec into

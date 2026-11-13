@@ -48,6 +48,12 @@ describe('loadAppConfig', () => {
       github: null,
       isolation: { mode: 'single-user' },
       auth: { mode: 'none' },
+      notifications: {
+        publicUrl: null,
+        stallMs: 15 * 60_000,
+        ntfy: null,
+        vapid: { publicKey: null, privateKeyFile: null, subject: null },
+      },
     });
   });
 
@@ -73,6 +79,12 @@ describe('loadAppConfig', () => {
           CF_ACCESS_TEAM_DOMAIN: 'acme',
           CF_ACCESS_AUD: 'aud-1, aud-2',
           CF_ACCESS_ALLOWED_EMAILS: 'Ada@Example.com',
+          PUBLIC_URL: 'https://crm.example.com/',
+          SESSION_STALL_MINUTES: '20',
+          NTFY_URL: 'https://ntfy.example.com',
+          NTFY_TOPIC: 'crm-alerts',
+          NTFY_TOKEN_FILE: '/run/secrets/ntfy-token',
+          VAPID_SUBJECT: 'mailto:admin@example.com',
         },
         PASSWD,
       ),
@@ -111,6 +123,20 @@ describe('loadAppConfig', () => {
           allowedEmails: ['ada@example.com'],
         },
       },
+      notifications: {
+        publicUrl: 'https://crm.example.com',
+        stallMs: 20 * 60_000,
+        ntfy: {
+          server: 'https://ntfy.example.com',
+          topic: 'crm-alerts',
+          tokenFile: '/run/secrets/ntfy-token',
+        },
+        vapid: {
+          publicKey: null,
+          privateKeyFile: null,
+          subject: 'mailto:admin@example.com',
+        },
+      },
     });
   });
 
@@ -124,6 +150,57 @@ describe('loadAppConfig', () => {
     expect(() =>
       loadAppConfig({ ...DEV, ALLOWED_ORIGINS: 'crm.example.com' }),
     ).toThrow('ALLOWED_ORIGINS');
+  });
+
+  it('checks the notification settings', () => {
+    const ntfy = {
+      ...DEV,
+      NTFY_URL: 'https://ntfy.example.com/',
+      NTFY_TOPIC: 'crm',
+    };
+    // The token is required whenever ntfy is configured.
+    expect(() => loadAppConfig(ntfy)).toThrow('ntfy needs an access token');
+    expect(
+      loadAppConfig({ ...ntfy, CRM_SECRET_NTFY_TOKEN: 'tk_secret' })
+        .notifications.ntfy,
+    ).toEqual({
+      server: 'https://ntfy.example.com',
+      topic: 'crm',
+      tokenFile: null,
+    });
+    // ...and the token never becomes part of the configuration.
+    expect(
+      JSON.stringify(
+        loadAppConfig({ ...ntfy, CRM_SECRET_NTFY_TOKEN: 'tk_secret' }),
+      ),
+    ).not.toContain('tk_secret');
+    expect(() =>
+      loadAppConfig({ ...DEV, NTFY_URL: 'https://ntfy.example.com' }),
+    ).toThrow('both NTFY_URL and NTFY_TOPIC');
+    expect(() =>
+      loadAppConfig({
+        ...ntfy,
+        NTFY_TOPIC: 'a/b',
+        CRM_SECRET_NTFY_TOKEN: 'x',
+      }),
+    ).toThrow('NTFY_TOPIC');
+    expect(() =>
+      loadAppConfig({
+        ...ntfy,
+        NTFY_URL: 'https://user:pw@ntfy.example.com',
+        CRM_SECRET_NTFY_TOKEN: 'x',
+      }),
+    ).toThrow('NTFY_URL');
+    expect(() =>
+      loadAppConfig({ ...DEV, PUBLIC_URL: 'crm.example.com' }),
+    ).toThrow('PUBLIC_URL');
+    expect(() =>
+      loadAppConfig({ ...DEV, VAPID_SUBJECT: 'admin@example.com' }),
+    ).toThrow('VAPID_SUBJECT');
+    expect(
+      loadAppConfig({ ...DEV, SESSION_STALL_MINUTES: '0' }).notifications
+        .stallMs,
+    ).toBe(0);
   });
 
   it('rejects an invalid idle timeout', () => {

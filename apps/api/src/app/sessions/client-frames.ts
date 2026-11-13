@@ -112,6 +112,21 @@ export function parseClientFrame(raw: unknown): ClientMessage {
         permissionRequestId: requireUuid(frame, 'permissionRequestId'),
         requestId,
       };
+    case 'presence': {
+      const sessionId = frame['sessionId'];
+      if (typeof frame['active'] !== 'boolean') {
+        throw new BadRequestException('active must be a boolean');
+      }
+      return {
+        type,
+        sessionId:
+          sessionId === null || sessionId === undefined
+            ? null
+            : requireUuid(frame, 'sessionId'),
+        active: frame['active'],
+        ...base,
+      };
+    }
     case 'message.unqueue':
       return {
         type,

@@ -580,8 +580,34 @@ export interface RerunSetupMessage {
   requestId?: string;
 }
 
+/**
+ * What the user is looking at in this client, for notifications: the API
+ * notifies nobody about a session a client shows to an active user. Sent
+ * when it changes and repeated every {@link PRESENCE_INTERVAL_MS} while
+ * `active`; without a repetition the API treats the client as away after
+ * {@link PRESENCE_TIMEOUT_MS} (a phone put away may keep the connection but
+ * stop its scripts).
+ */
+export interface PresenceMessage {
+  type: 'presence';
+  /** Session shown in the view, `null` on other pages. */
+  sessionId: string | null;
+  /**
+   * The page is visible and focused and the user interacted with it
+   * recently; `false` when hidden, unfocused or idle.
+   */
+  active: boolean;
+  requestId?: string;
+}
+
+/** How often an active client repeats its `presence` frame. */
+export const PRESENCE_INTERVAL_MS = 30_000;
+/** A `presence` frame counts for this long. */
+export const PRESENCE_TIMEOUT_MS = 75_000;
+
 export type ClientMessage =
   | SubscribeMessage
+  | PresenceMessage
   | UnsubscribeMessage
   | SendMessageMessage
   | InterruptMessage

@@ -600,45 +600,55 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     requestId: string,
     response: unknown,
   ): Promise<PermissionResponseResult> {
-    const record = this.requireRecord(sessionId);
+    this.requireRecord(sessionId);
     const resolution = this.approver.respond(sessionId, requestId, response);
-    const live = this.live.get(sessionId);
-    const find = (events: readonly { type: string }[]) =>
-      events.findLast(
-        (event): event is PermissionResolvedInput =>
-          event.type === 'permission.resolved' &&
-          (event as PermissionResolvedInput).requestId === requestId,
-      );
     if (resolution) {
-      const logged = live ? find(live.log.events) : undefined;
+      const live = this.live.get(sessionId);
+      const logged = live
+        ? findResolution(live.log.events, requestId)
+        : undefined;
       return {
         resolved: (logged ??
           resolution) as PermissionResponseResult['resolved'],
         alreadyResolved: false,
       };
     }
-    let previous: PermissionResolvedInput | undefined;
-    if (live) {
-      await this.ensureHistory(live, record);
-      previous = find(live.log.events);
-    } else {
-      previous = find(
-        this.storedEvents.list(sessionId).map((stored) => stored.event),
-      );
-    }
+    const previous = await this.permissionResolution(sessionId, requestId);
     if (!previous) {
       throw new NotFoundException(
         `Approval request ${requestId} not found in session ${sessionId}`,
       );
     }
-    return {
-      resolved: {
-        seq: 0,
-        at: null,
-        ...previous,
-      } as PermissionResponseResult['resolved'],
-      alreadyResolved: true,
-    };
+    return { resolved: previous, alreadyResolved: true };
+  }
+
+  /**
+   * How an approval request was resolved, without answering it; `null`
+   * while it is pending or when it is unknown.
+   */
+  async permissionResolution(
+    sessionId: string,
+    requestId: string,
+  ): Promise<PermissionResponseResult['resolved'] | null> {
+    const record = this.requireRecord(sessionId);
+    const live = this.live.get(sessionId);
+    let previous: PermissionResolvedInput | undefined;
+    if (live) {
+      await this.ensureHistory(live, record);
+      previous = findResolution(live.log.events, requestId);
+    } else {
+      previous = findResolution(
+        this.storedEvents.list(sessionId).map((stored) => stored.event),
+        requestId,
+      );
+    }
+    return previous
+      ? ({
+          seq: 0,
+          at: null,
+          ...previous,
+        } as PermissionResponseResult['resolved'])
+      : null;
   }
 
   /**
@@ -1892,6 +1902,18 @@ const statusKey = (status: {
   status: SessionStatus;
   waitingFor: SessionWaitingFor | null;
 }) => `${status.status}/${status.waitingFor ?? ''}`;
+
+/** The last resolution of an approval request in a list of events. */
+function findResolution(
+  events: readonly { type: string }[],
+  requestId: string,
+): PermissionResolvedInput | undefined {
+  return events.findLast(
+    (event): event is PermissionResolvedInput =>
+      event.type === 'permission.resolved' &&
+      (event as PermissionResolvedInput).requestId === requestId,
+  );
+}
 
 /** A user message event with its images from the attachment store. */
 function withAttachments(

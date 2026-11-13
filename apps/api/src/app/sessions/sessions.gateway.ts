@@ -19,6 +19,7 @@ import {
   SESSION_UPDATE_FIELDS,
 } from './client-frames';
 import { SessionsService } from './sessions.service';
+import { ViewerPresence } from './viewer-presence';
 
 /** Path of the WebSocket endpoint (outside Nest's global `/api` prefix). */
 export const SESSIONS_WS_PATH = '/api/ws';
@@ -43,6 +44,7 @@ export class SessionsGateway
   constructor(
     private readonly sessions: SessionsService,
     limits: LimitsService,
+    private readonly presence: ViewerPresence,
   ) {
     this.subscriptions = [
       sessions.events$.subscribe(({ sessionId, event }) => {
@@ -73,6 +75,7 @@ export class SessionsGateway
   handleDisconnect(client: WebSocket): void {
     const state = this.clients.get(client);
     this.clients.delete(client);
+    this.presence.remove(client);
     for (const sessionId of state?.subscriptions ?? []) {
       this.sessions.unsubscribe(sessionId);
     }
@@ -182,6 +185,9 @@ export class SessionsGateway
           message.permissionRequestId,
           pick(message, PERMISSION_ANSWER_FIELDS),
         );
+        return;
+      case 'presence':
+        this.presence.update(client, message.sessionId, message.active);
         return;
       case 'message.unqueue':
         await this.sessions.unqueue(message.sessionId, message.messageId);

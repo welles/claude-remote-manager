@@ -166,6 +166,14 @@ describe('authentication', () => {
       // What the session changed.
       ['GET', '/api/sessions/x/diff'],
       ['GET', '/api/sessions/x/diff/file?repositoryId=r&path=a'],
+      // Notifications: settings, devices, tests and approval buttons.
+      ['GET', '/api/notifications'],
+      ['PUT', '/api/notifications/preferences'],
+      ['POST', '/api/notifications/push-subscriptions'],
+      ['POST', '/api/notifications/push-subscriptions/remove'],
+      ['DELETE', '/api/notifications/push-subscriptions/x'],
+      ['POST', '/api/notifications/test'],
+      ['POST', '/api/notifications/approval-actions'],
     ] as const) {
       const response =
         method === 'GET' || method === 'DELETE'
