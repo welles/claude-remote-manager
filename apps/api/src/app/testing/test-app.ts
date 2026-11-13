@@ -14,6 +14,7 @@ import {
   testAppConfig,
 } from '../config/app-config';
 import { configureApp } from '../configure-app';
+import { gitSandbox } from '../git/testing/git-fixtures';
 import {
   FakeAgentRunner,
   FakeTranscriptReader,
@@ -47,6 +48,8 @@ export async function startTestApp(
     configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder;
   } = {},
 ): Promise<TestApp> {
+  // git of the app must not depend on the machine's git configuration.
+  const sandbox = gitSandbox('crm-app-git-');
   const dir = mkdtempSync(join(tmpdir(), 'crm-app-'));
   const runner = new FakeAgentRunner();
   const transcripts = new FakeTranscriptReader();
@@ -91,6 +94,7 @@ export async function startTestApp(
         await app.close();
       }
       rmSync(dir, { recursive: true, force: true });
+      sandbox.cleanup();
     },
   };
 }
