@@ -1,3 +1,4 @@
+import { withinDomain } from '../config/app-config';
 import type { IncomingHttpHeaders } from 'node:http';
 
 /**
@@ -26,6 +27,12 @@ export interface RequestPolicyConfig {
   allowedOrigins: string[];
   /** Host names (without port) besides the loopback names. */
   allowedHosts: string[];
+  /**
+   * Domain of the preview hosts (`PREVIEW_URL`): its names are never the
+   * app's, also not as `*.localhost` (the preview gateway answers them
+   * before the app; this is the second line).
+   */
+  previewDomain?: string | null;
 }
 
 export type PolicyVerdict =
@@ -52,8 +59,10 @@ function header(headers: IncomingHttpHeaders, name: string): string | null {
 export class RequestPolicy {
   private readonly origins: Set<string>;
   private readonly hosts: Set<string>;
+  private readonly previewDomain: string | null;
 
   constructor(config: RequestPolicyConfig) {
+    this.previewDomain = config.previewDomain ?? null;
     this.origins = new Set(
       config.allowedOrigins.map((origin) => new URL(origin).origin),
     );
@@ -78,6 +87,13 @@ export class RequestPolicy {
       return { ok: false, status: 400, reason: 'Missing Host header' };
     }
     const name = hostName(host);
+    if (this.inPreviewDomain(name)) {
+      return {
+        ok: false,
+        status: 403,
+        reason: `Host ${name} is a preview host`,
+      };
+    }
     if (!this.hosts.has(name) && !name.endsWith('.localhost')) {
       return { ok: false, status: 403, reason: `Host ${name} is not allowed` };
     }
@@ -98,6 +114,12 @@ export class RequestPolicy {
     return { ok: true };
   }
 
+  private inPreviewDomain(name: string): boolean {
+    return (
+      this.previewDomain !== null && withinDomain(name, this.previewDomain)
+    );
+  }
+
   private checkOrigin(origin: string, host: string): PolicyVerdict {
     let url: URL;
     try {
@@ -107,6 +129,14 @@ export class RequestPolicy {
         ok: false,
         status: 403,
         reason: `Origin ${origin} is not allowed`,
+      };
+    }
+    // Pages of previews never act on the app (also not if listed).
+    if (this.inPreviewDomain(url.hostname.toLowerCase())) {
+      return {
+        ok: false,
+        status: 403,
+        reason: `Origin ${origin} is a preview`,
       };
     }
     // Same origin: the page was loaded from the host it talks to. The scheme

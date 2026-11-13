@@ -70,6 +70,39 @@ export function cookie(
   return null;
 }
 
+/** The peer end of a connection the server accepted. */
+export type PeerSocket = Pick<
+  Socket,
+  'remoteAddress' | 'remotePort' | 'localPort'
+>;
+
+/**
+ * Whether a connection comes from a process of the session user over
+ * loopback (only with separate users; in `single-user` mode sessions run
+ * as the API's user and cannot be told apart).
+ */
+export function fromSessionProcess(
+  isolation: ProcessIsolation,
+  socket: PeerSocket,
+  peerUid: typeof loopbackPeerUid = loopbackPeerUid,
+): boolean {
+  return (
+    isolation.mode === 'separate-users' &&
+    isLoopback(socket.remoteAddress) &&
+    socket.remotePort !== undefined &&
+    socket.localPort !== undefined &&
+    peerUid(socket.remotePort, socket.localPort) === isolation.sessionUser.uid
+  );
+}
+
+/** The Access token of a request: header, else the cookie. */
+export function accessToken(headers: IncomingHttpHeaders): string | null {
+  return (
+    header(headers, 'cf-access-jwt-assertion') ??
+    cookie(headers, 'CF_Authorization')
+  );
+}
+
 /**
  * Decides whether a request (or WebSocket upgrade) may reach the API:
  *
@@ -97,7 +130,7 @@ export class Authenticator {
     method: string,
     path: string,
     headers: IncomingHttpHeaders,
-    socket: Pick<Socket, 'remoteAddress' | 'remotePort' | 'localPort'>,
+    socket: PeerSocket,
   ): Promise<AuthVerdict> {
     const exempt = AUTH_EXEMPT_ROUTES.find(
       (route) =>
@@ -105,13 +138,8 @@ export class Authenticator {
         route.path === path.replace(/\/+$/, ''),
     );
     if (
-      this.isolation.mode === 'separate-users' &&
       !exempt?.sessions &&
-      isLoopback(socket.remoteAddress) &&
-      socket.remotePort !== undefined &&
-      socket.localPort !== undefined &&
-      this.peerUid(socket.remotePort, socket.localPort) ===
-        this.isolation.sessionUser.uid
+      fromSessionProcess(this.isolation, socket, this.peerUid)
     ) {
       this.logger.warn(`Refused ${method} ${path} from a session process`);
       return {
@@ -124,11 +152,8 @@ export class Authenticator {
     if (exempt || !this.verifier) {
       return { ok: true, email: null };
     }
-    const token =
-      header(headers, 'cf-access-jwt-assertion') ??
-      cookie(headers, 'CF_Authorization');
     try {
-      const identity = await this.verifier.verify(token);
+      const identity = await this.verifier.verify(accessToken(headers));
       return { ok: true, email: identity.email };
     } catch (error) {
       if (error instanceof AccessTokenError) {

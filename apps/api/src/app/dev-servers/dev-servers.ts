@@ -1,17 +1,10 @@
 /**
- * Dev servers of sessions (spec step 10: `expose_port`, reverse proxy,
- * preview subdomains). Until then there are none; this is the hook that
- * ending a session through autoclose (and later the cleanup) calls, so the
- * dev-server step only has to implement it.
+ * Dev servers of sessions: what ends them when a session ends (the user
+ * ends it, autoclose, later the cleanup). Implemented by the previews
+ * (`previews/previews.service.ts`): it stops the session's previews and
+ * the dev servers listening on their ports.
  */
 export abstract class DevServers {
   /** Stops the session's dev servers and removes their forwarding. */
   abstract stopSession(sessionId: string): Promise<void>;
-}
-
-/** No dev servers yet. */
-export class NoDevServers extends DevServers {
-  async stopSession(): Promise<void> {
-    // nothing to stop
-  }
 }

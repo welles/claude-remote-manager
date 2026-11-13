@@ -58,6 +58,30 @@ export interface AppConfig {
   notifications: NotificationsConfig;
   /** PR automation: webhook and polling. */
   prAutomation: PrAutomationConfig;
+  /** Previews of dev servers; `null` when `PREVIEW_URL` is not set. */
+  previews: PreviewConfig | null;
+}
+
+/**
+ * Previews of dev servers (`PREVIEW_URL`): every preview gets a host name
+ * of its own below `domain`, `<label>.<domain>`, served by this server
+ * (the tunnel routes the wildcard name to it). Nothing of the app is
+ * served on these names, and no preview on the app's.
+ */
+export interface PreviewConfig {
+  /** How the browser reaches preview hosts. */
+  scheme: 'http' | 'https';
+  /** Parent domain of the preview host names, e.g. `preview.example.com`. */
+  domain: string;
+  /** Port in preview URLs; `null` for the scheme's default port. */
+  port: number | null;
+  /**
+   * With `AUTH_MODE=cloudflare-access`: Application Audience tag(s) of the
+   * Access application in front of the preview hosts. Never one of the
+   * app's own (`CF_ACCESS_AUD`): a preview page must not get a token that
+   * the API accepts. Empty with `AUTH_MODE=none`.
+   */
+  accessAudiences: string[];
 }
 
 /**
@@ -178,6 +202,7 @@ export function loadAppConfig(
     throw new Error('GITHUB_APP_ID must be the numeric App ID');
   }
   const dbDir = resolve(value('DB_DIR') ?? 'data/db');
+  const auth = loadAuth(value);
   return {
     dbDir,
     filesDir: resolve(value('FILES_DIR') ?? join(dbDir, 'files')),
@@ -218,10 +243,111 @@ export function loadAppConfig(
       value('SESSION_USER'),
       passwd,
     ),
-    auth: loadAuth(value),
+    auth,
     notifications: loadNotifications(value, minutes),
     prAutomation: loadPrAutomation(value),
+    previews: loadPreviews(value, auth),
   };
+}
+
+/** Host names that can never be a preview domain (the app's loopback names). */
+const RESERVED_PREVIEW_DOMAINS = ['localhost', '127.0.0.1', '::1'];
+
+/** Whether `host` (a host name without port) is `domain` or below it. */
+export function withinDomain(host: string, domain: string): boolean {
+  const name = host.toLowerCase().replace(/\.$/, '');
+  return name === domain || name.endsWith(`.${domain}`);
+}
+
+/**
+ * `PREVIEW_URL`, e.g. `https://preview.example.com` or, locally,
+ * `http://preview.localhost:3000`: scheme, parent domain and port of the
+ * preview host names. Checked against the app's own host names, so that
+ * no host is both.
+ */
+export function parsePreviewUrl(
+  raw: string,
+): Omit<PreviewConfig, 'accessAudiences'> {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('PREVIEW_URL must be an http or https URL');
+  }
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.pathname !== '/' && url.pathname !== '')
+  ) {
+    throw new Error(
+      'PREVIEW_URL must be an http or https URL with a host name only, e.g. https://preview.example.com',
+    );
+  }
+  const domain = url.hostname.toLowerCase();
+  if (
+    !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(
+      domain,
+    ) ||
+    /^[0-9.]+$/.test(domain) ||
+    RESERVED_PREVIEW_DOMAINS.includes(domain)
+  ) {
+    throw new Error(
+      `PREVIEW_URL: ${domain} must be a domain name with at least two labels (not an IP address or localhost), e.g. preview.example.com or preview.localhost`,
+    );
+  }
+  return {
+    scheme: url.protocol === 'https:' ? 'https' : 'http',
+    domain,
+    port: url.port ? Number(url.port) : null,
+  };
+}
+
+/**
+ * The preview configuration, checked against the rest: the app's host
+ * names must lie outside the preview domain, and with Cloudflare Access the
+ * preview hosts need an Access application of their own.
+ */
+function loadPreviews(
+  value: (name: string) => string | undefined,
+  auth: AuthConfig,
+): PreviewConfig | null {
+  const raw = value('PREVIEW_URL');
+  if (!raw) {
+    return null;
+  }
+  const preview = parsePreviewUrl(raw);
+  const appHosts = [
+    ...list(value('ALLOWED_HOSTS')),
+    ...list(value('ALLOWED_ORIGINS')).map((origin) => new URL(origin).hostname),
+    ...(value('PUBLIC_URL')
+      ? [new URL(value('PUBLIC_URL') as string).hostname]
+      : []),
+  ];
+  for (const host of appHosts) {
+    if (withinDomain(host.replace(/:\d+$/, ''), preview.domain)) {
+      throw new Error(
+        `PREVIEW_URL: the app's host ${host} lies in the preview domain ${preview.domain}; previews need a domain of their own`,
+      );
+    }
+  }
+  let accessAudiences: string[] = [];
+  if (auth.mode === 'cloudflare-access') {
+    accessAudiences = list(value('PREVIEW_ACCESS_AUD'));
+    if (accessAudiences.length === 0) {
+      throw new Error(
+        'PREVIEW_URL with AUTH_MODE=cloudflare-access needs PREVIEW_ACCESS_AUD: the audience tag of the Access application in front of the preview hosts',
+      );
+    }
+    if (accessAudiences.some((aud) => auth.access.audiences.includes(aud))) {
+      throw new Error(
+        'PREVIEW_ACCESS_AUD must differ from CF_ACCESS_AUD: previews need an Access application of their own, or a preview page could use its token against the API',
+      );
+    }
+  }
+  return { ...preview, accessAudiences };
 }
 
 /** Shortest polling interval that can be configured. */
@@ -401,6 +527,7 @@ export function testAppConfig(
       vapid: { publicKey: null, privateKeyFile: null, subject: null },
     },
     prAutomation: { webhookSecretFile: null, pollIntervalMs: 0 },
+    previews: null,
     ...overrides,
   };
 }

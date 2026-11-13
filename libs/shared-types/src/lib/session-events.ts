@@ -5,6 +5,7 @@ import type {
   MessageReferenceRequest,
 } from './github-references';
 import type { AccountLimits } from './limits';
+import type { PreviewDto, PreviewStopper } from './previews';
 import type { ShownFileDto } from './shown-files';
 import type {
   GitPushAnalysis,
@@ -164,6 +165,29 @@ export interface FileShownEvent extends SessionEventBase {
   /** The tool call it belongs to, when known. */
   toolUseId: string | null;
   file: ShownFileDto;
+}
+
+/**
+ * Claude exposed a dev server's port as a preview (tool `expose_port`,
+ * `toolUseId`): the history shows a card with the link. `preview` is the
+ * preview as it was then; its current state is in `SessionDto.previews`.
+ * Stored; never a reason for a notification.
+ */
+export interface PreviewExposedEvent extends SessionEventBase {
+  type: 'preview.exposed';
+  toolUseId: string | null;
+  preview: PreviewDto;
+}
+
+/** A preview's forwarding ended. Stored. */
+export interface PreviewStoppedEvent extends SessionEventBase {
+  type: 'preview.stopped';
+  /** The `stop_preview` call, when Claude stopped it. */
+  toolUseId: string | null;
+  previewId: string;
+  port: number;
+  name: string;
+  by: PreviewStopper;
 }
 
 /**
@@ -395,6 +419,8 @@ export type SessionEvent =
   | ToolDiffEvent
   | ToolByAppEvent
   | FileShownEvent
+  | PreviewExposedEvent
+  | PreviewStoppedEvent
   | PermissionRequestEvent
   | PermissionResolvedEvent
   | PermissionDeniedEvent

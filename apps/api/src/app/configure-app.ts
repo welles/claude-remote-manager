@@ -2,6 +2,17 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { raw, type NextFunction, type Request, type Response } from 'express';
 import { Authenticator } from './auth/authenticator';
 import {
+  APP_CONFIG,
+  type AppConfig,
+  type PreviewConfig,
+} from './config/app-config';
+import { PreviewAccess } from './previews/preview-access';
+import {
+  installPreviewGateway,
+  PreviewGateway,
+} from './previews/preview-gateway';
+import { PreviewsService } from './previews/previews.service';
+import {
   WEBHOOK_MAX_BODY_BYTES,
   WEBHOOK_PATH,
 } from './pr-automation/webhook.controller';
@@ -14,9 +25,10 @@ import { RequestPolicy } from './security/request-policy';
  * reaches the page (Markdown, file names, diffs): scripts only from the
  * app's own files (the build inlines none; critical CSS inlining, which
  * adds an inline script, is off), nothing loaded or contacted elsewhere,
- * frames only from the app's origin (the viewer's sandboxed HTML and PDFs),
- * and the app itself not framed. Styles need `'unsafe-inline'`: Angular
- * adds component styles as `<style>` elements at runtime.
+ * frames only from the app's origin (the viewer's sandboxed HTML and PDFs)
+ * and, with previews, the preview hosts (see {@link appCsp}), and the app
+ * itself not framed. Styles need `'unsafe-inline'`: Angular adds
+ * component styles as `<style>` elements at runtime.
  */
 export const APP_CSP = [
   "default-src 'self'",
@@ -34,6 +46,29 @@ export const APP_CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 
+/**
+ * Source expression of all preview hosts, e.g.
+ * `https://*.preview.example.com` (with the port in development, e.g.
+ * `http://*.preview.localhost:3000`).
+ */
+export function previewFrameSource(previews: PreviewConfig): string {
+  return `${previews.scheme}://*.${previews.domain}${previews.port ? `:${previews.port}` : ''}`;
+}
+
+/**
+ * The app's CSP: {@link APP_CSP}, with previews on also allowing frames of
+ * the preview hosts (the session view embeds running previews) and
+ * nothing else.
+ */
+export function appCsp(previews: PreviewConfig | null): string {
+  return previews
+    ? APP_CSP.replace(
+        "frame-src 'self'",
+        `frame-src 'self' ${previewFrameSource(previews)}`,
+      )
+    : APP_CSP;
+}
+
 /** Largest accepted JSON request body. */
 export const MAX_BODY_SIZE = '1mb';
 
@@ -42,6 +77,19 @@ export const MAX_BODY_SIZE = '1mb';
  * `bodyParser: false`: only JSON bodies are parsed (see RequestPolicy).
  */
 export function configureApp(app: NestExpressApplication): void {
+  const config = app.get<AppConfig>(APP_CONFIG);
+  // In front of everything: preview host names go to the dev servers and
+  // never reach the app; the app's host names never reach a preview.
+  if (config.previews) {
+    const previews = app.get(PreviewsService);
+    const server = app.getHttpServer();
+    previews.attachServer(server);
+    installPreviewGateway(
+      server,
+      new PreviewGateway(config.previews, previews, app.get(PreviewAccess)),
+    );
+  }
+  const csp = appCsp(config.previews);
   app.setGlobalPrefix('api');
   // Before everything else, also the static web app: see Authenticator.
   const authenticator = app.get(Authenticator);
@@ -67,7 +115,7 @@ export function configureApp(app: NestExpressApplication): void {
   });
   app.use((request: Request, response: Response, next: NextFunction) => {
     if (!/^\/api(\/|$)/.test(request.path)) {
-      response.setHeader('Content-Security-Policy', APP_CSP);
+      response.setHeader('Content-Security-Policy', csp);
       response.setHeader('X-Content-Type-Options', 'nosniff');
     }
     next();

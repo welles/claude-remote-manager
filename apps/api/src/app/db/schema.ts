@@ -8,6 +8,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import type {
+  PreviewStopper,
   PullRequestCreator,
   PullRequestState,
   SessionDirectoryKind,
@@ -397,6 +398,37 @@ export const messageContexts = sqliteTable(
   (table) => [index('message_contexts_session').on(table.sessionId)],
 );
 
+/**
+ * Previews of dev servers (tool `expose_port`): the session's port is
+ * forwarded from the host name `<label>.<preview domain>` while
+ * `stopped_at` is null. A port is exposed by at most one session at a
+ * time; the label (`<session slug>-<port>`) is therefore unique among
+ * active previews too.
+ */
+export const previews = sqliteTable(
+  'previews',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    port: integer('port').notNull(),
+    name: text('name').notNull(),
+    /** First label of the host name, `<session slug>-<port>`. */
+    label: text('label').notNull(),
+    createdAt: createdAt(),
+    stoppedAt: timestamp('stopped_at'),
+    stoppedBy: text('stopped_by').$type<PreviewStopper>(),
+  },
+  (table) => [
+    uniqueIndex('previews_active_port')
+      .on(table.port)
+      .where(sql`${table.stoppedAt} is null`),
+    index('previews_session').on(table.sessionId),
+    index('previews_label').on(table.label),
+  ],
+);
+
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
 export type SessionDirectoryRow = typeof sessionDirectories.$inferSelect;
@@ -409,3 +441,4 @@ export type AttachmentRow = typeof attachments.$inferSelect;
 export type ShownFileRow = typeof shownFiles.$inferSelect;
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type MessageContextRow = typeof messageContexts.$inferSelect;
+export type PreviewRow = typeof previews.$inferSelect;

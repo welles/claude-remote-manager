@@ -1,9 +1,9 @@
 import { Logger, Module } from '@nestjs/common';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
-import { DevServers, NoDevServers } from '../dev-servers/dev-servers';
 import { GitHubHttp } from '../github/github-http';
 import { GitHubService } from '../github/github.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { PreviewsModule } from '../previews/previews.module';
 import { RepositoriesModule } from '../repositories/repositories.module';
 import { SessionsModule } from '../sessions/sessions.module';
 import { PrAutomationController } from './pr-automation.controller';
@@ -22,7 +22,12 @@ import { WebhookSecret } from './webhook-signature';
  * the GitHub App's webhook (`POST /api/github/webhook`) and by polling.
  */
 @Module({
-  imports: [SessionsModule, NotificationsModule, RepositoriesModule],
+  imports: [
+    SessionsModule,
+    NotificationsModule,
+    RepositoriesModule,
+    PreviewsModule,
+  ],
   controllers: [PrAutomationController, WebhookController],
   providers: [
     {
@@ -55,7 +60,6 @@ import { WebhookSecret } from './webhook-signature';
       useFactory: (github: GitHubService, http: GitHubHttp) =>
         new PullRequestFeedback(github, http),
     },
-    { provide: DevServers, useValue: new NoDevServers() },
     WebhookDeliveryRepository,
     PrAutomationService,
     { provide: WebhookHandler, useExisting: PrAutomationService },

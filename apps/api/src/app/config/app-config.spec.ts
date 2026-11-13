@@ -55,6 +55,7 @@ describe('loadAppConfig', () => {
         vapid: { publicKey: null, privateKeyFile: null, subject: null },
       },
       prAutomation: { webhookSecretFile: null, pollIntervalMs: null },
+      previews: null,
     });
   });
 
@@ -144,6 +145,7 @@ describe('loadAppConfig', () => {
         webhookSecretFile: '/run/secrets/github-webhook-secret',
         pollIntervalMs: 300_000,
       },
+      previews: null,
     });
   });
 
@@ -229,5 +231,96 @@ describe('loadAppConfig', () => {
     expect(() =>
       loadAppConfig({ ...DEV, SETUP_SCRIPT_TIMEOUT_MINUTES: '0' }),
     ).toThrow('SETUP_SCRIPT_TIMEOUT_MINUTES');
+  });
+
+  describe('previews', () => {
+    const ACCESS = {
+      AUTH_MODE: 'cloudflare-access',
+      PROCESS_ISOLATION: 'single-user',
+      CF_ACCESS_TEAM_DOMAIN: 'acme',
+      CF_ACCESS_AUD: 'app-aud',
+    };
+
+    it('are off without PREVIEW_URL and read it otherwise', () => {
+      expect(loadAppConfig(DEV).previews).toBeNull();
+      expect(
+        loadAppConfig({ ...DEV, PREVIEW_URL: 'http://preview.localhost:3000' })
+          .previews,
+      ).toEqual({
+        scheme: 'http',
+        domain: 'preview.localhost',
+        port: 3000,
+        accessAudiences: [],
+      });
+      expect(
+        loadAppConfig({
+          ...ACCESS,
+          PREVIEW_URL: 'https://Preview.Example.com/',
+          PREVIEW_ACCESS_AUD: 'preview-aud',
+        }).previews,
+      ).toEqual({
+        scheme: 'https',
+        domain: 'preview.example.com',
+        port: null,
+        accessAudiences: ['preview-aud'],
+      });
+    });
+
+    it('take a domain name only', () => {
+      for (const url of [
+        'preview.example.com',
+        'ftp://preview.example.com',
+        'https://preview.example.com/path',
+        'https://user@preview.example.com',
+        'https://localhost',
+        'http://127.0.0.1:3000',
+        'https://com',
+      ]) {
+        expect(() => loadAppConfig({ ...DEV, PREVIEW_URL: url })).toThrow(
+          'PREVIEW_URL',
+        );
+      }
+    });
+
+    it('keep the app’s host names out of the preview domain', () => {
+      for (const env of [
+        { ALLOWED_HOSTS: 'crm.preview.example.com' },
+        { ALLOWED_HOSTS: 'preview.example.com' },
+        { ALLOWED_ORIGINS: 'https://x.preview.example.com' },
+        { PUBLIC_URL: 'https://a.preview.example.com' },
+      ]) {
+        expect(() =>
+          loadAppConfig({
+            ...DEV,
+            PREVIEW_URL: 'https://preview.example.com',
+            ...env,
+          }),
+        ).toThrow('lies in the preview domain');
+      }
+      expect(
+        loadAppConfig({
+          ...DEV,
+          PREVIEW_URL: 'https://preview.example.com',
+          ALLOWED_HOSTS: 'crm.example.com',
+          PUBLIC_URL: 'https://crm.example.com',
+        }).previews?.domain,
+      ).toBe('preview.example.com');
+    });
+
+    it('need an Access application of their own with Cloudflare Access', () => {
+      expect(() =>
+        loadAppConfig({
+          ...ACCESS,
+          PREVIEW_URL: 'https://preview.example.com',
+        }),
+      ).toThrow('needs PREVIEW_ACCESS_AUD');
+      expect(() =>
+        loadAppConfig({
+          ...ACCESS,
+          PREVIEW_URL: 'https://preview.example.com',
+          PREVIEW_ACCESS_AUD: 'other, app-aud',
+        }),
+      ).toThrow('PREVIEW_ACCESS_AUD must differ from CF_ACCESS_AUD');
+    });
   });
 });

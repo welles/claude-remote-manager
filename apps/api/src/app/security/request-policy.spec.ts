@@ -104,6 +104,43 @@ describe('RequestPolicy', () => {
   });
 });
 
+describe('RequestPolicy with previews', () => {
+  const policy = new RequestPolicy({
+    allowedOrigins: [],
+    allowedHosts: ['crm.example.com'],
+    previewDomain: 'preview.localhost',
+  });
+
+  it('never takes a preview host for the app, also under .localhost', () => {
+    for (const host of [
+      'preview.localhost',
+      'demo-1-5173.preview.localhost:3000',
+      'a.b.preview.localhost.',
+    ]) {
+      expect(policy.check('GET', { host })).toMatchObject({
+        ok: false,
+        status: 403,
+      });
+    }
+    expect(policy.check('GET', { host: 'app.localhost:3000' })).toEqual({
+      ok: true,
+    });
+  });
+
+  it('refuses requests from preview pages', () => {
+    expect(
+      policy.check(
+        'GET',
+        {
+          host: 'localhost:3000',
+          origin: 'http://demo-1-5173.preview.localhost:3000',
+        },
+        true,
+      ),
+    ).toMatchObject({ ok: false, status: 403 });
+  });
+});
+
 describe('hostName', () => {
   it('strips ports and brackets', () => {
     expect(hostName('Example.COM:8080')).toBe('example.com');

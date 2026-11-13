@@ -15,6 +15,7 @@ import { RequestPolicy } from './request-policy';
         new RequestPolicy({
           allowedOrigins: config.allowedOrigins,
           allowedHosts: config.allowedHosts,
+          previewDomain: config.previews?.domain ?? null,
         }),
     },
     {

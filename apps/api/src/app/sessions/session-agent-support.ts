@@ -1,6 +1,13 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  HttpException,
+  Inject,
+  Injectable,
+  Logger,
+  Optional,
+} from '@nestjs/common';
+import { MAX_PREVIEW_NAME_LENGTH } from '@claude-remote-manager/shared-types';
 import type { AgentTool } from '../agent/agent-runner';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { handOverToSession } from '../common/ownership';
@@ -9,11 +16,16 @@ import { GitService } from '../git/git.service';
 import { InstallationTokens } from '../github/installation-tokens';
 import { FileAccessError } from '../files/session-file-access';
 import { ShownFilesService } from '../shown-files/shown-files.service';
+import { PreviewsService } from '../previews/previews.service';
 import {
   ApprovalGrants,
   CREATE_PULL_REQUEST_TOOL,
+  EXPOSE_PORT_TOOL,
+  EXPOSE_PORT_TOOL_NAME,
   SHOW_FILE_TOOL,
   SHOW_FILE_TOOL_NAME,
+  STOP_PREVIEW_TOOL,
+  STOP_PREVIEW_TOOL_NAME,
 } from './approval-grants';
 import { SessionCredentials } from './session-credentials';
 import { SessionGitService } from './session-git.service';
@@ -87,6 +99,15 @@ export class NoSessionAgentSupport extends SessionAgentSupport {
 }
 
 function errorText(error: unknown): string {
+  if (error instanceof HttpException) {
+    const response = error.getResponse();
+    if (typeof response === 'object' && response !== null) {
+      const message = (response as { message?: unknown }).message;
+      if (typeof message === 'string') {
+        return message;
+      }
+    }
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -114,6 +135,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     private readonly git: GitService,
     private readonly tokens: InstallationTokens,
     private readonly shownFiles: ShownFilesService,
+    @Optional()
+    private readonly previews?: PreviewsService,
   ) {
     super();
   }
@@ -150,6 +173,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       await handOverToSession(memory, this.git.launcher);
       settings['autoMemoryDirectory'] = memory;
     }
+    const previews = this.previews?.enabled ? this.previews : null;
     return {
       env: {
         CRM_API_URL: this.config.internalApiUrl,
@@ -160,10 +184,20 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         ...(githubClones.length > 0
           ? [this.createPullRequestTool(record.id)]
           : []),
+        ...(previews
+          ? [
+              this.exposePortTool(record.id, previews),
+              this.stopPreviewTool(record.id, previews),
+            ]
+          : []),
       ],
       settings,
-      // Showing a file reads only inside the session's directories.
-      allowedTools: [SHOW_FILE_TOOL_NAME],
+      // Showing a file reads only inside the session's directories;
+      // previews forward only the session user's own ports.
+      allowedTools: [
+        SHOW_FILE_TOOL_NAME,
+        ...(previews ? [EXPOSE_PORT_TOOL_NAME, STOP_PREVIEW_TOOL_NAME] : []),
+      ],
     };
   }
 
@@ -247,6 +281,94 @@ export class SessionAgentSupportService extends SessionAgentSupport {
               error instanceof FileAccessError
                 ? `The file was not shown: ${error.message}`
                 : `The file was not shown: ${errorText(error)}`,
+          };
+        }
+      },
+    };
+  }
+
+  /**
+   * The tool `expose_port` of a session: forwards a preview host name to a
+   * port of the session's dev server. No approval (the owner's decision):
+   * only the session user's own ports on loopback can be forwarded, and
+   * the user sees every preview and can stop it.
+   */
+  exposePortTool(sessionId: string, previews: PreviewsService): AgentTool {
+    return {
+      name: EXPOSE_PORT_TOOL,
+      description:
+        'Make a dev server of this session reachable for the user as a preview: the session ' +
+        'manager forwards a host name of its own to the port (HTTP and WebSockets, so hot ' +
+        'reload works) and shows the user a card with the link, to open it in the browser or ' +
+        'embedded. Start the server first, in the background, listening on 127.0.0.1, ' +
+        'localhost or 0.0.0.0. The dev server sees requests as if the browser opened ' +
+        'http://localhost:<port> (Host and Origin), so no allowed-hosts configuration is ' +
+        'needed. Returns the preview URL. Exposing a port again only renames the preview. ' +
+        'Use stop_preview when it is no longer needed; the user can stop it as well.',
+      alwaysAsk: false,
+      inputSchema: (z) => ({
+        port: z
+          .number()
+          .int()
+          .min(1)
+          .max(65535)
+          .describe('TCP port the dev server listens on'),
+        name: z
+          .string()
+          .min(1)
+          .max(MAX_PREVIEW_NAME_LENGTH)
+          .describe('Short name for the user, e.g. "Web app" or "Storybook"'),
+      }),
+      handler: async (input, { toolUseId }) => {
+        try {
+          const { preview, created } = previews.expose(
+            sessionId,
+            Number(input['port']),
+            String(input['name']),
+            toolUseId,
+          );
+          const waiting =
+            preview.state === 'running'
+              ? ''
+              : ` Nothing listens on port ${preview.port} yet; the preview shows a waiting page until the server is up.`;
+          return {
+            text: `${created ? 'Exposed' : 'Already exposed'}: "${preview.name}" (port ${preview.port}) at ${preview.url}. The user sees a card with this link.${waiting} You cannot open this URL yourself; test the server on http://localhost:${preview.port}.`,
+          };
+        } catch (error) {
+          return {
+            isError: true,
+            text: `The port was not exposed: ${errorText(error)}`,
+          };
+        }
+      },
+    };
+  }
+
+  /** The tool `stop_preview` of a session: ends a preview's forwarding. */
+  stopPreviewTool(sessionId: string, previews: PreviewsService): AgentTool {
+    return {
+      name: STOP_PREVIEW_TOOL,
+      description:
+        'Stop the preview of a port that expose_port made: its host name stops forwarding. ' +
+        'The dev server itself keeps running until you stop it.',
+      alwaysAsk: false,
+      inputSchema: (z) => ({
+        port: z.number().int().min(1).max(65535).describe('The exposed port'),
+      }),
+      handler: async (input, { toolUseId }) => {
+        try {
+          const preview = previews.stopPort(
+            sessionId,
+            Number(input['port']),
+            toolUseId,
+          );
+          return {
+            text: `Stopped the preview "${preview.name}" of port ${preview.port}.`,
+          };
+        } catch (error) {
+          return {
+            isError: true,
+            text: `No preview was stopped: ${errorText(error)}`,
           };
         }
       },

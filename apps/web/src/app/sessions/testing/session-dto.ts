@@ -51,6 +51,7 @@ export const sessionDto = (
   context: null,
   pullRequests: [],
   autoclosedAt: null,
+  previews: [],
   ...overrides,
 });
 

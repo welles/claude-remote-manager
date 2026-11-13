@@ -9,6 +9,7 @@ export * from './lib/limits';
 export * from './lib/notifications';
 export * from './lib/permissions';
 export * from './lib/pr-automation';
+export * from './lib/previews';
 export * from './lib/repositories';
 export * from './lib/session';
 export * from './lib/session-diff';

@@ -1,5 +1,6 @@
 import type { MessageReferenceRequest } from './github-references';
 import type { PullRequestAutomationDto } from './pr-automation';
+import type { PreviewDto } from './previews';
 /**
  * Lifecycle of a session as shown in the UI. The Claude Code process is an
  * internal detail: it is closed when idle or when the server stops and
@@ -256,6 +257,11 @@ export interface SessionDto {
    * work that is not on GitHub (see `CloneLossReport`).
    */
   autoclosedAt: string | null;
+  /**
+   * Previews of the session's dev servers that are not stopped, oldest
+   * first (see `PreviewDto`).
+   */
+  previews: PreviewDto[];
 }
 
 /** A repository a new session works on. */

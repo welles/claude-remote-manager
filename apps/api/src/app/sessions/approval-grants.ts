@@ -6,6 +6,22 @@ export const CREATE_PULL_REQUEST_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${CREATE_P
 /** The app's tool that shows a file to the user (no approval needed). */
 export const SHOW_FILE_TOOL = 'show_file';
 export const SHOW_FILE_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SHOW_FILE_TOOL}`;
+/** The app's tools for previews of dev servers (no approval needed). */
+export const EXPOSE_PORT_TOOL = 'expose_port';
+export const EXPOSE_PORT_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${EXPOSE_PORT_TOOL}`;
+export const STOP_PREVIEW_TOOL = 'stop_preview';
+export const STOP_PREVIEW_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${STOP_PREVIEW_TOOL}`;
+/**
+ * The app's tools that never ask the user: showing a file (reads only the
+ * session's directories) and exposing or stopping a preview of the
+ * session's own dev server (the owner decided so; the user sees each
+ * preview and can stop it).
+ */
+export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
+  SHOW_FILE_TOOL_NAME,
+  EXPOSE_PORT_TOOL_NAME,
+  STOP_PREVIEW_TOOL_NAME,
+]);
 
 /** An approved `git push` stays usable at most this long. */
 export const PUSH_GRANT_MS = 15 * 60_000;

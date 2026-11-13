@@ -64,10 +64,11 @@ import {
 } from '../agent/tool-approval';
 import {
   APP_MCP_SERVER,
+  APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
-  SHOW_FILE_TOOL_NAME,
 } from './approval-grants';
 import { sessionAllows, unresolvedRequests } from './permission-requests';
+import { PreviewsService } from '../previews/previews.service';
 import {
   SessionAutomationHooks,
   type AutofixCommandOutcome,
@@ -345,6 +346,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly contexts?: MessageContextRepository,
     @Optional()
     private readonly automation?: SessionAutomationHooks,
+    @Optional()
+    private readonly previews?: PreviewsService,
   ) {}
 
   /**
@@ -944,6 +947,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     } else if (record.status !== 'finished') {
       this.updates.next(
         this.toDto(this.sessions.update(sessionId, { status: 'finished' })),
+      );
+    }
+    // Its dev servers end with it (previews and the processes behind them).
+    try {
+      await this.previews?.stopSession(sessionId);
+    } catch (error) {
+      this.logger.warn(
+        `Stopping the dev servers of ${sessionId} failed: ${String(error)}`,
       );
     }
     return this.get(sessionId);
@@ -1674,12 +1685,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private canUseTool(live: LiveSession): CanUseTool {
     return async (toolName, input, options) => {
       if (
-        toolName === SHOW_FILE_TOOL_NAME &&
+        APP_TOOLS_WITHOUT_APPROVAL.has(toolName) &&
         (!options.mcpServer ||
           (options.mcpServer.name === APP_MCP_SERVER &&
             options.mcpServer.source === 'sdk'))
       ) {
-        // Reads only inside the session's directories: never asks.
+        // Showing a file reads only inside the session's directories;
+        // previews forward only the session user's ports: never asks.
         return { behavior: 'allow', updatedInput: input };
       }
       const command =
@@ -2207,6 +2219,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       context: this.live.get(record.id)?.context ?? null,
       pullRequests: record.pullRequests.map(pullRequestDto),
       autoclosedAt: record.autoclosedAt?.toISOString() ?? null,
+      previews: this.previews?.forSession(record.id) ?? [],
     };
   }
 }

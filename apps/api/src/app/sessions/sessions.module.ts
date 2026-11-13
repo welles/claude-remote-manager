@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { AttachmentsModule } from '../attachments/attachments.module';
 import { GitHubReferencesModule } from '../github-references/github-references.module';
 import { MessageContextRepository } from './message-context.repository';
+import { PreviewsModule } from '../previews/previews.module';
+import { PreviewsService } from '../previews/previews.service';
 import { ShownFilesModule } from '../shown-files/shown-files.module';
 import { ShownFilesService } from '../shown-files/shown-files.service';
 import { ToolApprover } from '../agent/tool-approval';
@@ -48,6 +50,7 @@ import { ModelsService } from './models.service';
     AttachmentsModule,
     GitHubReferencesModule,
     LimitsModule,
+    PreviewsModule,
     RepositoriesModule,
     ShownFilesModule,
   ],
@@ -101,11 +104,18 @@ export class SessionsModule {
     limits: LimitsService,
     runner: AgentRunner,
     shownFiles: ShownFilesService,
+    previews: PreviewsService,
   ) {
     // Files shown by the app's tool belong in the session's log.
     shownFiles.shown$.subscribe(({ sessionId, toolUseId, file }) =>
       sessions.recordEvent(sessionId, { type: 'file.shown', toolUseId, file }),
     );
+    // Previews exposed and stopped belong in the log too; their states
+    // are part of the session.
+    previews.events$.subscribe(({ sessionId, event }) =>
+      sessions.recordEvent(sessionId, event),
+    );
+    previews.changes$.subscribe((id) => sessions.publishUpdate(id));
     // Pushes and pull requests change what the session view shows.
     git.changes$.subscribe((id) => sessions.publishUpdate(id));
     // Limits are also read when no session runs (see LimitsService).
