@@ -251,6 +251,8 @@ describe('session management', () => {
     const input = element.querySelector(
       '[data-testid="rename-input"]',
     ) as HTMLInputElement;
+    // A dialog that is one text field starts in the field.
+    expect(document.activeElement).toBe(input);
     input.value = '  New name ';
     input.dispatchEvent(new Event('input'));
     fixture.detectChanges();

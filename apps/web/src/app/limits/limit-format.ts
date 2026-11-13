@@ -21,7 +21,13 @@ export interface LimitView {
   resetText: string;
   /** The window was reset since the value was read: the value is old. */
   resetPassed: boolean;
-  level: 'normal' | 'warning' | 'critical';
+  /**
+   * `normal`; `high` from 75 % (or when Claude Code warns): a warning in
+   * the error colour, outlined; `exhausted` at 100 % or when requests are
+   * rejected: filled in the error colour. Not amber: amber means a session
+   * needs the user.
+   */
+  level: 'normal' | 'high' | 'exhausted';
   updatedAt: string;
 }
 
@@ -80,10 +86,10 @@ export function limitView(window: RateLimitWindow, now: number): LimitView {
       : `resets in ${formatDuration(reset - now)} (${formatTime(window.resetsAt, now)})`;
   }
   const level =
-    window.status === 'rejected' || (percent ?? 0) >= 90
-      ? 'critical'
+    window.status === 'rejected' || (percent ?? 0) >= 100
+      ? 'exhausted'
       : window.status === 'allowed_warning' || (percent ?? 0) >= 75
-        ? 'warning'
+        ? 'high'
         : 'normal';
   return {
     type: window.type,

@@ -2,6 +2,9 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  Injector,
+  afterNextRender,
+  inject,
   input,
   output,
   viewChild,
@@ -16,7 +19,8 @@ let nextId = 0;
  * scrolls and an action row that stays visible. Below 600 px it is a bottom
  * sheet. Content goes into the default slot; buttons into an element with
  * `dialog-actions`. Opening never focuses a confirming button: the first
- * focusable element is the close button.
+ * focusable element is the close button, unless `initialFocus` names the
+ * field to type into (dialogs that are one text input).
  */
 @Component({
   selector: 'app-dialog',
@@ -153,8 +157,11 @@ export class AppDialog {
   readonly heading = input.required<string>();
   /** `data-testid` of the `<dialog>` element. */
   readonly testId = input<string | null>(null);
+  /** CSS selector of the element to focus when opened, e.g. the input. */
+  readonly initialFocus = input<string | null>(null);
   /** Emitted when the dialog closed (button, Esc or `close()`). */
   readonly closed = output<void>();
+  private readonly injector = inject(Injector);
 
   protected readonly titleId = `app-dialog-title-${nextId++}`;
   private readonly dialog =
@@ -173,6 +180,14 @@ export class AppDialog {
       } else {
         dialog.setAttribute('open', '');
       }
+    }
+    const selector = this.initialFocus();
+    if (selector) {
+      // After the content the opener just switched on has rendered.
+      afterNextRender(
+        () => dialog.querySelector<HTMLElement>(selector)?.focus(),
+        { injector: this.injector },
+      );
     }
   }
 

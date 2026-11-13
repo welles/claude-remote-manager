@@ -65,7 +65,11 @@ export function sessionSubtitle(session: SessionDto): string {
     >
       <app-icon name="edit" />
     </button>
-    <app-dialog heading="Rename session" (closed)="renaming.set(false)">
+    <app-dialog
+      heading="Rename session"
+      initialFocus="[data-testid=rename-input]"
+      (closed)="renaming.set(false)"
+    >
       @if (renaming()) {
         <form class="rename" (ngSubmit)="save()" data-testid="rename-form">
           <mat-form-field appearance="outline" subscriptSizing="dynamic">

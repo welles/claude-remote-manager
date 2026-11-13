@@ -36,7 +36,10 @@ describe('limit presentation', () => {
     });
     expect(limitView(window({ utilization: 91.6 }), NOW)).toMatchObject({
       percentText: '92%',
-      level: 'critical',
+      level: 'high',
+    });
+    expect(limitView(window({ status: 'rejected' }), NOW)).toMatchObject({
+      level: 'exhausted',
     });
     expect(
       limitView(window({ utilization: null, resetsAt: null }), NOW),
@@ -44,7 +47,7 @@ describe('limit presentation', () => {
       percentText: '?',
       resetText: 'reset time unknown',
     });
-    // Past its reset the value is old: said so, not shown as critical.
+    // Past its reset the value is old: said so, not shown as high.
     expect(
       limitView(
         window({ utilization: 99, resetsAt: '2026-03-01T11:00:00Z' }),

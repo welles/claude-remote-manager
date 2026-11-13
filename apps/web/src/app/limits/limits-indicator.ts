@@ -8,22 +8,19 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { AppDialog } from '../ui/dialog';
-import {
-  formatTime,
-  isStale,
-  limitViews,
-  type LimitView,
-} from './limit-format';
+import { isStale, limitViews, type LimitView } from './limit-format';
+import { LimitWindows } from './limit-windows';
 import { LimitsStore } from './limits-store';
 
 /**
  * The account's plan limits in the start page's app bar: the 5-hour window
- * as a small meter (amber from 75 %, red from 90 %), and all windows with
- * their reset times in a dialog. The one place the limits are shown.
+ * as a small meter, neutral until 75 %, then outlined in the error colour,
+ * filled when exhausted (amber stays reserved for sessions that need the
+ * user); all windows with their reset times in a dialog.
  */
 @Component({
   selector: 'app-limits-indicator',
-  imports: [AppDialog, MatButtonModule],
+  imports: [AppDialog, LimitWindows, MatButtonModule],
   template: `
     <button
       type="button"
@@ -45,41 +42,7 @@ import { LimitsStore } from './limits-store';
       }
     </button>
     <app-dialog #details heading="Plan limits (whole account)">
-      <div class="details" data-testid="limits-details">
-        @for (view of views(); track view.type) {
-          <div class="window" data-testid="limit">
-            <div class="row">
-              <span class="label">{{ view.label }}</span>
-              <span class="percent level-{{ view.level }}">{{
-                view.percentText
-              }}</span>
-            </div>
-            <div
-              class="bar"
-              role="progressbar"
-              [attr.aria-label]="view.label"
-              [attr.aria-valuenow]="view.percent"
-              aria-valuemin="0"
-              aria-valuemax="100"
-            >
-              <div
-                class="fill level-{{ view.level }}"
-                [style.width.%]="view.percent ?? 0"
-              ></div>
-            </div>
-            <span class="reset" [class.old]="view.resetPassed">{{
-              view.resetText
-            }}</span>
-          </div>
-        } @empty {
-          <p class="hint">
-            Not known yet: Claude Code reports the limits with the first answer
-            of a session (or when they are read on request).
-          </p>
-        }
-        <!-- prettier-ignore -->
-        <p class="hint" [class.warn]="stale()">@if (failed()) {Could not load the limits.} @else if (updated()) {Last updated {{ updated() }}{{ stale() ? ' (may be outdated)' : '' }}.} @else {Never updated.}</p>
-      </div>
+      <app-limit-windows />
       <div dialog-actions>
         <button
           matButton
@@ -105,18 +68,18 @@ import { LimitsStore } from './limits-store';
       color: var(--mat-sys-on-surface-variant);
       font: var(--mat-sys-label-medium);
       font-weight: 600;
+      font-variant-numeric: tabular-nums;
       cursor: pointer;
       white-space: nowrap;
     }
     .pill:hover {
       background: var(--mat-sys-surface-container-high);
     }
-    .pill.level-warning {
-      border-color: transparent;
-      background: var(--app-status-attention-container);
-      color: var(--app-status-on-attention-container);
+    .pill.level-high {
+      border-color: var(--mat-sys-error);
+      color: var(--mat-sys-error);
     }
-    .pill.level-critical {
+    .pill.level-exhausted {
       border-color: transparent;
       background: var(--mat-sys-error-container);
       color: var(--mat-sys-on-error-container);
@@ -132,63 +95,13 @@ import { LimitsStore } from './limits-store';
       background: color-mix(in srgb, currentColor 25%, transparent);
       overflow: hidden;
     }
-    .meter .fill {
+    .fill {
       position: absolute;
       inset: 0 auto 0 0;
       background: currentColor;
     }
     .old {
       text-decoration: line-through;
-    }
-    .details {
-      display: flex;
-      flex-direction: column;
-      gap: var(--app-space-3);
-    }
-    .window {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .row {
-      display: flex;
-      justify-content: space-between;
-      gap: var(--app-space-2);
-      font: var(--mat-sys-title-small);
-    }
-    .percent {
-      font-variant-numeric: tabular-nums;
-    }
-    .bar {
-      height: 6px;
-      border-radius: 3px;
-      background: var(--mat-sys-surface-container-highest);
-      overflow: hidden;
-    }
-    .bar .fill {
-      height: 100%;
-      background: var(--app-status-running);
-    }
-    .bar .fill.level-warning {
-      background: var(--app-status-attention);
-    }
-    .bar .fill.level-critical {
-      background: var(--mat-sys-error);
-    }
-    .percent.level-warning {
-      color: var(--app-status-attention);
-    }
-    .percent.level-critical {
-      color: var(--mat-sys-error);
-    }
-    .reset,
-    .hint {
-      margin: 0;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .warn {
-      color: var(--mat-sys-error);
     }
   `,
 })
@@ -197,10 +110,8 @@ export class LimitsIndicator implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly now = signal(Date.now());
-  protected readonly limits = this.store.limits;
-  protected readonly failed = this.store.failed;
   protected readonly views = computed(() => {
-    const limits = this.limits();
+    const limits = this.store.limits();
     return limits ? limitViews(limits, this.now()) : [];
   });
   /** The window on the button: 5 hours (or the first one). */
@@ -214,12 +125,8 @@ export class LimitsIndicator implements OnInit {
       : 'Plan limits';
   });
   protected readonly stale = computed(() => {
-    const limits = this.limits();
+    const limits = this.store.limits();
     return limits !== null && isStale(limits, this.now());
-  });
-  protected readonly updated = computed(() => {
-    const at = this.limits()?.updatedAt;
-    return at ? formatTime(at, this.now()) : null;
   });
 
   ngOnInit(): void {
