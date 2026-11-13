@@ -91,16 +91,7 @@ import { SessionsApi } from './sessions-api';
               </p>
             }
           }
-          <p class="muted">
-            Kept: its usage in the statistics ({{
-              formatCost(preview.usage.costUsd)
-            }}
-            theoretical API cost), under its title and repositories
-            @if (preview.pullRequests > 0) {
-              , and its {{ preview.pullRequests }} pull request(s) on GitHub
-            }
-            .
-          </p>
+          <p class="muted">{{ keptText(preview) }}</p>
           @if (dirty()) {
             <mat-checkbox
               [(ngModel)]="acceptLoss"
@@ -137,8 +128,9 @@ import { SessionsApi } from './sessions-api';
   `,
   styles: `
     .dialog {
+      margin: 5vh auto auto;
       width: min(560px, calc(100vw - 32px));
-      max-height: calc(100dvh - 32px);
+      max-height: 90dvh;
       box-sizing: border-box;
       border: none;
       border-radius: 16px;
@@ -201,6 +193,15 @@ export class DeleteSessionDialog {
         (directory) => !directory.loss || !directory.loss.clean,
       ) ?? false,
   );
+
+  /** What stays after deleting. */
+  protected keptText(preview: DeletionPreview): string {
+    const pulls =
+      preview.pullRequests > 0
+        ? `, and its ${preview.pullRequests} pull request(s) on GitHub`
+        : '';
+    return `Kept: its usage in the statistics (${formatCost(preview.usage.costUsd)} theoretical API cost), under its title and repositories${pulls}.`;
+  }
 
   show(): void {
     this.open.set(true);

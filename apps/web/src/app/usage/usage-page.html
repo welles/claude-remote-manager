@@ -96,7 +96,7 @@
     }
   </div>
   <svg
-    [attr.viewBox]="'0 0 ' + width + ' ' + height"
+    [attr.viewBox]="'0 0 ' + width() + ' ' + height"
     role="img"
     [attr.aria-label]="'Usage per ' + granularity() + ', stacked by ' + groupBy()"
     data-testid="usage-chart"
@@ -105,7 +105,7 @@
     <line
       class="grid"
       [attr.x1]="plot.left"
-      [attr.x2]="width - plot.right"
+      [attr.x2]="width() - plot.right"
       [attr.y1]="tick.y"
       [attr.y2]="tick.y"
     />
@@ -123,6 +123,7 @@
       [class.active]="hovered() === bar.index"
       tabindex="0"
       (mouseenter)="hovered.set(bar.index)"
+      (click)="hovered.set(bar.index)"
       (focus)="hovered.set(bar.index)"
       (blur)="hovered.set(null)"
       data-testid="usage-bar"
@@ -158,7 +159,7 @@
     <line
       class="baseline"
       [attr.x1]="plot.left"
-      [attr.x2]="width - plot.right"
+      [attr.x2]="width() - plot.right"
       [attr.y1]="chart.baseline"
       [attr.y2]="chart.baseline"
     />

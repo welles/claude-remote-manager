@@ -181,7 +181,8 @@ export class SessionView implements OnInit {
   protected readonly hasRepositories = computed(
     () =>
       this.session()?.directories.some(
-        (directory) => directory.kind === 'clone',
+        (directory) =>
+          directory.kind === 'clone' && directory.state === 'ready',
       ) ?? false,
   );
   protected readonly preparing = computed(
@@ -202,9 +203,9 @@ export class SessionView implements OnInit {
     this.preparing()
       ? 'Available when the preparation is done'
       : !this.resumable()
-        ? this.session()?.archivedAt
-          ? 'Unarchive the session to continue it'
-          : 'The session cannot be continued: its directories were removed'
+        ? this.removedDirectories()
+          ? 'The session cannot be continued: its directories were removed'
+          : 'Unarchive the session to continue it'
         : this.running()
           ? 'Queue a message'
           : 'Message',
@@ -225,10 +226,14 @@ export class SessionView implements OnInit {
     }
     const names = removed.map((directory) =>
       directory.kind === 'scratch'
-        ? 'The scratch directory'
-        : `The clone of ${directory.repository?.fullName ?? directory.path}`,
+        ? 'the scratch directory'
+        : `the clone of ${directory.repository?.fullName ?? directory.path}`,
     );
-    return names.join(', ');
+    const text = names.join(', ');
+    return {
+      text: text.charAt(0).toUpperCase() + text.slice(1),
+      verb: names.length === 1 ? 'was' : 'were',
+    };
   });
   private readonly ended = computed(() => {
     const status = this.session()?.status;

@@ -1,6 +1,8 @@
 import { HttpClient } from '@angular/common/http';
 import {
   Component,
+  DestroyRef,
+  ElementRef,
   computed,
   inject,
   signal,
@@ -22,8 +24,11 @@ import {
   type UsageMeasure,
 } from './usage-chart';
 
-/** Geometry of the chart's SVG (user units; it scales to the width). */
-const WIDTH = 640;
+/**
+ * Geometry of the chart's SVG; the width follows the element's (one user
+ * unit is one pixel, so labels keep their size on phones and desktops).
+ */
+const DEFAULT_WIDTH = 640;
 const HEIGHT = 240;
 const PLOT = { left: 56, right: 8, top: 8, bottom: 28 };
 
@@ -53,7 +58,7 @@ export class UsagePage implements OnInit {
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;
-  protected readonly width = WIDTH;
+  protected readonly width = signal(DEFAULT_WIDTH);
   protected readonly height = HEIGHT;
   protected readonly plot = PLOT;
   protected readonly timeZone = browserTimeZone();
@@ -84,12 +89,14 @@ export class UsagePage implements OnInit {
     );
     const ticks = axisTicks(Math.max(0, ...sums));
     const top = ticks.at(-1) || 1;
-    const plotWidth = WIDTH - PLOT.left - PLOT.right;
+    const plotWidth = this.width() - PLOT.left - PLOT.right;
     const plotHeight = HEIGHT - PLOT.top - PLOT.bottom;
     const slot = plotWidth / Math.max(1, count);
     const barWidth = Math.max(2, Math.min(32, slot * 0.7));
     const y = (value: number) => PLOT.top + plotHeight * (1 - value / top);
-    const labelEvery = Math.ceil(count / 8);
+    const labelEvery = Math.ceil(
+      count / Math.max(2, Math.floor(plotWidth / 70)),
+    );
     const bars = statistics.buckets.map((bucket, index) => {
       const x = PLOT.left + slot * index + (slot - barWidth) / 2;
       let base = 0;
@@ -148,6 +155,20 @@ export class UsagePage implements OnInit {
 
   ngOnInit(): void {
     this.load();
+  }
+
+  constructor() {
+    const host = inject(ElementRef).nativeElement as HTMLElement;
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver(() => {
+        const width = Math.round(host.clientWidth);
+        if (width > 0) {
+          this.width.set(Math.max(280, width));
+        }
+      });
+      observer.observe(host);
+      inject(DestroyRef).onDestroy(() => observer.disconnect());
+    }
   }
 
   protected setGranularity(value: UsageGranularity): void {

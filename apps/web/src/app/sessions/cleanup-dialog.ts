@@ -8,7 +8,6 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
@@ -75,7 +74,6 @@ export function lossOf(
 @Component({
   selector: 'app-cleanup-dialog',
   imports: [
-    FormsModule,
     LossDetails,
     MatButtonModule,
     MatCheckboxModule,
@@ -147,8 +145,8 @@ export function lossOf(
                 }
                 <mat-radio-group
                   class="choices"
-                  [ngModel]="choice(directory)"
-                  (ngModelChange)="choose(directory, $event)"
+                  [value]="choice(directory)"
+                  (change)="choose(directory, $event.value)"
                   [name]="'choice-' + directory.position"
                   [attr.aria-label]="'What happens to ' + directory.name"
                 >
@@ -178,9 +176,8 @@ export function lossOf(
                     />
                     @if (!loss.clean) {
                       <mat-checkbox
-                        [ngModel]="accepted().has(directory.position)"
-                        (ngModelChange)="accept(directory, $event)"
-                        [name]="'accept-' + directory.position"
+                        [checked]="accepted().has(directory.position)"
+                        (change)="accept(directory, $event.checked)"
                         data-testid="accept-loss"
                         >Remove it anyway: I accept losing this</mat-checkbox
                       >
@@ -228,8 +225,10 @@ export function lossOf(
   `,
   styles: `
     .dialog {
+      /* Anchored at the top: the dialog grows downwards as choices change. */
+      margin: 5vh auto auto;
       width: min(640px, calc(100vw - 32px));
-      max-height: calc(100dvh - 32px);
+      max-height: 90dvh;
       box-sizing: border-box;
       border: none;
       border-radius: 16px;
