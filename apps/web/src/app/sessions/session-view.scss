@@ -212,6 +212,9 @@
 .controls {
   display: flex;
   flex-wrap: wrap;
+  // Each field keeps its own height (the hint under one must not stretch
+  // the outline of the other).
+  align-items: flex-start;
   gap: 8px;
   margin-top: 8px;
 }
