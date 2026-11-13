@@ -9,6 +9,7 @@ import {
   type ProcessLauncher,
 } from '../common/process-isolation';
 import {
+  GitError,
   GIT_NETWORK_TIMEOUT_MS,
   retryOnLockContention,
   runGit,
@@ -81,6 +82,19 @@ export interface CreateSessionCloneOptions {
  * are pruned. Tags of the remote overwrite local ones of the same name.
  */
 const MIRROR_FETCH_REFSPEC = '+refs/heads/*:refs/heads/*';
+
+/**
+ * Configuration a session clone has from git and the app; anything else
+ * (set by someone in the clone) may make git run programs.
+ */
+const PLAIN_CLONE_CONFIG: readonly RegExp[] = [
+  /^core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks)$/,
+  /^extensions\.objectformat$/,
+  /^remote\.origin\.(url|fetch)$/,
+  /^branch\.[^\n]+\.(remote|merge)$/,
+  /^user\.(name|email|useconfigonly)$/,
+  /^credential\.(helper|usehttppath)$/,
+];
 const FETCH_OPTIONS = ['--prune', '--tags', '--force', '--quiet'];
 
 /**
@@ -690,6 +704,90 @@ export class GitService {
       unpushedCount: count,
       stashes: stash.split('\n').filter(Boolean).length,
     };
+  }
+
+  /**
+   * Whether a clone's own configuration has only what the app writes into
+   * clones (and git itself), so that a git command there runs no program
+   * the clone names: no filters, fsmonitor, signing program, includes,
+   * aliases, ssh commands or the like.
+   */
+  async cloneConfigIsPlain(path: string): Promise<boolean> {
+    let output: string;
+    try {
+      output = await this.inClone(path, [
+        'config',
+        '--local',
+        '--list',
+        '--name-only',
+      ]);
+    } catch {
+      return false;
+    }
+    return output
+      .split('\n')
+      .filter(Boolean)
+      .every((name) =>
+        PLAIN_CLONE_CONFIG.some((pattern) => pattern.test(name)),
+      );
+  }
+
+  /**
+   * Runs `git add` or `git commit` with already checked arguments in a
+   * session clone, as the session user, for the PR automation: hooks off
+   * (as for every git command of the app), no global or system
+   * configuration (the session user could have written its own), no
+   * fsmonitor and no signing. Never throws for git's own failures: the
+   * outcome and git's output are returned.
+   */
+  async runCloneCommand(
+    path: string,
+    args: string[],
+  ): Promise<{ ok: boolean; output: string }> {
+    try {
+      const output = await this.inClone(
+        path,
+        [
+          '-c',
+          'core.fsmonitor=false',
+          '-c',
+          'commit.gpgSign=false',
+          '-c',
+          'core.editor=false',
+          ...args,
+        ],
+        {
+          env: {
+            GIT_CONFIG_GLOBAL: '/dev/null',
+            GIT_CONFIG_NOSYSTEM: '1',
+          },
+        },
+      );
+      return { ok: true, output };
+    } catch (error) {
+      if (error instanceof GitError) {
+        return {
+          ok: false,
+          output: error.stderr || error.message,
+        };
+      }
+      throw error;
+    }
+  }
+
+  /** Whether `commit` is reachable from a remote-tracking branch of the clone. */
+  async isOnRemote(path: string, commit: string): Promise<boolean> {
+    try {
+      const output = await this.inClone(path, [
+        'branch',
+        '--remotes',
+        '--contains',
+        commit,
+      ]);
+      return output.trim().length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** Whether the mirror has a remote (`false` for a local project). */

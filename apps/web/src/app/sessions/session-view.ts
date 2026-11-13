@@ -381,6 +381,9 @@ export class SessionView implements OnInit {
   protected toolState(
     item: Extract<ConversationItem, { kind: 'tool' }>,
   ): string {
+    if (item.byApp) {
+      return item.byApp.outcome === 'succeeded' ? 'done by the app' : 'failed';
+    }
     if (item.denied) {
       return 'denied';
     }

@@ -109,7 +109,7 @@ export interface FakeCheckRun {
 
 /** A review or review comment of a pull request created through the app. */
 export interface FakeReviewItem {
-  kind: 'review' | 'review_comment';
+  kind: 'review' | 'review_comment' | 'comment';
   id: number;
   author: string;
   authorType?: 'User' | 'Bot';
@@ -556,7 +556,7 @@ export class FakeGitHub {
   private automationRoute(request: RecordedRequest): Response | undefined {
     const { method, path, auth } = request;
     const match =
-      /^\/repos\/([^/]+)\/([^/]+)\/(commits\/([0-9a-f]{40})\/(check-runs|status)|pulls\/(\d+)\/(reviews|comments)|collaborators\/([^/]+)\/permission|actions\/jobs\/(\d+)\/logs)$/.exec(
+      /^\/repos\/([^/]+)\/([^/]+)\/(commits\/([0-9a-f]{40})\/(check-runs|status)|(pulls|issues)\/(\d+)\/(reviews|comments)|collaborators\/([^/]+)\/permission|actions\/jobs\/(\d+)\/logs)$/.exec(
         path,
       );
     if (method !== 'GET' || !match) {
@@ -572,7 +572,8 @@ export class FakeGitHub {
     const { repository } = found;
     const denied = () =>
       json(403, { message: 'Resource not accessible by integration' });
-    const [, , , , sha, commitPart, number, pullPart, login, job] = match;
+    const [, , , , sha, commitPart, collection, number, pullPart, login, job] =
+      match;
     if (sha) {
       if (commitPart === 'check-runs') {
         if (!this.allows(auth, repository, 'checks', 'read')) {
@@ -613,6 +614,32 @@ export class FakeGitHub {
       ) {
         return undefined;
       }
+      const user = (item: FakeReviewItem) => ({
+        login: item.author,
+        type: item.authorType ?? 'User',
+      });
+      if (collection === 'issues') {
+        if (
+          pullPart !== 'comments' ||
+          !this.allows(auth, repository, 'issues', 'read')
+        ) {
+          return denied();
+        }
+        const since = request.query.get('since') ?? '';
+        return this.page(
+          request,
+          (this.reviewItems.get(`${repository.id}#${number}`) ?? [])
+            .filter(
+              (item) => item.kind === 'comment' && item.createdAt >= since,
+            )
+            .map((item) => ({
+              id: item.id,
+              user: user(item),
+              body: item.body,
+              created_at: item.createdAt,
+            })),
+        );
+      }
       if (!this.allows(auth, repository, 'pull_requests', 'read')) {
         return denied();
       }
@@ -623,10 +650,6 @@ export class FakeGitHub {
           ? item.kind === 'review'
           : item.kind === 'review_comment',
       );
-      const user = (item: FakeReviewItem) => ({
-        login: item.author,
-        type: item.authorType ?? 'User',
-      });
       return pullPart === 'reviews'
         ? this.page(
             request,

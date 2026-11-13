@@ -31,8 +31,9 @@ import { RepositoryRepository } from '../repositories/repository.repository';
 import { pullRequestDto } from '../sessions/pull-request-dto';
 import {
   SessionAutomationHooks,
-  type AutoPushOutcome,
+  type AutofixCommandOutcome,
 } from '../sessions/session-automation-hooks';
+import { parseAutofixGitCommand } from './autofix-git';
 import { SessionGitService } from '../sessions/session-git.service';
 import {
   SessionRepository,
@@ -104,9 +105,6 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Separators of shell commands other than `&&` (anything that is not a simple sequence). */
-const COMPLEX_SHELL = /[;|\n`$<>(){}\\]|(?<!&)&(?!&)/;
-
 /** What a check found that an autofix run should handle. */
 interface Triggers {
   failed: FailedCheck[];
@@ -161,8 +159,8 @@ export class PrAutomationService
   onModuleInit(): void {
     // Turns cut off by a restart are over.
     this.records.clearAutofixRunning();
-    this.hooks.autoPush = (sessionId, command, pushes) =>
-      this.autoPush(sessionId, command, pushes);
+    this.hooks.autofixCommand = (sessionId, command, pushes) =>
+      this.autofixCommand(sessionId, command, pushes);
     this.subscriptions.push(
       this.sessionGit.closed$.subscribe((pull) => {
         void this.handleClosed(pull.id).catch((error: unknown) =>
@@ -195,9 +193,7 @@ export class PrAutomationService
     for (const subscription of this.subscriptions) {
       subscription.unsubscribe();
     }
-    if (this.hooks.autoPush) {
-      this.hooks.autoPush = null;
-    }
+    this.hooks.autofixCommand = null;
   }
 
   // --- Switches ------------------------------------------------------------
@@ -342,6 +338,17 @@ export class PrAutomationService
       case 'pull_request_review_comment':
         add((data['pull_request'] as { number?: unknown } | undefined)?.number);
         break;
+      case 'issue_comment': {
+        // Comments of pull requests (issues are not followed).
+        const issue = data['issue'] as
+          | { number?: unknown; pull_request?: unknown }
+          | undefined;
+        if (!issue?.pull_request) {
+          return;
+        }
+        add(issue.number);
+        break;
+      }
       case 'check_run':
         pullsOf(data['check_run']);
         break;
@@ -510,7 +517,9 @@ export class PrAutomationService
       }
     }
     const after = pull.autofixReviewsAfter?.getTime() ?? Date.now();
-    const candidates = (await this.feedback.reviews(repository, pull.number))
+    const candidates = (
+      await this.feedback.reviews(repository, pull.number, new Date(after))
+    )
       .filter(
         (item) =>
           new Date(item.createdAt).getTime() > after &&
@@ -545,7 +554,7 @@ export class PrAutomationService
     const reason =
       triggers.failed.length > 0
         ? `${triggers.failed.length} check(s) failed again`
-        : 'new review feedback';
+        : 'new reviews or comments';
     const updated = this.records.pullRequest(pull.id) ?? pull;
     this.sessions.recordEvent(pull.sessionId, {
       type: 'notice',
@@ -712,22 +721,31 @@ export class PrAutomationService
     );
   }
 
-  // --- Push during autofix -------------------------------------------------
+  // --- git during autofix -------------------------------------------------
 
   /**
-   * During autofix Claude may push exactly the session branch of the
-   * pull request without asking: no force, no other branch, repository or
-   * tag, nothing that deletes. The app does that push itself (as the Push
-   * button does: no token reaches the session), so what is pushed does not
-   * depend on the command or the clone's configuration. Everything else,
-   * and pushes that change workflow files, goes to the user as usual
-   * (`null`).
+   * During autofix Claude may stage, commit and push the session branch of
+   * the pull request without asking: a command that is nothing but
+   * `git add`, `git commit` and `git push` joined with `&&` (see
+   * `parseAutofixGitCommand`). The app carries it out itself instead of a
+   * shell: `git add` and `git commit` run as the session user with hooks
+   * off and only plain clone configuration, and the push is the Push
+   * button's (only the session branch, no force, no token in the session).
+   * Steps stop at the first failure, like `&&`. Everything else goes to the
+   * user as usual (`null`): other commands, other branches or remotes,
+   * force, tags, deletions, amending a pushed commit, clones whose git
+   * configuration could run programs, and new commits that change workflow
+   * files (those are committed, but the push then asks).
    */
-  async autoPush(
+  async autofixCommand(
     sessionId: string,
     command: string,
     pushes: GitPushAnalysis[],
-  ): Promise<AutoPushOutcome | null> {
+  ): Promise<AutofixCommandOutcome | null> {
+    const parsed = parseAutofixGitCommand(command);
+    if (!parsed) {
+      return null;
+    }
     const session = this.records.get(sessionId);
     if (!session) {
       return null;
@@ -754,51 +772,154 @@ export class PrAutomationService
     if (autofixClones.length === 0) {
       return null;
     }
+    const pushing = parsed.steps.some((step) => step.kind === 'push');
+    const local = parsed.steps.filter((step) => step.kind !== 'push');
     if (
-      pushes.length === 0 ||
-      pushes.some(
-        (push) =>
-          !push.sessionBranchOnly ||
-          push.force ||
-          push.deletes ||
-          push.everything ||
-          (push.remote !== null && push.remote !== 'origin'),
-      )
+      pushing &&
+      (pushes.length !== 1 ||
+        pushes.some(
+          (push) =>
+            !push.sessionBranchOnly ||
+            push.force ||
+            push.deletes ||
+            push.everything ||
+            (push.remote !== null && push.remote !== 'origin'),
+        ))
     ) {
       return null;
     }
-    const paths = simplePushCommand(command);
-    if (paths === null) {
-      return null;
-    }
     let targets = autofixClones;
-    if (paths.length > 0) {
-      const cwd = workingDirectory(session);
-      let location = cwd;
-      for (const path of paths) {
+    if (parsed.location) {
+      let location = workingDirectory(session);
+      for (const path of parsed.location) {
         location = isAbsolute(path) ? resolve(path) : resolve(location, path);
       }
-      const clone = session.directories.find(
-        (directory) =>
-          directory.kind === 'clone' &&
-          (location === directory.path ||
-            location.startsWith(directory.path + sep)),
-      );
       const target = autofixClones.find(
-        (directory) => directory.path === clone?.path,
+        (directory) =>
+          location === directory.path ||
+          location.startsWith(directory.path + sep),
       );
       if (!target) {
         return null;
       }
       targets = [target];
+    } else if (local.length > 0) {
+      // The shell's directory is unknown: only a session with one clone.
+      const clones = session.directories.filter(
+        (directory) => directory.kind === 'clone',
+      );
+      if (clones.length !== 1 || autofixClones.length !== 1) {
+        return null;
+      }
     }
-    const plans: {
-      directory: SessionDirectoryRecord & {
-        branch: string;
-        repositoryId: string;
+    if (local.length > 0) {
+      const [target] = targets;
+      if (
+        targets.length !== 1 ||
+        (await this.git.currentBranch(target.path)) !== target.branch ||
+        !(await this.git.cloneConfigIsPlain(target.path))
+      ) {
+        return null;
+      }
+      if (local.some((step) => step.kind === 'commit' && step.amend)) {
+        const head = await this.git.localBranchCommit(
+          target.path,
+          target.branch,
+        );
+        // Amending a pushed commit would need a force push.
+        if (!head || (await this.git.isOnRemote(target.path, head))) {
+          return null;
+        }
+      }
+    } else if (await this.pushNeedsApproval(targets)) {
+      return null;
+    }
+    const output: string[] = [];
+    const summary: string[] = [];
+    let ok = true;
+    for (const step of local) {
+      const [target] = targets;
+      const args = [step.kind, ...step.args];
+      const result = await this.git.runCloneCommand(target.path, args);
+      output.push(
+        `$ git ${step.kind} … (in ${target.repositoryName})`,
+        result.output.trim() || '(no output)',
+      );
+      if (!result.ok) {
+        ok = false;
+        summary.push(`git ${step.kind} failed`);
+        break;
+      }
+      summary.push(step.kind === 'add' ? 'Staged' : 'Committed');
+    }
+    if (pushing && ok) {
+      const pushed = await this.pushForAutofix(sessionId, targets);
+      output.push(...pushed.output);
+      summary.push(...pushed.summary);
+      ok = pushed.ok;
+    } else if (pushing) {
+      output.push('Not pushed, because a step before failed.');
+    }
+    const head = [
+      ok
+        ? 'Done by the app (autofix runs these git commands itself; no other command ran).'
+        : 'Failed (autofix runs these git commands itself; no other command ran).',
+    ];
+    return {
+      ok,
+      output: [...head, ...output].join('\n'),
+      summary: summary.join('; ') || (ok ? 'Done' : 'Failed'),
+    };
+  }
+
+  /** Whether new commits of the clones change workflow files. */
+  private async pushNeedsApproval(
+    targets: (SessionDirectoryRecord & { branch: string })[],
+  ): Promise<boolean> {
+    for (const directory of targets) {
+      const head = await this.git.localBranchCommit(
+        directory.path,
+        directory.branch,
+      );
+      const remote = await this.git.remoteBranchCommit(
+        directory.path,
+        directory.branch,
+      );
+      if (
+        head &&
+        head !== remote &&
+        (await this.git.changesWorkflows(
+          directory.path,
+          head,
+          remote ?? directory.baseCommit,
+        ))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Pushes the session branches like the Push button. */
+  private async pushForAutofix(
+    sessionId: string,
+    targets: (SessionDirectoryRecord & {
+      branch: string;
+      repositoryId: string;
+    })[],
+  ): Promise<{ ok: boolean; output: string[]; summary: string[] }> {
+    const output: string[] = [];
+    const summary: string[] = [];
+    let ok = true;
+    if (await this.pushNeedsApproval(targets)) {
+      return {
+        ok: false,
+        output: [
+          'Not pushed: the new commits change files under .github/workflows, which needs the approval of the user. Run git push as a command of its own to ask for it.',
+        ],
+        summary: ['not pushed (workflow files changed: needs approval)'],
       };
-      head: string;
-    }[] = [];
+    }
     for (const directory of targets) {
       const head = await this.git.localBranchCommit(
         directory.path,
@@ -809,65 +930,34 @@ export class PrAutomationService
         directory.branch,
       );
       if (!head || head === remote) {
+        output.push(
+          `Nothing to push for ${directory.repositoryName}: GitHub has the latest commit of ${directory.branch} already.`,
+        );
         continue;
       }
-      // Workflow changes can do anything with the repository's secrets:
-      // the user decides about those.
-      if (
-        await this.git.changesWorkflows(
-          directory.path,
-          head,
-          remote ?? directory.baseCommit,
-        )
-      ) {
-        return null;
-      }
-      plans.push({ directory, head });
-    }
-    const done: string[] = [];
-    const failed: string[] = [];
-    for (const { directory } of plans) {
       try {
         const commit = await this.sessionGit.push(
           sessionId,
           directory.repositoryId,
         );
-        done.push(
-          `${directory.branch} of ${directory.repositoryName} at ${commit.slice(0, 7)}`,
+        output.push(
+          `Pushed ${directory.branch} of ${directory.repositoryName} to GitHub at ${commit.slice(0, 7)} (no force).`,
+        );
+        summary.push(
+          `pushed ${directory.branch} of ${directory.repositoryName} at ${commit.slice(0, 7)}`,
         );
       } catch (error) {
-        failed.push(
-          `${directory.branch} of ${directory.repositoryName}: ${errorText(error)}`,
+        ok = false;
+        output.push(
+          `Push of ${directory.branch} of ${directory.repositoryName} failed: ${errorText(error)}`,
         );
+        summary.push(`push of ${directory.repositoryName} failed`);
       }
     }
-    const names = targets
-      .map((directory) => directory.repositoryName)
-      .join(', ');
-    if (plans.length === 0) {
-      return {
-        message: `Not run: during autofix the app pushes the session branch itself, and GitHub already has the latest commit of the session branch of ${names}. Nothing was pushed; commit your changes first if you meant to push them.`,
-        notice: `Autofix: nothing to push for ${names}.`,
-      };
+    if (summary.length === 0 && ok) {
+      summary.push('nothing to push');
     }
-    const lines = [
-      'Not run as written: during autofix the app pushes the session branch itself (without force).',
-      done.length > 0
-        ? `Pushed: ${done.join('; ')}. The push is complete; do not push again.`
-        : null,
-      failed.length > 0 ? `Failed: ${failed.join('; ')}.` : null,
-    ].filter(Boolean);
-    return {
-      message: lines.join(' '),
-      notice: [
-        done.length > 0
-          ? `Autofix pushed ${done.join('; ')} without asking.`
-          : null,
-        failed.length > 0 ? `Autofix push failed: ${failed.join('; ')}.` : null,
-      ]
-        .filter(Boolean)
-        .join(' '),
-    };
+    return { ok, output, summary };
   }
 
   // --- Merge and close -----------------------------------------------------
@@ -1170,51 +1260,4 @@ function describeLoss(loss: {
   ]
     .filter(Boolean)
     .join(', ');
-}
-
-/**
- * The directories a command changes into before its `git push`, if it is
- * nothing but `git push` (optionally after `cd <dir> &&` or with
- * `git -C <dir>`); `null` for anything else (other commands, pipes,
- * substitutions, redirections), which then needs the user's approval.
- */
-export function simplePushCommand(command: string): string[] | null {
-  if (COMPLEX_SHELL.test(command)) {
-    return null;
-  }
-  const paths: string[] = [];
-  let pushes = 0;
-  for (const part of command.split('&&')) {
-    const words = [...part.trim().matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(
-      (match) => match[1] ?? match[2] ?? match[3],
-    );
-    if (words.length === 0) {
-      return null;
-    }
-    if (words[0] === 'cd') {
-      if (words.length !== 2) {
-        return null;
-      }
-      paths.push(words[1]);
-      continue;
-    }
-    if (words[0] !== 'git') {
-      return null;
-    }
-    let index = 1;
-    while (index < words.length && words[index].startsWith('-')) {
-      if (words[index] === '-C' && index + 1 < words.length) {
-        paths.push(words[index + 1]);
-        index += 2;
-      } else {
-        // Other git options (-c config, --git-dir, ...) are not accepted.
-        return null;
-      }
-    }
-    if (words[index] !== 'push') {
-      return null;
-    }
-    pushes++;
-  }
-  return pushes === 1 ? paths : null;
 }

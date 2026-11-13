@@ -141,6 +141,20 @@ export interface ToolDiffEvent extends SessionEventBase {
 }
 
 /**
+ * A tool call the app carried out itself instead of Claude Code: during
+ * autofix, `git add`, `git commit` and the push of the session branch (the
+ * app pushes, see the PR automation). Claude got the outcome as the tool's
+ * result; `outcome` is the real one. Stored.
+ */
+export interface ToolByAppEvent extends SessionEventBase {
+  type: 'tool.by_app';
+  toolUseId: string;
+  outcome: 'succeeded' | 'failed';
+  /** What the app did, e.g. "Committed …; pushed claude/x at 1a2b3c4". */
+  summary: string;
+}
+
+/**
  * A file put in front of the user: by Claude's `show_file` tool call
  * (`toolUseId`), or an image Claude read or wrote (on that call). Stored;
  * never a reason for a notification.
@@ -379,6 +393,7 @@ export type SessionEvent =
   | ToolCallEvent
   | ToolResultEvent
   | ToolDiffEvent
+  | ToolByAppEvent
   | FileShownEvent
   | PermissionRequestEvent
   | PermissionResolvedEvent

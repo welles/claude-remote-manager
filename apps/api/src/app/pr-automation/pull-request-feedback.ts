@@ -42,7 +42,8 @@ export interface CheckResult {
 }
 
 export interface ReviewFeedback {
-  kind: 'review' | 'review_comment';
+  /** `comment`: a comment in the pull request's conversation. */
+  kind: 'review' | 'review_comment' | 'comment';
   id: number;
   author: string | null;
   /** `User`, `Bot`, ... */
@@ -81,6 +82,8 @@ const TOKEN_PERMISSIONS: GitHubPermissionSet = {
   statuses: 'read',
   pull_requests: 'read',
   actions: 'read',
+  // Conversation comments of pull requests are issue comments.
+  issues: 'read',
 };
 
 interface RawCheckRun {
@@ -112,6 +115,13 @@ interface RawReview {
   body?: string | null;
   state?: string;
   submitted_at?: string | null;
+}
+
+interface RawIssueComment {
+  id: number;
+  user: RawUser | null;
+  body?: string | null;
+  created_at: string;
 }
 
 interface RawReviewComment {
@@ -190,10 +200,14 @@ export class PullRequestFeedback {
     ];
   }
 
-  /** Reviews and review comments of a pull request (the latest ones). */
+  /**
+   * Reviews, review comments and conversation comments of a pull request
+   * (the latest ones; conversation comments updated since `since`).
+   */
   async reviews(
     repository: FeedbackRepository,
     number: number,
+    since: Date = new Date(0),
   ): Promise<ReviewFeedback[]> {
     const token = await this.token(repository);
     const base = `/repos/${repoPath(repository.fullName)}/pulls/${number}`;
@@ -208,7 +222,33 @@ export class PullRequestFeedback {
       token,
       query: { sort: 'created', direction: 'desc', per_page: 100 },
     });
+    const conversation = await this.http.paginate<
+      RawIssueComment[],
+      RawIssueComment
+    >(
+      {
+        path: `/repos/${repoPath(repository.fullName)}/issues/${number}/comments`,
+        token,
+        query: { since: since.toISOString() },
+      },
+      (page) => page,
+      3,
+    );
     return [
+      ...conversation.map(
+        (comment): ReviewFeedback => ({
+          kind: 'comment',
+          id: comment.id,
+          author: comment.user?.login ?? null,
+          authorType: comment.user?.type ?? null,
+          body: comment.body ?? '',
+          createdAt: comment.created_at,
+          state: null,
+          path: null,
+          line: null,
+          diffHunk: null,
+        }),
+      ),
       ...reviews
         .filter((review) => review.submitted_at)
         .map(

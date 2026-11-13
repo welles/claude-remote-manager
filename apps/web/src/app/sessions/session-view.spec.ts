@@ -293,6 +293,69 @@ describe('SessionView', () => {
     );
   });
 
+  it('shows git commands the app ran for autofix with their real outcome', async () => {
+    const { harness, socket, element } = await open();
+    const call = (toolUseId: string) =>
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId,
+        name: 'Bash',
+        input: { command: 'git commit -m x && git push' },
+        parentToolUseId: null,
+      });
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto(),
+      events: [
+        call('t1'),
+        event({
+          type: 'tool.by_app',
+          toolUseId: 't1',
+          outcome: 'succeeded',
+          summary: 'Committed; pushed claude/x of acme/app at 1a2b3c4',
+        }),
+        event({
+          type: 'tool.result',
+          toolUseId: 't1',
+          isError: false,
+          content: 'Done by the app',
+          truncated: false,
+          parentToolUseId: null,
+        }),
+        call('t2'),
+        event({
+          type: 'tool.by_app',
+          toolUseId: 't2',
+          outcome: 'failed',
+          summary: 'git commit failed',
+        }),
+        event({
+          type: 'tool.result',
+          toolUseId: 't2',
+          isError: true,
+          content: 'Failed',
+          truncated: false,
+          parentToolUseId: null,
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const states = [...element.querySelectorAll('.tool .tool-state')].map(
+      (node) => node.textContent?.trim(),
+    );
+    expect(states).toEqual(['done by the app', 'failed']);
+    const notes = [
+      ...element.querySelectorAll('[data-testid="tool-by-app"]'),
+    ].map((node) => node.textContent?.trim());
+    expect(notes[0]).toBe(
+      'Run by the app (autofix): Committed; pushed claude/x of acme/app at 1a2b3c4',
+    );
+  });
+
   it('shows the directories and the preparation, and holds messages back meanwhile', async () => {
     const { harness, socket, element, text } = await open();
     socket.receive({

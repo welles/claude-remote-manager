@@ -126,7 +126,11 @@
         >{{ toolState(item) }}</span
       >
     </summary>
-    @if (item.denied) {
+    @if (item.byApp; as byApp) {
+    <p class="tool-by-app" data-testid="tool-by-app">
+      Run by the app (autofix): {{ byApp.summary }}
+    </p>
+    } @if (item.denied) {
     <p class="tool-denied">{{ item.denied }}</p>
     } @if (item.permission?.resolved?.answers; as answers) {
     <dl class="answers">

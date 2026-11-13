@@ -70,7 +70,7 @@ import {
 import { sessionAllows, unresolvedRequests } from './permission-requests';
 import {
   SessionAutomationHooks,
-  type AutoPushOutcome,
+  type AutofixCommandOutcome,
 } from './session-automation-hooks';
 import { UserToolApprover } from './user-tool-approver';
 import {
@@ -1690,26 +1690,34 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       const gitPushes = command
         ? await this.workspaces.analyzeGitPushes(live.id, command)
         : [];
-      if (command && gitPushes.length > 0 && this.automation?.autoPush) {
-        // During autofix the app pushes the session branch itself.
-        let outcome: AutoPushOutcome | null = null;
+      if (command && this.automation?.autofixCommand) {
+        // During autofix the app runs add, commit and push itself.
+        let outcome: AutofixCommandOutcome | null = null;
         try {
-          outcome = await this.automation.autoPush(live.id, command, gitPushes);
+          outcome = await this.automation.autofixCommand(
+            live.id,
+            command,
+            gitPushes,
+          );
         } catch (error) {
           this.logger.warn(
-            `Autofix push of ${live.id} failed: ${errorMessage(error)}`,
+            `Autofix git command of ${live.id} failed: ${errorMessage(error)}`,
           );
         }
         if (outcome) {
           this.append(live, {
-            type: 'notice',
-            level: 'info',
-            text: outcome.notice,
+            type: 'tool.by_app',
+            toolUseId: options.toolUseID,
+            outcome: outcome.ok ? 'succeeded' : 'failed',
+            summary: outcome.summary,
           });
+          // The shell only prints what the app did (and fails if it did).
           return {
-            behavior: 'deny',
-            message: outcome.message,
-            interrupt: false,
+            behavior: 'allow',
+            updatedInput: {
+              ...input,
+              command: reportCommand(outcome.output, outcome.ok),
+            },
           };
         }
       }
@@ -2201,6 +2209,23 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       autoclosedAt: record.autoclosedAt?.toISOString() ?? null,
     };
   }
+}
+
+/** Output limit of a command the app carried out itself. */
+const REPORT_MAX_LENGTH = 20_000;
+
+/**
+ * A shell command that prints `text` exactly (base64, so nothing in it is
+ * interpreted) and exits with 1 when `ok` is false: what Claude Code runs
+ * for a command the app carried out itself.
+ */
+export function reportCommand(text: string, ok: boolean): string {
+  const bounded =
+    text.length > REPORT_MAX_LENGTH
+      ? `${text.slice(0, REPORT_MAX_LENGTH)}\n[… cut]`
+      : text;
+  const encoded = Buffer.from(`${bounded}\n`, 'utf8').toString('base64');
+  return `printf '%s' '${encoded}' | base64 -d${ok ? '' : '; false'}`;
 }
 
 const statusKey = (status: {

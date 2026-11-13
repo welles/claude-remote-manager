@@ -59,6 +59,12 @@
   border-left: 4px solid var(--mat-sys-tertiary);
 }
 
+.tool-by-app {
+  margin: 4px 0;
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-tertiary);
+}
+
 .message-origin {
   display: block;
   margin-bottom: 4px;

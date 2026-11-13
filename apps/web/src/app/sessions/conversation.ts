@@ -59,6 +59,11 @@ export type ConversationItem =
       diff: { diff: FileDiff; source: ToolDiffSource } | null;
       /** Files shown by the call (`show_file`, images read or written). */
       shown: ShownFileDto[];
+      /**
+       * Set when the app carried the call out itself (autofix: git add,
+       * commit, push), with the real outcome.
+       */
+      byApp: { outcome: 'succeeded' | 'failed'; summary: string } | null;
     }
   | {
       /** A file shown without a known tool call. */
@@ -258,6 +263,7 @@ export function applyEvent(
         permission: existing?.kind === 'tool' ? existing.permission : null,
         diff: existing?.kind === 'tool' ? existing.diff : null,
         shown: existing?.kind === 'tool' ? existing.shown : [],
+        byApp: existing?.kind === 'tool' ? existing.byApp : null,
       };
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
     }
@@ -289,6 +295,19 @@ export function applyEvent(
       return replaceAt(items, index, {
         ...existing,
         diff: { diff: event.diff, source: event.source },
+      });
+    }
+    case 'tool.by_app': {
+      const index = items.findIndex(
+        (item) => item.key === `tool:${event.toolUseId}`,
+      );
+      const existing = items[index];
+      if (existing?.kind !== 'tool') {
+        return items;
+      }
+      return replaceAt(items, index, {
+        ...existing,
+        byApp: { outcome: event.outcome, summary: event.summary },
       });
     }
     case 'file.shown': {
@@ -331,6 +350,7 @@ export function applyEvent(
           permission: null,
           diff: null,
           shown: [],
+          byApp: null,
         },
       ];
     }
@@ -357,6 +377,7 @@ export function applyEvent(
           permission,
           diff: null,
           shown: [],
+          byApp: null,
         },
       ];
     }

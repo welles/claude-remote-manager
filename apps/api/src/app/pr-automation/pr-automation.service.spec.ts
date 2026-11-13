@@ -462,7 +462,7 @@ describe('PrAutomationService', () => {
 
       const messages = appMessages();
       expect(messages).toHaveLength(1);
-      expect(messages[0].text).toContain('review feedback');
+      expect(messages[0].text).toContain('reviews or comments');
       const context = messages[0].context?.text ?? '';
       for (let i = 0; i < 10; i++) {
         expect(context).toContain(`Remark ${i}`);
@@ -480,6 +480,33 @@ describe('PrAutomationService', () => {
       await waitFor(() => !record(pull).autofixRunning);
       await automation.check(pull.id);
       expect(appMessages()).toHaveLength(1);
+    });
+
+    it('counts comments in the pull request conversation like review comments', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      addReview(pull, {
+        kind: 'comment',
+        body: 'Old conversation comment',
+        createdAt: new Date(Date.now() - 60_000).toISOString(),
+      });
+      enableAutofix(session.id, pull);
+      addReview(pull, { kind: 'comment', body: 'Please also update the docs' });
+      addReview(pull, { kind: 'comment', body: 'Do it', author: 'reader' });
+      addReview(pull, {
+        kind: 'comment',
+        body: 'Bot says',
+        author: 'helper[bot]',
+        authorType: 'Bot',
+      });
+
+      await automation.check(pull.id);
+
+      const context = appMessages()[0]?.context?.text ?? '';
+      expect(context).toContain('kind="comment"');
+      expect(context).toContain('Please also update the docs');
+      expect(context).not.toContain('Old conversation comment');
+      expect(context).not.toContain('Do it');
+      expect(context).not.toContain('Bot says');
     });
 
     it('starts no run for feedback only from people without write access', async () => {
@@ -513,17 +540,38 @@ describe('PrAutomationService', () => {
     });
   });
 
-  describe('push during autofix', () => {
+  describe('git during autofix', () => {
     const ask = (command: string) =>
       harness.runner.last.options.canUseTool(
         'Bash',
-        { command },
+        { command, description: 'Commit and push' },
         {
           signal: new AbortController().signal,
-          toolUseID: 'tool-push',
+          toolUseID: 'tool-git',
           requestId: 'r1',
         },
       ) as Promise<PermissionResult>;
+
+    /** What the replaced command prints, and whether it fails. */
+    const report = (result: PermissionResult) => {
+      expect(result.behavior).toBe('allow');
+      const command = String(
+        (result as unknown as { updatedInput: { command: string } })
+          .updatedInput.command,
+      );
+      const match =
+        /^printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d(; false)?$/.exec(
+          command,
+        );
+      expect(match).not.toBeNull();
+      return {
+        text: Buffer.from(match?.[1] ?? '', 'base64').toString('utf8'),
+        fails: match?.[2] !== undefined,
+      };
+    };
+
+    const byApp = (sessionId: string) =>
+      harness.eventsOfType(sessionId, 'tool.by_app');
 
     it('pushes exactly the session branch itself, without asking', async () => {
       const { session, pull, clone } = await sessionWithPullRequest();
@@ -531,34 +579,143 @@ describe('PrAutomationService', () => {
       const commit = await commitFile(clone, 'fix.txt', 'fixed');
       harness.approver.requests.length = 0;
 
-      const result = await ask('git push');
+      const output = report(await ask('git push'));
 
-      expect(result.behavior).toBe('deny');
-      expect((result as { message: string }).message).toContain('Pushed');
+      expect(output.fails).toBe(false);
+      expect(output.text).toContain(`Pushed claude/${session.slug}`);
       expect(harness.approver.requests).toHaveLength(0);
       expect(
         await git(origin, 'rev-parse', `refs/heads/claude/${session.slug}`),
       ).toBe(commit);
+      expect(byApp(session.id)).toEqual([
+        expect.objectContaining({
+          toolUseId: 'tool-git',
+          outcome: 'succeeded',
+          summary: expect.stringContaining(`pushed claude/${session.slug}`),
+        }),
+      ]);
+      // Stored, so reloads and restarts show it.
       expect(
-        harness
-          .eventsOfType(session.id, 'notice')
-          .some((event) => event.text.includes('Autofix pushed')),
+        new SessionEventRepository(harness.db)
+          .list(session.id)
+          .some((stored) => stored.event.type === 'tool.by_app'),
       ).toBe(true);
     });
 
-    it('accepts cd into the clone and git -C', async () => {
+    it('stages, commits and pushes in one command, with hooks off', async () => {
       const { session, pull, clone } = await sessionWithPullRequest();
       enableAutofix(session.id, pull);
-      await commitFile(clone, 'fix.txt', 'fixed');
-      expect((await ask(`cd ${clone} && git push origin HEAD`)).behavior).toBe(
-        'deny',
+      // A hook in the clone must not run without approval.
+      await writeFile(
+        join(clone, '.git', 'hooks', 'pre-commit'),
+        '#!/bin/sh\ntouch hook-ran\nexit 1\n',
+        { mode: 0o755 },
       );
-      await commitFile(clone, 'fix2.txt', 'fixed');
-      expect(
-        (await ask(`git -C ${clone} push -u origin claude/${session.slug}`))
-          .behavior,
-      ).toBe('deny');
+      await writeFile(join(clone, 'value.txt'), 'expected\n');
+
+      const output = report(
+        await ask(
+          `cd ${clone} && git add value.txt && git commit -q -m "Fix the value
+
+Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
+        ),
+      );
+
+      expect(output.fails).toBe(false);
+      expect(output.text).toContain('Done by the app');
       expect(harness.approver.requests).toHaveLength(0);
+      expect(existsSync(join(clone, 'hook-ran'))).toBe(false);
+      const head = await git(clone, 'rev-parse', 'HEAD');
+      expect(await git(clone, 'log', '-1', '--format=%s')).toBe(
+        'Fix the value',
+      );
+      expect(
+        await git(origin, 'rev-parse', `refs/heads/claude/${session.slug}`),
+      ).toBe(head);
+      expect(byApp(session.id)[0]).toMatchObject({
+        outcome: 'succeeded',
+        summary: expect.stringMatching(/^Staged; Committed; pushed /),
+      });
+    });
+
+    it('reports a failed step as failure and does not push', async () => {
+      const { session, pull, clone } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      const before = await git(
+        origin,
+        'rev-parse',
+        `refs/heads/claude/${session.slug}`,
+      );
+
+      // Nothing to commit: git commit fails.
+      const output = report(
+        await ask('git add -A && git commit -m "Nothing" && git push'),
+      );
+
+      expect(output.fails).toBe(true);
+      expect(output.text).toContain('Failed');
+      expect(output.text).toContain(
+        'Not pushed, because a step before failed.',
+      );
+      expect(
+        await git(origin, 'rev-parse', `refs/heads/claude/${session.slug}`),
+      ).toBe(before);
+      expect(byApp(session.id)[0]).toMatchObject({
+        outcome: 'failed',
+        summary: 'Staged; git commit failed',
+      });
+      void clone;
+    });
+
+    it('commits but leaves a push of workflow changes to the user', async () => {
+      const { session, pull, clone } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      await mkdir(join(clone, '.github', 'workflows'), { recursive: true });
+      await writeFile(
+        join(clone, '.github', 'workflows', 'ci.yml'),
+        'on: push\n',
+      );
+
+      const output = report(
+        await ask('git add -A && git commit -m "CI" && git push'),
+      );
+
+      expect(output.fails).toBe(true);
+      expect(output.text).toContain('.github/workflows');
+      expect(await git(clone, 'log', '-1', '--format=%s')).toBe('CI');
+      // The push alone then asks.
+      void ask('git push');
+      await waitFor(() => harness.approver.requests.length === 1);
+    });
+
+    it('allows amending a commit that is not pushed, and asks for a pushed one', async () => {
+      const { session, pull, clone } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      // The PR's head is pushed: amending it would need a force push.
+      void ask('git commit --amend --no-edit');
+      await waitFor(() => harness.approver.requests.length === 1);
+
+      await commitFile(clone, 'local.txt', 'local');
+      await writeFile(join(clone, 'local.txt'), 'changed');
+      const output = report(
+        await ask('git commit -a --amend -m "Local, amended"'),
+      );
+      expect(output.fails).toBe(false);
+      expect(await git(clone, 'log', '-1', '--format=%s')).toBe(
+        'Local, amended',
+      );
+    });
+
+    it('asks when the clone configuration could run programs', async () => {
+      const { session, pull, clone } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      await git(clone, 'config', 'filter.x.clean', 'touch filter-ran');
+      await writeFile(join(clone, 'a.txt'), 'a');
+
+      void ask('git add a.txt');
+
+      await waitFor(() => harness.approver.requests.length === 1);
+      expect(existsSync(join(clone, 'filter-ran'))).toBe(false);
     });
 
     it.each([
@@ -567,9 +724,21 @@ describe('PrAutomationService', () => {
       ['a deletion', 'git push origin --delete old'],
       ['tags', 'git push --tags'],
       ['another remote', 'git push upstream'],
-      ['a combined command', 'git add . && git commit -m x && git push'],
+      ['another command chained in', 'git add . && npm test && git push'],
+      ['a push that is not last', 'git push && git commit -m x'],
       ['a pipe', 'git push 2>&1 | tail'],
+      ['a semicolon', 'git add . ; git push'],
+      ['a command substitution', 'git commit -m "$(cat msg)"'],
+      ['a here-document', "git commit -F - <<'EOF'\nx\nEOF"],
       ['a config override', 'git -c core.hooksPath=x push'],
+      ['commit without message', 'git commit'],
+      ['commit with a file message', 'git commit -F msg.txt'],
+      ['commit with an author', 'git commit -m x --author="A <a@b>"'],
+      ['add outside the clone', 'git add ../other'],
+      ['add with pathspec magic', "git add ':(glob)*'"],
+      ['forced add', 'git add -f build'],
+      ['another git command', 'git reset --hard'],
+      ['a subshell', '(git add . && git commit -m x)'],
     ])('asks the user for %s', async (_, command) => {
       const { session, pull, clone } = await sessionWithPullRequest();
       enableAutofix(session.id, pull);
@@ -579,19 +748,14 @@ describe('PrAutomationService', () => {
 
       await waitFor(() => harness.approver.requests.length > 0);
       expect(harness.service.pendingPermissions(session.id)).toHaveLength(1);
+      expect(byApp(session.id)).toHaveLength(0);
     });
 
-    it('asks the user when autofix is off or the commits change workflows', async () => {
-      const { session, pull, clone } = await sessionWithPullRequest();
+    it('asks the user when autofix is off', async () => {
+      const { clone } = await sessionWithPullRequest();
       await commitFile(clone, 'fix.txt', 'fixed');
-      void ask('git push');
+      void ask('git add -A && git commit -m x && git push');
       await waitFor(() => harness.approver.requests.length === 1);
-
-      enableAutofix(session.id, pull);
-      await mkdir(join(clone, '.github', 'workflows'), { recursive: true });
-      await commitFile(clone, '.github/workflows/ci.yml', 'on: push');
-      void ask('git push');
-      await waitFor(() => harness.approver.requests.length === 2);
     });
   });
 
@@ -793,7 +957,19 @@ describe('PrAutomationService', () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(harness.github.requests.length).toBe(requests);
 
+      // A comment on an issue (not a pull request) is not followed.
+      automation.onWebhook('issue_comment', {
+        repository: { id: remote.id },
+        issue: { number: pull.number },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(harness.github.requests.length).toBe(requests);
+
       addReview(pull, { body: 'One more thing' });
+      automation.onWebhook('issue_comment', {
+        repository: { id: remote.id },
+        issue: { number: pull.number, pull_request: {} },
+      });
       automation.onWebhook('pull_request_review_comment', {
         repository: { id: remote.id },
         pull_request: { number: pull.number },
