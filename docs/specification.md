@@ -4,36 +4,38 @@ Dieses Dokument beschreibt ein selbst gehostetes Web-Frontend, mit dem Claude-Co
 
 ## Ziel und Motivation
 
-Auf dem Server liegen inzwischen viele Repositories. Die bisherigen Wege (Devbox-VM per RDP im Browser, CloudCLI, T3 Code) sind umständlich, vor allem beim Umgang mit Git-Worktrees. Außerdem fehlt die Möglichkeit, mehrere Repositories in derselben Konversation zu bearbeiten. Das neue Frontend soll Sitzungen, Repositories und Worktrees an einer Stelle bündeln.
+Auf dem Server liegen inzwischen viele Repositories. Die bisherigen Wege (Devbox-VM per RDP im Browser, CloudCLI, T3 Code) sind umständlich, vor allem beim Umgang mit Git-Worktrees. Außerdem fehlt die Möglichkeit, mehrere Repositories in derselben Konversation zu bearbeiten. Das neue Frontend soll Sitzungen, Repositories und deren Arbeitskopien an einer Stelle bündeln.
 
-**Grundprinzip Multi-Repo:** Eine Sitzung arbeitet von Anfang an mit beliebig vielen Repositories gleichzeitig. Datenmodell, Worktree-Verwaltung, Diff-Ansicht, Dev-Server-Vorschau, GitHub-Referenzen, PR-Automatik und Aufräumen sind deshalb immer pro Sitzung mit mehreren Repos ausgelegt, nie mit der Annahme „eine Sitzung = ein Repo“. Eine Sitzung kann damit auch mehrere PRs haben, einen pro geändertem Repository.
+**Grundprinzip Multi-Repo:** Eine Sitzung arbeitet von Anfang an mit beliebig vielen Repositories gleichzeitig. Datenmodell, Verwaltung der Sitzungsklone, Diff-Ansicht, Dev-Server-Vorschau, GitHub-Referenzen, PR-Automatik und Aufräumen sind deshalb immer pro Sitzung mit mehreren Repos ausgelegt, nie mit der Annahme „eine Sitzung = ein Repo“. Eine Sitzung kann damit auch mehrere PRs haben, einen pro geändertem Repository.
 
 ## Kernfunktionen
 
-1. **Repository-Übersicht:** Der GitHub-Account ist angebunden. Beim Start einer Sitzung lassen sich alle Repositories auswählen, auf die der Account Zugriff hat, auch aus Organisationen. Ein gewähltes Repo wird beim ersten Mal ins Volume geklont, danach nur noch aktualisiert; jede Sitzung bekommt darauf einen eigenen Worktree. Lokal vorhandene Repos werden mit Branch, offenen Worktrees und Sitzungen angezeigt.
-2. **Neue Sitzung starten:** Auswahl eines Haupt-Repositories plus optional weiterer Repositories. Für jedes gewählte Repository wird automatisch ein eigener Worktree mit neuem Branch angelegt.
-3. **Neues Projekt ohne Repo:** Eine Sitzung kann auch in einem frisch angelegten, leeren Verzeichnis mit `git init` gestartet werden, ganz ohne bestehendes GitHub-Repo. Bei Bedarf legt das Frontend über die GitHub App ein neues Repository im Account oder in einer Organisation an und verknüpft es als Remote.
+1. **Repository-Übersicht:** Der GitHub-Account ist angebunden. Beim Start einer Sitzung lassen sich alle Repositories auswählen, auf die der Account Zugriff hat, auch aus Organisationen. Ein gewähltes Repo wird beim ersten Mal als lokaler Spiegel ins Volume geklont, danach nur noch aktualisiert; jede Sitzung bekommt daraus einen eigenen Klon. Lokal vorhandene Repos werden mit Branch, Sitzungsklonen und Sitzungen angezeigt.
+2. **Neue Sitzung starten:** Auswahl eines Haupt-Repositories plus optional weiterer Repositories. Für jedes gewählte Repository wird automatisch ein eigener Sitzungsklon mit neuem Branch angelegt.
+3. **Neues Projekt ohne Repo:** Eine Sitzung kann auch in einem neuen, leeren lokalen Projekt gestartet werden, ganz ohne bestehendes GitHub-Repo. Das Projekt ist ein Repository ohne Remote (lokaler Spiegel mit `git init`); weitere Sitzungen arbeiten darauf wie auf jedem Repository in eigenen Klonen. Sitzungen ganz ohne Repository bekommen ein eigenes leeres Scratch-Verzeichnis. Bei Bedarf legt das Frontend über die GitHub App ein neues Repository im Account oder in einer Organisation an und verknüpft es als Remote.
 4. **Multi-Repo-Sitzungen:** Das Haupt-Repository ist das Arbeitsverzeichnis, die weiteren Repositories werden als zusätzliche Verzeichnisse freigegeben.
 5. **Chat-Ansicht:** Live-Streaming der Antworten, Tool-Aufrufe und Dateiänderungen, jede Änderung direkt als Diff im Verlauf. Dazu eine Diff-Ansicht der gesamten Sitzung gegenüber dem Basis-Branch, pro Repository und Datei, wahlweise nebeneinander oder untereinander; Eingabe neuer Nachrichten; Abbrechen einer laufenden Antwort.
 6. **Sitzungen fortsetzen:** Liste aller Sitzungen mit Status (läuft, wartet, beendet). Beendete Sitzungen lassen sich über ihre Sitzungs-ID wieder aufnehmen.
 7. **Berechtigungen:** Rückfragen von Claude zu Tool-Freigaben werden im Frontend als Dialog angezeigt und dort bestätigt oder abgelehnt. Der Berechtigungsmodus ist pro Sitzung wählbar.
-8. **Worktree-Aufräumen:** Nach Abschluss einer Sitzung lassen sich Worktrees mergen, pushen oder verwerfen, inklusive Diff-Ansicht vorher.
+8. **Aufräumen der Sitzungsklone:** Nach Abschluss einer Sitzung lassen sich ihre Klone mergen, pushen oder verwerfen, inklusive Diff-Ansicht vorher.
 
 ## Architektur
 
 - **Projektstruktur:** Nx-Monorepo mit Angular-Frontend und NestJS-Backend als eigenen Apps sowie gemeinsamen Bibliotheken, etwa für die Typen der Sitzungsereignisse.
-- **Backend:** NestJS (Node.js, TypeScript) und dem Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`). Das SDK liefert dieselbe Agent-Schleife wie Claude Code. Das Backend verwaltet Sitzungen, Worktrees und den Git-Zugriff.
+- **Backend:** NestJS (Node.js, TypeScript) und dem Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`). Das SDK liefert dieselbe Agent-Schleife wie Claude Code. Das Backend verwaltet Sitzungen, Repositories, Sitzungsklone und den Git-Zugriff.
 - **Kommunikation:** REST für Verwaltungsaktionen, WebSocket oder Server-Sent Events für das Streaming der Sitzungsereignisse.
 - **Frontend:** Angular-Single-Page-App, responsiv, damit es auch am Handy nutzbar ist.
-- **Persistenz:** SQLite für Metadaten (Sitzungen, zugehörige Repos und Worktrees, Titel, Zeitstempel). Die eigentlichen Gesprächsverläufe speichert Claude Code selbst.
+- **Persistenz:** SQLite für Metadaten (Sitzungen, zugehörige Repos und Sitzungsklone, Titel, Zeitstempel). Die eigentlichen Gesprächsverläufe speichert Claude Code selbst.
 - **Betrieb:** Docker-Container auf dem Heimserver, erreichbar über den bestehenden Cloudflare Tunnel mit Google Single Sign-On über Cloudflare Access davor (gilt auch für die Vorschau-Subdomains; nur der GitHub-Webhook-Pfad wird per Bypass-Regel ausgenommen). Keine eigene Anmeldung in der App.
 
-## Worktree-Konzept
+## Konzept der Sitzungsklone
 
-- Worktrees liegen zentral unter einem eigenen Verzeichnis, z. B. `~/worktrees/<repo>/<sitzungs-slug>`.
+- Pro Repository gibt es einen lokalen Spiegel (bare Repository) unter `<workspace>/repos/<owner>/<repo>`. Er wird einmal aus dem Netz geklont und danach nur noch aktualisiert; niemand arbeitet darin.
+- Jede Sitzung bekommt pro Repository einen eigenen, vollständigen Klon dieses Spiegels unter `<workspace>/sessions/<sitzungs-slug>/<owner>/<repo>`. Der lokale Klon verlinkt die Git-Objekte per Hardlink (gleiches Dateisystem) und kostet daher kaum Platz und keinen Netzverkehr; `origin` zeigt auf das echte Remote.
+- Grund: vollständige Isolation. Refs, Stash, Tags, Konfiguration, Hooks und Index gehören allein dem Klon der Sitzung, sodass parallele Sitzungen im selben Repository sich nie in die Quere kommen; zugleich wird nicht für jede Sitzung erneut aus dem Netz geklont.
 - Branch-Namensschema: `claude/<sitzungs-slug>`.
-- Eine Sitzung kennt alle ihre Worktrees; beim Aufräumen werden sie gemeinsam behandelt.
-- Verwaiste Worktrees (ohne zugehörige Sitzung) werden in der Übersicht markiert.
+- Eine Sitzung kennt alle ihre Klone; beim Aufräumen werden sie gemeinsam behandelt. Verwerfen heißt, das Verzeichnis der Sitzung zu löschen.
+- Verwaiste Sitzungsklone (ohne zugehörige Sitzung) werden in der Übersicht markiert.
 
 ## GitHub-Referenzen im Prompt
 
@@ -49,7 +51,7 @@ Im Eingabefeld lassen sich Issues und Pull Requests wie in GitHub referenzieren.
 Zu jeder Sitzung mit offenem Pull Request lassen sich Automatiken ein- und ausschalten.
 
 - **Autofix:** Schlägt ein CI-Check fehl oder kommt ein neuer Review-Kommentar, setzt das Backend die Sitzung automatisch mit diesem Kontext fort; Claude behebt das Problem und pusht auf den Sitzungs-Branch.
-- **Autoclose:** Wird der PR gemerged oder geschlossen, wird die Sitzung beendet, ihre Dev-Server gestoppt und die Worktrees aufgeräumt.
+- **Autoclose:** Wird der PR gemerged oder geschlossen, wird die Sitzung beendet, ihre Dev-Server gestoppt und die Sitzungsklone aufgeräumt.
 - **Ereignisquelle:** GitHub-Webhooks der GitHub App. Der Webhook-Endpunkt muss am SSO vorbei erreichbar sein und prüft die Webhook-Signatur; alternativ regelmäßiges Abfragen per Polling.
 - **Grenzen:** Maximale Anzahl automatischer Fix-Versuche pro PR, danach Benachrichtigung statt weiterer Versuche.
 
@@ -77,11 +79,11 @@ Das Angular-Frontend nutzt als installierbare PWA zusätzlich:
 ## Weitere Sitzungsfunktionen
 
 - **Modell und Plan-Modus:** Modell pro Sitzung wählbar (z. B. Opus oder Sonnet), auch während der Sitzung umschaltbar; Plan-Modus, in dem Claude zuerst einen Plan vorlegt und erst nach Freigabe umsetzt.
-- **Dateien per @:** Im Eingabefeld Dateien aus allen Worktrees der Sitzung per `@` mit Autovervollständigung referenzieren.
+- **Dateien per @:** Im Eingabefeld Dateien aus allen Klonen der Sitzung per `@` mit Autovervollständigung referenzieren.
 - **Bilder anhängen:** Screenshots einfügen, per Drag-and-drop oder Upload an den Prompt hängen.
 - **Nachrichten einreihen:** Während Claude arbeitet, lassen sich weitere Nachrichten schreiben; sie werden eingereiht und nach dem aktuellen Schritt verarbeitet.
 - **To-do-Liste und Kontext:** Claudes Aufgabenliste wird live angezeigt, ebenso die Auslastung des Kontextfensters.
-- **Setup-Skripte pro Repo:** Pro Repository ein konfigurierbares Skript (z. B. `npm install`), das nach dem Anlegen eines Worktrees läuft.
+- **Setup-Skripte pro Repo:** Pro Repository ein konfigurierbares Skript (z. B. `npm install`), das nach dem Anlegen eines Sitzungsklons läuft.
 - **Sitzungen verwalten:** Umbenennen, archivieren, durchsuchen.
 
 ## Anzeige von Kontext- und Abo-Limits
@@ -117,7 +119,7 @@ Das Backend protokolliert den Verbrauch jeder Sitzung und zeigt ihn im Frontend 
 
 Claude kann in einer Sitzung Dev-Server starten, die das Backend als Vorschau ins Frontend durchreicht.
 
-- **Start:** Claude startet den Dev-Server als Hintergrundprozess im Container, im Worktree der Sitzung.
+- **Start:** Claude startet den Dev-Server als Hintergrundprozess im Container, im Klon der Sitzung.
 - **Port melden:** Das Backend stellt Claude über das SDK ein eigenes Tool `expose_port` (Port, Name) bereit. Optional erkennt das Backend zusätzlich neu lauschende Ports der Sitzung automatisch.
 - **Weiterleitung:** NestJS leitet als Reverse Proxy weiter, inklusive WebSockets für Hot Reload.
 - **Adressen:** Eigene Subdomain pro Vorschau, z. B. `<sitzung>-<port>.preview.<domain>`, statt Unterpfaden (vermeidet Probleme mit Asset-Pfaden und Hot Reload). Dazu ein Wildcard-Eintrag im Cloudflare Tunnel; die Vorschau liegt ebenfalls hinter SSO.
@@ -131,7 +133,7 @@ Alles läuft in einem einzigen Docker-Container: NestJS-Backend, ausgeliefertes 
 - **Image unabhängig vom Host:** normales Dockerfile, keine Annahmen über NixOS auf dem Host. Das Image muss auf jedem Docker-Host laufen.
 - **Nix im Container:** Im Image ist Nix (Single-User, Flakes aktiviert) installiert. Repositories bringen ihre Werkzeuge über eine eigene `flake.nix` mit Dev-Shell mit; Claude führt Builds und Tests in dieser Umgebung aus (z. B. über `nix develop` oder direnv).
 - **Fallback:** Repos ohne Flake starten mit einer kleinen Grundausstattung im Image (git, Node.js). Fehlende Werkzeuge holt sich Claude bei Bedarf selbst über Nix, z. B. mit `nix shell nixpkgs#dotnet-sdk`.
-- **Volumes:** Repositories, Worktrees, das Claude-Verzeichnis (Login, Sitzungsverläufe), SSH-Key bzw. Git-Zugangsdaten, SQLite-Datenbank sowie der Nix-Store als Cache, damit Werkzeuge nicht bei jedem Neustart neu geladen werden.
+- **Volumes:** Arbeitsbereich mit Spiegeln, Sitzungsklonen und Scratch-Verzeichnissen (ein Volume, damit Hardlinks möglich sind), das Claude-Verzeichnis (Login, Sitzungsverläufe), SSH-Key bzw. Git-Zugangsdaten, SQLite-Datenbank sowie der Nix-Store als Cache, damit Werkzeuge nicht bei jedem Neustart neu geladen werden.
 - **Sandbox:** Der Container isoliert Claude vom Host; weitgehende Tool-Freigaben sind dadurch vertretbarer.
 
 **Claude-Anmeldung:** Claude Code meldet sich im Container über das Claude-Konto (Abo) an, nicht per API-Key. Die Anmeldedaten liegen im Volume des Claude-Verzeichnisses und überstehen so Neustarts des Containers.
@@ -141,9 +143,9 @@ Alles läuft in einem einzigen Docker-Container: NestJS-Backend, ausgeliefertes 
 Eine globale CLAUDE.md im Image (bzw. im Claude-Verzeichnis) gibt allen Sitzungen gemeinsame Regeln vor. Erste Punkte, noch zu ergänzen:
 
 - **Werkzeuge:** Fehlende Tools über Nix holen; Repos mit `flake.nix` immer in deren Dev-Shell bauen und testen.
-- **Worktrees:** Nur im zugewiesenen Worktree der Sitzung arbeiten, nie im Haupt-Checkout eines Repos.
-- **Mehrere Repos:** Zusätzliche Repositories liegen als eigene Worktrees vor; Änderungen dort ebenfalls nur auf dem Sitzungs-Branch.
-- **Verzeichnisse:** Feste Struktur für Repositories, Worktrees und neue Projekte (Pfade werden hier noch festgelegt).
+- **Sitzungsklone:** Nur in den Klonen der eigenen Sitzung arbeiten, nie im lokalen Spiegel eines Repos.
+- **Mehrere Repos:** Zusätzliche Repositories liegen als eigene Sitzungsklone vor; Änderungen dort ebenfalls nur auf dem Sitzungs-Branch.
+- **Verzeichnisse:** Feste Struktur für Spiegel, Sitzungsklone und Scratch-Verzeichnisse.
 - **Git:** Claude darf grundsätzlich selbst committen und pushen, aber nur mit Freigabe durch den Nutzer in der jeweiligen Sitzung.
 
 ## GitHub-Anbindung
@@ -158,7 +160,7 @@ Die Anbindung läuft über eine eigene GitHub App.
 
 Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
 
-- **Dateibrowser:** Verzeichnisbaum der Worktrees einer Sitzung, Dateien mit Syntax-Highlighting ansehen, geänderte Dateien markiert, Dateien per Klick als Referenz in den Prompt übernehmen.
+- **Dateibrowser:** Verzeichnisbaum der Klone einer Sitzung, Dateien mit Syntax-Highlighting ansehen, geänderte Dateien markiert, Dateien per Klick als Referenz in den Prompt übernehmen.
 
 * **MCP-Server:** Konfiguration global oder pro Repository.
 * **Slash-Commands und Skills:** Aus den Repos und der globalen Konfiguration, mit Autovervollständigung im Eingabefeld.
@@ -174,7 +176,7 @@ Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
 
 1. **Grundgerüst:** Nx-Workspace mit Angular-App, NestJS-App und gemeinsamer Typen-Bibliothek; Dockerfile mit Nix und Basiswerkzeugen; Container läuft lokal mit Volumes und Claude-Anmeldung über das Konto.
 2. **Agent-SDK-Durchstich:** NestJS startet eine Sitzung in einem festen Verzeichnis, streamt Ereignisse per WebSocket, setzt Sitzungen über die ID fort. Minimale Chat-Ansicht im Frontend.
-3. **Multi-Repo-Worktrees:** Worktree-Modul mit Tests, von Anfang an für mehrere Repos pro Sitzung; SQLite-Datenmodell für Sitzungen, Repos und Worktrees; Setup-Skripte pro Repo.
+3. **Multi-Repo-Sitzungsklone:** Git-Modul für Spiegel und Sitzungsklone mit Tests, von Anfang an für mehrere Repos pro Sitzung; SQLite-Datenmodell für Sitzungen, Repos und Sitzungsklone; Setup-Skripte pro Repo.
 4. **GitHub App:** Repo-Liste inkl. Organisationen, Klonen ins Volume, neue Repos anlegen, Pushen und PRs erstellen.
 5. **Vollständige Chat-Ansicht:** Berechtigungsdialoge, Modellwahl und Plan-Modus, Diffs im Verlauf und Gesamt-Diff, To-do-Liste, Kontextanzeige, Nachrichten einreihen, Bilder und @-Dateien, Dateien zeigen (`show_file`).
 6. **Betrieb:** Deployment auf dem Server hinter Cloudflare Tunnel mit Google SSO über Cloudflare Access; ab hier im Alltag nutzbar.
@@ -182,4 +184,4 @@ Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
 8. **GitHub-Referenzen im Prompt.**
 9. **PR-Automatik:** Webhooks mit Bypass-Regel und Signaturprüfung, Autofix mit Versuchslimit, Autoclose.
 10. **Dev-Server-Vorschau:** `expose_port`-Tool, Reverse Proxy mit WebSockets, Wildcard-Subdomains.
-11. **Sitzungen verwalten und aufräumen:** Umbenennen, Archivieren, Suche, Anzeige von Session- und Wochenlimit, Worktree-Aufräumen und verwaiste Worktrees; Statistik und theoretische Kosten (die Erfassung der Verbrauchsdaten läuft schon ab Schritt 2 mit).
+11. **Sitzungen verwalten und aufräumen:** Umbenennen, Archivieren, Suche, Anzeige von Session- und Wochenlimit, Aufräumen der Sitzungsklone und verwaiste Klone; Statistik und theoretische Kosten (die Erfassung der Verbrauchsdaten läuft schon ab Schritt 2 mit).
