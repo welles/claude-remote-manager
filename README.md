@@ -310,9 +310,10 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   turns; `GET /api/limits` reads them again through a short-lived process when they are unknown
   or older than 5 minutes (the web app asks every 5 minutes), and a later answer drops windows
   it no longer lists. Changes go to all clients as `account.limits`. The session list's app
-  bar shows the 5-hour window as a meter (amber from 75 %, red from 90 %); tapping it opens a
-  dialog with every window, per-model weekly ones included, with percent, reset time and when
-  they were last updated.
+  bar shows the 5-hour window as a meter (outlined in the error colour from 75 %, filled when
+  exhausted; amber is kept for sessions that need the user); tapping it opens a dialog with
+  every window, per-model weekly ones included, with percent, reset time and when they were
+  last updated. The session details show the same list.
 - Integrations: each Claude Code process gets a session token and the API URL for the git
   credential helper, the tools `show_file` (always) and `create_pull_request` (when the
   session has a GitHub repository; both in the in-process MCP server `crm`), a permission rule
@@ -562,7 +563,8 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
 
 ## Managing sessions
 
-All of it is in the session view (Rename, Clean up…, Archive…, Unarchive, Delete…), the
+All of it is in the session view (Rename in the app bar; Clean up…, Archive…, Unarchive,
+Delete… in the session details), the
 session list (search, the Archived filter) and the Workspace cleanup page (under Settings ›
 Maintenance, also linked from Repositories). Every route is a management route: Access token required, refused to
 session processes (see [Authentication](#authentication)).
@@ -735,7 +737,7 @@ name of its own, so absolute asset paths and hot-reload WebSockets work unchange
   exposed by another session, more than 10 previews per session. A port nothing listens on
   yet is accepted (the preview waits for it). Claude cannot open the preview URL itself (see
   below) and tests on `localhost:<port>`.
-- **Session view**: running previews in the header with state (running; not reachable, with
+- **Session view**: running previews in the session details (and a chip in the status strip) with state (running; not reachable, with
   the reason, e.g. "Nothing listens on port 5173"; stopped, checked every 3 s from the
   kernel's socket table), a link (new tab, no opener, no referrer), Embed and Stop; the
   history shows the same card where Claude exposed the port, and notes stopped previews
@@ -999,14 +1001,27 @@ web build runs it first):
   changes, a new session, Settings' Workspace cleanup and Server status) get the whole height
   and a back arrow in their app bar. From 840 px the destinations are a rail on the left. The
   start page lists the sessions grouped into Needs you, Running and Recent with search and
-  filters; "New session" (a floating button on phones) opens `/new`. The shell has no Material
-  modules, so the start bundle stays small; pages load lazily.
+  filters; each row says what the session needs ("Approve command", "2 questions", "Plan
+  ready", from `SessionDto.pendingRequests`: kind and count only). "New session" (a floating
+  button on phones) opens `/new`. The shell has no Material modules, so the start bundle
+  stays small; pages load lazily.
+- **Session view**: the app bar (title, repositories and branch, Rename, Changes), a sticky
+  status strip (what the session needs, context, pull request, tasks, previews, model and
+  permissions), the conversation (tool calls as compact rows with paths relative to the
+  session's directories; the preparation as one row) and a dock at the bottom: the pending
+  approval, question or plan with its buttons always in view (long content scrolls inside
+  the card), queued messages collapsed to a count, and a one-row composer. Everything else
+  (status, context, tasks, repositories, push and pull requests with their automation,
+  previews, model and permissions, usage, plan limits, end, clean up, archive, delete) is in
+  the session details: full screen on phones, a drawer on desktops, a permanent column from
+  1360 px. From 1100 px the session list stays on the left of an open session.
 - **Look**: one Angular Material M3 theme (`apps/web/src/styles/`): graphite neutrals, one
   cool accent, amber only for "needs you", small radii, compact type and monospace for paths,
   branches and commands; light and dark follow the system. Components use the
   `--mat-sys-*` and `--app-*` tokens only; icons are inline SVG (`app/ui/icon.ts`), dates are
-  formatted with `Intl` in the browser's locale (`app/ui/dates.ts`), and shared pieces
-  (status badge, banner, dialog, page app bar) are in `app/ui/`.
+  English with the day before the month and a 24-hour clock, in the browser's time zone
+  (`app/ui/dates.ts`), and shared pieces (status badge, banner, dialog, side panel, page app
+  bar) are in `app/ui/`.
 - The manifest is loaded with credentials (`crossorigin="use-credentials"`), as Cloudflare
   Access needs its cookie for it.
 
