@@ -46,6 +46,7 @@ describe('openDatabase', () => {
       'sessions',
       'shown_files',
       'usage_records',
+      'webhook_deliveries',
     ]);
     expect(db.$client.pragma('foreign_keys', { simple: true })).toBe(1);
     db.$client.close();

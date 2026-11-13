@@ -1,4 +1,5 @@
 import type { MessageReferenceRequest } from './github-references';
+import type { PullRequestAutomationDto } from './pr-automation';
 /**
  * Lifecycle of a session as shown in the UI. The Claude Code process is an
  * internal detail: it is closed when idle or when the server stops and
@@ -189,6 +190,8 @@ export interface PullRequestDto {
   mergedAt: string | null;
   /** When the state was last read from GitHub. */
   syncedAt: string;
+  /** PR automation of this pull request (see `PullRequestAutomationDto`). */
+  automation: PullRequestAutomationDto;
 }
 
 /**
@@ -247,6 +250,12 @@ export interface SessionDto {
   context: ContextUsage | null;
   /** Pull requests of the session's clones, oldest first. */
   pullRequests: PullRequestDto[];
+  /**
+   * When autoclose ended the session after its pull requests were merged
+   * or closed. Clones still `ready` afterwards were kept because they hold
+   * work that is not on GitHub (see `CloneLossReport`).
+   */
+  autoclosedAt: string | null;
 }
 
 /** A repository a new session works on. */

@@ -95,6 +95,22 @@ export const sessions = sqliteTable('sessions', {
   lastError: text('last_error'),
   createdAt: createdAt(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+  /**
+   * When autoclose ended the session after its pull requests were merged
+   * or closed; clones still `ready` afterwards were kept on purpose (work
+   * that is not on GitHub).
+   */
+  autoclosedAt: timestamp('autoclosed_at'),
+});
+
+/**
+ * GitHub webhook deliveries already processed (`X-GitHub-Delivery`), so a
+ * redelivery or duplicate does nothing. Pruned after a week.
+ */
+export const webhookDeliveries = sqliteTable('webhook_deliveries', {
+  id: text('id').primaryKey(),
+  event: text('event').notNull(),
+  receivedAt: timestamp('received_at').notNull(),
 });
 
 /**
@@ -177,6 +193,34 @@ export const pullRequests = sqliteTable(
     /** Last time the state was read from GitHub. */
     syncedAt: timestamp('synced_at').notNull(),
     createdAt: createdAt(),
+    /** Head commit on GitHub as last read (CI failures count only for it). */
+    headSha: text('head_sha'),
+    // --- PR automation (both off by default) ------------------------------
+    /** Autofix: failed checks and review feedback continue the session. */
+    autofix: integer('autofix', { mode: 'boolean' }).notNull().default(false),
+    /** Autoclose: merged or closed ends the session and removes clones. */
+    autoclose: integer('autoclose', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    /** Autofix runs allowed for this pull request. */
+    autofixMaxAttempts: integer('autofix_max_attempts').notNull().default(3),
+    /** Autofix runs started so far (reset only by the user). */
+    autofixAttempts: integer('autofix_attempts').notNull().default(0),
+    /** When the limit stopped a run and the user was told; cleared on reset. */
+    autofixGaveUpAt: timestamp('autofix_gave_up_at'),
+    /** Head commit whose failed checks a run was started for already. */
+    autofixCiHandledSha: text('autofix_ci_handled_sha'),
+    /** Reviews and review comments after this time are new. */
+    autofixReviewsAfter: timestamp('autofix_reviews_after'),
+    /** Last autofix run: start and what triggered it (`ci`, `review`). */
+    autofixLastRunAt: timestamp('autofix_last_run_at'),
+    autofixLastTrigger: text('autofix_last_trigger'),
+    /** An autofix run is going on (its turn has not ended yet). */
+    autofixRunning: integer('autofix_running', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    /** When the merge or close was handled (notification, autoclose). */
+    closeHandledAt: timestamp('close_handled_at'),
   },
   (table) => [
     uniqueIndex('pull_requests_repository_number').on(

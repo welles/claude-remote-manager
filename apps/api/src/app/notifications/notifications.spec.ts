@@ -550,6 +550,16 @@ describe('notifications', () => {
       closedAt: null,
       mergedAt: '',
       syncedAt: '',
+      automation: {
+        autofix: true,
+        autoclose: true,
+        attempts: 3,
+        maxAttempts: 3,
+        gaveUp: true,
+        running: false,
+        lastRunAt: null,
+        lastTrigger: null,
+      },
     };
     expect(service.notifyPullRequestClosed(session.id, pullRequest)).toBe(true);
     expect(

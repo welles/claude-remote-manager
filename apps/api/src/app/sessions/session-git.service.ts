@@ -27,6 +27,7 @@ import {
 } from '../repositories/repository.repository';
 import {
   SessionRepository,
+  type PullRequestRecord,
   type SessionDirectoryRecord,
   type SessionRecord,
 } from './session.repository';
@@ -63,8 +64,14 @@ export class SessionGitService {
   private readonly logger = new Logger(SessionGitService.name);
   private readonly locks = new KeyedMutex();
   private readonly changes = new Subject<string>();
+  private readonly closed = new Subject<PullRequestRecord>();
   /** IDs of sessions whose clones or pull requests changed. */
   readonly changes$ = this.changes.asObservable();
+  /**
+   * Pull requests read from GitHub as merged or closed (every time they
+   * are read so; the PR automation handles each once).
+   */
+  readonly closed$ = this.closed.asObservable();
 
   constructor(
     private readonly sessions: SessionRepository,
@@ -257,6 +264,7 @@ export class SessionGitService {
       draft: info.draft,
       headBranch: info.headBranch,
       baseBranch: info.baseBranch,
+      headSha: info.headSha,
       createdBy,
       openedAt: info.createdAt,
       closedAt: info.closedAt,
@@ -278,7 +286,6 @@ export class SessionGitService {
       throw new NotFoundException(`Session ${sessionId} not found`);
     }
     const now = Date.now();
-    let changed = false;
     for (const pull of session.pullRequests) {
       if (
         pull.state !== 'open' ||
@@ -286,36 +293,61 @@ export class SessionGitService {
       ) {
         continue;
       }
-      const repository = this.repositories.get(pull.repositoryId);
-      if (!repository || !isGitHubRepository(repository)) {
-        continue;
-      }
       try {
-        const info = await this.github.getPullRequest(
-          repository.githubInstallationId,
-          repository.githubRepositoryId,
-          `${repository.owner}/${repository.name}`,
-          pull.number,
-        );
-        this.sessions.updatePullRequest(pull.id, {
-          title: info.title,
-          state: info.state,
-          draft: info.draft,
-          baseBranch: info.baseBranch,
-          closedAt: info.closedAt,
-          mergedAt: info.mergedAt,
-          syncedAt: new Date(),
-        });
-        changed = true;
+        await this.refreshPullRequest(pull.id);
       } catch (error) {
         this.logger.warn(
           `Could not refresh ${pull.repositoryName}#${pull.number}: ${errorText(error)}`,
         );
       }
     }
-    if (changed) {
-      this.changes.next(sessionId);
+  }
+
+  /**
+   * Reads one pull request from GitHub and stores its state (title, state,
+   * head commit, ...). Reports a merge or close to {@link closed$}. Returns
+   * the stored pull request, or `null` when it cannot be read from GitHub
+   * (not a GitHub repository). GitHub errors are thrown.
+   */
+  async refreshPullRequest(
+    pullRequestId: number,
+  ): Promise<PullRequestRecord | null> {
+    const pull = this.sessions.pullRequest(pullRequestId);
+    if (!pull) {
+      return null;
     }
+    const repository = this.repositories.get(pull.repositoryId);
+    if (!repository || !isGitHubRepository(repository)) {
+      return null;
+    }
+    const info = await this.github.getPullRequest(
+      repository.githubInstallationId,
+      repository.githubRepositoryId,
+      `${repository.owner}/${repository.name}`,
+      pull.number,
+    );
+    this.sessions.updatePullRequest(pull.id, {
+      title: info.title,
+      state: info.state,
+      draft: info.draft,
+      baseBranch: info.baseBranch,
+      headSha: info.headSha,
+      closedAt: info.closedAt,
+      mergedAt: info.mergedAt,
+      syncedAt: new Date(),
+    });
+    const updated = this.sessions.pullRequest(pull.id) ?? null;
+    if (
+      pull.state !== info.state ||
+      pull.title !== info.title ||
+      pull.draft !== info.draft
+    ) {
+      this.changes.next(pull.sessionId);
+    }
+    if (updated && updated.state !== 'open') {
+      this.closed.next(updated);
+    }
+    return updated;
   }
 
   // -------------------------------------------------------------------------

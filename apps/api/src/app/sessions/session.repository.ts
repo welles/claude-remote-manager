@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, or, type SQL } from 'drizzle-orm';
 import type {
   PullRequestCreator,
   PullRequestState,
@@ -56,6 +56,7 @@ export type NewPullRequest = {
   draft: boolean;
   headBranch: string;
   baseBranch: string;
+  headSha?: string | null;
   createdBy: PullRequestCreator;
   openedAt: Date;
   closedAt: Date | null;
@@ -73,7 +74,22 @@ export type PullRequestPatch = Partial<
     | 'closedAt'
     | 'mergedAt'
     | 'syncedAt'
-  >
+  > &
+    Pick<
+      PullRequestRow,
+      | 'headSha'
+      | 'autofix'
+      | 'autoclose'
+      | 'autofixMaxAttempts'
+      | 'autofixAttempts'
+      | 'autofixGaveUpAt'
+      | 'autofixCiHandledSha'
+      | 'autofixReviewsAfter'
+      | 'autofixLastRunAt'
+      | 'autofixLastTrigger'
+      | 'autofixRunning'
+      | 'closeHandledAt'
+    >
 >;
 
 /** A session's persisted metadata. */
@@ -93,6 +109,8 @@ export interface SessionRecord {
   lastError: string | null;
   createdAt: Date;
   updatedAt: Date;
+  /** When autoclose ended the session (see `sessions.autoclosed_at`). */
+  autoclosedAt: Date | null;
 }
 
 export type NewSessionDirectory = Pick<
@@ -127,6 +145,7 @@ export type SessionPatch = Partial<
     | 'pendingMessage'
     | 'model'
     | 'permissionMode'
+    | 'autoclosedAt'
   >
 >;
 
@@ -301,6 +320,46 @@ export class SessionRepository {
     }
   }
 
+  /** A pull request by its ID. */
+  pullRequest(id: number): PullRequestRecord | undefined {
+    return this.pullRequestsWhere(eq(pullRequests.id, id))[0];
+  }
+
+  /** Open pull requests with autofix or autoclose on, oldest first. */
+  automatedOpenPullRequests(): PullRequestRecord[] {
+    return this.pullRequestsWhere(
+      and(
+        eq(pullRequests.state, 'open'),
+        or(eq(pullRequests.autofix, true), eq(pullRequests.autoclose, true)),
+      ),
+    );
+  }
+
+  /**
+   * Pull requests of the repository with this GitHub ID, all or those with
+   * the given numbers.
+   */
+  pullRequestsOfGitHubRepository(
+    githubRepositoryId: number,
+    numbers?: number[],
+  ): PullRequestRecord[] {
+    return this.pullRequestsWhere(
+      and(
+        eq(repositories.githubRepositoryId, githubRepositoryId),
+        numbers ? inArray(pullRequests.number, numbers) : undefined,
+      ),
+    );
+  }
+
+  /** After a restart no autofix run is going on any more. */
+  clearAutofixRunning(): void {
+    this.db
+      .update(pullRequests)
+      .set({ autofixRunning: false })
+      .where(eq(pullRequests.autofixRunning, true))
+      .run();
+  }
+
   /** Paths of all session clones that exist (state `ready`). */
   readyClonePaths(): string[] {
     return this.db
@@ -342,6 +401,10 @@ export class SessionRepository {
     if (sessionIds.length === 0) {
       return [];
     }
+    return this.pullRequestsWhere(inArray(pullRequests.sessionId, sessionIds));
+  }
+
+  private pullRequestsWhere(where: SQL | undefined): PullRequestRecord[] {
     return this.db
       .select({
         pull: pullRequests,
@@ -350,7 +413,7 @@ export class SessionRepository {
       })
       .from(pullRequests)
       .innerJoin(repositories, eq(repositories.id, pullRequests.repositoryId))
-      .where(inArray(pullRequests.sessionId, sessionIds))
+      .where(where)
       .orderBy(asc(pullRequests.openedAt), asc(pullRequests.id))
       .all()
       .map(({ pull, owner, name }) => ({

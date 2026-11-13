@@ -72,6 +72,8 @@ export interface PullRequestInfo {
   state: 'open' | 'closed' | 'merged';
   draft: boolean;
   headBranch: string;
+  /** Head commit; `null` if GitHub did not say. */
+  headSha: string | null;
   baseBranch: string;
   createdAt: Date;
   closedAt: Date | null;
@@ -116,7 +118,7 @@ interface RawPullRequest {
   merged_at?: string | null;
   closed_at?: string | null;
   created_at: string;
-  head: { ref: string };
+  head: { ref: string; sha?: string };
   base: { ref: string };
 }
 
@@ -144,6 +146,10 @@ function toPullRequest(raw: RawPullRequest): PullRequestInfo {
     state: raw.merged_at ? 'merged' : raw.state,
     draft: raw.draft ?? false,
     headBranch: raw.head.ref,
+    headSha:
+      typeof raw.head.sha === 'string' && /^[0-9a-f]{40}$/.test(raw.head.sha)
+        ? raw.head.sha
+        : null,
     baseBranch: raw.base.ref,
     createdAt: new Date(raw.created_at),
     closedAt: raw.closed_at ? new Date(raw.closed_at) : null,
