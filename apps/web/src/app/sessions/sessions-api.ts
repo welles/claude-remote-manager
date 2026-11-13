@@ -2,10 +2,14 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 import type {
+  CreatePullRequestRequest,
   CreateSessionRequest,
+  PullRequestDto,
   SessionDto,
   SessionListResponse,
 } from '@claude-remote-manager/shared-types';
+
+const sessionPath = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
 
 /** REST client for sessions. */
 @Injectable({ providedIn: 'root' })
@@ -22,6 +26,32 @@ export class SessionsApi {
 
   create(request: CreateSessionRequest): Observable<SessionDto> {
     return this.http.post<SessionDto>('/api/sessions', request);
+  }
+
+  /** Pushes the session branch of one repository's clone. */
+  push(sessionId: string, repositoryId: string): Observable<SessionDto> {
+    return this.http.post<SessionDto>(
+      `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/push`,
+      {},
+    );
+  }
+
+  createPullRequest(
+    sessionId: string,
+    repositoryId: string,
+    request: CreatePullRequestRequest,
+  ): Observable<PullRequestDto> {
+    return this.http.post<PullRequestDto>(
+      `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/pull-requests`,
+      request,
+    );
+  }
+
+  refreshPullRequests(sessionId: string): Observable<SessionDto> {
+    return this.http.post<SessionDto>(
+      `${sessionPath(sessionId)}/pull-requests/refresh`,
+      {},
+    );
   }
 }
 

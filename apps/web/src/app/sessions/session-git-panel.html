@@ -1,0 +1,114 @@
+@if (clones().length > 0) {
+<section class="git" data-testid="git-panel">
+  @for (clone of clones(); track clone.repositoryId) {
+  <div class="clone" data-testid="git-clone">
+    <div class="clone-head">
+      <strong>{{ clone.name }}</strong>
+      @if (clone.directory.pushedCommit; as pushed) {
+      <span class="pushed" data-testid="pushed"
+        >pushed <code>{{ pushed.slice(0, 7) }}</code> @if
+        (clone.directory.pushedAt) { {{ clone.directory.pushedAt | date: 'short'
+        }} }</span
+      >
+      }
+      <span class="spacer"></span>
+      <button
+        matButton
+        type="button"
+        (click)="push(clone)"
+        [disabled]="busy() !== null || clone.directory.state !== 'ready'"
+        data-testid="push"
+      >
+        Push
+      </button>
+      @if (clone.github) {
+      <button
+        matButton
+        type="button"
+        (click)="compose(clone)"
+        [disabled]="busy() !== null || clone.directory.state !== 'ready'"
+        data-testid="create-pr"
+      >
+        Create PR
+      </button>
+      }
+    </div>
+    @if (composing() === clone.repositoryId) {
+    <form
+      class="pr-form"
+      (ngSubmit)="createPullRequest(clone)"
+      data-testid="pr-form"
+    >
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Title</mat-label>
+        <input
+          matInput
+          name="title"
+          [(ngModel)]="title"
+          data-testid="pr-title"
+        />
+      </mat-form-field>
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Description</mat-label>
+        <textarea
+          matInput
+          name="body"
+          [(ngModel)]="body"
+          cdkTextareaAutosize
+          cdkAutosizeMinRows="3"
+          data-testid="pr-body"
+        ></textarea>
+      </mat-form-field>
+      <div class="pr-row">
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Base branch</mat-label>
+          <input
+            matInput
+            name="base"
+            [(ngModel)]="base"
+            data-testid="pr-base"
+          />
+        </mat-form-field>
+        <mat-checkbox name="draft" [(ngModel)]="draft">Draft</mat-checkbox>
+      </div>
+      <div class="pr-row">
+        <button
+          matButton="filled"
+          type="submit"
+          [disabled]="busy() !== null"
+          data-testid="pr-submit"
+        >
+          {{ isPushed(clone) ? 'Create pull request' : 'Push and create pull
+          request' }}
+        </button>
+        <button matButton type="button" (click)="composing.set(null)">
+          Cancel
+        </button>
+      </div>
+    </form>
+    } @if (messages()[clone.repositoryId]; as message) {
+    <p class="message" [class.error]="message.error" data-testid="git-message">
+      {{ message.text }}
+    </p>
+    } @if (clone.pullRequests.length > 0) {
+    <ul class="pulls">
+      @for (pull of clone.pullRequests; track pull.id) {
+      <li data-testid="pull-request">
+        <span class="state state-{{ pull.state }}"
+          >{{ pull.draft && pull.state === 'open' ? 'Draft' :
+          stateLabels[pull.state] }}</span
+        >
+        <a [href]="pull.url" target="_blank" rel="noopener"
+          >#{{ pull.number }} {{ pull.title }}</a
+        >
+        <span class="by"
+          >{{ pull.createdBy === 'claude' ? 'by Claude' : '' }}</span
+        >
+      </li>
+      }
+    </ul>
+    }
+  </div>
+  }
+</section>
+}

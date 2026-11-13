@@ -31,6 +31,7 @@ import {
 } from './conversation';
 import { formatCost, formatTokens, STATUS_LABELS, totalTokens } from './format';
 import { MarkdownPipe } from './markdown.pipe';
+import { SessionGitPanel } from './session-git-panel';
 import { SessionSocket } from './session-socket';
 import { newId } from './sessions-api';
 
@@ -45,6 +46,7 @@ import { newId } from './sessions-api';
     MatInputModule,
     MatProgressBarModule,
     RouterLink,
+    SessionGitPanel,
     TextFieldModule,
   ],
   templateUrl: './session-view.html',

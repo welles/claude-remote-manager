@@ -79,7 +79,9 @@
       }
     </ul>
   </details>
-  } } @if (incompatible()) {
+  }
+  <app-session-git-panel [session]="s" />
+  } @if (incompatible()) {
   <p class="banner error">The server uses a newer protocol. Reload the page.</p>
   } @else if (!connected()) {
   <p class="banner">Connecting to the server…</p>
