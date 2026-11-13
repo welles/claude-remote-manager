@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AttachmentsModule } from '../attachments/attachments.module';
+import { ShownFilesModule } from '../shown-files/shown-files.module';
+import { ShownFilesService } from '../shown-files/shown-files.service';
 import { ToolApprover } from '../agent/tool-approval';
 import { ApprovalGrants } from './approval-grants';
 import { GitCredentialsController } from './git-credentials.controller';
@@ -38,7 +40,12 @@ import { ModelsController } from './models.controller';
 import { ModelsService } from './models.service';
 
 @Module({
-  imports: [AttachmentsModule, LimitsModule, RepositoriesModule],
+  imports: [
+    AttachmentsModule,
+    LimitsModule,
+    RepositoriesModule,
+    ShownFilesModule,
+  ],
   controllers: [
     SessionsController,
     SessionGitController,
@@ -75,7 +82,12 @@ export class SessionsModule {
     git: SessionGitService,
     limits: LimitsService,
     runner: AgentRunner,
+    shownFiles: ShownFilesService,
   ) {
+    // Files shown by the app's tool belong in the session's log.
+    shownFiles.shown$.subscribe(({ sessionId, toolUseId, file }) =>
+      sessions.recordEvent(sessionId, { type: 'file.shown', toolUseId, file }),
+    );
     // Pushes and pull requests change what the session view shows.
     git.changes$.subscribe((id) => sessions.publishUpdate(id));
     // Limits are also read when no session runs (see LimitsService).

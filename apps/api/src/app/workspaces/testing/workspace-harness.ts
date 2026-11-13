@@ -1,3 +1,5 @@
+import { SessionFileAccess } from '../../files/session-file-access';
+import { ShownFilesService } from '../../shown-files/shown-files.service';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type {
@@ -107,6 +109,7 @@ export class WorkspaceHarness {
   sessionGit!: SessionGitService;
   support!: SessionAgentSupportService;
   service!: SessionsService;
+  shownFiles!: ShownFilesService;
 
   /** (Re)creates the services on the same database, like a restart. */
   async start(): Promise<SessionsService> {
@@ -134,6 +137,13 @@ export class WorkspaceHarness {
       this.git,
       this.github.service,
     );
+    this.shownFiles = new ShownFilesService(
+      this.config,
+      this.db,
+      this.sessions,
+      new SessionFileAccess(),
+    );
+    await this.shownFiles.onModuleInit();
     this.support = new SessionAgentSupportService(
       this.config,
       this.sessionCredentials,
@@ -141,6 +151,7 @@ export class WorkspaceHarness {
       this.sessionGit,
       this.git,
       this.github.installationTokens,
+      this.shownFiles,
     );
     this.service = new SessionsService(
       this.config,
@@ -153,6 +164,13 @@ export class WorkspaceHarness {
       this.workspaces,
       this.approver,
       this.support,
+      undefined,
+      undefined,
+      this.shownFiles,
+    );
+    const service = this.service;
+    this.shownFiles.shown$.subscribe(({ sessionId, toolUseId, file }) =>
+      service.recordEvent(sessionId, { type: 'file.shown', toolUseId, file }),
     );
     await this.service.onModuleInit();
     this.service.events$.subscribe((event) => this.events.push(event));

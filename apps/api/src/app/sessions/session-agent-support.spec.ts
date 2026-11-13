@@ -1,13 +1,17 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionDto } from '@claude-remote-manager/shared-types';
 import type { AgentTool } from '../agent/agent-runner';
 import { commitFile, git } from '../git/testing/git-fixtures';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
-import { CREATE_PULL_REQUEST_TOOL_NAME } from './approval-grants';
+import {
+  CREATE_PULL_REQUEST_TOOL_NAME,
+  SHOW_FILE_TOOL_NAME,
+} from './approval-grants';
 import { SESSION_PERMISSION_SETTINGS } from './session-agent-support';
+import { pngImage } from '../attachments/testing/images';
 import { flush, waitFor } from './testing/fake-agent';
 
 describe('session integrations (credentials, tool, memory)', () => {
@@ -100,7 +104,12 @@ describe('session integrations (credentials, tool, memory)', () => {
     expect(existsSync(memory)).toBe(true);
     expect(
       options().tools?.map((entry) => [entry.name, entry.alwaysAsk]),
-    ).toEqual([['create_pull_request', true]]);
+    ).toEqual([
+      ['show_file', false],
+      ['create_pull_request', true],
+    ]);
+    // Showing a file never asks.
+    expect(options().allowedTools).toContain('mcp__crm__show_file');
     expect(
       await git(session.cwd, 'config', '--get-all', 'credential.helper'),
     ).toMatch(/^\n?.*git-credential-crm\.cjs'$/);
@@ -110,10 +119,131 @@ describe('session integrations (credentials, tool, memory)', () => {
     expect(options().settings?.['autoMemoryDirectory']).toBe(memory);
   });
 
-  it('keeps Claude Code’s default memory and no tools for scratch sessions', async () => {
+  it('keeps Claude Code’s default memory and only show_file for scratch sessions', async () => {
     await start(null);
     expect(options().settings).toEqual(SESSION_PERMISSION_SETTINGS);
-    expect(options().tools).toEqual([]);
+    expect(options().tools?.map((entry) => entry.name)).toEqual(['show_file']);
+  });
+
+  it('shows files with show_file, without asking, as events of the session', async () => {
+    const session = await start(null);
+    writeFileSync(join(session.cwd, 'report.md'), '# Done\n');
+    // Claude Code allows the tool by rule; canUseTool would allow it too.
+    await expect(
+      ask(SHOW_FILE_TOOL_NAME, { path: 'report.md' }, 'tu-s', {
+        name: 'crm',
+        source: 'sdk',
+      }),
+    ).resolves.toEqual({
+      behavior: 'allow',
+      updatedInput: { path: 'report.md' },
+    });
+    expect(harness.approver.requests).toHaveLength(0);
+
+    const result = await tool('show_file').handler(
+      { path: 'report.md', caption: 'Summary' },
+      { toolUseId: 'tu-s' },
+    );
+    expect(result.isError).toBeUndefined();
+    expect(result.text).toContain('Shown to the user');
+    await waitFor(
+      () => harness.eventsOfType(session.id, 'file.shown').length === 1,
+    );
+    expect(harness.eventsOfType(session.id, 'file.shown')[0]).toMatchObject({
+      toolUseId: 'tu-s',
+      file: { name: 'report.md', caption: 'Summary', kind: 'markdown' },
+    });
+
+    // Outside the session: refused, nothing shown.
+    const outside = await tool('show_file').handler(
+      { path: '/etc/passwd' },
+      { toolUseId: 'tu-o' },
+    );
+    expect(outside).toMatchObject({ isError: true });
+    expect(outside.text).toContain('not inside the session');
+  });
+
+  it('shows images Claude read or wrote on their tool calls', async () => {
+    const session = await start(null);
+    writeFileSync(
+      join(session.cwd, 'chart.svg'),
+      '<svg xmlns="http://www.w3.org/2000/svg"/>',
+    );
+    harness.runner.last.emit(
+      {
+        type: 'assistant',
+        message: {
+          id: 'm1',
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'read-1',
+              name: 'Read',
+              input: { file_path: join(session.cwd, 'shot.png') },
+            },
+            {
+              type: 'tool_use',
+              id: 'write-1',
+              name: 'Write',
+              input: { file_path: join(session.cwd, 'chart.svg'), content: '' },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'read-1', content: [] },
+          ],
+        },
+        parent_tool_use_id: null,
+        tool_use_result: {
+          type: 'image',
+          file: {
+            base64: pngImage().toString('base64'),
+            type: 'image/png',
+            originalSize: 10,
+          },
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'write-1', content: 'Done' },
+          ],
+        },
+        parent_tool_use_id: null,
+        tool_use_result: {
+          type: 'create',
+          filePath: join(session.cwd, 'chart.svg'),
+          content: '',
+          structuredPatch: [],
+          originalFile: null,
+        },
+      },
+    );
+    await waitFor(
+      () => harness.eventsOfType(session.id, 'file.shown').length === 2,
+    );
+    expect(
+      harness
+        .eventsOfType(session.id, 'file.shown')
+        .map((event) => [
+          event.toolUseId,
+          event.file.origin,
+          event.file.mediaType,
+        ])
+        .sort(),
+    ).toEqual([
+      ['read-1', 'read', 'image/png'],
+      ['write-1', 'write', 'image/svg+xml'],
+    ]);
   });
 
   it('revokes the session token when the process ends', async () => {
@@ -139,7 +269,9 @@ describe('session integrations (credentials, tool, memory)', () => {
       behavior: 'deny',
       message: expect.stringContaining('Not yet'),
     });
-    const denied = await tool('create_pull_request').handler(input);
+    const denied = await tool('create_pull_request').handler(input, {
+      toolUseId: null,
+    });
     expect(denied).toMatchObject({ isError: true });
     expect(denied.text).toContain('not approved');
     expect(harness.github.pulls).toHaveLength(0);
@@ -181,7 +313,9 @@ describe('session integrations (credentials, tool, memory)', () => {
         { decision: 'allow', scope: 'session' },
       ),
     ).resolves.toMatchObject({ alreadyResolved: true });
-    const created = await tool('create_pull_request').handler(input);
+    const created = await tool('create_pull_request').handler(input, {
+      toolUseId: null,
+    });
     expect(created.isError).toBeUndefined();
     expect(created.text).toContain('https://github.com/alice/app/pull/1');
     expect(harness.service.get(session.id).pullRequests).toEqual([
@@ -189,9 +323,10 @@ describe('session integrations (credentials, tool, memory)', () => {
     ]);
 
     // One approval, one call.
-    expect((await tool('create_pull_request').handler(input)).isError).toBe(
-      true,
-    );
+    expect(
+      (await tool('create_pull_request').handler(input, { toolUseId: null }))
+        .isError,
+    ).toBe(true);
   });
 
   it('names the repository when the call is ambiguous or foreign', async () => {
@@ -208,7 +343,7 @@ describe('session integrations (credentials, tool, memory)', () => {
         name: 'crm',
         source: 'sdk',
       });
-      return tool('create_pull_request').handler(input);
+      return tool('create_pull_request').handler(input, { toolUseId: null });
     };
     await expect(call({ title: 'x' })).rejects.toThrow('Name the repository');
     await expect(call({ title: 'x', repository: 'bob/app' })).rejects.toThrow(

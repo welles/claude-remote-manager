@@ -42,6 +42,7 @@ describe('openDatabase', () => {
       'session_directories',
       'session_events',
       'sessions',
+      'shown_files',
       'usage_records',
     ]);
     expect(db.$client.pragma('foreign_keys', { simple: true })).toBe(1);

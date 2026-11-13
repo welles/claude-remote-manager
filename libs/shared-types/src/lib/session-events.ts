@@ -1,6 +1,7 @@
 import type { AttachmentDto } from './attachments';
 import type { FileDiff, ToolDiffSource } from './diffs';
 import type { AccountLimits } from './limits';
+import type { ShownFileDto } from './shown-files';
 import type {
   GitPushAnalysis,
   PermissionRequestKind,
@@ -120,6 +121,18 @@ export interface ToolDiffEvent extends SessionEventBase {
   diff: FileDiff;
   source: ToolDiffSource;
   parentToolUseId: string | null;
+}
+
+/**
+ * A file put in front of the user: by Claude's `show_file` tool call
+ * (`toolUseId`), or an image Claude read or wrote (on that call). Stored;
+ * never a reason for a notification.
+ */
+export interface FileShownEvent extends SessionEventBase {
+  type: 'file.shown';
+  /** The tool call it belongs to, when known. */
+  toolUseId: string | null;
+  file: ShownFileDto;
 }
 
 /**
@@ -348,6 +361,7 @@ export type SessionEvent =
   | ToolCallEvent
   | ToolResultEvent
   | ToolDiffEvent
+  | FileShownEvent
   | PermissionRequestEvent
   | PermissionResolvedEvent
   | PermissionDeniedEvent

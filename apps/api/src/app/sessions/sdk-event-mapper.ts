@@ -4,6 +4,20 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionEventInput } from '@claude-remote-manager/shared-types';
 import { diffFromToolResult, FILE_CHANGE_TOOLS } from '../diffs/tool-diffs';
+import { isImagePath } from '../shown-files/file-kind';
+
+/**
+ * An image Claude read (content from Claude Code's structured result) or
+ * wrote (the file, to be read), to show in the conversation.
+ */
+export type SeenImage =
+  | {
+      kind: 'read';
+      toolUseId: string;
+      path: string;
+      data: Buffer;
+    }
+  | { kind: 'write'; toolUseId: string; path: string };
 
 /** Tool results longer than this are truncated in events. */
 export const MAX_TOOL_RESULT_LENGTH = 8000;
@@ -136,11 +150,19 @@ export class SdkEventMapper {
   private readonly streamingMessage = new Map<string, string>();
   /** Indices of streamed text blocks not yet completed, per message ID. */
   private readonly pendingTextBlocks = new Map<string, number[]>();
-  /** File-changing tool calls waiting for their result, by tool use ID. */
+  /** File tool calls (changes, reads) waiting for their result. */
   private readonly fileCalls = new Map<
     string,
     { name: string; input: unknown }
   >();
+  private images: SeenImage[] = [];
+
+  /** Images read or written in the messages mapped since the last call. */
+  takeImages(): SeenImage[] {
+    const images = this.images;
+    this.images = [];
+    return images;
+  }
 
   map(message: SDKMessage): SessionEventInput[] {
     switch (message.type) {
@@ -162,7 +184,10 @@ export class SdkEventMapper {
           });
         }
         for (const event of events) {
-          if (event.type === 'tool.call' && FILE_CHANGE_TOOLS.has(event.name)) {
+          if (
+            event.type === 'tool.call' &&
+            (FILE_CHANGE_TOOLS.has(event.name) || event.name === 'Read')
+          ) {
             this.fileCalls.set(event.toolUseId, {
               name: event.name,
               input: event.input,
@@ -206,6 +231,10 @@ export class SdkEventMapper {
         continue;
       }
       this.fileCalls.delete(event.toolUseId);
+      this.noteImage(event.toolUseId, event.isError, call, structured);
+      if (call.name === 'Read') {
+        continue;
+      }
       const diff = event.isError
         ? null
         : diffFromToolResult(call.name, call.input, structured);
@@ -220,6 +249,41 @@ export class SdkEventMapper {
       }
     }
     return diffs;
+  }
+
+  /** Notes an image Claude read or wrote. */
+  private noteImage(
+    toolUseId: string,
+    isError: boolean,
+    call: { name: string; input: unknown },
+    structured: unknown,
+  ): void {
+    const input = (call.input ?? {}) as Record<string, unknown>;
+    const path =
+      typeof input['file_path'] === 'string' ? input['file_path'] : null;
+    if (isError || !path) {
+      return;
+    }
+    if (call.name === 'Write' && isImagePath(path)) {
+      this.images.push({ kind: 'write', toolUseId, path });
+      return;
+    }
+    const result = (structured ?? {}) as {
+      type?: unknown;
+      file?: { base64?: unknown };
+    };
+    if (
+      call.name === 'Read' &&
+      result.type === 'image' &&
+      typeof result.file?.base64 === 'string'
+    ) {
+      this.images.push({
+        kind: 'read',
+        toolUseId,
+        path,
+        data: Buffer.from(result.file.base64, 'base64'),
+      });
+    }
   }
 
   private mapStreamEvent(

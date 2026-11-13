@@ -11,7 +11,7 @@
 //     sockets, devices). The check is made on the opened file itself
 //     (/proc/self/fd), so swapping a path component between check and read
 //     cannot redirect it. Writes one JSON line, then up to <maxBytes> bytes
-//     of content.
+//     of content (streamed).
 //
 //   session-files.cjs list <maxEntries> <root>
 //     Lists the files below <root> (not following symlinked directories,
@@ -35,7 +35,11 @@ const out = (header, body) => {
 const fail = (code, message) => out({ ok: false, code, message });
 
 const inside = (real, roots) =>
-  roots.some((root) => real === root || real.startsWith(`${root}${path.sep}`));
+  roots.some(
+    (root) =>
+      real === root ||
+      real.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`),
+  );
 
 function realRoots(list) {
   const roots = [];
@@ -128,27 +132,37 @@ function read(maxBytes, requested, rootList) {
       fail('not_regular', `${requested} is not a regular file`);
       return;
     }
-    const wanted = Math.min(stats.size, maxBytes);
-    const buffer = Buffer.alloc(wanted);
-    let length = 0;
-    while (length < wanted) {
-      const count = fs.readSync(fd, buffer, length, wanted - length, length);
-      if (count === 0) {
-        break;
-      }
-      length += count;
-    }
-    out(
-      {
+    // The header, then the content in chunks (synchronous writes wait for
+    // the reader, so large files are never held in memory).
+    fs.writeSync(
+      1,
+      `${JSON.stringify({
         ok: true,
         path: real,
         size: stats.size,
         mtimeMs: stats.mtimeMs,
-        length,
-        truncated: stats.size > length,
-      },
-      buffer.subarray(0, length),
+        truncated: stats.size > maxBytes,
+      })}\n`,
     );
+    const chunk = Buffer.alloc(Math.min(Math.max(maxBytes, 1), 1024 * 1024));
+    let position = 0;
+    while (position < maxBytes) {
+      const count = fs.readSync(
+        fd,
+        chunk,
+        0,
+        Math.min(chunk.length, maxBytes - position),
+        position,
+      );
+      if (count === 0) {
+        break;
+      }
+      let written = 0;
+      while (written < count) {
+        written += fs.writeSync(1, chunk, written, count - written);
+      }
+      position += count;
+    }
   } catch (error) {
     fail(errorCode(error), String((error && error.message) || error));
   } finally {

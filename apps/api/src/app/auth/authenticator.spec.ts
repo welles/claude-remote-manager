@@ -154,6 +154,10 @@ describe('authentication', () => {
       ['DELETE', '/api/sessions/x/queued-messages/y'],
       ['GET', '/api/models'],
       ['GET', '/api/limits'],
+      // Files Claude showed.
+      ['GET', '/api/shown-files/x'],
+      ['GET', '/api/shown-files/x/content'],
+      ['GET', '/api/shown-files/x/live'],
       // Images for messages.
       ['POST', '/api/attachments'],
       ['GET', '/api/attachments/x'],

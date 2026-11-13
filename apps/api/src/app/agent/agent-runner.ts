@@ -8,6 +8,12 @@ import type {
 import type { SessionPermissionMode } from '@claude-remote-manager/shared-types';
 import type * as Zod from 'zod';
 
+/** What the app's tool knows about the call. */
+export interface AgentToolContext {
+  /** The tool use (`claudecode/toolUseId` of the MCP request), if known. */
+  toolUseId: string | null;
+}
+
 /** Result of one of the app's own tools. */
 export interface AgentToolResult {
   text: string;
@@ -28,7 +34,12 @@ export interface AgentTool {
    * allows the tool (MCP tool permission policy `always_ask`).
    */
   alwaysAsk: boolean;
-  handler: (input: Record<string, unknown>) => Promise<AgentToolResult>;
+  /** The tool only reads (MCP annotation `readOnlyHint`). */
+  readOnly?: boolean;
+  handler: (
+    input: Record<string, unknown>,
+    context: AgentToolContext,
+  ) => Promise<AgentToolResult>;
 }
 
 /** What a Claude Code process is started with. */

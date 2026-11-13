@@ -46,7 +46,11 @@ import {
   ToolApprover,
   type PermissionResolvedInput,
 } from '../agent/tool-approval';
-import { CREATE_PULL_REQUEST_TOOL_NAME } from './approval-grants';
+import {
+  APP_MCP_SERVER,
+  CREATE_PULL_REQUEST_TOOL_NAME,
+  SHOW_FILE_TOOL_NAME,
+} from './approval-grants';
 import { sessionAllows, unresolvedRequests } from './permission-requests';
 import { UserToolApprover } from './user-tool-approver';
 import {
@@ -68,7 +72,11 @@ import {
   NoSessionAgentSupport,
   SessionAgentSupport,
 } from './session-agent-support';
-import { SdkEventMapper, transcriptEntries } from './sdk-event-mapper';
+import {
+  SdkEventMapper,
+  transcriptEntries,
+  type SeenImage,
+} from './sdk-event-mapper';
 import {
   SessionEventRepository,
   STORED_EVENT_TYPES,
@@ -80,6 +88,7 @@ import {
   FileAccessError,
   SessionFileAccess,
 } from '../files/session-file-access';
+import { ShownFilesService } from '../shown-files/shown-files.service';
 import {
   additionalDirectories,
   SessionRepository,
@@ -256,6 +265,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // Not a union type: Nest injects by the parameter's declared class.
     @Optional()
     private readonly attachments?: AttachmentStore,
+    @Optional()
+    private readonly shownFiles?: ShownFilesService,
   ) {}
 
   /**
@@ -1016,7 +1027,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           permissionMode: record.permissionMode,
           ...(await this.resumeTarget(record)),
           canUseTool: this.canUseTool(live),
-          allowedTools: allowed.rules,
+          allowedTools: [...allowed.rules, ...(extras.allowedTools ?? [])],
           env: { ...SESSION_ENV, ...extras.env },
           tools: extras.tools,
           settings: extras.settings,
@@ -1162,6 +1173,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     for (const event of events) {
       this.append(live, event);
     }
+    this.showImages(live, live.mapper.takeImages());
     if (message.type === 'assistant' && live.run) {
       // Live context usage during long turns (no API request involved).
       void this.refreshContext(live, live.run);
@@ -1223,6 +1235,49 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (run) {
       void this.refreshContext(live, run, { force: true });
       void this.limits.refreshPlanUsage(() => run.planUsage());
+    }
+  }
+
+  /**
+   * Shows images Claude read or wrote as thumbnails on their tool call
+   * (through the shown files, whose events come back via
+   * {@link recordEvent}).
+   */
+  private showImages(live: LiveSession, images: SeenImage[]): void {
+    const store = this.shownFiles;
+    if (!store) {
+      return;
+    }
+    for (const image of images) {
+      const shown =
+        image.kind === 'read'
+          ? store.fromData(
+              live.id,
+              image.toolUseId,
+              image.path,
+              image.data,
+              'read',
+            )
+          : store.show(live.id, image.toolUseId, image.path, null, 'write');
+      shown.catch((error: unknown) =>
+        this.logger.warn(
+          `Could not keep the image ${image.path} of ${live.id}: ${String(error)}`,
+        ),
+      );
+    }
+  }
+
+  /**
+   * Adds an event that happened outside the session's process (a file
+   * shown by the app's tool) to its log, or stores it when the session is
+   * not in memory.
+   */
+  recordEvent(sessionId: string, event: SessionEventInput): void {
+    const live = this.live.get(sessionId);
+    if (live) {
+      this.append(live, event);
+    } else if (this.sessions.get(sessionId)) {
+      this.storedEvents.add(sessionId, event, { uuid: null, userId: null });
     }
   }
 
@@ -1383,6 +1438,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   private canUseTool(live: LiveSession): CanUseTool {
     return async (toolName, input, options) => {
+      if (
+        toolName === SHOW_FILE_TOOL_NAME &&
+        (!options.mcpServer ||
+          (options.mcpServer.name === APP_MCP_SERVER &&
+            options.mcpServer.source === 'sdk'))
+      ) {
+        // Reads only inside the session's directories: never asks.
+        return { behavior: 'allow', updatedInput: input };
+      }
       const command =
         toolName === 'Bash' && typeof input['command'] === 'string'
           ? input['command']

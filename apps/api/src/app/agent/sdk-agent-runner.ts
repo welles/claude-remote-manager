@@ -47,6 +47,22 @@ function loadZod(): Promise<typeof Zod> {
 }
 
 /**
+ * The tool use ID Claude Code sends with a call of an MCP tool, in the
+ * request's `_meta` (`claudecode/toolUseId`); `null` without.
+ */
+export function toolUseIdOf(extra: unknown): string | null {
+  const meta =
+    typeof extra === 'object' && extra !== null
+      ? (extra as { _meta?: unknown })._meta
+      : undefined;
+  const id =
+    typeof meta === 'object' && meta !== null
+      ? (meta as Record<string, unknown>)['claudecode/toolUseId']
+      : undefined;
+  return typeof id === 'string' && id ? id : null;
+}
+
+/**
  * The app's tools as an in-process MCP server (`createSdkMcpServer`), with
  * the permission policy `always_ask` for tools that need the user's
  * approval on every call.
@@ -68,10 +84,11 @@ export async function appMcpServers(
         definition.name,
         definition.description,
         definition.inputSchema(z),
-        async (input) => {
+        async (input, extra) => {
           try {
             const result = await definition.handler(
               input as Record<string, unknown>,
+              { toolUseId: toolUseIdOf(extra) },
             );
             return {
               content: [{ type: 'text', text: result.text }],
@@ -89,6 +106,9 @@ export async function appMcpServers(
             };
           }
         },
+        definition.readOnly
+          ? { annotations: { readOnlyHint: true } }
+          : undefined,
       ),
     ),
   });

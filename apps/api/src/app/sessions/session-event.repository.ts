@@ -15,6 +15,7 @@ import { sessionEvents } from '../db/schema';
 export const STORED_EVENT_TYPES: ReadonlySet<SessionEventInput['type']> =
   new Set([
     'tool.diff',
+    'file.shown',
     'permission.request',
     'permission.resolved',
     'permission.denied',

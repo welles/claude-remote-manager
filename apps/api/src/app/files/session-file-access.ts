@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { PassThrough, type Readable } from 'node:stream';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Inject, Injectable, Optional } from '@nestjs/common';
@@ -59,6 +60,8 @@ export interface SessionFileContent {
 }
 
 const TIMEOUT_MS = 30_000;
+/** Serving a live file may take longer (slow clients). */
+const STREAM_TIMEOUT_MS = 10 * 60_000;
 /** Room for the JSON line before the content. */
 const HEADER_ALLOWANCE = 64 * 1024;
 
@@ -105,6 +108,94 @@ export class SessionFileAccess {
       data: body,
       truncated: header['truncated'] === true,
     };
+  }
+
+  /**
+   * Opens a file inside `roots` for streaming up to `maxBytes` (e.g. to
+   * serve it). Resolves once the helper checked the file; throws
+   * {@link FileAccessError}.
+   */
+  stream(
+    roots: string[],
+    path: string,
+    maxBytes: number,
+  ): Promise<{
+    path: string;
+    size: number;
+    truncated: boolean;
+    content: Readable;
+  }> {
+    const command = this.launcher.command('session', process.execPath, [
+      sessionFilesScript(),
+      'read',
+      String(maxBytes),
+      path,
+      ...roots,
+    ]);
+    return new Promise((resolve, reject) => {
+      const child = spawn(command.command, command.args, {
+        cwd: '/',
+        env: this.launcher.environment('session'),
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      const content = new PassThrough();
+      let head = Buffer.alloc(0);
+      let headerDone = false;
+      const timer = setTimeout(() => child.kill('SIGKILL'), STREAM_TIMEOUT_MS);
+      const onData = (chunk: Buffer) => {
+        if (headerDone) {
+          return;
+        }
+        head = Buffer.concat([head, chunk]);
+        const newline = head.indexOf(0x0a);
+        if (newline < 0) {
+          if (head.length > HEADER_ALLOWANCE) {
+            child.kill('SIGKILL');
+          }
+          return;
+        }
+        headerDone = true;
+        child.stdout.off('data', onData);
+        let header: HelperHeader;
+        try {
+          header = JSON.parse(head.subarray(0, newline).toString('utf8'));
+        } catch {
+          child.kill('SIGKILL');
+          reject(new FileAccessError('failed', 'The file helper failed'));
+          return;
+        }
+        if (!header.ok) {
+          reject(
+            new FileAccessError(
+              header.code ?? 'failed',
+              header.message ?? 'The file could not be read',
+            ),
+          );
+          return;
+        }
+        content.write(head.subarray(newline + 1));
+        child.stdout.pipe(content);
+        resolve({
+          path: String(header['path']),
+          size: Number(header['size']),
+          truncated: header['truncated'] === true,
+          content,
+        });
+      };
+      child.stdout.on('data', onData);
+      // A reader that stops early ends the helper.
+      content.on('close', () => child.kill('SIGKILL'));
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        reject(new FileAccessError('failed', error.message));
+      });
+      child.on('close', () => {
+        clearTimeout(timer);
+        if (!headerDone) {
+          reject(new FileAccessError('failed', 'The file helper failed'));
+        }
+      });
+    });
   }
 
   /**

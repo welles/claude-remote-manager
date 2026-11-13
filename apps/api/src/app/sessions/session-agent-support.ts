@@ -7,7 +7,14 @@ import { handOverToSession } from '../common/ownership';
 import { credentialHelperCommand } from '../git/credential-helper';
 import { GitService } from '../git/git.service';
 import { InstallationTokens } from '../github/installation-tokens';
-import { ApprovalGrants, CREATE_PULL_REQUEST_TOOL } from './approval-grants';
+import { FileAccessError } from '../files/session-file-access';
+import { ShownFilesService } from '../shown-files/shown-files.service';
+import {
+  ApprovalGrants,
+  CREATE_PULL_REQUEST_TOOL,
+  SHOW_FILE_TOOL,
+  SHOW_FILE_TOOL_NAME,
+} from './approval-grants';
 import { SessionCredentials } from './session-credentials';
 import { SessionGitService } from './session-git.service';
 import type { SessionRecord } from './session.repository';
@@ -17,6 +24,8 @@ export interface LaunchExtras {
   env: Record<string, string>;
   tools: AgentTool[];
   settings?: Record<string, unknown>;
+  /** Permission rules that allow tools without asking. */
+  allowedTools?: string[];
 }
 
 /**
@@ -104,6 +113,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     private readonly sessionGit: SessionGitService,
     private readonly git: GitService,
     private readonly tokens: InstallationTokens,
+    private readonly shownFiles: ShownFilesService,
   ) {
     super();
   }
@@ -145,9 +155,15 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         CRM_API_URL: this.config.internalApiUrl,
         CRM_SESSION_TOKEN: this.sessionCredentials.issue(record.id),
       },
-      tools:
-        githubClones.length > 0 ? [this.createPullRequestTool(record.id)] : [],
+      tools: [
+        this.showFileTool(record.id),
+        ...(githubClones.length > 0
+          ? [this.createPullRequestTool(record.id)]
+          : []),
+      ],
       settings,
+      // Showing a file reads only inside the session's directories.
+      allowedTools: [SHOW_FILE_TOOL_NAME],
     };
   }
 
@@ -175,6 +191,66 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   released(sessionId: string): void {
     this.sessionCredentials.revoke(sessionId);
     this.revoke(this.grants.clear(sessionId));
+  }
+
+  /**
+   * The tool `show_file` of a session: puts a file of the session's
+   * directories in front of the user (a card in the conversation, opened
+   * in a viewer), as it is now. No approval: it cannot write, and it reads
+   * only inside the session's directories, as the session user.
+   */
+  showFileTool(sessionId: string): AgentTool {
+    return {
+      name: SHOW_FILE_TOOL,
+      description:
+        'Show a file to the user: it appears as a card in the conversation and opens in a viewer ' +
+        '(images directly, Markdown and HTML rendered, code and text highlighted, PDF embedded, ' +
+        'anything else as a download), with the content it has now. Use it when you want the user ' +
+        'to look at a file you produced or found for them, such as a screenshot, an image, a ' +
+        'report, an HTML page or a PDF. Do not use it for every file you read or change: the ' +
+        "user sees your file changes as diffs anyway. Only files inside this session's " +
+        'directories (working directory and additional directories).',
+      alwaysAsk: false,
+      readOnly: true,
+      inputSchema: (z) => ({
+        path: z
+          .string()
+          .min(1)
+          .max(4096)
+          .describe(
+            'Path of the file, absolute or relative to the working directory',
+          ),
+        caption: z
+          .string()
+          .max(500)
+          .optional()
+          .describe('Optional short caption shown with the file'),
+      }),
+      handler: async (input, { toolUseId }) => {
+        try {
+          const file = await this.shownFiles.show(
+            sessionId,
+            toolUseId,
+            String(input['path']),
+            typeof input['caption'] === 'string' ? input['caption'] : null,
+            'show_file',
+          );
+          return {
+            text: file.snapshot
+              ? `Shown to the user: ${file.path} (${file.kind}, ${file.size} bytes).`
+              : `Shown to the user: ${file.path} (${file.kind}, ${file.size} bytes). It is too large to keep a copy, so the user sees it only while the file exists.`,
+          };
+        } catch (error) {
+          return {
+            isError: true,
+            text:
+              error instanceof FileAccessError
+                ? `The file was not shown: ${error.message}`
+                : `The file was not shown: ${errorText(error)}`,
+          };
+        }
+      },
+    };
   }
 
   /** The tool `create_pull_request` of a session. */

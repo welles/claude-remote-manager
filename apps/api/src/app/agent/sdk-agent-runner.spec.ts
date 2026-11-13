@@ -4,6 +4,7 @@ import { ProcessLauncher, type ProcessRole } from '../common/process-isolation';
 import {
   buildQueryOptions,
   spawnAsSession,
+  toolUseIdOf,
   userContent,
 } from './sdk-agent-runner';
 
@@ -207,5 +208,15 @@ describe('userContent', () => {
         images: [{ mediaType: 'image/gif', data: 'B' }],
       }),
     ).toHaveLength(1);
+  });
+});
+
+describe('toolUseIdOf', () => {
+  it('reads the tool use ID Claude Code sends with MCP calls', () => {
+    expect(toolUseIdOf({ _meta: { 'claudecode/toolUseId': 'toolu_1' } })).toBe(
+      'toolu_1',
+    );
+    expect(toolUseIdOf({ _meta: {} })).toBeNull();
+    expect(toolUseIdOf(undefined)).toBeNull();
   });
 });

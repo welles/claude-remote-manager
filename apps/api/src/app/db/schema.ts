@@ -15,6 +15,8 @@ import type {
   SessionPermissionMode,
   SessionStatus,
   SetupStatus,
+  ShownFileKind,
+  ShownFileOrigin,
 } from '@claude-remote-manager/shared-types';
 
 /**
@@ -274,6 +276,35 @@ export const attachments = sqliteTable(
   ],
 );
 
+/**
+ * Files put in front of the user (tool `show_file`, images Claude read or
+ * wrote). The snapshot of the content is `<filesDir>/shown/<id>` (owned by
+ * the API, not reachable by sessions) when `snapshot` is set; larger files
+ * keep only this row and are served from `path` while it exists.
+ */
+export const shownFiles = sqliteTable(
+  'shown_files',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    toolUseId: text('tool_use_id'),
+    origin: text('origin').$type<ShownFileOrigin>().notNull(),
+    /** Real path at the time it was shown. */
+    path: text('path').notNull(),
+    name: text('name').notNull(),
+    caption: text('caption'),
+    kind: text('kind').$type<ShownFileKind>().notNull(),
+    mediaType: text('media_type').notNull(),
+    language: text('language'),
+    size: integer('size').notNull(),
+    snapshot: integer('snapshot', { mode: 'boolean' }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [index('shown_files_session').on(table.sessionId)],
+);
+
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
 export type SessionDirectoryRow = typeof sessionDirectories.$inferSelect;
@@ -283,3 +314,4 @@ export type PullRequestRow = typeof pullRequests.$inferSelect;
 export type UsageRecordRow = typeof usageRecords.$inferSelect;
 export type NewUsageRecordRow = typeof usageRecords.$inferInsert;
 export type AttachmentRow = typeof attachments.$inferSelect;
+export type ShownFileRow = typeof shownFiles.$inferSelect;
