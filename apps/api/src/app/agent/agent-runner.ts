@@ -1,5 +1,6 @@
 import type {
   CanUseTool,
+  ModelInfo,
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
   SDKMessage,
@@ -43,6 +44,11 @@ export interface AgentStartOptions {
   sessionId: string | null;
   /** Decides tool uses that need the user's approval. */
   canUseTool: CanUseTool;
+  /**
+   * Permission rules allowed for this process (in memory, like rules the
+   * user allowed for the session; never written to settings files).
+   */
+  allowedTools?: string[];
   /** Variables added to the process environment (without app secrets). */
   env?: Record<string, string>;
   /** The app's own tools for this session. */
@@ -76,6 +82,10 @@ export interface AgentRun {
   contextUsage(): Promise<SDKControlGetContextUsageResponse>;
   /** Plan rate limits (experimental SDK API, may change). */
   planUsage(): Promise<SDKControlGetUsageResponse>;
+  /** Switches the permission mode of the running process. */
+  setPermissionMode(mode: SessionPermissionMode): Promise<void>;
+  /** Switches the model for the next requests; `null`: the default. */
+  setModel(model: string | null): Promise<void>;
   /** Ends the input and terminates the process. */
   close(): void;
   /** The last lines Claude Code wrote to stderr, for error messages. */
@@ -91,4 +101,18 @@ export abstract class AgentRunner {
     options: AgentStartOptions,
     firstMessage: AgentUserMessage,
   ): Promise<AgentRun>;
+
+  /**
+   * Starts a short-lived Claude Code process without a prompt (no model
+   * request, no transcript) to ask it about the account, and closes it.
+   */
+  abstract probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T>;
+}
+
+/** What a probe process can be asked. */
+export interface AgentProbe {
+  /** Models Claude Code offers for the logged-in account. */
+  supportedModels(): Promise<ModelInfo[]>;
+  /** Plan rate limits (experimental SDK API, may change). */
+  planUsage(): Promise<SDKControlGetUsageResponse>;
 }

@@ -24,12 +24,11 @@ import {
 } from '../../sessions/testing/fake-agent';
 import { UsageRepository } from '../../sessions/usage.repository';
 import { SessionWorkspaceService } from '../session-workspace.service';
-import {
-  NO_APPROVAL_UI_MESSAGE,
-  ToolApprover,
-  type ToolApprovalDecision,
-  type ToolApprovalRequest,
+import type {
+  ToolApprovalDecision,
+  ToolApprovalRequest,
 } from '../../agent/tool-approval';
+import { UserToolApprover } from '../../sessions/user-tool-approver';
 import { FakeGitHub } from '../../github/testing/fake-github';
 import { ApprovalGrants } from '../../sessions/approval-grants';
 import { SessionAgentSupportService } from '../../sessions/session-agent-support';
@@ -40,20 +39,27 @@ import { SettingsService } from '../../settings/settings.service';
 import { SetupScriptRunner } from '../setup-script-runner';
 
 /**
- * Stands in for the approval dialogs: answers with `answer`, which denies
- * like the app does today unless a test replaces it.
+ * The real approver, recording the requests; with `autoAnswer` set it
+ * answers every request right away, as a user would in the dialog.
  */
-export class FakeApprover extends ToolApprover {
+export class RecordingApprover extends UserToolApprover {
   readonly requests: ToolApprovalRequest[] = [];
-  answer: (request: ToolApprovalRequest) => ToolApprovalDecision = () => ({
-    behavior: 'deny',
-    message: NO_APPROVAL_UI_MESSAGE,
-    reason: 'no_approval_ui',
-  });
+  autoAnswer: Record<string, unknown> | null = null;
 
-  async decide(request: ToolApprovalRequest): Promise<ToolApprovalDecision> {
+  override decide(request: ToolApprovalRequest): Promise<ToolApprovalDecision> {
     this.requests.push(request);
-    return this.answer(request);
+    return super.decide({
+      ...request,
+      onRequest: (event) => {
+        request.onRequest(event);
+        const answer = this.autoAnswer;
+        if (answer) {
+          queueMicrotask(() =>
+            this.respond(request.sessionId, event.requestId, answer),
+          );
+        }
+      },
+    });
   }
 }
 
@@ -95,7 +101,7 @@ export class WorkspaceHarness {
   readonly config: AppConfig = testAppConfig(this.dir);
   readonly sessionCredentials = new SessionCredentials();
   readonly grants = new ApprovalGrants();
-  readonly approver = new FakeApprover();
+  readonly approver = new RecordingApprover();
   repositories!: RepositoriesService;
   workspaces!: SessionWorkspaceService;
   sessionGit!: SessionGitService;

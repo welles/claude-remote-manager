@@ -3,6 +3,7 @@ import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import type * as Zod from 'zod';
 import { APP_MCP_SERVER } from '../sessions/approval-grants';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { CLAUDE_CODE_SECRETS } from '../common/child-environment';
 import {
   PROCESS_LAUNCHER,
@@ -11,6 +12,7 @@ import {
 } from '../common/process-isolation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import type {
+  AgentProbe,
   AgentRun,
   AgentRunner,
   AgentStartOptions,
@@ -173,6 +175,9 @@ export function buildQueryOptions(
     }),
     cwd: options.cwd,
     additionalDirectories: options.additionalDirectories,
+    ...(options.allowedTools && options.allowedTools.length > 0
+      ? { allowedTools: options.allowedTools }
+      : {}),
     ...(options.model ? { model: options.model } : {}),
     permissionMode: options.permissionMode,
     canUseTool: options.canUseTool,
@@ -250,11 +255,56 @@ export class SdkAgentRunner implements AgentRunner {
         query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
           skipBehaviors: true,
         }),
+      setPermissionMode: (mode) => query.setPermissionMode(mode),
+      setModel: (model) => query.setModel(model ?? undefined),
       close: () => {
         input.close();
         query.close();
       },
       stderrTail: () => [...stderr],
     };
+  }
+
+  async probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T> {
+    const sdk = await loadAgentSdk();
+    // Streaming input that never sends a message: Claude Code initializes
+    // and answers control requests, but makes no model request.
+    const input = new AsyncQueue<Sdk.SDKUserMessage>();
+    const query = sdk.query({
+      prompt: input,
+      options: {
+        ...(this.launcher.separated
+          ? {
+              spawnClaudeCodeProcess: (spawnOptions: Sdk.SpawnOptions) =>
+                spawnAsSession(this.launcher, spawnOptions, () => undefined),
+            }
+          : {}),
+        env: this.launcher.environment(
+          'session',
+          {},
+          { keep: CLAUDE_CODE_SECRETS, base: process.env },
+        ),
+        // Readable for the session user; nothing is written there.
+        cwd: tmpdir(),
+        settingSources: ['user'],
+        permissionMode: 'default',
+        ...(this.config.claudeExecutable
+          ? { pathToClaudeCodeExecutable: this.config.claudeExecutable }
+          : {}),
+        stderr: (data) => this.logger.debug(data.trimEnd()),
+      },
+    });
+    try {
+      return await task({
+        supportedModels: () => query.supportedModels(),
+        planUsage: () =>
+          query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
+            skipBehaviors: true,
+          }),
+      });
+    } finally {
+      input.close();
+      query.close();
+    }
   }
 }

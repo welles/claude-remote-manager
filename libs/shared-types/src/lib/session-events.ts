@@ -1,8 +1,19 @@
 import type { AccountLimits } from './limits';
 import type {
+  GitPushAnalysis,
+  PermissionRequestKind,
+  PermissionResolutionCause,
+  PermissionResponse,
+  PullRequestCall,
+  SessionAllowOffer,
+  UserQuestion,
+} from './permissions';
+import type {
   ContextUsage,
   SessionDto,
+  SessionPermissionMode,
   SessionStatus,
+  SessionWaitingFor,
   UsageTotals,
 } from './session';
 
@@ -92,25 +103,105 @@ export interface ToolResultEvent extends SessionEventBase {
 }
 
 /**
- * Claude asks for permission to use a tool. Reserved for the approval
- * dialogs (later step); not emitted yet.
+ * Claude needs the user's decision: a tool use that needs approval, a
+ * question (`AskUserQuestion`) or a plan (`ExitPlanMode`). It stays pending
+ * until a `permission.resolved` with the same `requestId` follows; every
+ * client shows it, and the first answer counts (`permission.respond` frame
+ * or `POST /api/sessions/:id/permission-requests/:requestId`). Stored, so
+ * a reloaded history shows requests and decisions.
  */
 export interface PermissionRequestEvent extends SessionEventBase {
   type: 'permission.request';
+  /** ID of the request (UUID). */
   requestId: string;
   toolUseId: string;
   toolName: string;
   input: unknown;
+  kind: PermissionRequestKind;
   /** Prompt sentence from Claude Code, e.g. "Claude wants to read foo.txt". */
   title: string | null;
+  /** Subtitle from Claude Code, e.g. what access it would grant. */
   description: string | null;
+  /** Short name of the action, e.g. "Read file". */
+  displayName: string | null;
+  /** Why Claude Code asks, e.g. the rule that requires asking. */
+  decisionReason: string | null;
+  /** Path outside the allowed directories that triggered the request. */
+  blockedPath: string | null;
+  /** Set when a subagent asks. */
+  agentId: string | null;
+  /** For Bash commands with `git push`: what each push would update. */
+  gitPushes: GitPushAnalysis[];
+  /** For `create_pull_request`: the pull request it would create. */
+  pullRequest: PullRequestCall | null;
+  /**
+   * What "Allow for this session" would allow; `null` when only "allow
+   * once" is offered (always for pushes, pull requests, questions, plans).
+   */
+  sessionAllow: SessionAllowOffer | null;
+  /** For `question`: the questions. */
+  questions: UserQuestion[] | null;
+  /** For `plan`: the plan (Markdown). */
+  plan: string | null;
 }
 
-/** A permission request was answered. Reserved like `permission.request`. */
+/** A `permission.request` was answered or cancelled. */
 export interface PermissionResolvedEvent extends SessionEventBase {
   type: 'permission.resolved';
   requestId: string;
+  toolUseId: string;
+  /** `deny` also for cancelled requests (the tool was not used). */
   decision: 'allow' | 'deny';
+  /** For allowed tool uses: once, or the session-wide allow was applied. */
+  scope: 'once' | 'session' | null;
+  cause: PermissionResolutionCause;
+  /** The user's message to Claude with a denial (or plan feedback). */
+  message: string | null;
+  /** For questions: the answers given. */
+  answers: Record<string, string> | null;
+  /** For plans, or a session-wide allow that switched modes: the new mode. */
+  mode: SessionPermissionMode | null;
+  /** For `scope: 'session'`: what was allowed for the rest of the session. */
+  sessionAllow: SessionAllowOffer | null;
+}
+
+/**
+ * A message the user sent while Claude was working; it waits in the
+ * app's queue and goes to Claude when the current turn ends (see
+ * `message.dequeued`). Stored.
+ */
+export interface MessageQueuedEvent extends SessionEventBase {
+  type: 'message.queued';
+  /** Client-side ID of the message; the later `user.message` keeps it. */
+  id: string;
+  text: string;
+}
+
+/**
+ * A queued message left the queue:
+ * - `sent`: it went to Claude (a `user.message` with the same ID follows);
+ * - `removed`: the user removed it;
+ * - `withdrawn`: it was not sent because the turn was stopped, the
+ *   session ended or failed, or the server stopped (`reason` says which).
+ */
+export interface MessageDequeuedEvent extends SessionEventBase {
+  type: 'message.dequeued';
+  id: string;
+  outcome: 'sent' | 'removed' | 'withdrawn';
+  reason: string | null;
+}
+
+/**
+ * The model or permission mode of the session changed: by the user, by
+ * approving a plan, or by Claude Code itself (e.g. entering plan mode).
+ * Stored.
+ */
+export interface SettingsChangedEvent extends SessionEventBase {
+  type: 'settings.changed';
+  /** New model when it changed (`null`: Claude Code's default). */
+  model?: string | null;
+  permissionMode?: SessionPermissionMode;
+  cause: 'user' | 'plan' | 'claude';
 }
 
 /** A tool use was denied without asking the user. */
@@ -121,7 +212,11 @@ export interface PermissionDeniedEvent extends SessionEventBase {
   input: unknown;
   /** Why it was denied; also what Claude was told. */
   message: string;
-  /** `no_approval_ui`: approval dialogs do not exist yet; `rule`: by Claude Code; `user`: the user said no. */
+  /**
+   * `rule`: by Claude Code (a rule or the permission mode); `user` and
+   * `no_approval_ui` appear only in histories from before the approval
+   * dialogs (denials by the user are `permission.resolved` now).
+   */
   reason: 'no_approval_ui' | 'rule' | 'user';
 }
 
@@ -129,6 +224,8 @@ export interface PermissionDeniedEvent extends SessionEventBase {
 export interface StatusEvent extends SessionEventBase {
   type: 'session.status';
   status: SessionStatus;
+  /** What a `waiting` session waits for (absent from older servers). */
+  waitingFor?: SessionWaitingFor | null;
 }
 
 /** A turn ended (one per user message, or per interruption). */
@@ -226,6 +323,9 @@ export type SessionEvent =
   | PermissionRequestEvent
   | PermissionResolvedEvent
   | PermissionDeniedEvent
+  | MessageQueuedEvent
+  | MessageDequeuedEvent
+  | SettingsChangedEvent
   | StatusEvent
   | TurnResultEvent
   | ContextUsageEvent
@@ -355,8 +455,8 @@ export interface UnsubscribeMessage {
 }
 
 /**
- * Send a user message. Starts a turn, is queued behind the running turn, or
- * resumes a finished session.
+ * Send a user message. Starts a turn, is queued behind the running turn
+ * (`message.queued`), or resumes a finished session.
  */
 export interface SendMessageMessage {
   type: 'message.send';
@@ -384,14 +484,35 @@ export interface EndSessionMessage {
   requestId?: string;
 }
 
-/** Answer a `permission.request`. Reserved; rejected until approvals exist. */
-export interface PermissionResponseMessage {
+/**
+ * Answer a `permission.request` (see {@link PermissionResponse} for the
+ * fields per kind). Answering a request that is resolved already is
+ * acknowledged without effect; the `permission.resolved` event says how it
+ * was decided.
+ */
+export interface PermissionResponseMessage extends PermissionResponse {
   type: 'permission.respond';
   sessionId: string;
   requestId: string;
   permissionRequestId: string;
-  decision: 'allow' | 'deny';
-  message?: string;
+}
+
+/** Remove a queued message before it goes to Claude. */
+export interface UnqueueMessage {
+  type: 'message.unqueue';
+  sessionId: string;
+  /** ID of the queued message. */
+  messageId: string;
+  requestId?: string;
+}
+
+/** Change the model or permission mode (see `UpdateSessionRequest`). */
+export interface UpdateSessionMessage {
+  type: 'session.update';
+  sessionId: string;
+  model?: string | null;
+  permissionMode?: SessionPermissionMode;
+  requestId?: string;
 }
 
 /**
@@ -422,4 +543,25 @@ export type ClientMessage =
   | EndSessionMessage
   | SendPendingMessage
   | RerunSetupMessage
-  | PermissionResponseMessage;
+  | PermissionResponseMessage
+  | UnqueueMessage
+  | UpdateSessionMessage;
+
+// ---------------------------------------------------------------------------
+// REST payloads about approval requests
+// ---------------------------------------------------------------------------
+
+/** Response of `GET /api/sessions/:id/permission-requests`: pending ones. */
+export interface PendingPermissionRequestsResponse {
+  requests: PermissionRequestEvent[];
+}
+
+/**
+ * Response of `POST /api/sessions/:id/permission-requests/:requestId`:
+ * how the request was resolved. `alreadyResolved` is set when it had been
+ * answered (or cancelled) before; the answer sent was ignored then.
+ */
+export interface PermissionResponseResult {
+  resolved: PermissionResolvedEvent;
+  alreadyResolved: boolean;
+}

@@ -20,13 +20,24 @@ export interface LaunchExtras {
 }
 
 /**
- * Permission rules every session gets on top of the user's and project's
- * settings: `git push` always asks (an ask rule wins over allow rules, e.g.
- * from a repository's `.claude/settings.json`), so the user's approval is
- * what lets a push through (see {@link ApprovalGrants}).
+ * Permission settings every session gets on top of the user's and
+ * project's settings:
+ * - `git push` always asks (an ask rule wins over allow rules, e.g. from a
+ *   repository's `.claude/settings.json`), so the user's approval is what
+ *   lets a push through (see {@link ApprovalGrants});
+ * - no bypass mode, and no auto mode: approvals come from the user, not
+ *   from a classifier (also not during plan mode);
+ * - approval requests do not expire while the user is away (the app
+ *   cancels them itself when the turn, session or process ends).
  */
 export const SESSION_PERMISSION_SETTINGS = {
-  permissions: { ask: ['Bash(git push:*)'] },
+  permissions: {
+    ask: ['Bash(git push:*)'],
+    disableBypassPermissionsMode: 'disable',
+    disableAutoMode: 'disable',
+  },
+  useAutoModeDuringPlan: false,
+  dialogExpiry: 'never',
 };
 
 /** Hooks of the sessions service for the app's integrations. */

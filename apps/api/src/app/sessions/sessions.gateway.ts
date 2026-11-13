@@ -12,7 +12,12 @@ import {
   type ServerMessage,
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
-import { parseClientFrame } from './client-frames';
+import {
+  parseClientFrame,
+  PERMISSION_ANSWER_FIELDS,
+  pick,
+  SESSION_UPDATE_FIELDS,
+} from './client-frames';
 import { SessionsService } from './sessions.service';
 
 /** Path of the WebSocket endpoint (outside Nest's global `/api` prefix). */
@@ -171,7 +176,20 @@ export class SessionsGateway
         await this.sessions.rerunSetup(message.sessionId);
         return;
       case 'permission.respond':
-        // Rejected by parseClientFrame until approvals exist.
+        await this.sessions.respondToPermission(
+          message.sessionId,
+          message.permissionRequestId,
+          pick(message, PERMISSION_ANSWER_FIELDS),
+        );
+        return;
+      case 'message.unqueue':
+        await this.sessions.unqueue(message.sessionId, message.messageId);
+        return;
+      case 'session.update':
+        await this.sessions.update(
+          message.sessionId,
+          pick(message, SESSION_UPDATE_FIELDS),
+        );
         return;
     }
   }

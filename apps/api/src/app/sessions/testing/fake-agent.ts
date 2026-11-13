@@ -1,10 +1,12 @@
 import type {
+  ModelInfo,
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
   SDKMessage,
   SessionMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
+  AgentProbe,
   AgentRun,
   AgentRunner,
   AgentStartOptions,
@@ -12,6 +14,7 @@ import type {
 } from '../../agent/agent-runner';
 import { AsyncQueue } from '../../agent/async-queue';
 import type { TranscriptReader } from '../../agent/transcript-reader';
+import type { SessionPermissionMode } from '@claude-remote-manager/shared-types';
 
 /** A Claude Code process whose messages the test pushes. */
 export class FakeRun implements AgentRun {
@@ -85,6 +88,32 @@ export class FakeRun implements AgentRun {
     throw new Error('not available in tests');
   }
 
+  /** Mode and model switches of the running process, in order. */
+  readonly switches: (
+    | { permissionMode: SessionPermissionMode }
+    | { model: string | null }
+  )[] = [];
+  /** Set to make the next switch fail. */
+  failSwitch: Error | null = null;
+
+  async setPermissionMode(mode: SessionPermissionMode): Promise<void> {
+    this.takeFailure();
+    this.switches.push({ permissionMode: mode });
+  }
+
+  async setModel(model: string | null): Promise<void> {
+    this.takeFailure();
+    this.switches.push({ model });
+  }
+
+  private takeFailure(): void {
+    const failure = this.failSwitch;
+    this.failSwitch = null;
+    if (failure) {
+      throw failure;
+    }
+  }
+
   close(): void {
     this.closed = true;
     this.output.close();
@@ -100,6 +129,20 @@ export class FakeRun implements AgentRun {
 export class FakeAgentRunner implements AgentRunner {
   readonly runs: FakeRun[] = [];
   failNextStart: Error | null = null;
+  /** What probe processes answer; a function may throw. */
+  probeModels: () => ModelInfo[] = () => [];
+  probeUsage: () => SDKControlGetUsageResponse = () => {
+    throw new Error('not available in tests');
+  };
+  probes = 0;
+
+  async probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T> {
+    this.probes++;
+    return task({
+      supportedModels: async () => this.probeModels(),
+      planUsage: async () => this.probeUsage(),
+    });
+  }
 
   async start(
     options: AgentStartOptions,

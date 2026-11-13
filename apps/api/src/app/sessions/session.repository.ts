@@ -120,7 +120,13 @@ export interface NewSession {
 export type SessionPatch = Partial<
   Pick<
     SessionRecord,
-    'sdkSessionId' | 'title' | 'status' | 'lastError' | 'pendingMessage'
+    | 'sdkSessionId'
+    | 'title'
+    | 'status'
+    | 'lastError'
+    | 'pendingMessage'
+    | 'model'
+    | 'permissionMode'
   >
 >;
 

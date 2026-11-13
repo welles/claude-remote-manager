@@ -1,4 +1,22 @@
-import type { GitPushAnalysis } from './git-push-analysis';
+import type {
+  PermissionResult,
+  PermissionUpdate,
+} from '@anthropic-ai/claude-agent-sdk';
+import type {
+  GitPushAnalysis,
+  PermissionRequestEvent,
+  PermissionResolutionCause,
+  PermissionResolvedEvent,
+  PullRequestCall,
+} from '@claude-remote-manager/shared-types';
+
+/** A `permission.request` event before the log assigns `seq` and `at`. */
+export type PermissionRequestInput = Omit<PermissionRequestEvent, 'seq' | 'at'>;
+/** A `permission.resolved` event before the log assigns `seq` and `at`. */
+export type PermissionResolvedInput = Omit<
+  PermissionResolvedEvent,
+  'seq' | 'at'
+>;
 
 /** A tool use Claude Code asks the host to decide (`canUseTool`). */
 export interface ToolApprovalRequest {
@@ -9,6 +27,11 @@ export interface ToolApprovalRequest {
   /** Prompt sentence from Claude Code, e.g. "Claude wants to run …". */
   title: string | null;
   description: string | null;
+  displayName: string | null;
+  decisionReason: string | null;
+  blockedPath: string | null;
+  /** Set when a subagent asks. */
+  agentId: string | null;
   /** For MCP tools: the server and where it is defined (`sdk`: ours). */
   mcpServer: { name: string; source: string } | null;
   /**
@@ -17,43 +40,48 @@ export interface ToolApprovalRequest {
    * lets the credential helper write to the whole repository).
    */
   gitPushes: GitPushAnalysis[];
+  /** For the app's `create_pull_request` tool: the pull request. */
+  pullRequest: PullRequestCall | null;
+  /** Claude Code's suggestions for not asking again (`canUseTool`). */
+  suggestions: PermissionUpdate[];
+  /** Claude Code says not to offer "don't ask again" for this request. */
+  suppressAlwaysAllow: boolean;
   signal: AbortSignal;
+  /** The request is pending now (to show it to the user). */
+  onRequest(event: PermissionRequestInput): void;
+  /** The request was answered or cancelled. */
+  onResolve(event: PermissionResolvedInput): void;
 }
 
-export type ToolApprovalDecision =
-  | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
-  | {
-      behavior: 'deny';
-      message: string;
-      /** `no_approval_ui`: no dialog exists to ask; `user`: the user said no. */
-      reason: 'no_approval_ui' | 'user';
-    };
-
-/** What Claude is told, and the user shown, when a tool use needs approval. */
-export const NO_APPROVAL_UI_MESSAGE =
-  'Approval dialogs are not implemented in Claude Remote Manager yet, so this ' +
-  'tool use was denied automatically. Continue without it if you can, ' +
-  'otherwise tell the user what you wanted to do.';
+/** The answer for Claude Code plus how the request was resolved. */
+export type ToolApprovalDecision = PermissionResult & {
+  resolution: PermissionResolvedInput;
+};
 
 /**
  * Decides tool uses that need the user's approval. Every such decision of
  * a session goes through here, so the app knows what the user approved
  * (an approved `git push` lets the credential helper hand out a write
  * token; an approved `create_pull_request` call lets the tool run).
- * An abstract class to serve as Nest token: the approval dialogs replace
- * the default implementation, tests use a fake.
+ * An abstract class to serve as Nest token.
  */
 export abstract class ToolApprover {
+  /** Waits for the user's decision (or the request's cancellation). */
   abstract decide(request: ToolApprovalRequest): Promise<ToolApprovalDecision>;
-}
-
-/** Until approval dialogs exist: every tool use that needs approval is denied. */
-export class NoApprovalUiApprover extends ToolApprover {
-  async decide(): Promise<ToolApprovalDecision> {
-    return {
-      behavior: 'deny',
-      message: NO_APPROVAL_UI_MESSAGE,
-      reason: 'no_approval_ui',
-    };
-  }
+  /**
+   * Answers a pending request; `null` if it is not pending (unknown or
+   * resolved already).
+   */
+  abstract respond(
+    sessionId: string,
+    requestId: string,
+    response: unknown,
+  ): PermissionResolvedInput | null;
+  /** Cancels the pending requests of a session; returns how many. */
+  abstract cancelSession(
+    sessionId: string,
+    cause: Exclude<PermissionResolutionCause, 'user'>,
+  ): number;
+  abstract pendingRequests(sessionId: string): PermissionRequestInput[];
+  abstract hasPending(sessionId: string): boolean;
 }

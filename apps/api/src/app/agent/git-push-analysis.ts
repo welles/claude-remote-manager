@@ -9,37 +9,12 @@
  * or the remote's configuration. Anything it cannot place is reported as
  * unclear, never as harmless.
  */
-export interface GitPushTarget {
-  /** Destination ref as written (`main`, `refs/heads/x`, `HEAD`, ...). */
-  destination: string;
-  /** Short branch name if the destination is a branch (`HEAD`: current). */
-  branch: string | null;
-  /** Forced by a leading `+` in the refspec. */
-  forced: boolean;
-  /** `:dst`: deletes the destination. */
-  deletes: boolean;
-}
+import type {
+  GitPushAnalysis,
+  GitPushTarget,
+} from '@claude-remote-manager/shared-types';
 
-export interface GitPushAnalysis {
-  /** The `git push` part of the command, as written. */
-  command: string;
-  remote: string | null;
-  targets: GitPushTarget[];
-  /** `--force`, `-f`, `--force-with-lease`, `--force-if-includes`, `+` refspecs. */
-  force: boolean;
-  /** `--delete`, `-d`, `:dst` refspecs, `--prune`. */
-  deletes: boolean;
-  /** `--all`, `--branches`, `--mirror` or `--tags`: more than named refs. */
-  everything: boolean;
-  /**
-   * Only the session branch (by name, or `HEAD`/no refspec, which push the
-   * current branch: normally the session branch), without force or
-   * delete. `false` when anything else is pushed or it is unclear.
-   */
-  sessionBranchOnly: boolean;
-  /** Plain-language warnings for the dialog; empty for a plain push. */
-  warnings: string[];
-}
+export type { GitPushAnalysis, GitPushTarget };
 
 const FORCE_OPTIONS = new Set([
   '-f',

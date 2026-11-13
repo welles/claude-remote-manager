@@ -6,9 +6,14 @@ import { LimitsService } from './limits.service';
 export class LimitsController {
   constructor(private readonly limits: LimitsService) {}
 
-  /** Latest known subscription rate limits of the Claude account. */
+  /**
+   * Latest known subscription rate limits of the Claude account. Stale or
+   * unknown values are read again in the background; the new values
+   * arrive as `account.limits` frames.
+   */
   @Get()
   get(): AccountLimits {
+    this.limits.refreshIfStale();
     return this.limits.get();
   }
 }

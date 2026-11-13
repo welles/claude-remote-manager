@@ -1,6 +1,7 @@
 import type { SDKControlGetUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import type { AccountLimits } from '@claude-remote-manager/shared-types';
 import {
+  LIMITS_STALE_MS,
   LimitsService,
   PLAN_USAGE_REFRESH_INTERVAL_MS,
 } from './limits.service';
@@ -136,5 +137,44 @@ describe('LimitsService', () => {
       type: 'five_hour',
       utilization: 1,
     });
+  });
+
+  it('drops windows a later plan usage answer no longer lists', () => {
+    service.updateFromPlanUsage(
+      planUsage({
+        five_hour: { utilization: 3, resets_at: null },
+        model_scoped: [
+          { display_name: 'Fable', utilization: 5, resets_at: null },
+        ],
+      }),
+      now,
+    );
+    service.updateFromPlanUsage(
+      planUsage({ five_hour: { utilization: 4, resets_at: null } }),
+      now,
+    );
+    expect(service.get().windows.map((window) => window.type)).toEqual([
+      'five_hour',
+    ]);
+  });
+
+  it('reads stale or unknown limits through the probe when asked', async () => {
+    const source = jest
+      .fn()
+      .mockResolvedValue(
+        planUsage({ five_hour: { utilization: 7, resets_at: null } }),
+      );
+    // Without a source nothing happens.
+    service.refreshIfStale(Date.now());
+    service.setPlanUsageSource(source);
+    service.refreshIfStale(Date.now());
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(source).toHaveBeenCalledTimes(1);
+    expect(published.at(-1)?.windows[0]).toMatchObject({ utilization: 7 });
+    // Fresh values are not read again.
+    service.refreshIfStale(Date.now() + 1000);
+    expect(source).toHaveBeenCalledTimes(1);
+    service.refreshIfStale(Date.now() + LIMITS_STALE_MS + 1000);
+    expect(source).toHaveBeenCalledTimes(2);
   });
 });

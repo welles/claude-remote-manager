@@ -232,8 +232,174 @@ describe('SessionsGateway', () => {
     expect(
       await client.next('error', (error) => error.requestId === 'r4'),
     ).toMatchObject({
-      message: expect.stringContaining('not supported'),
+      message: 'permissionRequestId must be a UUID',
     });
+  });
+
+  it('shows approval requests to every client; the first answer counts', async () => {
+    const session = await createSession();
+    const other = new TestClient(`ws://${testApp.host}${SESSIONS_WS_PATH}`);
+    await other.opened;
+    for (const each of [client, other]) {
+      each.send({ type: 'subscribe', sessionId: session.id });
+      await each.next('session.history');
+    }
+    const decision = runner.last.options.canUseTool(
+      'Bash',
+      { command: 'rm -r build' },
+      { signal: new AbortController().signal, toolUseID: 't1', requestId: 'x' },
+    );
+    const requests = await Promise.all(
+      [client, other].map((each) =>
+        each.next(
+          'session.event',
+          (frame) => frame.event.type === 'permission.request',
+        ),
+      ),
+    );
+    const request = requests[0].event;
+    if (request.type !== 'permission.request') {
+      throw new Error('unexpected');
+    }
+    expect(requests[1].event).toEqual(request);
+    // The session list sees that it waits for an approval.
+    expect(
+      (
+        await other.next(
+          'session.updated',
+          (frame) => frame.session.waitingFor === 'permission',
+        )
+      ).session.status,
+    ).toBe('waiting');
+    const pending = await fetch(
+      `${url}/api/sessions/${session.id}/permission-requests`,
+    );
+    expect(await pending.json()).toEqual({ requests: [request] });
+
+    other.send({
+      type: 'permission.respond',
+      sessionId: session.id,
+      permissionRequestId: request.requestId,
+      decision: 'deny',
+      message: 'Keep the build',
+      requestId: 'p1',
+    });
+    await other.next('ack', (ack) => ack.requestId === 'p1');
+    for (const each of [client, other]) {
+      expect(
+        (
+          await each.next(
+            'session.event',
+            (frame) => frame.event.type === 'permission.resolved',
+          )
+        ).event,
+      ).toMatchObject({ decision: 'deny', message: 'Keep the build' });
+    }
+    await expect(decision).resolves.toMatchObject({ behavior: 'deny' });
+
+    // A late answer (REST, e.g. from a notification) changes nothing.
+    const late = await fetch(
+      `${url}/api/sessions/${session.id}/permission-requests/${request.requestId}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'allow' }),
+      },
+    );
+    expect(late.status).toBe(200);
+    expect(await late.json()).toMatchObject({
+      alreadyResolved: true,
+      resolved: { decision: 'deny' },
+    });
+    other.close();
+  });
+
+  it('answers approval requests, changes settings and removes queued messages over REST', async () => {
+    const session = await createSession();
+    const decision = runner.last.options.canUseTool(
+      'WebFetch',
+      { url: 'https://example.com' },
+      { signal: new AbortController().signal, toolUseID: 't1', requestId: 'x' },
+    );
+    let requests: { requestId: string }[] = [];
+    await waitFor(async () => {
+      const response = await fetch(
+        `${url}/api/sessions/${session.id}/permission-requests`,
+      );
+      requests = ((await response.json()) as { requests: typeof requests })
+        .requests;
+      return requests.length === 1;
+    });
+    const path = `${url}/api/sessions/${session.id}/permission-requests/${requests[0].requestId}`;
+    const post = (body: unknown) =>
+      fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    expect((await post({ decision: 'perhaps' })).status).toBe(400);
+    const answered = await post({ decision: 'allow' });
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toMatchObject({
+      alreadyResolved: false,
+      resolved: { decision: 'allow', cause: 'user' },
+    });
+    await expect(decision).resolves.toMatchObject({ behavior: 'allow' });
+    expect(
+      (
+        await fetch(
+          `${url}/api/sessions/${session.id}/permission-requests/${MSG_2}`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ decision: 'allow' }),
+          },
+        )
+      ).status,
+    ).toBe(404);
+
+    const patched = await fetch(`${url}/api/sessions/${session.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'sonnet', permissionMode: 'plan' }),
+    });
+    expect(patched.status).toBe(200);
+    expect(await patched.json()).toMatchObject({
+      model: 'sonnet',
+      permissionMode: 'plan',
+    });
+    expect(
+      (
+        await fetch(`${url}/api/sessions/${session.id}`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ permissionMode: 'bypassPermissions' }),
+        })
+      ).status,
+    ).toBe(400);
+
+    // Queued while the turn runs, removed before it ends.
+    client.send({
+      type: 'message.send',
+      sessionId: session.id,
+      id: MSG_2,
+      text: 'Later',
+      requestId: 'q1',
+    });
+    await client.next('ack', (ack) => ack.requestId === 'q1');
+    const removed = await fetch(
+      `${url}/api/sessions/${session.id}/queued-messages/${MSG_2}`,
+      { method: 'DELETE' },
+    );
+    expect(removed.status).toBe(204);
+    expect(
+      (
+        await fetch(
+          `${url}/api/sessions/${session.id}/queued-messages/${MSG_2}`,
+          { method: 'DELETE' },
+        )
+      ).status,
+    ).toBe(409);
   });
 
   it('ends sessions over WebSocket and REST', async () => {

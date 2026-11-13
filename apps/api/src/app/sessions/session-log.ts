@@ -26,10 +26,15 @@ const draftKey = (messageId: string, blockIndex: number) =>
  */
 export class SessionLog {
   readonly id = randomUUID();
-  private readonly events: SessionEvent[] = [];
+  private readonly events_: SessionEvent[] = [];
   private readonly drafts = new Map<string, AssistantDraft>();
   private nextSeq = 1;
   private lastText: string | null = null;
+
+  /** All events of the log, oldest first (do not modify). */
+  get events(): readonly SessionEvent[] {
+    return this.events_;
+  }
 
   /** Text of the last complete assistant text block. */
   get lastAssistantText(): string | null {
@@ -59,7 +64,7 @@ export class SessionLog {
       }
       this.lastText = event.text;
     }
-    this.events.push(event);
+    this.events_.push(event);
     return event;
   }
 
@@ -72,8 +77,8 @@ export class SessionLog {
   findLast<T extends SessionEvent['type']>(
     type: T,
   ): Extract<SessionEvent, { type: T }> | undefined {
-    for (let index = this.events.length - 1; index >= 0; index--) {
-      const event = this.events[index];
+    for (let index = this.events_.length - 1; index >= 0; index--) {
+      const event = this.events_[index];
       if (event.type === type) {
         return event as Extract<SessionEvent, { type: T }>;
       }
@@ -87,14 +92,14 @@ export class SessionLog {
       return {
         logId: this.id,
         complete: true,
-        events: [...this.events],
+        events: [...this.events_],
         drafts,
       };
     }
     return {
       logId: this.id,
       complete: false,
-      events: this.events.slice(this.firstIndexAfter(after.seq)),
+      events: this.events_.slice(this.firstIndexAfter(after.seq)),
       drafts,
     };
   }
@@ -102,10 +107,10 @@ export class SessionLog {
   /** Index of the first event with a seq greater than `seq` (binary search). */
   private firstIndexAfter(seq: number): number {
     let low = 0;
-    let high = this.events.length;
+    let high = this.events_.length;
     while (low < high) {
       const middle = (low + high) >>> 1;
-      if (this.events[middle].seq <= seq) {
+      if (this.events_[middle].seq <= seq) {
         low = middle + 1;
       } else {
         high = middle;

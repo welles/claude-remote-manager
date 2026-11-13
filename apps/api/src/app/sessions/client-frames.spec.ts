@@ -28,6 +28,52 @@ describe('parseClientFrame', () => {
     expect(parseClientFrame({ type: 'interrupt', sessionId: SESSION })).toEqual(
       { type: 'interrupt', sessionId: SESSION },
     );
+    // Answers keep their fields (validated against the request later).
+    expect(
+      parseClientFrame({
+        type: 'permission.respond',
+        sessionId: SESSION,
+        permissionRequestId: MESSAGE,
+        requestId: 'r',
+        decision: 'deny',
+        message: 'no',
+        answers: { a: 'b' },
+        other: 1,
+      }),
+    ).toEqual({
+      type: 'permission.respond',
+      sessionId: SESSION,
+      permissionRequestId: MESSAGE,
+      requestId: 'r',
+      decision: 'deny',
+      message: 'no',
+      answers: { a: 'b' },
+    });
+    expect(
+      parseClientFrame({
+        type: 'session.update',
+        sessionId: SESSION,
+        model: null,
+        permissionMode: 'plan',
+        title: 'x',
+      }),
+    ).toEqual({
+      type: 'session.update',
+      sessionId: SESSION,
+      model: null,
+      permissionMode: 'plan',
+    });
+    expect(
+      parseClientFrame({
+        type: 'message.unqueue',
+        sessionId: SESSION,
+        messageId: MESSAGE,
+      }),
+    ).toEqual({
+      type: 'message.unqueue',
+      sessionId: SESSION,
+      messageId: MESSAGE,
+    });
     for (const type of ['pending.send', 'setup.rerun'] as const) {
       expect(
         parseClientFrame({ type, sessionId: SESSION, requestId: 'r' }),
@@ -50,7 +96,12 @@ describe('parseClientFrame', () => {
       'text must be a string',
     ],
     [{ type: 'subscribe', sessionId: SESSION, requestId: 5 }, 'requestId'],
-    [{ type: 'permission.respond' }, 'not supported'],
+    [{ type: 'permission.respond' }, 'requestId must be a string'],
+    [
+      { type: 'permission.respond', sessionId: SESSION, requestId: 'r' },
+      'permissionRequestId must be a UUID',
+    ],
+    [{ type: 'message.unqueue', sessionId: SESSION }, 'messageId'],
     [{ type: 'other' }, 'Unknown frame type other'],
   ])('rejects %j', (frame, message) => {
     expect(() => parseClientFrame(frame)).toThrow(BadRequestException);

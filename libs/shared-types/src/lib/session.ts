@@ -11,10 +11,11 @@
  *   session's directories are removed again then); or in `waiting` with
  *   `pendingMessage` set if a setup script failed.
  * - `running`: Claude is working on a turn.
- * - `waiting`: waits for the next user message (later also for a
- *   permission answer). With `pendingMessage` set, the first message has
- *   not been sent because a setup script failed: the user sends it anyway,
- *   runs the failed setup scripts again, or ends the session.
+ * - `waiting`: waits for the user; `waitingFor` (see {@link
+ *   SessionWaitingFor}) says for what. With `waitingFor: 'permission'` a
+ *   turn is in progress but blocked on an approval request (or a question,
+ *   or a plan to approve); Stop interrupts it and new messages are queued,
+ *   as while `running`.
  * - `finished`: ended explicitly (later also by PR autoclose). Sending a
  *   message resumes the session.
  * - `failed`: the process could not start or ended with an error during a
@@ -26,6 +27,17 @@ export type SessionStatus =
   | 'waiting'
   | 'finished'
   | 'failed';
+
+/**
+ * What a `waiting` session waits for:
+ * - `message`: the next user message (the turn is over);
+ * - `permission`: the answer to an approval request, question or plan of
+ *   the running turn (`GET /api/sessions/:id/permission-requests`);
+ * - `setup`: a decision about the first message, held back because a
+ *   setup script failed (`pendingMessage` is set): send it anyway, run the
+ *   failed setup scripts again, or end the session.
+ */
+export type SessionWaitingFor = 'message' | 'permission' | 'setup';
 
 /**
  * Permission modes a session may use. Mirrors the Agent SDK's modes without
@@ -189,6 +201,8 @@ export interface SessionDto {
   model: string | null;
   permissionMode: SessionPermissionMode;
   status: SessionStatus;
+  /** Set exactly when `status` is `waiting`. */
+  waitingFor: SessionWaitingFor | null;
   /**
    * Readable unique name, used for the session's directories and branches;
    * `null` for sessions created before session clones existed.

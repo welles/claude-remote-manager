@@ -119,6 +119,12 @@ describe('authentication', () => {
     expect((await rawRequest(app.port, 'POST', '/api/health')).status).toBe(
       401,
     );
+    // The new routes are not exempt either.
+    expect(
+      (await postJson(app.port, '/api/sessions/x/permission-requests/y', {}))
+        .status,
+    ).toBe(401);
+    expect((await get('/api/models')).status).toBe(401);
   });
 
   it('refuses session processes, whatever token they bring', async () => {
@@ -137,6 +143,32 @@ describe('authentication', () => {
       { 'cf-access-jwt-assertion': access.token() },
     );
     expect(push.status).toBe(403);
+    // A session process can never answer its own approval requests, change
+    // its mode or model, or look at what waits for approval.
+    const token = { 'cf-access-jwt-assertion': access.token() };
+    for (const [method, path] of [
+      ['POST', '/api/sessions/x/permission-requests/y'],
+      ['GET', '/api/sessions/x/permission-requests'],
+      ['PATCH', '/api/sessions/x'],
+      ['DELETE', '/api/sessions/x/queued-messages/y'],
+      ['GET', '/api/models'],
+      ['GET', '/api/limits'],
+    ] as const) {
+      const response =
+        method === 'GET' || method === 'DELETE'
+          ? await rawRequest(app.port, method, path, token)
+          : await rawRequest(
+              app.port,
+              method,
+              path,
+              { ...token, 'content-type': 'application/json' },
+              '{}',
+            );
+      expect([method, path, response.status]).toEqual([method, path, 403]);
+      expect(response.json<{ reason: string }>().reason).toBe(
+        'session_process_refused',
+      );
+    }
     // What sessions need stays reachable.
     expect((await get('/api/health')).status).toBe(200);
     expect(

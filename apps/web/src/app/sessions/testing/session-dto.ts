@@ -10,6 +10,7 @@ export const sessionDto = (
   model: 'haiku',
   permissionMode: 'default',
   status: 'waiting',
+  waitingFor: 'message',
   slug: 'reply-with-pong-abc123',
   pendingMessage: null,
   directories: [

@@ -11,20 +11,36 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { Subject } from 'rxjs';
-import type { CanUseTool, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  PermissionMode,
+  SDKMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 import {
   SESSION_PERMISSION_MODES,
   type ContextUsage,
   type CreateSessionRequest,
   type LogPosition,
+  type PermissionRequestEvent,
+  type PermissionResponseResult,
+  type PullRequestCall,
   type SessionDto,
   type SessionEvent,
   type SessionDirectoryDto,
   type SessionEventInput,
+  type SessionPermissionMode,
   type SessionStatus,
+  type SessionWaitingFor,
+  type UpdateSessionRequest,
 } from '@claude-remote-manager/shared-types';
 import { AgentRunner, type AgentRun } from '../agent/agent-runner';
-import { NoApprovalUiApprover, ToolApprover } from '../agent/tool-approval';
+import {
+  ToolApprover,
+  type PermissionResolvedInput,
+} from '../agent/tool-approval';
+import { CREATE_PULL_REQUEST_TOOL_NAME } from './approval-grants';
+import { sessionAllows, unresolvedRequests } from './permission-requests';
+import { UserToolApprover } from './user-tool-approver';
 import {
   optionalEnum,
   optionalString,
@@ -60,11 +76,26 @@ import {
 import { EMPTY_USAGE, UsageRepository } from './usage.repository';
 import { sumUsage, UsageTracker } from './usage-tracker';
 
-export { NO_APPROVAL_UI_MESSAGE } from '../agent/tool-approval';
-
 const MAX_MESSAGE_LENGTH = 100_000;
 const MAX_TITLE_LENGTH = 200;
 const MODEL_PATTERN = /^[\w.[\]-]{1,100}$/;
+/**
+ * Environment every Claude Code process of a session gets. The task list
+ * tools (`TaskCreate`, `TaskUpdate`, …) are off in SDK sessions of the
+ * bundled Claude Code unless enabled; the session view shows that list.
+ */
+export const SESSION_ENV: Readonly<Record<string, string>> = {
+  CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+};
+
+/** Context usage is re-read at most this often while a turn runs. */
+export const CONTEXT_REFRESH_INTERVAL_MS = 5000;
+
+/** A user message on its way to Claude. */
+interface UserMessage {
+  id: string;
+  text: string;
+}
 
 /** Error text, completed with Claude Code's last stderr line if any. */
 function errorMessage(error: unknown, run?: AgentRun): string {
@@ -113,7 +144,21 @@ interface LiveSession {
   /** Position in the transcript that new stored events are anchored to. */
   anchor: EventAnchor;
   context: ContextUsage | null;
-  interruptRequested: boolean;
+  /** When the context usage was last requested during a turn. */
+  contextRequestedAt: number;
+  /**
+   * Set when the running turn is being stopped: by the user (Stop; queued
+   * messages are withdrawn) or by a denial without message (the queue
+   * goes on).
+   */
+  interruptRequested: 'user' | 'denied' | null;
+  /**
+   * Messages sent while a turn runs; they go to Claude when it ends. Held
+   * by the app (not Claude Code's own queue) so that they can be removed.
+   */
+  queue: UserMessage[];
+  /** Status and `waitingFor` last published (`status/waitingFor`). */
+  publishedStatus: string;
   /** Why the current process is being closed on purpose. */
   closing: 'idle' | 'shutdown' | 'end' | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
@@ -135,6 +180,14 @@ export const PREPARATION_INTERRUPTED =
 /** Notice when a session is ended before its first message reached Claude. */
 export const ENDED_WHILE_PREPARING =
   'The session was ended before its first message was sent to Claude.';
+
+/** Why queued messages were not sent. */
+export const QUEUE_WITHDRAWN = {
+  interrupted: 'The turn was stopped.',
+  ended: 'The session was ended.',
+  failed: 'Claude Code ended with an error.',
+  restart: 'The server stopped.',
+} as const;
 
 /** Notice when the first message is held back after failed setup scripts. */
 export function setupFailedNotice(repositories: string[]): string {
@@ -172,7 +225,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly limits: LimitsService,
     private readonly workspaces: SessionWorkspaceService,
     @Optional()
-    private readonly approver: ToolApprover = new NoApprovalUiApprover(),
+    private readonly approver: ToolApprover = new UserToolApprover(),
     @Optional()
     private readonly support: SessionAgentSupport = new NoSessionAgentSupport(),
   ) {}
@@ -205,10 +258,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const ids = this.sessions.stopRunningSessions();
     for (const id of ids) {
       // Where in the conversation is unknown: placed at the end.
+      const anchor = { uuid: null, userId: null };
+      this.closeLeftovers(id, (event) =>
+        this.storedEvents.add(id, event, anchor),
+      );
       this.storedEvents.add(
         id,
         { type: 'notice', level: 'warning', text: RESTART_NOTICE },
-        { uuid: null, userId: null },
+        anchor,
       );
     }
     if (ids.length > 0) {
@@ -238,6 +295,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (!live.run) {
         continue;
       }
+      this.approver.cancelSession(live.id, 'restart');
+      this.withdrawQueue(live, QUEUE_WITHDRAWN.restart);
       if (this.requireRecord(live.id).status === 'running') {
         this.append(live, {
           type: 'notice',
@@ -339,7 +398,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     const live = this.liveSession(record.id);
     live.historyLoaded = Promise.resolve();
-    this.append(live, { type: 'session.status', status: 'preparing' });
+    this.append(live, {
+      type: 'session.status',
+      status: 'preparing',
+      waitingFor: null,
+    });
     this.appendUserMessage(live, message);
     const dto = this.toDto(record);
     this.updates.next(dto);
@@ -348,8 +411,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Sends a user message. Starts a turn, queues it behind the running turn,
-   * or resumes the session if no process is running.
+   * Sends a user message. Starts a turn, queues it behind the running turn
+   * (it goes to Claude when the turn ends), or resumes the session if no
+   * process is running.
    */
   async send(
     sessionId: string,
@@ -368,6 +432,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     await this.ensureHistory(live, record);
     if (live.starting) {
       await live.starting;
+    }
+    if (live.run && this.requireRecord(sessionId).status === 'running') {
+      if (
+        live.queue.some((queued) => queued.id === id) ||
+        live.log.findLast('user.message')?.id === id
+      ) {
+        return;
+      }
+      live.queue.push({ id, text });
+      this.append(live, { type: 'message.queued', id, text });
+      return;
     }
     this.appendUserMessage(live, { id, text });
     if (live.run) {
@@ -402,6 +477,157 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return this.get(sessionId);
   }
 
+  /**
+   * Removes a queued message before it goes to Claude. Fails with 409 when
+   * it is not queued (anymore): it was sent already or withdrawn.
+   */
+  async unqueue(sessionId: string, messageId: string): Promise<void> {
+    this.requireRecord(sessionId);
+    const live = this.live.get(sessionId);
+    const index = live?.queue.findIndex((queued) => queued.id === messageId);
+    if (!live || index === undefined || index < 0) {
+      throw new ConflictException(
+        'The message is not queued: it was sent to Claude already or withdrawn',
+      );
+    }
+    live.queue.splice(index, 1);
+    this.append(live, {
+      type: 'message.dequeued',
+      id: messageId,
+      outcome: 'removed',
+      reason: null,
+    });
+  }
+
+  /** Pending approval requests of a session, oldest first. */
+  pendingPermissions(sessionId: string): PermissionRequestEvent[] {
+    this.requireRecord(sessionId);
+    const live = this.live.get(sessionId);
+    const requests = new Set(
+      this.approver.pendingRequests(sessionId).map((event) => event.requestId),
+    );
+    return (live?.log.events ?? []).filter(
+      (event): event is PermissionRequestEvent =>
+        event.type === 'permission.request' && requests.has(event.requestId),
+    );
+  }
+
+  /**
+   * Answers an approval request (from any client, or a notification).
+   * Answering one that is resolved already changes nothing and returns how
+   * it was resolved; an unknown request is 404.
+   */
+  async respondToPermission(
+    sessionId: string,
+    requestId: string,
+    response: unknown,
+  ): Promise<PermissionResponseResult> {
+    const record = this.requireRecord(sessionId);
+    const resolution = this.approver.respond(sessionId, requestId, response);
+    const live = this.live.get(sessionId);
+    const find = (events: readonly { type: string }[]) =>
+      events.findLast(
+        (event): event is PermissionResolvedInput =>
+          event.type === 'permission.resolved' &&
+          (event as PermissionResolvedInput).requestId === requestId,
+      );
+    if (resolution) {
+      const logged = live ? find(live.log.events) : undefined;
+      return {
+        resolved: (logged ??
+          resolution) as PermissionResponseResult['resolved'],
+        alreadyResolved: false,
+      };
+    }
+    let previous: PermissionResolvedInput | undefined;
+    if (live) {
+      await this.ensureHistory(live, record);
+      previous = find(live.log.events);
+    } else {
+      previous = find(
+        this.storedEvents.list(sessionId).map((stored) => stored.event),
+      );
+    }
+    if (!previous) {
+      throw new NotFoundException(
+        `Approval request ${requestId} not found in session ${sessionId}`,
+      );
+    }
+    return {
+      resolved: {
+        seq: 0,
+        at: null,
+        ...previous,
+      } as PermissionResponseResult['resolved'],
+      alreadyResolved: true,
+    };
+  }
+
+  /**
+   * Changes the model or permission mode of a session. A running Claude
+   * Code process switches right away (the model for its next request);
+   * otherwise the next process starts with it.
+   */
+  async update(
+    sessionId: string,
+    request: UpdateSessionRequest,
+  ): Promise<SessionDto> {
+    const body = requireObject(request);
+    const record = this.requireRecord(sessionId);
+    let model: string | null | undefined;
+    if ('model' in body) {
+      model =
+        body['model'] === null
+          ? null
+          : optionalString(body, 'model')?.trim() || null;
+      if (model && !MODEL_PATTERN.test(model)) {
+        throw new BadRequestException('model is not a valid model name');
+      }
+    }
+    const permissionMode = optionalEnum(
+      body,
+      'permissionMode',
+      SESSION_PERMISSION_MODES,
+    );
+    const changes: {
+      model?: string | null;
+      permissionMode?: SessionPermissionMode;
+    } = {};
+    if (model !== undefined && model !== record.model) {
+      changes.model = model;
+    }
+    if (permissionMode && permissionMode !== record.permissionMode) {
+      changes.permissionMode = permissionMode;
+    }
+    if (Object.keys(changes).length === 0) {
+      return this.toDto(record);
+    }
+    const live = this.live.get(sessionId);
+    if (live?.starting) {
+      await live.starting;
+    }
+    const run = live?.run;
+    if (run) {
+      try {
+        if (changes.permissionMode) {
+          await run.setPermissionMode(changes.permissionMode);
+        }
+        if (changes.model !== undefined) {
+          await run.setModel(changes.model);
+        }
+      } catch (error) {
+        throw new ConflictException(
+          `Claude Code did not accept the change: ${errorMessage(error)}`,
+        );
+      }
+    }
+    this.applySettings(sessionId, changes, 'user');
+    if (run && live && changes.model !== undefined) {
+      void this.refreshContext(live, run, { force: true });
+    }
+    return this.get(sessionId);
+  }
+
   /** Stops the running turn of a session. */
   async interrupt(sessionId: string): Promise<void> {
     if (this.requireRecord(sessionId).status === 'preparing') {
@@ -416,7 +642,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (!live?.run || record.status !== 'running') {
       throw new ConflictException('The session is not running');
     }
-    live.interruptRequested = true;
+    live.interruptRequested = 'user';
+    this.withdrawQueue(live, QUEUE_WITHDRAWN.interrupted);
+    this.approver.cancelSession(sessionId, 'interrupted');
     await live.run.interrupt();
   }
 
@@ -434,6 +662,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     if (live?.run) {
       live.closing = 'end';
+      this.approver.cancelSession(sessionId, 'ended');
+      this.withdrawQueue(live, QUEUE_WITHDRAWN.ended);
       live.run.close();
     }
     if (this.requireRecord(sessionId).pendingMessage) {
@@ -512,12 +742,19 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         subscribers: 0,
         anchor: { uuid: null, userId: null },
         context: null,
-        interruptRequested: false,
+        contextRequestedAt: 0,
+        interruptRequested: null,
+        queue: [],
+        publishedStatus: '',
         closing: null,
         idleTimer: null,
         consuming: null,
       };
       this.live.set(id, live);
+      const record = this.sessions.get(id);
+      if (record) {
+        live.publishedStatus = statusKey(this.effectiveStatus(record));
+      }
     }
     return live;
   }
@@ -708,19 +945,30 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.clearIdleTimer(live);
     live.mapper = new SdkEventMapper();
     live.tracker = new UsageTracker(this.usage.totalsByModel(record.id));
-    live.interruptRequested = false;
+    live.interruptRequested = null;
     live.closing = null;
     try {
       const extras = await this.support.prepare(record);
+      // What the user allowed for the session applies to every process.
+      const allowed = sessionAllows(this.storedEvents.list(record.id));
+      const directories = additionalDirectories(record);
       const run = await this.runner.start(
         {
           cwd: workingDirectory(record),
-          additionalDirectories: additionalDirectories(record),
+          additionalDirectories: [
+            ...directories,
+            ...allowed.directories.filter(
+              (directory) =>
+                !directories.includes(directory) &&
+                directory !== workingDirectory(record),
+            ),
+          ],
           model: record.model,
           permissionMode: record.permissionMode,
           ...(await this.resumeTarget(record)),
           canUseTool: this.canUseTool(live),
-          env: extras.env,
+          allowedTools: allowed.rules,
+          env: { ...SESSION_ENV, ...extras.env },
           tools: extras.tools,
           settings: extras.settings,
         },
@@ -783,6 +1031,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live.run !== run || this.shuttingDown) {
       return;
     }
+    // Nobody can answer into the ended process any more.
+    this.approver.cancelSession(live.id, 'process_exit');
     live.run = null;
     live.consuming = null;
     this.clearIdleTimer(live);
@@ -831,7 +1081,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           ),
         );
       }
+      if (message.permissionMode) {
+        this.syncPermissionMode(live, message.permissionMode);
+      }
       return;
+    }
+    if (
+      message.type === 'system' &&
+      message.subtype === 'status' &&
+      message.permissionMode
+    ) {
+      // Claude Code changed the mode itself (e.g. entering plan mode).
+      this.syncPermissionMode(live, message.permissionMode);
     }
     if (message.type === 'rate_limit_event') {
       this.limits.updateFromRateLimitEvent(message.rate_limit_info);
@@ -852,6 +1113,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     for (const event of events) {
       this.append(live, event);
     }
+    if (message.type === 'assistant' && live.run) {
+      // Live context usage during long turns (no API request involved).
+      void this.refreshContext(live, live.run);
+    }
   }
 
   private handleResult(
@@ -865,8 +1130,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       result.session_id ?? record.sdkSessionId,
       byModel,
     );
-    const interrupted = live.interruptRequested;
-    live.interruptRequested = false;
+    const stop = live.interruptRequested;
+    const interrupted = stop !== null;
+    live.interruptRequested = null;
     const errors = result.subtype === 'success' ? [] : result.errors;
     this.append(live, {
       type: 'turn.result',
@@ -896,24 +1162,151 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         });
       }
     }
-    const queued = (result.queued_turn_count ?? 0) > 0;
+    const run = live.run;
+    // Queued messages go to Claude now (Claude Code may take them as one
+    // turn); after the user stopped the turn they were withdrawn already.
+    const flushed = run && stop !== 'user' ? this.flushQueue(live, run) : 0;
+    const queued = flushed > 0 || (result.queued_turn_count ?? 0) > 0;
     if (!this.setStatus(live, queued ? 'running' : 'waiting')) {
       // Usage changed even if the status did not.
       this.updates.next(this.toDto(this.requireRecord(live.id)));
     }
-    const run = live.run;
     if (run) {
-      void this.refreshContext(live, run);
+      void this.refreshContext(live, run, { force: true });
       void this.limits.refreshPlanUsage(() => run.planUsage());
     }
   }
 
+  /** Sends all queued messages to Claude; returns how many. */
+  private flushQueue(live: LiveSession, run: AgentRun): number {
+    const messages = live.queue.splice(0);
+    for (const message of messages) {
+      this.append(live, {
+        type: 'message.dequeued',
+        id: message.id,
+        outcome: 'sent',
+        reason: null,
+      });
+      this.appendUserMessage(live, message);
+      run.send(message);
+    }
+    return messages.length;
+  }
+
+  /** Drops the queued messages; the user sees them as not sent. */
+  private withdrawQueue(live: LiveSession, reason: string): void {
+    for (const message of live.queue.splice(0)) {
+      this.append(live, {
+        type: 'message.dequeued',
+        id: message.id,
+        outcome: 'withdrawn',
+        reason,
+      });
+    }
+  }
+
+  /**
+   * After a crash: approval requests and queued messages that were open
+   * when the server stopped are closed (their process is gone).
+   */
+  private closeLeftovers(
+    sessionId: string,
+    add: (event: SessionEventInput) => void,
+  ): void {
+    const stored = this.storedEvents.list(sessionId);
+    for (const request of unresolvedRequests(stored)) {
+      add({
+        type: 'permission.resolved',
+        requestId: request.requestId,
+        toolUseId: request.toolUseId,
+        decision: 'deny',
+        scope: null,
+        cause: 'restart',
+        message: null,
+        answers: null,
+        mode: null,
+        sessionAllow: null,
+      });
+    }
+    const queued = new Map<string, true>();
+    for (const { event } of stored) {
+      if (event.type === 'message.queued') {
+        queued.set(event.id, true);
+      } else if (event.type === 'message.dequeued') {
+        queued.delete(event.id);
+      }
+    }
+    for (const id of queued.keys()) {
+      add({
+        type: 'message.dequeued',
+        id,
+        outcome: 'withdrawn',
+        reason: QUEUE_WITHDRAWN.restart,
+      });
+    }
+  }
+
+  /** Records a mode Claude Code reports, if it is one this app uses. */
+  private syncPermissionMode(live: LiveSession, mode: PermissionMode): void {
+    const record = this.requireRecord(live.id);
+    if (
+      mode === record.permissionMode ||
+      !SESSION_PERMISSION_MODES.includes(mode as SessionPermissionMode)
+    ) {
+      if (!SESSION_PERMISSION_MODES.includes(mode as SessionPermissionMode)) {
+        this.logger.warn(
+          `Claude Code of ${live.id} reports permission mode ${mode}, which this app does not use`,
+        );
+      }
+      return;
+    }
+    this.applySettings(
+      live.id,
+      { permissionMode: mode as SessionPermissionMode },
+      'claude',
+    );
+  }
+
+  /** Stores a model or mode change, logs it and publishes the session. */
+  private applySettings(
+    sessionId: string,
+    changes: { model?: string | null; permissionMode?: SessionPermissionMode },
+    cause: 'user' | 'plan' | 'claude',
+  ): void {
+    const updated = this.sessions.update(sessionId, changes);
+    const live = this.live.get(sessionId);
+    if (live) {
+      this.append(live, { type: 'settings.changed', ...changes, cause });
+    } else {
+      this.storedEvents.add(
+        sessionId,
+        { type: 'settings.changed', ...changes, cause },
+        { uuid: null, userId: null },
+      );
+    }
+    this.updates.next(this.toDto(updated));
+  }
+
+  /**
+   * Reads the context window usage from Claude Code (no API request). After
+   * a turn (`force`) it is stored; during a turn at most every
+   * {@link CONTEXT_REFRESH_INTERVAL_MS}, live only.
+   */
   private async refreshContext(
     live: LiveSession,
     run: AgentRun,
+    { force = false }: { force?: boolean } = {},
   ): Promise<void> {
+    const now = Date.now();
+    if (!force && now - live.contextRequestedAt < CONTEXT_REFRESH_INTERVAL_MS) {
+      return;
+    }
+    live.contextRequestedAt = now;
     try {
       const usage = await run.contextUsage();
+      if (live.run !== run) {
+        return;
+      }
       live.context = {
         model: usage.model,
         usedTokens: usage.totalTokens,
@@ -921,7 +1314,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         percentage: usage.percentage,
         updatedAt: new Date().toISOString(),
       };
-      this.append(live, { type: 'context.usage', context: live.context });
+      this.append(
+        live,
+        { type: 'context.usage', context: live.context },
+        { store: force },
+      );
     } catch (error) {
       this.logger.warn(
         `Context usage of ${live.id} unavailable: ${String(error)}`,
@@ -930,10 +1327,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Tool uses that need approval go to the {@link ToolApprover} (until the
-   * approval dialogs exist it denies everything, visibly for the user).
-   * Approved uses are reported to the integrations: an approved `git push`
-   * or `create_pull_request` call is what lets those through.
+   * Tool uses that need approval become approval requests the user
+   * answers (see {@link ToolApprover}); the session waits for the user
+   * meanwhile. Approved uses are reported to the integrations: an approved
+   * `git push` or `create_pull_request` call is what lets those through.
    */
   private canUseTool(live: LiveSession): CanUseTool {
     return async (toolName, input, options) => {
@@ -941,44 +1338,106 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         toolName === 'Bash' && typeof input['command'] === 'string'
           ? input['command']
           : null;
+      const mcpServer = options.mcpServer ?? null;
+      const gitPushes = command
+        ? await this.workspaces.analyzeGitPushes(live.id, command)
+        : [];
       const decision = await this.approver.decide({
         sessionId: live.id,
         toolName,
         input,
-        gitPushes: command
-          ? await this.workspaces.analyzeGitPushes(live.id, command)
-          : [],
+        gitPushes,
+        pullRequest:
+          toolName === CREATE_PULL_REQUEST_TOOL_NAME &&
+          (mcpServer === null || mcpServer.source === 'sdk')
+            ? this.pullRequestCall(live.id, input)
+            : null,
         toolUseId: options.toolUseID,
         title: options.title ?? null,
         description: options.description ?? null,
-        mcpServer: options.mcpServer ?? null,
+        displayName: options.displayName ?? null,
+        decisionReason: options.decisionReason ?? null,
+        blockedPath: options.blockedPath ?? null,
+        agentId: options.agentID ?? null,
+        mcpServer,
+        suggestions: options.suggestions ?? [],
+        suppressAlwaysAllow: options.suppressAlwaysAllowRule === true,
         signal: options.signal,
+        onRequest: (event) => {
+          this.append(live, event);
+          this.publishStatus(live);
+        },
+        onResolve: (event) => {
+          this.append(live, event);
+          this.publishStatus(live);
+        },
       });
-      if (decision.behavior === 'deny') {
-        this.append(live, {
-          type: 'permission.denied',
-          toolUseId: options.toolUseID,
-          toolName,
-          input,
-          message: decision.message,
-          reason: decision.reason,
-        });
-        return { behavior: 'deny', message: decision.message };
+      const { resolution, ...result } = decision;
+      if (result.behavior === 'deny') {
+        if (result.interrupt && live.run) {
+          // The turn ends; queued messages still go to Claude afterwards.
+          live.interruptRequested ??= 'denied';
+        }
+        return result;
       }
-      const approvedInput = decision.updatedInput ?? input;
+      const approvedInput = result.updatedInput ?? input;
+      if (
+        resolution.mode &&
+        resolution.mode !== this.requireRecord(live.id).permissionMode
+      ) {
+        this.applySettings(
+          live.id,
+          { permissionMode: resolution.mode },
+          resolution.sessionAllow ? 'user' : 'plan',
+        );
+      }
       this.support.approved(
         live.id,
         toolName,
         approvedInput,
         options.toolUseID,
-        options.mcpServer ?? null,
+        mcpServer,
       );
-      return { behavior: 'allow', updatedInput: approvedInput };
+      return { ...result, updatedInput: approvedInput };
+    };
+  }
+
+  /**
+   * A `create_pull_request` call as the approval shows it: the repository
+   * and base branch the tool would use when Claude omitted them.
+   */
+  private pullRequestCall(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): PullRequestCall {
+    const text = (name: string) =>
+      typeof input[name] === 'string' ? (input[name] as string) : null;
+    const record = this.requireRecord(sessionId);
+    const clones = record.directories.filter(
+      (directory) => directory.kind === 'clone' && directory.repositoryGitHub,
+    );
+    const named = text('repository');
+    const clone = named
+      ? clones.find(
+          (directory) =>
+            directory.repositoryName?.toLowerCase() === named.toLowerCase(),
+        )
+      : clones.length === 1
+        ? clones[0]
+        : undefined;
+    return {
+      repository: named ?? clone?.repositoryName ?? null,
+      title: text('title') ?? '',
+      body: text('body'),
+      base: text('base') ?? clone?.baseBranch ?? null,
+      draft: input['draft'] === true,
     };
   }
 
   private failRun(live: LiveSession, error: unknown, run?: AgentRun): void {
     live.run = null;
+    this.approver.cancelSession(live.id, 'process_exit');
+    this.withdrawQueue(live, QUEUE_WITHDRAWN.failed);
     const message = errorMessage(error, run);
     this.logger.error(`Session ${live.id} failed: ${message}`);
     this.append(live, { type: 'error', message });
@@ -1000,15 +1459,52 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     const updated = this.sessions.update(live.id, { status, lastError });
-    if (record.status !== status) {
-      this.append(live, { type: 'session.status', status });
-    }
     if (status === 'waiting') {
       this.startIdleTimer(live);
     } else {
       this.clearIdleTimer(live);
     }
-    this.updates.next(this.toDto(updated));
+    if (!this.publishStatus(live)) {
+      this.updates.next(this.toDto(updated));
+    }
+    return true;
+  }
+
+  /**
+   * Status as clients see it: a running turn that waits for an approval
+   * request is `waiting` for `permission` (the stored status stays
+   * `running`: the turn and its process go on).
+   */
+  private effectiveStatus(record: SessionRecord): {
+    status: SessionStatus;
+    waitingFor: SessionWaitingFor | null;
+  } {
+    if (record.status === 'running' && this.approver.hasPending(record.id)) {
+      return { status: 'waiting', waitingFor: 'permission' };
+    }
+    if (record.status === 'waiting') {
+      return {
+        status: 'waiting',
+        waitingFor: record.pendingMessage ? 'setup' : 'message',
+      };
+    }
+    return { status: record.status, waitingFor: null };
+  }
+
+  /**
+   * Logs and publishes the status when what clients see changed. Returns
+   * whether it did.
+   */
+  private publishStatus(live: LiveSession): boolean {
+    const record = this.requireRecord(live.id);
+    const effective = this.effectiveStatus(record);
+    const key = statusKey(effective);
+    if (key === live.publishedStatus) {
+      return false;
+    }
+    live.publishedStatus = key;
+    this.append(live, { type: 'session.status', ...effective });
+    this.updates.next(this.toDto(record));
     return true;
   }
 
@@ -1118,7 +1614,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       title: record.title,
       model: record.model,
       permissionMode: record.permissionMode,
-      status: record.status,
+      ...this.effectiveStatus(record),
       slug: record.slug,
       pendingMessage: record.pendingMessage?.text ?? null,
       directories: record.directories.map(
@@ -1155,3 +1651,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 }
+
+const statusKey = (status: {
+  status: SessionStatus;
+  waitingFor: SessionWaitingFor | null;
+}) => `${status.status}/${status.waitingFor ?? ''}`;

@@ -11,6 +11,11 @@ import type {
 
 /** Minimum time between two plan usage requests to claude.ai. */
 export const PLAN_USAGE_REFRESH_INTERVAL_MS = 60_000;
+/**
+ * When someone looks at the limits and they are older than this, they are
+ * read again through a probe process (no session needs to run).
+ */
+export const LIMITS_STALE_MS = 5 * 60_000;
 
 const LABELS: Record<string, string> = {
   five_hour: 'Session (5 hours)',
@@ -62,10 +67,32 @@ export class LimitsService {
   private subscriptionType: string | null = null;
   private updatedAt: string | null = null;
   private lastPlanUsageRequest = 0;
+  private planUsageSource: (() => Promise<SDKControlGetUsageResponse>) | null =
+    null;
   private readonly changes = new Subject<AccountLimits>();
 
   /** Emits the complete state after every change. */
   readonly changes$ = this.changes.asObservable();
+
+  /**
+   * How to read the plan usage without a running session (a short-lived
+   * Claude Code process); set by the sessions module.
+   */
+  setPlanUsageSource(source: () => Promise<SDKControlGetUsageResponse>): void {
+    this.planUsageSource = source;
+  }
+
+  /**
+   * Reads the plan usage again in the background if it is unknown or
+   * older than {@link LIMITS_STALE_MS}; the result is published.
+   */
+  refreshIfStale(now = Date.now()): void {
+    const source = this.planUsageSource;
+    const updated = this.updatedAt ? Date.parse(this.updatedAt) : 0;
+    if (source && now - updated >= LIMITS_STALE_MS) {
+      void this.refreshPlanUsage(source, now);
+    }
+  }
 
   get(): AccountLimits {
     return {
@@ -99,6 +126,7 @@ export class LimitsService {
     const limits = usage.rate_limits;
     if (usage.rate_limits_available && limits) {
       const updatedAt = now.toISOString();
+      const reported = new Set<string>();
       const fixed = [
         'five_hour',
         'seven_day',
@@ -109,6 +137,7 @@ export class LimitsService {
       for (const type of fixed) {
         const window = limits[type];
         if (window) {
+          reported.add(type);
           this.merge(type, {
             type,
             label: LABELS[type] ?? null,
@@ -122,6 +151,7 @@ export class LimitsService {
       }
       for (const window of limits.model_scoped ?? []) {
         const type = `model:${window.display_name}`;
+        reported.add(type);
         this.merge(type, {
           type,
           label: `Week (${window.display_name})`,
@@ -131,6 +161,13 @@ export class LimitsService {
           source: 'usage',
           updatedAt,
         });
+      }
+      // A complete answer replaces an earlier one: windows it no longer
+      // lists (e.g. a per-model week) are gone.
+      for (const [key, window] of this.windows) {
+        if (window.source === 'usage' && !reported.has(key)) {
+          this.windows.delete(key);
+        }
       }
     }
     this.publish(now);

@@ -7,7 +7,7 @@ import type { AgentTool } from '../agent/agent-runner';
 import { commitFile, git } from '../git/testing/git-fixtures';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import { CREATE_PULL_REQUEST_TOOL_NAME } from './approval-grants';
-import { NO_APPROVAL_UI_MESSAGE } from './sessions.service';
+import { SESSION_PERMISSION_SETTINGS } from './session-agent-support';
 import { flush, waitFor } from './testing/fake-agent';
 
 describe('session integrations (credentials, tool, memory)', () => {
@@ -86,8 +86,13 @@ describe('session integrations (credentials, tool, memory)', () => {
     );
     const memory = join(harness.config.memoryDir, repository.id);
     expect(options().settings).toEqual({
-      permissions: { ask: ['Bash(git push:*)'] },
+      ...SESSION_PERMISSION_SETTINGS,
       autoMemoryDirectory: memory,
+    });
+    expect(SESSION_PERMISSION_SETTINGS.permissions).toMatchObject({
+      ask: ['Bash(git push:*)'],
+      disableBypassPermissionsMode: 'disable',
+      disableAutoMode: 'disable',
     });
     expect(existsSync(memory)).toBe(true);
     expect(
@@ -104,9 +109,7 @@ describe('session integrations (credentials, tool, memory)', () => {
 
   it('keeps Claude Code’s default memory and no tools for scratch sessions', async () => {
     await start(null);
-    expect(options().settings).toEqual({
-      permissions: { ask: ['Bash(git push:*)'] },
-    });
+    expect(options().settings).toEqual(SESSION_PERMISSION_SETTINGS);
     expect(options().tools).toEqual([]);
   });
 
@@ -125,20 +128,25 @@ describe('session integrations (credentials, tool, memory)', () => {
     const input = { title: 'Add work', body: 'Done' };
     const sdk = { name: 'crm', source: 'sdk' };
 
-    // Today: denied without dialog, visibly; the tool refuses to run.
+    // Denied by the user: the tool refuses to run.
+    harness.approver.autoAnswer = { decision: 'deny', message: 'Not yet' };
     await expect(
       ask(CREATE_PULL_REQUEST_TOOL_NAME, input, 'tu-1', sdk),
-    ).resolves.toEqual({ behavior: 'deny', message: NO_APPROVAL_UI_MESSAGE });
+    ).resolves.toMatchObject({
+      behavior: 'deny',
+      message: expect.stringContaining('Not yet'),
+    });
     const denied = await tool('create_pull_request').handler(input);
     expect(denied).toMatchObject({ isError: true });
     expect(denied.text).toContain('not approved');
     expect(harness.github.pulls).toHaveLength(0);
-    expect(harness.eventsOfType(session.id, 'permission.denied')).toHaveLength(
-      1,
-    );
+    expect(
+      harness.eventsOfType(session.id, 'permission.resolved').at(-1),
+    ).toMatchObject({ decision: 'deny', cause: 'user', message: 'Not yet' });
 
-    // With a (fake) approval, after Claude pushed the branch.
-    harness.approver.answer = () => ({ behavior: 'allow' });
+    // Approved, after Claude pushed the branch. The request shows the pull
+    // request with the defaults the tool uses, and offers no session allow.
+    harness.approver.autoAnswer = { decision: 'allow' };
     await harness.sessionGit.push(session.id, repository.id);
     await expect(
       ask(CREATE_PULL_REQUEST_TOOL_NAME, input, 'tu-2', sdk),
@@ -149,6 +157,27 @@ describe('session integrations (credentials, tool, memory)', () => {
       toolUseId: 'tu-2',
       mcpServer: sdk,
     });
+    expect(
+      harness.eventsOfType(session.id, 'permission.request').at(-1),
+    ).toMatchObject({
+      kind: 'tool',
+      pullRequest: {
+        repository: 'alice/app',
+        title: 'Add work',
+        body: 'Done',
+        base: 'main',
+        draft: false,
+      },
+      sessionAllow: null,
+    });
+    await expect(
+      harness.service.respondToPermission(
+        session.id,
+        harness.eventsOfType(session.id, 'permission.request').at(-1)
+          ?.requestId ?? '',
+        { decision: 'allow', scope: 'session' },
+      ),
+    ).resolves.toMatchObject({ alreadyResolved: true });
     const created = await tool('create_pull_request').handler(input);
     expect(created.isError).toBeUndefined();
     expect(created.text).toContain('https://github.com/alice/app/pull/1');
@@ -170,7 +199,7 @@ describe('session integrations (credentials, tool, memory)', () => {
       repositories: [{ repositoryId: first.id }, { repositoryId: second.id }],
     });
     await harness.prepared(session.id);
-    harness.approver.answer = () => ({ behavior: 'allow' });
+    harness.approver.autoAnswer = { decision: 'allow' };
     const call = async (input: Record<string, unknown>) => {
       await ask(CREATE_PULL_REQUEST_TOOL_NAME, input, 't', {
         name: 'crm',
@@ -187,13 +216,17 @@ describe('session integrations (credentials, tool, memory)', () => {
   it('grants a push from its approval until Claude Code reports its result', async () => {
     const repository = await githubRepository();
     const session = await start(repository.id);
-    harness.approver.answer = () => ({ behavior: 'allow' });
+    harness.approver.autoAnswer = { decision: 'allow' };
     await ask('Bash', { command: 'git push -u origin HEAD' }, 'push-1');
     expect(harness.grants.hasPushGrant(session.id)).toBe(true);
     // The approval request says what the push targets.
     expect(harness.approver.requests.at(-1)?.gitPushes).toEqual([
       expect.objectContaining({ sessionBranchOnly: true, warnings: [] }),
     ]);
+    // Each push needs its own approval: no "allow for this session".
+    expect(
+      harness.eventsOfType(session.id, 'permission.request').at(-1),
+    ).toMatchObject({ gitPushes: [expect.anything()], sessionAllow: null });
     await ask(
       'Bash',
       { command: 'git push --force origin HEAD:main' },
@@ -235,7 +268,7 @@ describe('session integrations (credentials, tool, memory)', () => {
     const repository = await githubRepository();
     const session = await start(repository.id);
     const commit = await commitFile(session.cwd, 'work.txt', 'w');
-    harness.approver.answer = () => ({ behavior: 'allow' });
+    harness.approver.autoAnswer = { decision: 'allow' };
     await ask('Bash', { command: 'git push' }, 'push-1');
     // What Claude's push does (here without credentials: a local remote).
     await git(

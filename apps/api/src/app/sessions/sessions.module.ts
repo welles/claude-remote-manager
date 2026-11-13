@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { NoApprovalUiApprover, ToolApprover } from '../agent/tool-approval';
+import { ToolApprover } from '../agent/tool-approval';
 import { ApprovalGrants } from './approval-grants';
 import { GitCredentialsController } from './git-credentials.controller';
 import { GitCredentialsService } from './git-credentials.service';
@@ -17,6 +17,7 @@ import {
   TranscriptReader,
 } from '../agent/transcript-reader';
 import { LimitsModule } from '../limits/limits.module';
+import { LimitsService } from '../limits/limits.service';
 import { RepositoriesModule } from '../repositories/repositories.module';
 import { SessionWorkspaceService } from '../workspaces/session-workspace.service';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
@@ -26,6 +27,9 @@ import { SessionsController } from './sessions.controller';
 import { SessionsGateway } from './sessions.gateway';
 import { SessionsService } from './sessions.service';
 import { UsageRepository } from './usage.repository';
+import { UserToolApprover } from './user-tool-approver';
+import { ModelsController } from './models.controller';
+import { ModelsService } from './models.service';
 
 @Module({
   imports: [LimitsModule, RepositoriesModule],
@@ -33,6 +37,7 @@ import { UsageRepository } from './usage.repository';
     SessionsController,
     SessionGitController,
     GitCredentialsController,
+    ModelsController,
   ],
   providers: [
     SessionRepository,
@@ -45,8 +50,8 @@ import { UsageRepository } from './usage.repository';
     { provide: SessionCredentials, useValue: new SessionCredentials() },
     { provide: ApprovalGrants, useValue: new ApprovalGrants() },
     { provide: SessionAgentSupport, useClass: SessionAgentSupportService },
-    // Replaced by the approval dialogs.
-    { provide: ToolApprover, useClass: NoApprovalUiApprover },
+    { provide: ToolApprover, useValue: new UserToolApprover() },
+    ModelsService,
     SessionWorkspaceService,
     SetupScriptRunner,
     { provide: AgentRunner, useClass: SdkAgentRunner },
@@ -54,8 +59,15 @@ import { UsageRepository } from './usage.repository';
   ],
 })
 export class SessionsModule {
-  constructor(sessions: SessionsService, git: SessionGitService) {
+  constructor(
+    sessions: SessionsService,
+    git: SessionGitService,
+    limits: LimitsService,
+    runner: AgentRunner,
+  ) {
     // Pushes and pull requests change what the session view shows.
     git.changes$.subscribe((id) => sessions.publishUpdate(id));
+    // Limits are also read when no session runs (see LimitsService).
+    limits.setPlanUsageSource(() => runner.probe((probe) => probe.planUsage()));
   }
 }

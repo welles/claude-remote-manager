@@ -4,6 +4,7 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
+import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type {
   CreateSessionRequest,
   SessionDto,
@@ -22,10 +23,11 @@ import { RepositoryCredentials } from '../repositories/repository-credentials';
 import { SettingsService } from '../settings/settings.service';
 import { withTestIdentity } from '../workspaces/testing/workspace-harness';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
+import { DENIED_STOP_MESSAGE } from './permission-requests';
 import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
 import {
-  NO_APPROVAL_UI_MESSAGE,
+  QUEUE_WITHDRAWN,
   RESTART_NOTICE,
   SessionsService,
   titleFromPrompt,
@@ -345,6 +347,8 @@ describe('SessionsService', () => {
         'assistant.delta',
         'assistant.delta',
         'assistant.text',
+        // Read live during the turn.
+        'context.usage',
         'turn.result',
         'session.status',
         'context.usage',
@@ -386,6 +390,7 @@ describe('SessionsService', () => {
         'user.message',
         'session.status',
         'assistant.text',
+        'context.usage',
         'turn.result',
         'session.status',
         'context.usage',
@@ -507,32 +512,599 @@ describe('SessionsService', () => {
     });
   });
 
-  describe('permissions', () => {
-    it('denies tool uses that need approval, visibly', async () => {
-      await startSession();
-      const decision = await runner.last.options.canUseTool(
+  describe('approval requests', () => {
+    const PERMISSION_ID = /^[0-9a-f-]{36}$/;
+
+    /** Asks like Claude Code's `canUseTool`. */
+    const ask = (
+      toolName: string,
+      input: Record<string, unknown>,
+      extra: Record<string, unknown> = {},
+    ) =>
+      runner.last.options.canUseTool(toolName, input, {
+        signal: new AbortController().signal,
+        toolUseID: 'tool-1',
+        requestId: 'r1',
+        ...extra,
+      }) as Promise<PermissionResult>;
+
+    /** The request that became pending (waits for it). */
+    const pending = async (sessionId: string) => {
+      await waitFor(() => service.pendingPermissions(sessionId).length > 0);
+      return service.pendingPermissions(sessionId)[0];
+    };
+
+    it('makes the session wait for the user until one answer allows it', async () => {
+      const session = await startSession();
+      const decision = ask(
         'Bash',
         { command: 'rm file' },
         {
-          signal: new AbortController().signal,
-          toolUseID: 'tool-1',
-          requestId: 'r1',
+          title: 'Claude wants to run rm file',
+          decisionReason: 'needs approval',
         },
       );
+      const request = await pending(session.id);
 
-      expect(decision).toEqual({
-        behavior: 'deny',
-        message: NO_APPROVAL_UI_MESSAGE,
-      });
-      expect(lastEvent('permission.denied')).toMatchObject({
-        toolUseId: 'tool-1',
+      expect(request).toMatchObject({
+        type: 'permission.request',
+        kind: 'tool',
         toolName: 'Bash',
+        toolUseId: 'tool-1',
         input: { command: 'rm file' },
-        reason: 'no_approval_ui',
-        message: NO_APPROVAL_UI_MESSAGE,
+        title: 'Claude wants to run rm file',
+        decisionReason: 'needs approval',
+        gitPushes: [],
+        sessionAllow: null,
       });
-      expect(NO_APPROVAL_UI_MESSAGE).toContain('not implemented');
+      expect(request.requestId).toMatch(PERMISSION_ID);
+      // Visible as waiting for an approval; the turn goes on internally.
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'permission',
+      });
+      expect(lastEvent('session.status')).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'permission',
+      });
+      expect(updates.at(-1)).toMatchObject({ waitingFor: 'permission' });
+
+      const answer = await service.respondToPermission(
+        session.id,
+        request.requestId,
+        { decision: 'allow' },
+      );
+      expect(answer).toMatchObject({
+        alreadyResolved: false,
+        resolved: { decision: 'allow', scope: 'once', cause: 'user' },
+      });
+      await expect(decision).resolves.toEqual({
+        behavior: 'allow',
+        updatedInput: { command: 'rm file' },
+      });
+      expect(service.get(session.id)).toMatchObject({
+        status: 'running',
+        waitingFor: null,
+      });
+
+      // A second answer (another client, a notification) changes nothing.
+      await expect(
+        service.respondToPermission(session.id, request.requestId, {
+          decision: 'deny',
+        }),
+      ).resolves.toMatchObject({
+        alreadyResolved: true,
+        resolved: { decision: 'allow' },
+      });
+      await expect(
+        service.respondToPermission(session.id, MSG_2, { decision: 'allow' }),
+      ).rejects.toThrow(NotFoundException);
+      // Requests and answers are stored for the history.
+      const stored = new SessionEventRepository(db)
+        .list(session.id)
+        .map(({ event }) => event.type);
+      expect(stored).toEqual(
+        expect.arrayContaining(['permission.request', 'permission.resolved']),
+      );
     });
+
+    it('passes a denial with message on, and stops the turn without one', async () => {
+      const session = await startSession();
+      const first = ask('Bash', { command: 'curl x' });
+      let request = await pending(session.id);
+      await service.respondToPermission(session.id, request.requestId, {
+        decision: 'deny',
+        message: 'Use the local copy',
+      });
+      await expect(first).resolves.toEqual({
+        behavior: 'deny',
+        message: expect.stringContaining('Use the local copy'),
+      });
+
+      const second = ask('Bash', { command: 'curl y' }, { toolUseID: 't2' });
+      request = await pending(session.id);
+      await service.respondToPermission(session.id, request.requestId, {
+        decision: 'deny',
+      });
+      await expect(second).resolves.toEqual({
+        behavior: 'deny',
+        message: DENIED_STOP_MESSAGE,
+        interrupt: true,
+      });
+      // The stopped turn is shown as interrupted, without error.
+      runner.last.emit(
+        resultMessage(1, 0, {
+          subtype: 'error_during_execution',
+          errors: ['aborted'],
+        }),
+      );
+      await flush();
+      expect(lastEvent('turn.result')).toMatchObject({ interrupted: true });
+      expect(lastEvent('error')).toBeUndefined();
+      expect(lastEvent('permission.resolved')).toMatchObject({
+        decision: 'deny',
+        message: null,
+        cause: 'user',
+      });
+    });
+
+    it('rejects answers that do not fit the request and keeps it pending', async () => {
+      const session = await startSession();
+      void ask('Bash', { command: 'make' });
+      const request = await pending(session.id);
+      for (const body of [
+        {},
+        { decision: 'maybe' },
+        { decision: 'allow', scope: 'session' },
+        { decision: 'deny', message: 42 },
+      ]) {
+        await expect(
+          service.respondToPermission(session.id, request.requestId, body),
+        ).rejects.toThrow(BadRequestException);
+      }
+      expect(service.pendingPermissions(session.id)).toHaveLength(1);
+    });
+
+    it('offers and applies "allow for this session", also to later processes', async () => {
+      const session = await startSession();
+      const suggestions = [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'localSettings',
+          rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }],
+        },
+      ];
+      const decision = ask('Bash', { command: 'npm test' }, { suggestions });
+      const request = await pending(session.id);
+      expect(request.sessionAllow).toEqual({
+        rules: ['Bash(npm test:*)'],
+        directories: [],
+        mode: null,
+      });
+      await service.respondToPermission(session.id, request.requestId, {
+        decision: 'allow',
+        scope: 'session',
+      });
+      // Applied to this session only, never to a settings file.
+      await expect(decision).resolves.toEqual({
+        behavior: 'allow',
+        updatedInput: { command: 'npm test' },
+        updatedPermissions: [
+          {
+            type: 'addRules',
+            behavior: 'allow',
+            destination: 'session',
+            rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }],
+          },
+        ],
+      });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      runner.last.close();
+      await flush();
+      await service.send(session.id, { id: MSG_2, text: 'Run the tests' });
+      await flush();
+      expect(runner.runs).toHaveLength(2);
+      expect(runner.last.options.allowedTools).toEqual(['Bash(npm test:*)']);
+      // The task list tools are on, for the to-do list in the session view.
+      expect(runner.last.options.env).toMatchObject({
+        CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+      });
+    });
+
+    it('never offers a session-wide allow for pushes', async () => {
+      const session = await startSession();
+      void ask(
+        'Bash',
+        { command: 'git push -u origin HEAD' },
+        {
+          suggestions: [
+            {
+              type: 'addRules',
+              behavior: 'allow',
+              destination: 'session',
+              rules: [{ toolName: 'Bash', ruleContent: 'git push:*' }],
+            },
+          ],
+        },
+      );
+      const request = await pending(session.id);
+      expect(request.sessionAllow).toBeNull();
+      expect(request.gitPushes).toHaveLength(1);
+    });
+
+    it('cancels requests when the turn is interrupted, also through the signal', async () => {
+      const session = await startSession();
+      const controller = new AbortController();
+      const decision = ask(
+        'Bash',
+        { command: 'sleep 1' },
+        {
+          signal: controller.signal,
+        },
+      );
+      await pending(session.id);
+      controller.abort();
+      await expect(decision).resolves.toMatchObject({ behavior: 'deny' });
+      expect(lastEvent('permission.resolved')).toMatchObject({
+        decision: 'deny',
+        cause: 'interrupted',
+      });
+      expect(service.get(session.id).waitingFor).toBeNull();
+
+      const second = ask('Bash', { command: 'sleep 2' }, { toolUseID: 't2' });
+      await pending(session.id);
+      // Interrupting a turn that waits for an approval works.
+      await service.interrupt(session.id);
+      await expect(second).resolves.toMatchObject({ behavior: 'deny' });
+      expect(runner.last.interrupted).toBe(1);
+      expect(service.pendingPermissions(session.id)).toEqual([]);
+    });
+
+    it('cancels requests when the session ends or the process exits', async () => {
+      const session = await startSession();
+      const decision = ask('Write', { file_path: '/x', content: 'y' });
+      await pending(session.id);
+      await service.end(session.id);
+      await expect(decision).resolves.toMatchObject({ behavior: 'deny' });
+      expect(lastEvent('permission.resolved')).toMatchObject({
+        cause: 'ended',
+      });
+
+      await service.send(session.id, { id: MSG_2, text: 'again' });
+      await flush();
+      const next = ask('Write', { file_path: '/x', content: 'z' });
+      const request = await pending(session.id);
+      runner.last.crash(new Error('exited with code 1'));
+      await expect(next).resolves.toMatchObject({ behavior: 'deny' });
+      expect(lastEvent('permission.resolved')).toMatchObject({
+        requestId: request.requestId,
+        cause: 'process_exit',
+      });
+      // Nothing to answer into a dead process.
+      await expect(
+        service.respondToPermission(session.id, request.requestId, {
+          decision: 'allow',
+        }),
+      ).resolves.toMatchObject({ alreadyResolved: true });
+    });
+
+    it('closes requests and queued messages left open by a crashed server', async () => {
+      const session = await startSession();
+      void ask('Bash', { command: 'ls /' });
+      const request = await pending(session.id);
+      await service.send(session.id, { id: MSG_2, text: 'and then' });
+      // A server that died without shutting down.
+      const fresh = await createService();
+      const history = await fresh.subscribe(session.id);
+      expect(history.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'permission.resolved',
+            requestId: request.requestId,
+            cause: 'restart',
+          }),
+          expect.objectContaining({
+            type: 'message.dequeued',
+            id: MSG_2,
+            outcome: 'withdrawn',
+          }),
+        ]),
+      );
+      expect(fresh.get(session.id).status).toBe('waiting');
+    });
+
+    it('cancels requests on shutdown', async () => {
+      const session = await startSession();
+      const decision = ask('Bash', { command: 'ls /' });
+      await pending(session.id);
+      await service.onModuleDestroy();
+      await expect(decision).resolves.toMatchObject({ behavior: 'deny' });
+      expect(
+        new SessionEventRepository(db)
+          .list(session.id)
+          .map(({ event }) => event)
+          .find((event) => event.type === 'permission.resolved'),
+      ).toMatchObject({ cause: 'restart' });
+    });
+
+    it('returns the answers to Claude’s questions', async () => {
+      const session = await startSession();
+      const questions = [
+        {
+          question: 'Which format?',
+          header: 'Format',
+          options: [
+            { label: 'Summary', description: 'Short' },
+            { label: 'Detailed', description: 'Long' },
+          ],
+          multiSelect: false,
+        },
+        {
+          question: 'Which sections?',
+          header: 'Sections',
+          options: [
+            { label: 'Intro', description: '' },
+            { label: 'End', description: '' },
+          ],
+          multiSelect: true,
+        },
+      ];
+      const decision = ask('AskUserQuestion', { questions });
+      const request = await pending(session.id);
+      expect(request).toMatchObject({
+        kind: 'question',
+        sessionAllow: null,
+        questions: [
+          expect.objectContaining({ question: 'Which format?' }),
+          expect.objectContaining({ multiSelect: true }),
+        ],
+      });
+      await expect(
+        service.respondToPermission(session.id, request.requestId, {
+          decision: 'allow',
+          answers: { 'Which format?': 'Summary' },
+        }),
+      ).rejects.toThrow('Answer every question');
+      const answers = {
+        'Which format?': 'Summary',
+        'Which sections?': 'Intro, End',
+      };
+      await service.respondToPermission(session.id, request.requestId, {
+        decision: 'allow',
+        answers,
+      });
+      await expect(decision).resolves.toEqual({
+        behavior: 'allow',
+        updatedInput: { questions, answers },
+      });
+      expect(lastEvent('permission.resolved')).toMatchObject({ answers });
+    });
+
+    it('approves a plan and switches the mode, or keeps planning', async () => {
+      const session = await startSession({ permissionMode: 'plan' });
+      const rejected = ask('ExitPlanMode', { plan: '# Plan\n1. Do it' });
+      let request = await pending(session.id);
+      expect(request).toMatchObject({ kind: 'plan', plan: '# Plan\n1. Do it' });
+      await service.respondToPermission(session.id, request.requestId, {
+        decision: 'deny',
+        message: 'Add tests',
+      });
+      await expect(rejected).resolves.toEqual({
+        behavior: 'deny',
+        message: expect.stringContaining('Add tests'),
+      });
+      expect(service.get(session.id).permissionMode).toBe('plan');
+
+      const approved = ask(
+        'ExitPlanMode',
+        { plan: '# Plan\n1. Do it\n2. Test' },
+        { toolUseID: 't2' },
+      );
+      request = await pending(session.id);
+      await service.respondToPermission(session.id, request.requestId, {
+        decision: 'allow',
+        mode: 'acceptEdits',
+      });
+      await expect(approved).resolves.toEqual({
+        behavior: 'allow',
+        updatedInput: { plan: '# Plan\n1. Do it\n2. Test' },
+        updatedPermissions: [
+          { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+        ],
+      });
+      expect(service.get(session.id).permissionMode).toBe('acceptEdits');
+      expect(lastEvent('settings.changed')).toMatchObject({
+        permissionMode: 'acceptEdits',
+        cause: 'plan',
+      });
+    });
+  });
+
+  describe('model and permission mode', () => {
+    it('switches a running process and stores the choice', async () => {
+      const session = await startSession();
+      const updated = await service.update(session.id, {
+        model: 'sonnet',
+        permissionMode: 'acceptEdits',
+      });
+      expect(updated).toMatchObject({
+        model: 'sonnet',
+        permissionMode: 'acceptEdits',
+      });
+      expect(runner.last.switches).toEqual([
+        { permissionMode: 'acceptEdits' },
+        { model: 'sonnet' },
+      ]);
+      expect(lastEvent('settings.changed')).toMatchObject({
+        model: 'sonnet',
+        permissionMode: 'acceptEdits',
+        cause: 'user',
+      });
+
+      // Back to the default model.
+      await service.update(session.id, { model: null });
+      expect(runner.last.switches.at(-1)).toEqual({ model: null });
+      expect(service.get(session.id).model).toBeNull();
+    });
+
+    it('applies the choice to the next process when none runs', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      runner.last.close();
+      await flush();
+      await service.update(session.id, { permissionMode: 'plan' });
+      await service.send(session.id, { id: MSG_2, text: 'Plan it' });
+      await flush();
+      expect(runner.last.options.permissionMode).toBe('plan');
+    });
+
+    it('refuses bypass modes, invalid models and keeps the old ones on failure', async () => {
+      const session = await startSession();
+      for (const body of [
+        { permissionMode: 'bypassPermissions' },
+        { permissionMode: 'auto' },
+        { model: 'no spaces allowed' },
+      ]) {
+        await expect(service.update(session.id, body as never)).rejects.toThrow(
+          BadRequestException,
+        );
+      }
+      runner.last.failSwitch = new Error('unknown model');
+      await expect(
+        service.update(session.id, { model: 'nonsense' }),
+      ).rejects.toThrow(ConflictException);
+      expect(service.get(session.id).model).toBe('haiku');
+    });
+
+    it('follows mode changes Claude Code reports', async () => {
+      const session = await startSession();
+      runner.last.emit({
+        type: 'system',
+        subtype: 'status',
+        status: null,
+        permissionMode: 'plan',
+      });
+      await flush();
+      expect(service.get(session.id).permissionMode).toBe('plan');
+      expect(lastEvent('settings.changed')).toMatchObject({
+        permissionMode: 'plan',
+        cause: 'claude',
+      });
+      // Modes this app never uses are not taken over.
+      runner.last.emit({
+        type: 'system',
+        subtype: 'status',
+        status: null,
+        permissionMode: 'bypassPermissions',
+      });
+      await flush();
+      expect(service.get(session.id).permissionMode).toBe('plan');
+    });
+  });
+
+  describe('queued messages', () => {
+    it('queues messages while Claude works and sends them when the turn ends', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Also this' });
+      await service.send(session.id, { id: MSG_3, text: 'And that' });
+      expect(runner.last.sent).toHaveLength(1);
+      expect(lastEvent('message.queued')).toMatchObject({
+        id: MSG_3,
+        text: 'And that',
+      });
+      expect(lastEvent('user.message')?.id).not.toBe(MSG_2);
+
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(1)).toEqual([
+        { id: MSG_2, text: 'Also this' },
+        { id: MSG_3, text: 'And that' },
+      ]);
+      expect(
+        events
+          .map(({ event }) => event)
+          .filter((event) => event.type === 'message.dequeued'),
+      ).toEqual([
+        expect.objectContaining({ id: MSG_2, outcome: 'sent' }),
+        expect.objectContaining({ id: MSG_3, outcome: 'sent' }),
+      ]);
+      expect(lastEvent('user.message')).toMatchObject({ id: MSG_3 });
+      expect(service.get(session.id).status).toBe('running');
+    });
+
+    it('lets the user remove a queued message, but not a sent one', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Never mind' });
+      await service.unqueue(session.id, MSG_2);
+      expect(lastEvent('message.dequeued')).toMatchObject({
+        id: MSG_2,
+        outcome: 'removed',
+      });
+      await expect(service.unqueue(session.id, MSG_2)).rejects.toThrow(
+        ConflictException,
+      );
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent).toHaveLength(1);
+      expect(service.get(session.id).status).toBe('waiting');
+    });
+
+    it('withdraws queued messages when the user stops the turn', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Later' });
+      await service.interrupt(session.id);
+      expect(lastEvent('message.dequeued')).toMatchObject({
+        id: MSG_2,
+        outcome: 'withdrawn',
+        reason: QUEUE_WITHDRAWN.interrupted,
+      });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent).toHaveLength(1);
+      expect(service.get(session.id).status).toBe('waiting');
+    });
+
+    it('queues messages while an approval request waits', async () => {
+      const session = await startSession();
+      void runner.last.options.canUseTool(
+        'Bash',
+        { command: 'ls' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 't',
+          requestId: 'r',
+        },
+      );
+      await waitFor(() => service.get(session.id).waitingFor === 'permission');
+      await service.send(session.id, { id: MSG_2, text: 'Meanwhile' });
+      expect(lastEvent('message.queued')).toMatchObject({ id: MSG_2 });
+      expect(runner.last.sent).toHaveLength(1);
+    });
+  });
+
+  it('reads the context usage during a turn, at most every few seconds', async () => {
+    await startSession();
+    const assistant = (id: string) => ({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { id, content: [{ type: 'text', text: 'x' }] },
+    });
+    runner.last.emit(assistant('m1'), assistant('m2'));
+    await flush();
+    await flush();
+    const contexts = events.filter(
+      ({ event }) => event.type === 'context.usage',
+    );
+    expect(contexts).toHaveLength(1);
+    // Live only during the turn; stored after it.
+    expect(
+      new SessionEventRepository(db)
+        .list(contexts[0].sessionId)
+        .some(({ event }) => event.type === 'context.usage'),
+    ).toBe(false);
   });
 
   describe('process end and resume', () => {
@@ -872,7 +1444,7 @@ describe('SessionsService', () => {
         },
       );
       await flush();
-      await run.options.canUseTool(
+      const decision = run.options.canUseTool(
         'Bash',
         { command: 'ls' },
         {
@@ -881,6 +1453,13 @@ describe('SessionsService', () => {
           requestId: 'r',
         },
       );
+      await waitFor(() => service.pendingPermissions(session.id).length > 0);
+      await service.respondToPermission(
+        session.id,
+        service.pendingPermissions(session.id)[0].requestId,
+        { decision: 'deny', message: 'No' },
+      );
+      await decision;
       run.emit(
         {
           type: 'assistant',
@@ -940,7 +1519,8 @@ describe('SessionsService', () => {
       expect(conversation(rebuilt.events).map((event) => event.type)).toEqual([
         'user.message',
         'tool.call',
-        'permission.denied',
+        'permission.request',
+        'permission.resolved',
         'tool.result',
         'assistant.text',
         'turn.result',
@@ -948,7 +1528,7 @@ describe('SessionsService', () => {
       ]);
       expect(
         conversation(rebuilt.events).map((event) => event.at === null),
-      ).toEqual([true, true, false, true, true, false, false]);
+      ).toEqual([true, true, false, false, true, true, false, false]);
       expect(rebuilt.session.context).toMatchObject({ usedTokens: 1200 });
 
       // Kept while subscribed, released after the last unsubscribe.
