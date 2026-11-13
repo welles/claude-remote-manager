@@ -50,7 +50,7 @@ import {
   totalTokens,
 } from './format';
 import { MarkdownPipe } from './markdown.pipe';
-import { ModelsStore, modelOptionsWith } from './models-store';
+import { ModelsStore, modelOptionsWith, normalizeModel } from './models-store';
 import { PermissionCard } from './permission-card';
 import { ContextMeter } from './context-meter';
 import { MessageImages } from '../attachments/message-images';
@@ -161,12 +161,13 @@ export class SessionView implements OnInit {
   /** Claude's task list. */
   protected readonly todos = computed(() => todoList(this.items()));
   /** Models to choose from, including the session's own. */
+  protected readonly normalizeModel = normalizeModel;
   protected readonly modelOptions = computed(() =>
     modelOptionsWith(this.modelsStore.models(), this.session()?.model ?? null),
   );
   /** Model the session's choice currently resolves to, when known. */
   protected readonly resolvedModel = computed(() => {
-    const model = this.session()?.model ?? null;
+    const model = normalizeModel(this.session()?.model ?? null);
     return (
       this.modelOptions().find((option) => option.value === model)
         ?.resolvedModel ??

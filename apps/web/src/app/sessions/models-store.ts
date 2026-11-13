@@ -45,11 +45,20 @@ export class ModelsStore {
   }
 }
 
+/**
+ * The model value as the options use it: Claude Code's `default` row stands
+ * for not choosing a model (`null`), also where a session stored the name.
+ */
+export function normalizeModel(value: string | null): string | null {
+  return value === 'default' ? null : value;
+}
+
 /** The options, plus `value` if it is not among them (e.g. an older model). */
 export function modelOptionsWith(
   options: ModelOption[],
-  value: string | null,
+  model: string | null,
 ): ModelOption[] {
+  const value = normalizeModel(model);
   return options.some((option) => option.value === value)
     ? options
     : [
@@ -66,8 +75,9 @@ export function modelOptionsWith(
 /** Display name of a model value among the options. */
 export function modelLabel(
   options: ModelOption[],
-  value: string | null,
+  model: string | null,
 ): string {
+  const value = normalizeModel(model);
   return (
     options.find((option) => option.value === value)?.label ??
     value ??

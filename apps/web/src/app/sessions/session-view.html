@@ -112,7 +112,7 @@
     >
       <mat-label>Model</mat-label>
       <mat-select
-        [value]="s.model ?? ''"
+        [value]="normalizeModel(s.model) ?? ''"
         (selectionChange)="configure({ model: $event.value })"
         [disabled]="!connected() || s.status === 'preparing'"
         data-testid="model-select"

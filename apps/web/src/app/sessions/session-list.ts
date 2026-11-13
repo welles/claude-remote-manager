@@ -30,6 +30,7 @@ import {
   statusLabel,
   totalTokens,
 } from './format';
+import { ModelsStore, modelLabel } from './models-store';
 import { NewSessionForm, type SessionPrefill } from './new-session-form';
 import { loadSessionList, saveSessionList } from './session-list-cache';
 import { SessionSocket } from './session-socket';
@@ -71,6 +72,8 @@ export class SessionList implements OnInit, AfterViewInit {
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;
+  protected readonly modelLabel = modelLabel;
+  protected readonly models = inject(ModelsStore).models;
 
   protected readonly loading = signal(true);
   protected readonly loadError = signal<string | null>(null);

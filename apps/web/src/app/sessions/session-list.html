@@ -74,7 +74,7 @@
       @if (workspaceLabel(session); as workspace) {
       <span class="workspace">{{ workspace }}</span>
       } @if (session.model) {
-      <span>{{ session.model }}</span>
+      <span>{{ modelLabel(models(), session.model) }}</span>
       }
       <span>
         {{ formatTokens(totalTokens(session.usage)) }} tokens · {{
