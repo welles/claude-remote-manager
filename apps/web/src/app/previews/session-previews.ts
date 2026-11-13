@@ -2,14 +2,14 @@ import { Component, input, output } from '@angular/core';
 import type { PreviewDto } from '@claude-remote-manager/shared-types';
 import { PreviewCard } from './preview-card';
 
-/** The running previews of a session, in its header. */
+/** The running previews of a session, in its details. */
 @Component({
   selector: 'app-session-previews',
   imports: [PreviewCard],
   template: `
     @if (previews().length > 0) {
       <section class="previews" data-testid="session-previews">
-        <h2>Previews</h2>
+        <h3 class="app-section-label">Previews</h3>
         <p class="kept" data-testid="previews-keep-running">
           The session does not go idle while it has previews: Claude Code and
           the dev servers it started keep running until you stop the previews or
@@ -25,12 +25,10 @@ import { PreviewCard } from './preview-card';
     .previews {
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      margin-top: 8px;
+      gap: 6px;
     }
-    h2 {
+    .app-section-label {
       margin: 0;
-      font: var(--mat-sys-title-small);
     }
     .kept {
       margin: 0 0 4px;
