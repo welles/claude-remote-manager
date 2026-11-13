@@ -5,10 +5,12 @@ work on several repositories at once, each in its own clone of the repository, w
 cleanup. Everything runs in one Docker container. See [docs/specification.md](docs/specification.md)
 (German) for the full specification.
 
-Current state: repositories are registered by clone URL, local projects by name; sessions run
-through the Claude Agent SDK in their own clones of one or more repositories (or in a scratch
-directory) and stream to a minimal chat view; usage is recorded per request. The GitHub
-integration, approval dialogs, the full chat view and the cleanup of sessions follow.
+Current state: repositories are chosen from GitHub through the app's GitHub App (or registered
+by clone URL), local projects by name; sessions run through the Claude Agent SDK in their own
+clones of one or more repositories (or in a scratch directory) and stream to a minimal chat
+view; session branches are pushed and pull requests created by button, or by Claude after the
+user's approval; usage is recorded per request. Approval dialogs, the full chat view and the
+cleanup of sessions follow.
 
 ## Workspace layout
 
@@ -52,36 +54,49 @@ config directory is `~/.claude` or `CLAUDE_CONFIG_DIR`). Never an API key.
 npm start                        # then open http://localhost:4200
 ```
 
-Add a repository on the Repositories page (any clone URL git can use with the credentials of
-your shell, or a local path), then start a session on it with a short prompt (choose Haiku to
+Set the git author name and email on the Settings page first (commits in session clones are
+made with them). Add a repository on the Repositories page (from GitHub if the GitHub App is
+configured, see [GitHub](#github); or any clone URL git can use with the credentials of your
+shell, or a local path), then start a session on it with a short prompt (choose Haiku to
 keep it cheap), watch the answer stream in, send a follow-up, restart the API and send another
 message: the session is resumed. Mirrors, session clones and scratch directories live in
 `~/.local/share/claude-remote-manager/workspace` by default, outside this repository; the
 database lives in `data/db` of this repository (gitignored).
+
+For GitHub, start it with `GITHUB_APP_ID=… GITHUB_APP_PRIVATE_KEY_FILE=/path/to/key.pem`. In
+development the session clones also see your global git configuration (e.g. commit signing);
+in the container that is `/data/git/gitconfig`.
 
 Start the API from a normal shell. Started from inside a Claude Code session it inherits that
 session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions it runs.
 
 ### Environment variables of the API
 
-| Variable                       | Default (development)                                  | Purpose                                                    |
-| ------------------------------ | ------------------------------------------------------ | ---------------------------------------------------------- |
-| `PORT`                         | `3000` (image: `8080`)                                 | HTTP and WebSocket port                                    |
-| `DB_DIR`                       | `data/db` in the working directory (image: `/data/db`) | SQLite database `claude-remote-manager.sqlite`             |
-| `WORKSPACE_DIR`                | `~/.local/share/claude-remote-manager/workspace`       | `repos/`, `sessions/`, `scratch/` on one filesystem        |
-| `SETUP_SCRIPT_TIMEOUT_MINUTES` | `15`                                                   | Setup scripts are stopped after this long                  |
-| `SESSION_IDLE_TIMEOUT_MINUTES` | `60`                                                   | Close Claude Code processes idle this long; `0` keeps them |
-| `CLAUDE_CODE_EXECUTABLE`       | the binary bundled with the Agent SDK                  | Other Claude Code executable for the sessions              |
-| `CLAUDE_CONFIG_DIR`            | `~/.claude` (image: `/data/claude`)                    | Read by Claude Code: login, settings, transcripts          |
-| `WEB_ROOT`                     | `public` next to the bundle (image: `/app/public`)     | Built web app served by the API                            |
-| `ALLOWED_HOSTS`                | none (loopback names are always allowed)               | Comma-separated host names the server answers to           |
-| `ALLOWED_ORIGINS`              | `http://localhost:4200` outside production             | Comma-separated origins besides the server's own           |
+| Variable                            | Default (development)                                                                            | Purpose                                                         |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                         |
+| `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                  |
+| `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem             |
+| `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                       |
+| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them      |
+| `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                   |
+| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts               |
+| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                        |
+| `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                  |
+| `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret     |
+| `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                     |
+| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API |
+| `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                 |
+| `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                |
+| `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                |
 
 Secrets of the app are never passed to the processes it starts (Claude Code, setup scripts,
 its own git commands): every variable named `CRM_SECRET_*` is removed, plus a registry of fixed
 names in `apps/api/src/app/common/child-environment.ts` (`ANTHROPIC_API_KEY`,
 `ANTHROPIC_AUTH_TOKEN`, and `CLAUDE_CODE_OAUTH_TOKEN`, which only Claude Code gets). New
 secrets must use the `CRM_SECRET_` prefix, so a forgotten registration still keeps them out.
+The GitHub App's private key is read once at startup and kept only in the API's memory (see
+[GitHub](#github) for what that does and does not protect).
 
 ### Request guard
 
@@ -148,8 +163,13 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   theoretical cost in USD are stored per request and model in `usage_records`; the session
   shows the totals. Context window usage and the account's rate limits are captured after
   each turn (`GET /api/limits`).
-- Permissions: sessions run in permission mode `default`. Until approval dialogs exist, every
-  tool use that needs approval is denied and shown as such in the chat.
+- Permissions: sessions run in permission mode `default`. Every tool use that needs approval
+  goes through a `ToolApprover`; until the approval dialogs exist it denies everything and the
+  chat shows the denial. Approved uses are recorded (see [Push and pull requests](#push-and-pull-requests)).
+- Integrations: each Claude Code process gets a session token and the API URL for the git
+  credential helper, the tool `create_pull_request` (in-process MCP server `crm`) when the
+  session has a GitHub repository, a permission rule that makes `git push` always ask, and the
+  auto-memory directory of its main repository.
 - Settings: sessions get Claude Code's own system prompt and the user, project and local
   settings, including `CLAUDE.md` files of the working directory and the user's; the managed
   policy `/etc/claude-code/CLAUDE.md` is always loaded.
@@ -157,9 +177,14 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `POST /api/sessions/:id/messages`, `POST /api/sessions/:id/interrupt`,
 `POST /api/sessions/:id/end`, `POST /api/sessions/:id/pending-message/send`,
-`POST /api/sessions/:id/setup/rerun`, `GET /api/repositories`, `GET /api/repositories/:id`,
-`POST /api/repositories`, `PATCH /api/repositories/:id`, `POST /api/repositories/:id/fetch`,
-`GET /api/repositories/:id/branches`, `GET /api/limits`, `GET /api/health`. WebSocket: `/api/ws` with the versioned protocol in
+`POST /api/sessions/:id/setup/rerun`, `POST /api/sessions/:id/repositories/:repositoryId/push`,
+`POST /api/sessions/:id/repositories/:repositoryId/pull-requests`,
+`POST /api/sessions/:id/pull-requests/refresh`, `GET /api/repositories`,
+`GET /api/repositories/:id`, `POST /api/repositories`, `PATCH /api/repositories/:id`,
+`POST /api/repositories/:id/fetch`, `POST /api/repositories/:id/github`,
+`GET /api/repositories/:id/branches`, `GET /api/github/status`, `GET /api/github/repositories`,
+`GET /api/settings`, `PUT /api/settings`, `POST /api/git/credentials` (credential helper only),
+`GET /api/limits`, `GET /api/health`. WebSocket: `/api/ws` with the versioned protocol in
 `libs/shared-types/src/lib/session-events.ts`.
 
 ## Repositories and session clones
@@ -189,15 +214,18 @@ Hardlinks need one filesystem: `repos/`, `sessions/` and `scratch/` are subdirec
 different filesystems; git then copies the objects, which is correct but slow and large.
 
 **Local projects** (`local/<name>`, created on the Repositories page or with "New project" in
-the new-session form) are repositories without remote. Their mirror starts empty on `main`;
-sessions clone it like any other repository, with the mirror as `origin`. The first session
-on an empty project starts on an unborn session branch. A session's work reaches later
+the new-session form) are repositories without remote. Their mirror starts with an empty
+commit on `main` (authored with the configured commit identity), so every session has a real
+base commit and parallel first sessions share history; sessions clone it like any other
+repository, with the mirror as `origin`. A session's work reaches later
 sessions only when it is brought into the project's `main`: `GitService.fastForwardMirror`
 fast-forwards `main` of the mirror to the session branch (merge `main` into the session
 branch first if it moved on); the cleanup step will offer that as "merge". Pushes from session
 clones into the mirror may only fast-forward and never delete branches. Attaching a GitHub
-remote later turns the project into a normal repository without moving data: set the mirror's
-remote and the session clones' `origin`.
+remote later turns the project into a normal repository without moving data: "Put on GitHub"
+on the Repositories page (`POST /api/repositories/:id/github`) sets the mirror's remote, pushes
+its branches and tags, and points the existing session clones' `origin` there (see
+[GitHub](#github)).
 
 **Scratch sessions** ("No repository") get an empty directory of their own without git.
 
@@ -205,8 +233,8 @@ remote and the session clones' `origin`.
 
 - `repositories`: owner, name, clone URL (`null` for local projects), default branch (as last
   fetched), path of the mirror, setup script, clone/fetch times and last error;
-  `github_repository_id` and `github_installation_id` are reserved for the GitHub
-  integration.
+  `github_repository_id` and `github_installation_id` for repositories registered from GitHub
+  (fetched, cloned and pushed with installation tokens).
 - `sessions`: as before plus the `slug` and the `pending_message` (the first message while it
   has not been sent to Claude).
 - `session_directories`: the session's directories in order; position 0 is the working
@@ -215,6 +243,14 @@ remote and the session clones' `origin`.
   whole session — and `setup_status`), `scratch`, or `directory` (sessions from before session
   clones). `state` is `pending`, `ready`, `failed` or `removed`. This table is the only source
   of a session's directories (the former `sessions.cwd` was migrated into it).
+  `pushed_commit`/`pushed_at`: what was last pushed of the session branch (by button, or seen
+  after an approved push by Claude).
+- `pull_requests`: per session clone (session and repository) the pull requests created by
+  button or by Claude: number, URL, title, state (`open`, `closed`, `merged`), draft, head and
+  base branch, creator (`user`/`claude`), opened/closed/merged times and when the state was
+  last read from GitHub (open ones at most once a minute when the session is opened). The
+  PR automation builds on this table.
+- `app_settings`: settings edited in the UI (key, JSON value): the commit identity.
 
 ### How a session gets its directories
 
@@ -249,7 +285,8 @@ repositories and unused scratch directories are listed as stray. Removing a sess
 (`GitService.removeSessionClone`) and fast-forwarding a local project exist for the cleanup
 step; there is no UI for them yet.
 
-Until the GitHub integration exists, cloning and fetching use whatever git credentials the
+Repositories registered from GitHub are cloned and fetched with installation tokens (see
+[GitHub](#github)). Repositories registered by clone URL use whatever git credentials the
 API's environment has (SSH key, credential helper), so public HTTPS URLs and local paths work
 out of the box. Clone URLs are validated (https, ssh, scp-like `git@host:owner/repo` or an
 absolute local path; no credentials in the URL, no other transports); git always runs with
@@ -274,7 +311,135 @@ Several sessions may work in the same repository at the same time without seeing
   the global `CLAUDE.md` allows pushing only the session branch after the user approved. The
   serialization is per API process; two API instances on the same workspace are not
   supported. Joining a running fetch can miss a commit pushed after that fetch started.
-  Claude Code keeps its auto-memory per working directory, i.e. per session clone.
+- **Auto-memory is per repository**, not per session clone: Claude Code would keep it per
+  working directory; the app sets `autoMemoryDirectory` to `MEMORY_DIR/<repository id>`
+  (outside the clones), so all sessions of a repository share one memory, also after a local
+  project was put on GitHub. Scratch sessions keep Claude Code's default.
+
+## GitHub
+
+The app talks to GitHub through its own GitHub App. Without configuration it still starts and
+works with local projects and repositories registered by clone URL; the Settings page says
+that GitHub is not configured and why.
+
+### Configuration
+
+| Setting                    | How                                                                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| App ID                     | `GITHUB_APP_ID` (plain configuration)                                                                                      |
+| Private key                | `GITHUB_APP_PRIVATE_KEY_FILE`: path of the PEM file, mounted as secret (see [Container](#github-app-key-in-the-container)) |
+| Private key, alternatively | `CRM_SECRET_GITHUB_APP_PRIVATE_KEY`: the PEM itself                                                                        |
+
+The key is never part of the image, the database, logs or the configuration object; it is read
+once at startup and never given to child processes, and neither are app JWTs.
+
+Permissions the app needs (repository permissions):
+
+| Permission     | Access     | Used for                                                                |
+| -------------- | ---------- | ----------------------------------------------------------------------- |
+| Metadata       | read       | listing the installations' repositories                                 |
+| Contents       | read/write | cloning, fetching and pushing; reading refs when creating pull requests |
+| Pull requests  | read/write | creating pull requests and reading their state                          |
+| Workflows      | read/write | pushing commits that change `.github/workflows` (only then requested)   |
+| Administration | read/write | creating repositories for local projects (organizations)                |
+
+Issues, Checks, Commit statuses and Actions (read) are for later steps (GitHub references in
+the prompt, PR automation); the webhook is not used yet. Install the app on your account and
+on organizations and choose the repositories there; the Settings page lists the
+installations with their repository counts and links to install the app on further accounts.
+
+### Repositories and tokens
+
+`GET /api/github/repositories?query=&page=&perPage=` lists every repository the installations
+can access, across the personal account and organizations (searchable, paginated, cached for a
+minute). Choosing one in the new-session form or on the Repositories page registers it
+(`POST /api/repositories` with `githubRepositoryId`, idempotent) and clones its mirror; later
+sessions only fetch.
+
+The client is plain `fetch` (`apps/api/src/app/github`): it follows `Link` pagination, waits
+out short rate limits and reports longer ones with the time to retry, and reports GitHub as
+unreachable after one retry. A session on a repository that is cloned already still starts
+when GitHub is unreachable, from the last fetched state, with a warning.
+
+Installation tokens are minted for exactly one repository and the permissions of the
+operation, reused for at most ten minutes, and given to git only through the environment of
+one command (`GIT_CONFIG_*`), never through arguments, git config, remote URLs, the database
+or logs:
+
+| Operation                              | Token                                                                |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| listing an installation's repositories | `metadata: read`, whole installation                                 |
+| clone and fetch of a mirror            | `contents: read`                                                     |
+| push by button                         | `contents: write` (+ `workflows: write` if workflow files changed)   |
+| create / read a pull request           | `pull_requests: write` + `contents: read` / `pull_requests: read`    |
+| credential helper, normally            | `contents: read`                                                     |
+| credential helper, approved push       | `contents: write` (+ `workflows`), fresh, revoked when the push ends |
+| create a repository                    | `administration: write`, fresh, revoked afterwards                   |
+
+If the installation of a repository changed (app reinstalled), the current one is looked up
+and stored.
+
+### Commit identity
+
+Commits in session clones are made as the user, not as the app: the git author name and email
+are app settings (Settings page, `PUT /api/settings`), written into every session clone
+(`user.name`, `user.email`, `user.useConfigOnly`) and into existing clones when they change.
+While they are not set, sessions with repositories and new local projects are refused with a
+message pointing to the Settings page; a clone whose identity was cleared cannot commit at all
+(git's global identity is hidden). Scratch sessions need none.
+
+### Push and pull requests
+
+Both work two ways:
+
+1. **By button** (session view, per repository): "Push" pushes the session branch (no force,
+   set as upstream); "Create PR" creates a pull request with title, description, base branch
+   and draft flag, pushing first when GitHub lacks the latest commit. The click is the user's
+   approval. Repositories registered by clone URL push with the server's own credentials;
+   local projects have no remote (put them on GitHub first).
+2. **By Claude**: `git push` in a session clone gets its credentials from a credential helper
+   (`apps/api/src/assets/git-credential-crm.cjs`, configured in every clone of a GitHub
+   repository, with all other helpers reset). It asks `POST /api/git/credentials`,
+   authenticated with a random token of the session's Claude Code process (in its environment,
+   revoked when the process ends), for a token for exactly that repository of exactly that
+   session. The token is read-only unless a `git push` command that the user approved in
+   this session is running right now; then it may write, and it is revoked when Claude Code
+   reports the command's result (at the latest after 15 minutes). Pull requests come from the
+   tool `create_pull_request` (repository, title, body, base branch, draft), which never
+   pushes and runs only for a call the user approved, once.
+
+Approval: every tool use that needs approval goes through `canUseTool` and the
+`ToolApprover`. Today it denies everything (the approval dialogs come in the next step), so
+these paths only work by button; tests use a fake approver. Approvals are what unlock them, not
+Claude Code's own decision: `git push` has an `ask` permission rule in every session (it wins
+over allow rules, e.g. from a repository's `.claude/settings.json`), the tool has the MCP
+permission policy `always_ask`, and if anything still skipped `canUseTool` (a permission mode,
+an allow rule) no grant is recorded, so the helper stays read-only and the tool refuses.
+
+What this boundary cannot guarantee:
+
+- An approved command does whatever it does. A push grant is recognized from the command
+  text (`git … push`) and holds for the whole session (all its GitHub repositories, every
+  process) while that command runs; a command like `git push && git credential fill` would
+  show a write token to Claude. Commands that push in other ways (scripts, aliases) are not
+  recognized and get a read-only token, which fails safely.
+- Read-only tokens are available to every process of the session at any time (for
+  `git fetch`), e.g. by running the helper or `git credential fill`, which itself is a Bash
+  command that needs approval.
+- All sessions and the API run as one user in the container. A process of a session can read
+  files and `/proc/<pid>/environ` of other processes of that user: other sessions' tokens,
+  and the private key file (or the API's environment, if the key is passed as variable).
+  Claude Code asks before reading outside the session's directories, so only an approved tool
+  use can get there; a hard boundary needs separate users or a separate token service.
+
+### Local projects on GitHub
+
+"Put on GitHub" (`POST /api/repositories/:id/github`) creates a repository and pushes the
+project's branches and tags there, or attaches an existing empty repository the app can
+access. Organizations: `POST /orgs/{org}/repos` with an installation token works with the
+Administration permission. Personal account: GitHub's documentation lists
+`POST /user/repos` for installation tokens too, but this is not verified; if GitHub refuses,
+the error says to create an empty repository on GitHub and attach it instead.
 
 ## Container
 
@@ -333,6 +498,30 @@ the entrypoint checks on each start whether the image's Nix profile exists in `/
 - empty `/nix` (e.g. a new bind mount): the copy is unpacked;
 - `/nix` from an older image (profile missing): the image's store paths are added and registered
   in the existing Nix database, everything already in the store is kept.
+
+### GitHub App key in the container
+
+Mount the private key as a file and point `GITHUB_APP_PRIVATE_KEY_FILE` to it, e.g. with a
+Compose secret (see `docker-compose.yml`):
+
+```yaml
+services:
+  claude-remote-manager:
+    environment:
+      GITHUB_APP_ID: '123456'
+      GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app-key
+    secrets:
+      - github-app-key
+secrets:
+  github-app-key:
+    file: ./secrets/github-app.pem
+```
+
+Compose bind-mounts the file with its host owner and mode; it must be readable by the
+container user (UID 1000), e.g. owned by it with mode `0400`. Or without Compose:
+`docker run -v /path/github-app.pem:/run/secrets/github-app-key:ro -e GITHUB_APP_ID=…
+-e GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github-app-key …`. Never put the key into the image
+or the compose file itself.
 
 ### Logging in to Claude
 

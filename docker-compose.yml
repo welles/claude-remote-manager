@@ -16,6 +16,13 @@ services:
       # Public host name the app is reached under (behind the tunnel); the
       # API refuses other Host headers except loopback names.
       # ALLOWED_HOSTS: crm.example.com
+      # GitHub App (optional): App ID and the private key as secret file.
+      # Without them the app runs without GitHub (local projects and clone
+      # URLs still work).
+      # GITHUB_APP_ID: '123456'
+      # GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app-key
+    # secrets:
+    #   - github-app-key
     volumes:
       # Session workspace on one filesystem: repos/ (mirrors), sessions/
       # (one clone per session and repository, hardlinked), scratch/
@@ -28,6 +35,12 @@ services:
       - db:/data/db
       # Nix store, keeps downloaded tools across container re-creations
       - nix:/nix
+
+# The GitHub App's private key, bind-mounted read-only at
+# /run/secrets/github-app-key; the file must be readable by UID 1000.
+# secrets:
+#   github-app-key:
+#     file: ./secrets/github-app.pem
 
 volumes:
   workspace:

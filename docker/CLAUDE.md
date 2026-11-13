@@ -41,9 +41,17 @@ sessions.
   `nix shell nixpkgs#dotnet-sdk -c dotnet build`. There is no root access and no `apt`.
 - The image itself only provides a small base: git, Node.js/npm, curl, ssh and Nix.
 
-## Git
+## Git and GitHub
 
-- Commit on the session branch. You may commit on your own; push only after the user
-  approved it in the current session, and only the session branch unless the user explicitly
-  asks for another one.
+- Commit on the session branch. You may commit on your own; commits are made with the user's
+  name and email (configured by the session manager; do not change `user.name`/`user.email`).
+- Push only after the user approved it in the current session, and only the session branch
+  unless the user explicitly asks for another one: `git push -u origin HEAD`. Each push asks
+  the user; for GitHub repositories the credentials come from the session manager's
+  credential helper and allow writing only while an approved `git push` runs (otherwise they
+  are read-only, so `git fetch` works). Do not change the credential helper, do not use other
+  credentials and do not call the helper or `git credential` yourself.
+- Create pull requests with the tool `create_pull_request` (repository `owner/name`, title,
+  body, base branch), after pushing the branch; each call asks the user. Do not use `gh` or
+  the GitHub API directly.
 - Never force-push or rewrite published history unless the user explicitly asks for it.
