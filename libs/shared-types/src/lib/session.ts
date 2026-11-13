@@ -110,8 +110,16 @@ export interface SessionDirectoryDto {
   kind: SessionDirectoryKind;
   path: string;
   state: SessionDirectoryState;
-  /** Repository of a clone. */
-  repository: { id: string; fullName: string; local: boolean } | null;
+  /**
+   * Repository of a clone; `github` when it is registered from GitHub (push
+   * and pull requests through the GitHub App).
+   */
+  repository: {
+    id: string;
+    fullName: string;
+    local: boolean;
+    github: boolean;
+  } | null;
   /** Branch of the clone, `claude/<session-slug>`. */
   branch: string | null;
   /** Branch of the mirror the clone's branch was created from. */
@@ -122,6 +130,49 @@ export interface SessionDirectoryDto {
    */
   baseCommit: string | null;
   setupStatus: SetupStatus;
+  /** Commit of the session branch last pushed (by button or by Claude). */
+  pushedCommit: string | null;
+  pushedAt: string | null;
+}
+
+export type PullRequestState = 'open' | 'closed' | 'merged';
+
+/** Who created a pull request: the user by button, or Claude by tool. */
+export type PullRequestCreator = 'user' | 'claude';
+
+/** A pull request of one of the session's clones. */
+export interface PullRequestDto {
+  id: number;
+  repositoryId: string;
+  /** `owner/name` of the repository. */
+  repository: string;
+  number: number;
+  url: string;
+  title: string;
+  state: PullRequestState;
+  draft: boolean;
+  headBranch: string;
+  baseBranch: string;
+  createdBy: PullRequestCreator;
+  openedAt: string;
+  closedAt: string | null;
+  mergedAt: string | null;
+  /** When the state was last read from GitHub. */
+  syncedAt: string;
+}
+
+/**
+ * Body of `POST /api/sessions/:id/repositories/:repositoryId/pull-requests`.
+ * The session branch is pushed first if GitHub does not have its latest
+ * commit.
+ */
+export interface CreatePullRequestRequest {
+  /** Default: the session title. */
+  title?: string;
+  body?: string;
+  /** Default: the branch the session clone started from. */
+  base?: string;
+  draft?: boolean;
 }
 
 /** A session as returned by the REST API and pushed over the WebSocket. */
@@ -162,6 +213,8 @@ export interface SessionDto {
   usage: UsageTotals;
   /** Latest known context window usage; only while this server knows it. */
   context: ContextUsage | null;
+  /** Pull requests of the session's clones, oldest first. */
+  pullRequests: PullRequestDto[];
 }
 
 /** A repository a new session works on. */

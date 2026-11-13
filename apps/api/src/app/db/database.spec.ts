@@ -36,6 +36,7 @@ describe('openDatabase', () => {
     expect(existsSync(join(location, DATABASE_FILE_NAME))).toBe(true);
     expect(tables(db)).toEqual([
       'app_settings',
+      'pull_requests',
       'repositories',
       'session_directories',
       'session_events',
@@ -110,11 +111,14 @@ describe('openDatabase', () => {
         repositoryId: null,
         repositoryName: null,
         repositoryLocal: false,
+        repositoryGitHub: false,
         branch: null,
         baseBranch: null,
         baseCommit: null,
         state: 'ready',
         setupStatus: 'none',
+        pushedCommit: null,
+        pushedAt: null,
       })),
     );
     expect(sessions.require('b').directories.map((d) => d.path)).toEqual([

@@ -1,6 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type {
+  PullRequestCreator,
+  PullRequestState,
   SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
@@ -9,9 +11,11 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { DATABASE, type AppDatabase } from '../db/database';
 import {
+  pullRequests,
   repositories,
   sessionDirectories,
   sessions,
+  type PullRequestRow,
   type SessionRow,
 } from '../db/schema';
 
@@ -25,12 +29,52 @@ export interface SessionDirectoryRecord {
   repositoryName: string | null;
   /** The repository is a local project without remote. */
   repositoryLocal: boolean;
+  /** The repository is registered from GitHub. */
+  repositoryGitHub: boolean;
   branch: string | null;
   baseBranch: string | null;
   baseCommit: string | null;
   state: SessionDirectoryState;
   setupStatus: SetupStatus;
+  pushedCommit: string | null;
+  pushedAt: Date | null;
 }
+
+/** A pull request of a session clone, see `pull_requests`. */
+export interface PullRequestRecord extends PullRequestRow {
+  /** `owner/name` of the repository. */
+  repositoryName: string;
+}
+
+export type NewPullRequest = {
+  sessionId: string;
+  repositoryId: string;
+  number: number;
+  url: string;
+  title: string;
+  state: PullRequestState;
+  draft: boolean;
+  headBranch: string;
+  baseBranch: string;
+  createdBy: PullRequestCreator;
+  openedAt: Date;
+  closedAt: Date | null;
+  mergedAt: Date | null;
+  syncedAt: Date;
+};
+
+export type PullRequestPatch = Partial<
+  Pick<
+    NewPullRequest,
+    | 'title'
+    | 'state'
+    | 'draft'
+    | 'baseBranch'
+    | 'closedAt'
+    | 'mergedAt'
+    | 'syncedAt'
+  >
+>;
 
 /** A session's persisted metadata. */
 export interface SessionRecord {
@@ -44,6 +88,8 @@ export interface SessionRecord {
   pendingMessage: { id: string; text: string } | null;
   /** In order; the first is the working directory. */
   directories: SessionDirectoryRecord[];
+  /** Pull requests of the session's clones, oldest first. */
+  pullRequests: PullRequestRecord[];
   lastError: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -81,7 +127,12 @@ export type SessionPatch = Partial<
 export type SessionDirectoryPatch = Partial<
   Pick<
     SessionDirectoryRecord,
-    'state' | 'setupStatus' | 'baseBranch' | 'baseCommit'
+    | 'state'
+    | 'setupStatus'
+    | 'baseBranch'
+    | 'baseCommit'
+    | 'pushedCommit'
+    | 'pushedAt'
   >
 >;
 
@@ -201,6 +252,49 @@ export class SessionRepository {
     return this.require(sessionId);
   }
 
+  /**
+   * Stores a pull request of a session clone; one that is known already
+   * (same repository and number) is updated instead, keeping its creator
+   * and session.
+   */
+  savePullRequest(pull: NewPullRequest): PullRequestRecord {
+    const { sessionId, repositoryId, number, createdBy, ...state } = pull;
+    this.db
+      .insert(pullRequests)
+      .values({ sessionId, repositoryId, number, createdBy, ...state })
+      .onConflictDoUpdate({
+        target: [pullRequests.repositoryId, pullRequests.number],
+        set: state,
+      })
+      .run();
+    this.touch(sessionId);
+    const saved = this.db
+      .select({ sessionId: pullRequests.sessionId })
+      .from(pullRequests)
+      .where(
+        and(
+          eq(pullRequests.repositoryId, repositoryId),
+          eq(pullRequests.number, number),
+        ),
+      )
+      .get();
+    return this.pullRequestsOf([saved?.sessionId ?? sessionId]).find(
+      (entry) => entry.repositoryId === repositoryId && entry.number === number,
+    ) as PullRequestRecord;
+  }
+
+  updatePullRequest(id: number, patch: PullRequestPatch): void {
+    const row = this.db
+      .update(pullRequests)
+      .set(patch)
+      .where(eq(pullRequests.id, id))
+      .returning({ sessionId: pullRequests.sessionId })
+      .get();
+    if (row) {
+      this.touch(row.sessionId);
+    }
+  }
+
   /** Paths of all session clones that exist (state `ready`). */
   readyClonePaths(): string[] {
     return this.db
@@ -230,10 +324,40 @@ export class SessionRepository {
       .map((row) => row.id);
   }
 
+  private touch(sessionId: string, now = new Date()): void {
+    this.db
+      .update(sessions)
+      .set({ updatedAt: now })
+      .where(eq(sessions.id, sessionId))
+      .run();
+  }
+
+  private pullRequestsOf(sessionIds: string[]): PullRequestRecord[] {
+    if (sessionIds.length === 0) {
+      return [];
+    }
+    return this.db
+      .select({
+        pull: pullRequests,
+        owner: repositories.owner,
+        name: repositories.name,
+      })
+      .from(pullRequests)
+      .innerJoin(repositories, eq(repositories.id, pullRequests.repositoryId))
+      .where(inArray(pullRequests.sessionId, sessionIds))
+      .orderBy(asc(pullRequests.openedAt), asc(pullRequests.id))
+      .all()
+      .map(({ pull, owner, name }) => ({
+        ...pull,
+        repositoryName: `${owner}/${name}`,
+      }));
+  }
+
   private withDirectories(rows: SessionRow[]): SessionRecord[] {
     if (rows.length === 0) {
       return [];
     }
+    const pulls = this.pullRequestsOf(rows.map((row) => row.id));
     const directories = this.db
       .select({
         sessionId: sessionDirectories.sessionId,
@@ -244,11 +368,14 @@ export class SessionRepository {
         owner: repositories.owner,
         name: repositories.name,
         cloneUrl: repositories.cloneUrl,
+        githubRepositoryId: repositories.githubRepositoryId,
         branch: sessionDirectories.branch,
         baseBranch: sessionDirectories.baseBranch,
         baseCommit: sessionDirectories.baseCommit,
         state: sessionDirectories.state,
         setupStatus: sessionDirectories.setupStatus,
+        pushedCommit: sessionDirectories.pushedCommit,
+        pushedAt: sessionDirectories.pushedAt,
       })
       .from(sessionDirectories)
       .leftJoin(
@@ -265,6 +392,7 @@ export class SessionRepository {
       .all();
     return rows.map((row) => ({
       ...row,
+      pullRequests: pulls.filter((pull) => pull.sessionId === row.id),
       directories: directories
         .filter((directory) => directory.sessionId === row.id)
         .map(
@@ -273,6 +401,7 @@ export class SessionRepository {
             owner,
             name,
             cloneUrl,
+            githubRepositoryId,
             ...directory
           }): SessionDirectoryRecord => {
             void sessionId;
@@ -281,6 +410,7 @@ export class SessionRepository {
               ...directory,
               repositoryName: known ? `${owner}/${name}` : null,
               repositoryLocal: known && cloneUrl === null,
+              repositoryGitHub: known && githubRepositoryId !== null,
             };
           },
         ),

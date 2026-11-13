@@ -8,6 +8,8 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import type {
+  PullRequestCreator,
+  PullRequestState,
   SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
@@ -126,6 +128,9 @@ export const sessionDirectories = sqliteTable(
       .$type<SetupStatus>()
       .notNull()
       .default('none'),
+    /** Commit of the session branch last pushed by the app (or Claude). */
+    pushedCommit: text('pushed_commit'),
+    pushedAt: timestamp('pushed_at'),
   },
   (table) => [
     uniqueIndex('session_directories_session_position').on(
@@ -136,6 +141,47 @@ export const sessionDirectories = sqliteTable(
       table.sessionId,
       table.repositoryId,
     ),
+  ],
+);
+
+/**
+ * Pull requests of session clones: a session can have several, one (or,
+ * over time, more) per repository it changed. Created by the user (button)
+ * or by Claude (tool `create_pull_request`); the state is refreshed from
+ * GitHub (later also by webhooks, for the PR automation).
+ */
+export const pullRequests = sqliteTable(
+  'pull_requests',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    repositoryId: text('repository_id')
+      .notNull()
+      .references(() => repositories.id),
+    number: integer('number').notNull(),
+    url: text('url').notNull(),
+    title: text('title').notNull(),
+    state: text('state').$type<PullRequestState>().notNull(),
+    draft: integer('draft', { mode: 'boolean' }).notNull().default(false),
+    headBranch: text('head_branch').notNull(),
+    baseBranch: text('base_branch').notNull(),
+    createdBy: text('created_by').$type<PullRequestCreator>().notNull(),
+    /** When it was opened on GitHub. */
+    openedAt: timestamp('opened_at').notNull(),
+    closedAt: timestamp('closed_at'),
+    mergedAt: timestamp('merged_at'),
+    /** Last time the state was read from GitHub. */
+    syncedAt: timestamp('synced_at').notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex('pull_requests_repository_number').on(
+      table.repositoryId,
+      table.number,
+    ),
+    index('pull_requests_session').on(table.sessionId),
   ],
 );
 
@@ -205,5 +251,6 @@ export type SessionRow = typeof sessions.$inferSelect;
 export type SessionDirectoryRow = typeof sessionDirectories.$inferSelect;
 export type NewSessionRow = typeof sessions.$inferInsert;
 export type SessionEventRow = typeof sessionEvents.$inferSelect;
+export type PullRequestRow = typeof pullRequests.$inferSelect;
 export type UsageRecordRow = typeof usageRecords.$inferSelect;
 export type NewUsageRecordRow = typeof usageRecords.$inferInsert;

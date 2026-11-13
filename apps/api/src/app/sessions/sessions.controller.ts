@@ -4,6 +4,7 @@ import type {
   SessionDto,
   SessionListResponse,
 } from '@claude-remote-manager/shared-types';
+import { SessionGitService } from './session-git.service';
 import { SessionsService } from './sessions.service';
 
 /**
@@ -12,7 +13,10 @@ import { SessionsService } from './sessions.service';
  */
 @Controller('sessions')
 export class SessionsController {
-  constructor(private readonly sessions: SessionsService) {}
+  constructor(
+    private readonly sessions: SessionsService,
+    private readonly git: SessionGitService,
+  ) {}
 
   @Get()
   list(): SessionListResponse {
@@ -21,7 +25,13 @@ export class SessionsController {
 
   @Get(':id')
   get(@Param('id') id: string): SessionDto {
-    return this.sessions.get(id);
+    const session = this.sessions.get(id);
+    // Open pull requests are re-read from GitHub in the background (at
+    // most once a minute); changes arrive as session updates.
+    if (session.pullRequests.some((pull) => pull.state === 'open')) {
+      void this.git.refreshPullRequests(id).catch(() => undefined);
+    }
+    return session;
   }
 
   @Post()

@@ -37,6 +37,7 @@ import {
   SessionWorkspaceService,
   type SetupOutcome,
 } from '../workspaces/session-workspace.service';
+import { pullRequestDto } from './pull-request-dto';
 import { SdkEventMapper, transcriptEntries } from './sdk-event-mapper';
 import {
   SessionEventRepository,
@@ -269,6 +270,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   get(id: string): SessionDto {
     return this.toDto(this.requireRecord(id));
+  }
+
+  /**
+   * Publishes the current state of a session after a change made outside
+   * this service (push, pull request).
+   */
+  publishUpdate(id: string): void {
+    const record = this.sessions.get(id);
+    if (record) {
+      this.updates.next(this.toDto(record));
+    }
   }
 
   /**
@@ -1073,12 +1085,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
                   id: directory.repositoryId,
                   fullName: directory.repositoryName,
                   local: directory.repositoryLocal,
+                  github: directory.repositoryGitHub,
                 }
               : null,
           branch: directory.branch,
           baseBranch: directory.baseBranch,
           baseCommit: directory.baseCommit,
           setupStatus: directory.setupStatus,
+          pushedCommit: directory.pushedCommit,
+          pushedAt: directory.pushedAt?.toISOString() ?? null,
         }),
       ),
       cwd: workingDirectory(record),
@@ -1088,6 +1103,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       updatedAt: record.updatedAt.toISOString(),
       usage: totals,
       context: this.live.get(record.id)?.context ?? null,
+      pullRequests: record.pullRequests.map(pullRequestDto),
     };
   }
 }
