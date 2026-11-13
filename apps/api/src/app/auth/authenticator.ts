@@ -8,7 +8,7 @@ import {
   type AccessConfig,
   type AccessFailure,
 } from './access-jwt';
-import { isLoopback, loopbackPeerUid } from './peer-credentials';
+import { loopbackPeerUid } from './peer-credentials';
 
 /**
  * How the API authenticates requests (`AUTH_MODE`, no default):
@@ -74,12 +74,16 @@ export function cookie(
 export type PeerSocket = Pick<
   Socket,
   'remoteAddress' | 'remotePort' | 'localPort'
->;
+> &
+  Partial<Pick<Socket, 'localAddress'>>;
 
 /**
- * Whether a connection comes from a process of the session user over
- * loopback (only with separate users; in `single-user` mode sessions run
- * as the API's user and cannot be told apart).
+ * Whether a connection comes from a process of the session user (only with
+ * separate users; in `single-user` mode sessions run as the API's user and
+ * cannot be told apart). Any connection made inside the container counts,
+ * over loopback or to one of the container's own addresses (its `eth0`
+ * address reaches the API's port too); connections from outside the
+ * network namespace have no client socket in its tables.
  */
 export function fromSessionProcess(
   isolation: ProcessIsolation,
@@ -88,10 +92,15 @@ export function fromSessionProcess(
 ): boolean {
   return (
     isolation.mode === 'separate-users' &&
-    isLoopback(socket.remoteAddress) &&
     socket.remotePort !== undefined &&
     socket.localPort !== undefined &&
-    peerUid(socket.remotePort, socket.localPort) === isolation.sessionUser.uid
+    peerUid(
+      socket.remotePort,
+      socket.localPort,
+      socket.remoteAddress && socket.localAddress
+        ? { client: socket.remoteAddress, server: socket.localAddress }
+        : undefined,
+    ) === isolation.sessionUser.uid
   );
 }
 
@@ -106,8 +115,9 @@ export function accessToken(headers: IncomingHttpHeaders): string | null {
 /**
  * Decides whether a request (or WebSocket upgrade) may reach the API:
  *
- * 1. With separate users, connections over loopback from a process of the
- *    session user are refused, except for the routes sessions need (the
+ * 1. With separate users, connections from a process of the session user
+ *    (inside the container, over loopback or the container's own address)
+ *    are refused, except for the routes sessions need (the
  *    credential endpoint). Sessions cannot call the management API, e.g.
  *    push without the user's approval, whatever the auth mode.
  * 2. Exempt routes need no Access token.

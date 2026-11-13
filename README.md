@@ -168,8 +168,9 @@ Exempt, each with its own protection (`AUTH_EXEMPT_ROUTES` in
 The notification routes (settings, devices, tests, the approval buttons) are not exempt.
 
 **Session processes cannot call the API.** With `PROCESS_ISOLATION=separate-users`, connections
-over loopback from a process of the session user (looked up in the kernel's socket table,
-`/proc/net/tcp*`) are refused with `403` (`session_process_refused`) except on the routes
+from a process of the session user (looked up in the kernel's socket table, `/proc/net/tcp*`,
+by ports and addresses: over loopback and to the container's own addresses such as its `eth0`
+address alike) are refused with `403` (`session_process_refused`) except on the routes
 sessions need (the credential endpoint, the health check), in either auth mode. This is what
 closes the hole in `AUTH_MODE=none` inside the container. Still open with `AUTH_MODE=none`:
 every process outside the container that can reach the port (the compose file publishes it on
