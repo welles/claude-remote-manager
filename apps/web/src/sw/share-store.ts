@@ -2,7 +2,7 @@
  * Content shared to the installed app (Web Share Target). The service
  * worker takes the operating system's form post (`POST /share-target`,
  * multipart) itself, keeps the content in the Cache API and opens the app
- * with `/?share=<id>`; the new-session form then takes it as its prompt and
+ * with `/new?share=<id>`; the new-session form then takes it as its prompt and
  * images. The post never reaches the API, so the API's request guard
  * (JSON bodies only) stays as it is.
  */

@@ -8,10 +8,9 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { AppDatePipe } from '../ui/dates';
+import { AppIcon } from '../ui/icon';
 import { RouterLink } from '@angular/router';
 import {
   Subject,
@@ -66,28 +65,24 @@ export function snippetParts(
   imports: [
     AppDatePipe,
     FormsModule,
-    MatFormFieldModule,
-    MatInputModule,
+    AppIcon,
     MatProgressBarModule,
     RouterLink,
   ],
   template: `
-    <mat-form-field
-      appearance="outline"
-      subscriptSizing="dynamic"
-      class="field"
-    >
-      <mat-label>Search sessions</mat-label>
+    <label class="field">
+      <app-icon name="search" />
       <input
-        matInput
         type="search"
         [maxlength]="maxLength"
         [ngModel]="query()"
         (ngModelChange)="changed($event)"
-        placeholder="Words from titles, repositories or the conversation"
+        placeholder="Search sessions"
+        aria-label="Search sessions: titles, repositories, branches and the conversation"
+        enterkeyhint="search"
         data-testid="search-input"
       />
-    </mat-form-field>
+    </label>
     @if (query().trim()) {
       @if (busy()) {
         <mat-progress-bar mode="indeterminate" />
@@ -113,7 +108,7 @@ export function snippetParts(
                 }
               </span>
               <span class="meta"
-                >{{ hit.updatedAt | appDate }}
+                >{{ hit.updatedAt | appDate: 'relative' }}
                 @if (hit.repositories.length > 0) {
                   · {{ hit.repositories.join(' + ') }}
                 }
@@ -138,24 +133,62 @@ export function snippetParts(
   styles: `
     :host {
       display: block;
-      margin-bottom: 8px;
     }
     .field {
-      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: var(--app-space-2);
+      height: 40px;
+      padding: 0 var(--app-space-3);
+      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: var(--mat-sys-corner-small);
+      background: var(--mat-sys-surface-container);
+      color: var(--mat-sys-on-surface-variant);
+      cursor: text;
+    }
+    .field:focus-within {
+      border-color: var(--mat-sys-primary);
+    }
+    input {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      border: 0;
+      outline: none;
+      background: none;
+      color: var(--mat-sys-on-surface);
+      font: var(--mat-sys-body-large);
+    }
+    input::placeholder {
+      color: var(--mat-sys-on-surface-variant);
+    }
+    mat-progress-bar {
+      margin-top: var(--app-space-2);
     }
     .hits {
       display: flex;
       flex-direction: column;
+      margin-top: var(--app-space-3);
+      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: var(--mat-sys-corner-medium);
+      background: var(--mat-sys-surface-container-low);
+      overflow: hidden;
+    }
+    .hits:empty {
+      display: none;
     }
     .hit {
       display: flex;
       flex-direction: column;
       gap: 4px;
-      padding: 12px 8px;
+      padding: 10px 12px;
       border-bottom: 1px solid var(--mat-sys-outline-variant);
       color: inherit;
       text-decoration: none;
       overflow-wrap: anywhere;
+    }
+    .hit:last-child {
+      border-bottom: 0;
     }
     .hit:hover,
     .hit:focus-visible {

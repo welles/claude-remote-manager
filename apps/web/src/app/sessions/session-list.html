@@ -1,93 +1,130 @@
-<app-page-bar heading="Sessions"><app-limits-indicator /></app-page-bar>
-@if (shareNotice(); as notice) {
-<p class="notice" data-testid="share-notice">{{ notice }}</p>
-}
-<mat-card appearance="outlined" class="new-session">
-  <mat-card-header>
-    <mat-card-title>New session</mat-card-title>
-  </mat-card-header>
-  <mat-card-content>
-    <app-new-session-form [prefill]="prefill()" (created)="open($event)" />
-  </mat-card-content>
-</mat-card>
+<app-page-bar heading="Sessions">
+  <app-limits-indicator />
+  <a
+    matButton="filled"
+    class="new-session"
+    routerLink="/new"
+    data-testid="new-session"
+    ><app-icon name="plus" />New session</a
+  >
+</app-page-bar>
 
-<div class="heading-row">
-  <h2 class="heading">{{ archived() ? 'Archived sessions' : 'Sessions' }}</h2>
-  <span class="heading-actions">
-    @if (sessions().length > 0 && !archived()) {
-    <button
-      matButton
-      type="button"
-      (click)="showWaiting(!waitingOnly())"
-      [attr.aria-pressed]="waitingOnly()"
-      data-testid="waiting-filter"
-    >
-      {{ waitingOnly() ? 'Show all' : 'Needs you (' + needsYouCount() + ')' }}
-    </button>
-    }
-    <button
-      matButton
-      type="button"
-      (click)="showArchived(!archived())"
-      [attr.aria-pressed]="archived()"
-      data-testid="archived-filter"
-    >
-      {{ archived() ? 'Current sessions' : 'Archived' }}
-    </button>
-    <a matButton routerLink="/usage" data-testid="usage-link">Usage</a>
-  </span>
-</div>
-<app-limits-summary />
 <app-session-search (active)="searching.set($event)" />
-@if (searching()) {
-<!-- The search results replace the list. -->
-} @else { @if (staleSince(); as since) {
+@if (!searching()) {
+<div class="filters" role="group" aria-label="Show">
+  <button
+    type="button"
+    class="chip"
+    [class.on]="filter() === 'all'"
+    [attr.aria-pressed]="filter() === 'all'"
+    (click)="setFilter('all')"
+    data-testid="all-filter"
+  >
+    All
+  </button>
+  <button
+    type="button"
+    class="chip"
+    [class.on]="filter() === 'waiting'"
+    [attr.aria-pressed]="filter() === 'waiting'"
+    (click)="setFilter('waiting')"
+    data-testid="waiting-filter"
+  >
+    Needs you @if (!archived() && needsYouCount() > 0) {<span
+      class="count attention"
+      >{{ needsYouCount() }}</span
+    >}
+  </button>
+  <button
+    type="button"
+    class="chip"
+    [class.on]="filter() === 'running'"
+    [attr.aria-pressed]="filter() === 'running'"
+    (click)="setFilter('running')"
+    data-testid="running-filter"
+  >
+    Running @if (!archived() && runningCount() > 0) {<span class="count"
+      >{{ runningCount() }}</span
+    >}
+  </button>
+  <button
+    type="button"
+    class="chip"
+    [class.on]="archived()"
+    [attr.aria-pressed]="archived()"
+    (click)="setFilter('archived')"
+    data-testid="archived-filter"
+  >
+    Archived
+  </button>
+</div>
+@if (staleSince(); as since) {
 <p class="stale" role="status" data-testid="stale-list">
-  Offline: the sessions as of {{ since | appDate }}. They may be out of date.
+  <app-icon name="cloud-off" />
+  <span class="stale-text"
+    >Offline: the sessions as of {{ since | appDate }}. They may be out of
+    date.</span
+  >
   <button matButton type="button" (click)="load()">Retry</button>
 </p>
 } @if (loading() && sessions().length === 0) {
-<mat-progress-spinner mode="indeterminate" diameter="32" />
+<mat-progress-bar mode="indeterminate" />
 } @else if (loadError(); as error) {
-<p class="error">{{ error }}</p>
+<p class="app-error">{{ error }}</p>
 } @else if (sessions().length === 0) {
 <p class="empty">
-  {{ archived() ? 'No archived sessions.' : 'No sessions yet.' }}
+  @if (archived()) { No archived sessions. } @else { No sessions yet.
+  <a routerLink="/new">Start one.</a> }
 </p>
 } @else if (shown().length === 0) {
-<p class="empty" data-testid="no-waiting">No session needs you.</p>
-} @else {
-<nav class="sessions" [class.stale-list]="staleSince() !== null">
-  @for (session of shown(); track session.id) {
-  <a
-    class="session"
-    [routerLink]="['/sessions', session.id]"
-    data-testid="session"
-  >
+<p class="empty" data-testid="no-waiting">
+  {{ filter() === 'running' ? 'No session is running.' : 'No session needs you.'
+  }}
+</p>
+} @else { @for (group of groups(); track group.key) { @if (group.label) {
+<h2 class="app-section-label group-label">{{ group.label }}</h2>
+}
+<nav
+  class="list"
+  [class.stale-list]="staleSince() !== null"
+  [attr.aria-label]="group.label || 'Sessions'"
+>
+  @for (session of group.sessions; track session.id) { @let kind =
+  statusKind(session);
+  <a class="row" [routerLink]="['/sessions', session.id]" data-testid="session">
+    <app-status-dot [kind]="kind" />
     <span class="title">{{ session.title || 'Untitled session' }}</span>
+    <time
+      class="time"
+      [attr.datetime]="session.updatedAt"
+      [title]="session.updatedAt | appDate"
+      >{{ session.updatedAt | appDate: 'relative' : now() }}</time
+    >
     <span class="meta">
-      <span
-        class="status {{ statusClass(session) }}"
-        data-testid="session-status"
+      @if (tagged(kind)) {
+      <span class="status {{ kindClass[kind] }}" data-testid="session-status"
         >{{ statusLabel(session) }}</span
       >
-      <span>{{ session.updatedAt | appDate }}</span>
-      @if (workspaceLabel(session); as workspace) {
-      <span class="workspace">{{ workspace }}</span>
-      } @if (session.model) {
-      <span>{{ modelLabel(models(), session.model) }}</span>
-      }
-      <span>
-        {{ formatTokens(totalTokens(session.usage)) }} tokens · {{
-        formatCost(session.usage.costUsd) }}
-      </span>
-      @if (!resumable(session)) {
-      <span class="tag" data-testid="not-resumable"
+      } @else {
+      <span class="state" data-testid="session-status"
+        >{{ statusLabel(session) }}</span
+      >
+      } @if (workspaceLabel(session); as workspace) {
+      <span class="repo">{{ workspace }}</span>
+      } @if (!resumable(session)) {
+      <span class="app-tag" data-testid="not-resumable"
         >{{ session.archivedAt ? 'Archived' : 'Clones removed' }}</span
       >
       }
     </span>
+    <span class="extra">
+      <span class="model">{{ modelLabel(models(), session.model) }}</span>
+      <span class="usage"
+        >{{ formatTokens(totalTokens(session.usage)) }} tokens · {{
+        formatCost(session.usage.costUsd) }}</span
+      >
+    </span>
   </a>
   }
 </nav>
-} }
+} } }

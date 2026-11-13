@@ -39,7 +39,7 @@
     {
       "name": "New session",
       "short_name": "New",
-      "url": "/?new=1",
+      "url": "/new",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
     },
     {

@@ -5,7 +5,6 @@ import {
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
-import { SHARE_CACHE, storeShare } from '../../sw/share-store';
 import { SessionList } from './session-list';
 import { SESSION_LIST_KEY, saveSessionList } from './session-list-cache';
 import { WEBSOCKET_FACTORY } from './session-socket';
@@ -48,10 +47,6 @@ describe('SessionList', () => {
 
   it('lists sessions with status, repositories and usage, updated live', async () => {
     const fixture = await render();
-    http.expectOne('/api/repositories').flush({
-      repositories: [],
-      strayDirectories: [],
-    });
     http.expectOne('/api/sessions').flush({
       sessions: [
         sessionDto(),
@@ -91,35 +86,6 @@ describe('SessionList', () => {
     expect(rows()[0]).toContain('Running');
   });
 
-  it('opens a session started with the form', async () => {
-    const fixture = await render();
-    http.expectOne('/api/sessions').flush({ sessions: [] });
-    http.expectOne('/api/repositories').flush({
-      repositories: [],
-      strayDirectories: [],
-    });
-    await fixture.whenStable();
-    expect((fixture.nativeElement as HTMLElement).textContent).toContain(
-      'No sessions yet',
-    );
-
-    const router = TestBed.inject(Router);
-    const navigate = vi.spyOn(router, 'navigate').mockResolvedValue(true);
-    const form = fixture.debugElement.query(
-      (node) => node.name === 'app-new-session-form',
-    );
-    (
-      form.componentInstance as { created: { emit(s: unknown): void } }
-    ).created.emit(sessionDto({ id: 'new', status: 'preparing' }));
-    await fixture.whenStable();
-
-    expect(navigate).toHaveBeenCalledWith(['/sessions', 'new']);
-    const element = fixture.nativeElement as HTMLElement;
-    expect(
-      element.querySelector('[data-testid="session"]')?.textContent,
-    ).toContain('Preparing');
-  });
-
   const rows = (fixture: { nativeElement: unknown }) =>
     [
       ...(fixture.nativeElement as HTMLElement).querySelectorAll(
@@ -130,10 +96,6 @@ describe('SessionList', () => {
   it('shows only sessions that need the user from the "Waiting sessions" shortcut', async () => {
     await TestBed.inject(Router).navigateByUrl('/?waiting=1');
     const fixture = await render();
-    http.expectOne('/api/repositories').flush({
-      repositories: [],
-      strayDirectories: [],
-    });
     http.expectOne('/api/sessions').flush({
       sessions: [
         sessionDto({ id: 's1', title: 'Needs me', waitingFor: 'permission' }),
@@ -155,11 +117,16 @@ describe('SessionList', () => {
     const filter = (fixture.nativeElement as HTMLElement).querySelector(
       '[data-testid="waiting-filter"]',
     ) as HTMLElement;
-    expect(filter.textContent?.trim()).toBe('Show all');
-    filter.click();
+    expect(filter.getAttribute('aria-pressed')).toBe('true');
+    expect(filter.textContent?.replace(/\s+/g, ' ').trim()).toBe('Needs you 2');
+    (
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-testid="all-filter"]',
+      ) as HTMLElement
+    ).click();
     await fixture.whenStable();
     expect(rows(fixture)).toHaveLength(4);
-    expect(filter.textContent?.trim()).toBe('Needs you (2)');
+    expect(filter.getAttribute('aria-pressed')).toBe('false');
   });
 
   it('shows the last known list, marked as stale, when offline', async () => {
@@ -169,10 +136,6 @@ describe('SessionList', () => {
       new Date('2026-03-01T10:00:00Z'),
     );
     const fixture = await render();
-    http.expectOne('/api/repositories').flush({
-      repositories: [],
-      strayDirectories: [],
-    });
     http.expectOne('/api/sessions').error(new ProgressEvent('error'));
     await fixture.whenStable();
     const element = fixture.nativeElement as HTMLElement;
@@ -192,52 +155,43 @@ describe('SessionList', () => {
     expect(localStorage.getItem(SESSION_LIST_KEY)).toContain('Current');
   });
 
-  it('fills the form with content shared to the app', async () => {
-    const store = new Map<string, Response>();
-    const cache = {
-      put: async (key: string, response: Response) =>
-        void store.set(key, response),
-      match: async (key: string) => store.get(key)?.clone(),
-      delete: async (key: string) => store.delete(key),
-      keys: async () => [...store.keys()].map((url) => ({ url })),
-    };
-    vi.stubGlobal('caches', {
-      open: async (name: string) => (name === SHARE_CACHE ? cache : null),
-    });
-    URL.createObjectURL = vi.fn(() => 'blob:preview');
-    await storeShare(cache, 'abc', {
-      title: '',
-      text: 'The login fails',
-      url: 'https://example.com/1',
-      files: [new File(['png'], 'shot.png', { type: 'image/png' })],
-    });
-    await TestBed.inject(Router).navigateByUrl('/?share=abc');
-    const fixture = await render();
-    http.expectOne('/api/repositories').flush({
-      repositories: [],
-      strayDirectories: [],
-    });
-    http.expectOne('/api/sessions').flush({ sessions: [] });
-    await fixture.whenStable();
-    await new Promise((resolve) => setTimeout(resolve));
+  it('sends older "new session" and share links on to /new', async () => {
+    const router = TestBed.inject(Router);
+    await router.navigateByUrl('/?share=abc');
+    const navigate = vi.spyOn(router, 'navigate').mockResolvedValue(true);
+    const fixture = TestBed.createComponent(SessionList);
     fixture.detectChanges();
+    expect(navigate).toHaveBeenCalledWith(['/new'], {
+      queryParams: { share: 'abc' },
+      replaceUrl: true,
+    });
+    http.expectOne('/api/limits');
+  });
+
+  it('groups the sessions by what they need', async () => {
+    const fixture = await render();
+    http.expectOne('/api/sessions').flush({
+      sessions: [
+        sessionDto({ id: 's1', title: 'Idle', waitingFor: 'message' }),
+        sessionDto({ id: 's2', title: 'Ask', waitingFor: 'permission' }),
+        sessionDto({
+          id: 's3',
+          title: 'Busy',
+          status: 'running',
+          waitingFor: null,
+        }),
+      ],
+    });
     await fixture.whenStable();
     const element = fixture.nativeElement as HTMLElement;
     expect(
-      (
-        element.querySelector(
-          '[data-testid="new-prompt"]',
-        ) as HTMLTextAreaElement
-      ).value,
-    ).toBe('The login fails\n\nhttps://example.com/1');
-    expect(
-      element.querySelector('[data-testid="share-notice"]'),
-    ).not.toBeNull();
-    expect(store.size).toBe(0);
-    // The image is uploaded once, like an attached one.
-    http
-      .expectOne({ method: 'POST', url: '/api/attachments' })
-      .flush({ id: 'a1', name: 'shot.png', mediaType: 'image/png', size: 3 });
-    vi.unstubAllGlobals();
+      [...element.querySelectorAll('.group-label')].map((label) =>
+        label.textContent?.trim(),
+      ),
+    ).toEqual(['Needs you', 'Running', 'Recent']);
+    const titles = [
+      ...element.querySelectorAll('[data-testid="session"] .title'),
+    ].map((title) => title.textContent?.trim());
+    expect(titles).toEqual(['Ask', 'Busy', 'Idle']);
   });
 });

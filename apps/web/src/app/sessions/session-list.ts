@@ -1,4 +1,3 @@
-import { AppDatePipe } from '../ui/dates';
 import {
   Component,
   DestroyRef,
@@ -6,14 +5,11 @@ import {
   effect,
   inject,
   signal,
-  viewChild,
-  type AfterViewInit,
   type OnInit,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
-import { MatCardModule } from '@angular/material/card';
-import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
   canResume,
@@ -21,77 +17,87 @@ import {
   type SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { LimitsIndicator } from '../limits/limits-indicator';
-import { LimitsSummary } from '../limits/limits-summary';
+import { AppDatePipe } from '../ui/dates';
+import { AppIcon } from '../ui/icon';
 import { AppPageBar } from '../ui/page-bar';
-import { SessionSearch } from './session-search';
-import { SHARE_CACHE, sharedPrompt, takeShare } from '../../sw/share-store';
 import {
-  formatCost,
-  formatTokens,
-  statusClass,
-  statusLabel,
-  totalTokens,
-} from './format';
+  StatusDot,
+  STATUS_KIND_CLASS,
+  statusKind,
+  type StatusKind,
+} from '../ui/status-badge';
+import { formatCost, formatTokens, statusLabel, totalTokens } from './format';
 import { ModelsStore, modelLabel } from './models-store';
-import { NewSessionForm, type SessionPrefill } from './new-session-form';
 import { loadSessionList, saveSessionList } from './session-list-cache';
+import { SessionSearch } from './session-search';
 import { SessionSocket } from './session-socket';
 import { SessionsApi } from './sessions-api';
 
+/** What the list shows: all current sessions, a part of them, or the archive. */
+export type SessionFilter = 'all' | 'waiting' | 'running' | 'archived';
+
+interface SessionGroup {
+  key: string;
+  label: string;
+  sessions: SessionDto[];
+}
+
+const RUNNING = new Set(['preparing', 'running']);
+
 /**
- * Start page: all sessions with their status, and a form for a new one.
- * Query parameters of the app shortcuts and the share target: `new` puts
- * the cursor into the form, `waiting` shows only sessions that need the user (open approval,
- * question, plan or failed setup; the same count as the badge), `share`
- * fills the form with content shared to the app. Without a connection it
- * shows the last known list, marked as stale.
+ * Start page: the sessions, grouped by what they need (needs you, running,
+ * recent), with search and filters; "New session" leads to `/new`. Query
+ * parameters (app shortcuts, links): `waiting` shows only sessions that
+ * need the user (open approval, question, plan or failed setup; the same
+ * count as the badge), `running` only working ones, `archived` the archive.
+ * `new` and `share` (older shortcuts and share targets) go on to `/new`.
+ * Without a connection it shows the last known list, marked as stale.
  */
 @Component({
   selector: 'app-session-list',
   host: { class: 'app-page' },
   imports: [
     AppDatePipe,
+    AppIcon,
     AppPageBar,
     LimitsIndicator,
-    LimitsSummary,
     MatButtonModule,
-    MatCardModule,
-    MatProgressSpinnerModule,
-    NewSessionForm,
+    MatProgressBarModule,
     RouterLink,
     SessionSearch,
+    StatusDot,
   ],
   templateUrl: './session-list.html',
   styleUrl: './session-list.scss',
 })
-export class SessionList implements OnInit, AfterViewInit {
+export class SessionList implements OnInit {
   private readonly api = inject(SessionsApi);
   private readonly socket = inject(SessionSocket);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
-  private readonly form = viewChild(NewSessionForm);
 
   protected readonly statusLabel = statusLabel;
-  protected readonly statusClass = statusClass;
+  protected readonly statusKind = statusKind;
+  protected readonly kindClass = STATUS_KIND_CLASS;
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;
   protected readonly modelLabel = modelLabel;
-  protected readonly models = inject(ModelsStore).models;
+  private readonly modelsStore = inject(ModelsStore);
+  protected readonly models = this.modelsStore.models;
 
+  /** Ticks for the relative times. */
+  protected readonly now = signal(Date.now());
   protected readonly loading = signal(true);
   protected readonly loadError = signal<string | null>(null);
   /** When the list shown was loaded, if it is the stored one (offline). */
   protected readonly staleSince = signal<string | null>(null);
-  protected readonly waitingOnly = signal(false);
-  /** Shows the archived sessions instead of the current ones. */
-  protected readonly archived = signal(false);
+  protected readonly filter = signal<SessionFilter>('all');
+  protected readonly archived = computed(() => this.filter() === 'archived');
   /** A search query is entered: its results replace the list. */
   protected readonly searching = signal(false);
   protected readonly resumable = canResume;
-  protected readonly prefill = signal<SessionPrefill | null>(null);
-  protected readonly shareNotice = signal<string | null>(null);
   private readonly sessionMap = signal(new Map<string, SessionDto>());
   protected readonly sessions = computed(() =>
     [...this.sessionMap().values()].sort((a, b) =>
@@ -101,9 +107,41 @@ export class SessionList implements OnInit, AfterViewInit {
   protected readonly needsYouCount = computed(
     () => this.sessions().filter(needsUser).length,
   );
-  protected readonly shown = computed(() =>
-    this.waitingOnly() ? this.sessions().filter(needsUser) : this.sessions(),
+  protected readonly runningCount = computed(
+    () => this.sessions().filter((s) => RUNNING.has(s.status)).length,
   );
+  protected readonly shown = computed(() => {
+    const sessions = this.sessions();
+    switch (this.filter()) {
+      case 'waiting':
+        return sessions.filter(needsUser);
+      case 'running':
+        return sessions.filter((s) => RUNNING.has(s.status));
+      default:
+        return sessions;
+    }
+  });
+  /** Needs you, running, then the rest; the archive and filters as one. */
+  protected readonly groups = computed<SessionGroup[]>(() => {
+    const shown = this.shown();
+    if (this.filter() !== 'all') {
+      return [{ key: this.filter(), label: '', sessions: shown }];
+    }
+    const groups: SessionGroup[] = [
+      { key: 'waiting', label: 'Needs you', sessions: [] },
+      { key: 'running', label: 'Running', sessions: [] },
+      { key: 'recent', label: 'Recent', sessions: [] },
+    ];
+    for (const session of shown) {
+      const index = needsUser(session)
+        ? 0
+        : RUNNING.has(session.status)
+          ? 1
+          : 2;
+      groups[index].sessions.push(session);
+    }
+    return groups.filter((group) => group.sessions.length > 0);
+  });
 
   constructor() {
     // The list as last loaded, for starts without a connection.
@@ -122,12 +160,27 @@ export class SessionList implements OnInit, AfterViewInit {
 
   ngOnInit(): void {
     const params = this.route.snapshot.queryParamMap;
-    this.waitingOnly.set(params.has('waiting'));
-    this.archived.set(params.has('archived'));
-    const share = params.get('share');
-    if (share) {
-      void this.takeShare(share);
+    // Older shortcuts and share redirects: starting a session is a page.
+    if (params.has('new') || params.has('share')) {
+      const share = params.get('share');
+      void this.router.navigate(['/new'], {
+        queryParams: share ? { share } : {},
+        replaceUrl: true,
+      });
+      return;
     }
+    this.filter.set(
+      params.has('archived')
+        ? 'archived'
+        : params.has('waiting')
+          ? 'waiting'
+          : params.has('running')
+            ? 'running'
+            : 'all',
+    );
+    this.modelsStore.load();
+    const timer = setInterval(() => this.now.set(Date.now()), 30_000);
+    this.destroyRef.onDestroy(() => clearInterval(timer));
     this.socket.connect();
     this.socket.messages$
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -153,12 +206,6 @@ export class SessionList implements OnInit, AfterViewInit {
     this.load();
   }
 
-  ngAfterViewInit(): void {
-    if (this.route.snapshot.queryParamMap.has('new')) {
-      this.form()?.focusPrompt();
-    }
-  }
-
   protected load(): void {
     this.loading.set(true);
     this.loadError.set(null);
@@ -179,6 +226,7 @@ export class SessionList implements OnInit, AfterViewInit {
         this.staleSince.set(null);
         this.sessionMap.set(map);
         this.loading.set(false);
+        this.now.set(Date.now());
       },
       error: () => {
         if (archived) {
@@ -203,17 +251,23 @@ export class SessionList implements OnInit, AfterViewInit {
   /** The list was switched (current/archived): do not merge the old one. */
   private switched = false;
 
-  protected showArchived(on: boolean): void {
-    this.archived.set(on);
-    this.waitingOnly.set(false);
-    this.switched = true;
-    this.sessionMap.set(new Map());
+  protected setFilter(filter: SessionFilter): void {
+    const wasArchived = this.archived();
+    this.filter.set(filter);
     void this.router.navigate([], {
-      queryParams: { archived: on ? 1 : null, waiting: null },
+      queryParams: {
+        waiting: filter === 'waiting' ? 1 : null,
+        running: filter === 'running' ? 1 : null,
+        archived: filter === 'archived' ? 1 : null,
+      },
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
-    this.load();
+    if (wasArchived !== this.archived()) {
+      this.switched = true;
+      this.sessionMap.set(new Map());
+      this.load();
+    }
   }
 
   private drop(id: string): void {
@@ -224,15 +278,6 @@ export class SessionList implements OnInit, AfterViewInit {
         return next;
       });
     }
-  }
-
-  protected showWaiting(on: boolean): void {
-    this.waitingOnly.set(on);
-    void this.router.navigate([], {
-      queryParams: { waiting: on ? 1 : null },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
   }
 
   /** Repositories of a session, e.g. `acme/app + acme/lib`, or `Scratch`. */
@@ -247,40 +292,12 @@ export class SessionList implements OnInit, AfterViewInit {
       .join(' + ');
   }
 
-  protected open(session: SessionDto): void {
-    this.upsert(session);
-    void this.router.navigate(['/sessions', session.id]);
+  /** Kinds whose state is a coloured tag; the others are plain text. */
+  protected tagged(kind: StatusKind): boolean {
+    return kind === 'attention' || kind === 'running' || kind === 'failed';
   }
 
   private upsert(session: SessionDto): void {
     this.sessionMap.update((map) => new Map(map).set(session.id, session));
-  }
-
-  /** Content shared to the app becomes the new session's prompt and images. */
-  private async takeShare(id: string): Promise<void> {
-    try {
-      const content =
-        id !== 'failed' && 'caches' in globalThis
-          ? await takeShare(await caches.open(SHARE_CACHE), id)
-          : null;
-      if (content) {
-        this.prefill.set({
-          prompt: sharedPrompt(content),
-          files: content.files,
-        });
-        this.shareNotice.set(
-          'Shared content is in the form below: choose where the session works and start it.',
-        );
-      } else {
-        this.shareNotice.set('The shared content could not be received.');
-      }
-    } catch {
-      this.shareNotice.set('The shared content could not be received.');
-    }
-    void this.router.navigate([], {
-      queryParams: { share: null },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
   }
 }

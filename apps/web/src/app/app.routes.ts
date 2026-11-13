@@ -8,6 +8,11 @@ export const appRoutes: Route[] = [
       import('./sessions/session-list').then((m) => m.SessionList),
   },
   {
+    path: 'new',
+    loadComponent: () =>
+      import('./sessions/new-session-page').then((m) => m.NewSessionPage),
+  },
+  {
     path: 'sessions/:id',
     loadComponent: () =>
       import('./sessions/session-view').then((m) => m.SessionView),

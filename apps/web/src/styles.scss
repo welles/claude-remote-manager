@@ -12,3 +12,8 @@ html {
 
 @include base.base;
 @include base.markdown;
+
+// Compact containers: form fields at density -2 (buttons keep their size).
+.app-compact {
+  @include theme.compact;
+}

@@ -166,9 +166,9 @@ async function receiveShare(request: Request): Promise<Response> {
   try {
     const content = readShareForm(await request.formData());
     await storeShare(await caches.open(SHARE_CACHE), id, content);
-    return Response.redirect(`/?share=${id}`, 303);
+    return Response.redirect(`/new?share=${id}`, 303);
   } catch {
-    return Response.redirect('/?share=failed', 303);
+    return Response.redirect('/new?share=failed', 303);
   }
 }
 
