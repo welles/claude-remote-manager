@@ -26,6 +26,32 @@ export interface AppConfig {
   allowedOrigins: string[];
   /** Host names besides the loopback names the server answers to. */
   allowedHosts: string[];
+  /**
+   * URL under which processes on this machine reach the API (the git
+   * credential helper of session clones).
+   */
+  internalApiUrl: string;
+  /**
+   * Claude Code auto-memory per repository: `<memoryDir>/<owner>/<name>`,
+   * shared by all sessions of a repository.
+   */
+  memoryDir: string;
+  /** GitHub App; `null` when not configured. */
+  github: GitHubAppConfig | null;
+}
+
+/**
+ * GitHub App settings. The private key itself is not part of the
+ * configuration object: it is read from `privateKeyFile` or from the
+ * secret variable `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` (see
+ * github/github-app-credentials.ts), so it cannot end up in logs or dumps
+ * of the configuration.
+ */
+export interface GitHubAppConfig {
+  /** App ID (numeric), used as JWT issuer. */
+  appId: string;
+  /** File with the PEM private key; `null` to read it from the secret variable. */
+  privateKeyFile: string | null;
 }
 
 /** The Angular dev server, allowed outside production. */
@@ -61,6 +87,12 @@ export function loadAppConfig(env: Env = process.env): AppConfig {
     return result * 60_000;
   };
   const workspaceDir = dir('WORKSPACE_DIR', 'workspace');
+  const port = value('PORT') ?? '3000';
+  const claudeConfigDir = value('CLAUDE_CONFIG_DIR');
+  const appId = value('GITHUB_APP_ID');
+  if (appId !== undefined && !/^\d+$/.test(appId)) {
+    throw new Error('GITHUB_APP_ID must be the numeric App ID');
+  }
   return {
     dbDir: resolve(value('DB_DIR') ?? 'data/db'),
     ...workspaceLayout(workspaceDir),
@@ -78,6 +110,43 @@ export function loadAppConfig(env: Env = process.env): AppConfig {
       }),
     ],
     allowedHosts: list(value('ALLOWED_HOSTS')),
+    internalApiUrl: (
+      value('INTERNAL_API_URL') ?? `http://127.0.0.1:${port}`
+    ).replace(/\/+$/, ''),
+    memoryDir: resolve(
+      value('MEMORY_DIR') ??
+        (claudeConfigDir
+          ? join(claudeConfigDir, 'repository-memory')
+          : join(devDataDir, 'memory')),
+    ),
+    github: appId
+      ? {
+          appId,
+          privateKeyFile: value('GITHUB_APP_PRIVATE_KEY_FILE')
+            ? resolve(value('GITHUB_APP_PRIVATE_KEY_FILE') as string)
+            : null,
+        }
+      : null,
+  };
+}
+
+/** Configuration for tests: everything below `dir`, no GitHub App. */
+export function testAppConfig(
+  dir: string,
+  overrides: Partial<AppConfig> = {},
+): AppConfig {
+  return {
+    dbDir: ':memory:',
+    ...workspaceLayout(join(dir, 'workspace')),
+    setupScriptTimeoutMs: 10_000,
+    sessionIdleTimeoutMs: 0,
+    claudeExecutable: null,
+    allowedOrigins: [],
+    allowedHosts: [],
+    internalApiUrl: 'http://127.0.0.1:3000',
+    memoryDir: join(dir, 'memory'),
+    github: null,
+    ...overrides,
   };
 }
 

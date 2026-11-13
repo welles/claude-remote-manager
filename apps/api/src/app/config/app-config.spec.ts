@@ -16,6 +16,9 @@ describe('loadAppConfig', () => {
       claudeExecutable: null,
       allowedOrigins: DEV_ORIGINS,
       allowedHosts: [],
+      internalApiUrl: 'http://127.0.0.1:3000',
+      memoryDir: join(devData, 'memory'),
+      github: null,
     });
   });
 
@@ -30,6 +33,10 @@ describe('loadAppConfig', () => {
         NODE_ENV: 'production',
         ALLOWED_ORIGINS: 'https://crm.example.com/, https://other.example:8443',
         ALLOWED_HOSTS: 'crm.example.com,crm.internal',
+        PORT: '8080',
+        CLAUDE_CONFIG_DIR: '/data/claude',
+        GITHUB_APP_ID: '12345',
+        GITHUB_APP_PRIVATE_KEY_FILE: '/run/secrets/github-app-key',
       }),
     ).toEqual({
       dbDir: '/data/db',
@@ -42,7 +49,19 @@ describe('loadAppConfig', () => {
       claudeExecutable: '/usr/local/bin/claude',
       allowedOrigins: ['https://crm.example.com', 'https://other.example:8443'],
       allowedHosts: ['crm.example.com', 'crm.internal'],
+      internalApiUrl: 'http://127.0.0.1:8080',
+      memoryDir: '/data/claude/repository-memory',
+      github: {
+        appId: '12345',
+        privateKeyFile: '/run/secrets/github-app-key',
+      },
     });
+  });
+
+  it('rejects a GitHub App ID that is not numeric', () => {
+    expect(() => loadAppConfig({ GITHUB_APP_ID: 'Iv23abc' })).toThrow(
+      'GITHUB_APP_ID',
+    );
   });
 
   it('rejects invalid allowed origins', () => {

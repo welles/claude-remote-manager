@@ -1,0 +1,561 @@
+import { Injectable, Logger } from '@nestjs/common';
+import type {
+  GitHubInstallationDto,
+  GitHubRepositoryDto,
+  GitHubStatusDto,
+} from '@claude-remote-manager/shared-types';
+import { GitHubAppCredentials } from './github-app-credentials';
+import { GitHubApiError, GitHubNotConfiguredError } from './github-errors';
+import { GitHubHttp } from './github-http';
+import {
+  InstallationTokens,
+  type GitHubPermissionSet,
+  type InstallationToken,
+} from './installation-tokens';
+
+/** Host of clone URLs of GitHub repositories. */
+export const GITHUB_HOST = 'github.com';
+
+/** How long installations and repository lists are cached. */
+export const LIST_CACHE_MS = 60_000;
+const APP_CACHE_MS = 10 * 60_000;
+
+/** `https://github.com/<owner>/<name>.git`. */
+export function githubCloneUrl(owner: string, name: string): string {
+  return `https://${GITHUB_HOST}/${owner}/${name}.git`;
+}
+
+/**
+ * `owner/name` of an https clone URL on github.com, or `null` for other
+ * URLs (ssh, other hosts, local paths).
+ */
+export function githubFullName(url: string | null): string | null {
+  if (!url) {
+    return null;
+  }
+  const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(
+    url,
+  );
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+export interface GitHubInstallation {
+  id: number;
+  account: string;
+  accountType: string;
+  repositorySelection: string;
+  settingsUrl: string | null;
+}
+
+/** A repository as listed by an installation. */
+export type GitHubRepository = Omit<
+  GitHubRepositoryDto,
+  'registeredRepositoryId'
+>;
+
+export interface RepositoryListing {
+  repositories: GitHubRepository[];
+  /** Repository counts per installation (`null`: listing failed). */
+  counts: Map<number, number | null>;
+  errors: Map<number, string>;
+  fetchedAt: Date;
+}
+
+export interface PullRequestInfo {
+  number: number;
+  url: string;
+  title: string;
+  state: 'open' | 'closed' | 'merged';
+  draft: boolean;
+  headBranch: string;
+  baseBranch: string;
+  createdAt: Date;
+  closedAt: Date | null;
+  mergedAt: Date | null;
+}
+
+export interface CreatePullRequestInput {
+  title: string;
+  body: string;
+  head: string;
+  base: string;
+  draft?: boolean;
+}
+
+export interface CreatedRepository {
+  id: number;
+  owner: string;
+  name: string;
+  defaultBranch: string | null;
+  htmlUrl: string;
+}
+
+interface RawRepository {
+  id: number;
+  name: string;
+  full_name: string;
+  owner: { login: string };
+  private: boolean;
+  archived?: boolean;
+  default_branch?: string | null;
+  description?: string | null;
+  pushed_at?: string | null;
+  html_url: string;
+}
+
+interface RawPullRequest {
+  number: number;
+  html_url: string;
+  title: string;
+  state: 'open' | 'closed';
+  draft?: boolean;
+  merged_at?: string | null;
+  closed_at?: string | null;
+  created_at: string;
+  head: { ref: string };
+  base: { ref: string };
+}
+
+interface RawInstallation {
+  id: number;
+  account: { login: string; type: string } | null;
+  repository_selection: string;
+  html_url?: string;
+}
+
+/** `owner/name` with both parts URL-encoded. */
+function repoPath(fullName: string): string {
+  return fullName.split('/').map(encodeURIComponent).join('/');
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function toPullRequest(raw: RawPullRequest): PullRequestInfo {
+  return {
+    number: raw.number,
+    url: raw.html_url,
+    title: raw.title,
+    state: raw.merged_at ? 'merged' : raw.state,
+    draft: raw.draft ?? false,
+    headBranch: raw.head.ref,
+    baseBranch: raw.base.ref,
+    createdAt: new Date(raw.created_at),
+    closedAt: raw.closed_at ? new Date(raw.closed_at) : null,
+    mergedAt: raw.merged_at ? new Date(raw.merged_at) : null,
+  };
+}
+
+function toRepository(
+  raw: RawRepository,
+  installationId: number,
+): GitHubRepository {
+  return {
+    id: raw.id,
+    installationId,
+    owner: raw.owner.login,
+    name: raw.name,
+    fullName: raw.full_name,
+    private: raw.private,
+    archived: raw.archived ?? false,
+    defaultBranch: raw.default_branch ?? null,
+    description: raw.description ?? null,
+    pushedAt: raw.pushed_at ?? null,
+    htmlUrl: raw.html_url,
+  };
+}
+
+/**
+ * The GitHub App: its installations, the repositories they can access, and
+ * the few API operations of the app (pull requests, repository creation).
+ * Every call authenticates with the app JWT or with an installation token
+ * narrowed to the repository and permissions of the call.
+ */
+@Injectable()
+export class GitHubService {
+  private readonly logger = new Logger(GitHubService.name);
+  private app: {
+    at: number;
+    value: Promise<{ name: string; slug: string; url: string }>;
+  } | null = null;
+  private installationCache: {
+    at: number;
+    value: Promise<GitHubInstallation[]>;
+  } | null = null;
+  private listingCache: {
+    at: number;
+    value: Promise<RepositoryListing>;
+  } | null = null;
+
+  constructor(
+    readonly credentials: GitHubAppCredentials,
+    private readonly http: GitHubHttp,
+    readonly tokens: InstallationTokens,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  get configured(): boolean {
+    return this.credentials.configured;
+  }
+
+  /** Throws a clear error when the app is not configured. */
+  requireConfigured(): void {
+    if (!this.configured) {
+      throw new GitHubNotConfiguredError(this.credentials.problem ?? undefined);
+    }
+  }
+
+  async status(): Promise<GitHubStatusDto> {
+    const base: GitHubStatusDto = {
+      configured: this.configured,
+      problem: this.configured ? null : this.credentials.problem,
+      appId: this.credentials.appId,
+      appName: null,
+      appSlug: null,
+      appUrl: null,
+      installUrl: null,
+      installations: [],
+      error: null,
+    };
+    if (!this.configured) {
+      return base;
+    }
+    try {
+      const app = await this.appInfo();
+      const installations = await this.installations();
+      const listing = await this.listing();
+      return {
+        ...base,
+        appName: app.name,
+        appSlug: app.slug,
+        appUrl: app.url,
+        installUrl: `https://${GITHUB_HOST}/apps/${app.slug}/installations/new`,
+        installations: installations.map(
+          (installation): GitHubInstallationDto => ({
+            ...installation,
+            repositoryCount: listing.counts.get(installation.id) ?? null,
+            error: listing.errors.get(installation.id) ?? null,
+          }),
+        ),
+      };
+    } catch (error) {
+      return { ...base, error: errorText(error) };
+    }
+  }
+
+  /** Installations of the app (cached for a minute). */
+  installations(refresh = false): Promise<GitHubInstallation[]> {
+    this.requireConfigured();
+    if (
+      refresh ||
+      !this.installationCache ||
+      this.now() - this.installationCache.at > LIST_CACHE_MS
+    ) {
+      const value = this.http
+        .paginate<RawInstallation[], RawInstallation>(
+          { path: '/app/installations', token: this.credentials.jwt() },
+          (page) => page,
+        )
+        .then((raw) =>
+          raw
+            .filter((installation) => installation.account)
+            .map((installation) => ({
+              id: installation.id,
+              account: installation.account?.login ?? '',
+              accountType: installation.account?.type ?? 'User',
+              repositorySelection: installation.repository_selection,
+              settingsUrl: installation.html_url ?? null,
+            })),
+        );
+      this.installationCache = { at: this.now(), value };
+      value.catch(() => {
+        if (this.installationCache?.value === value) {
+          this.installationCache = null;
+        }
+      });
+    }
+    return this.installationCache.value;
+  }
+
+  /**
+   * All repositories the installations can access, across the user's
+   * account and organizations (cached for a minute). An installation whose
+   * repositories cannot be listed is reported in `errors`; the others are
+   * still listed.
+   */
+  listing(refresh = false): Promise<RepositoryListing> {
+    this.requireConfigured();
+    if (
+      refresh ||
+      !this.listingCache ||
+      this.now() - this.listingCache.at > LIST_CACHE_MS
+    ) {
+      const value = this.fetchListing(refresh);
+      this.listingCache = { at: this.now(), value };
+      value.catch(() => {
+        if (this.listingCache?.value === value) {
+          this.listingCache = null;
+        }
+      });
+    }
+    return this.listingCache.value;
+  }
+
+  /** A repository the installations can access, by GitHub ID. */
+  async findRepository(id: number): Promise<GitHubRepository | null> {
+    const cached = (await this.listing()).repositories.find(
+      (repository) => repository.id === id,
+    );
+    if (cached) {
+      return cached;
+    }
+    return (
+      (await this.listing(true)).repositories.find(
+        (repository) => repository.id === id,
+      ) ?? null
+    );
+  }
+
+  /** Installation that covers `owner/name` now (it may have changed). */
+  async installationFor(owner: string, name: string): Promise<number | null> {
+    this.requireConfigured();
+    try {
+      const response = await this.http.request<{ id: number }>({
+        path: `/repos/${repoPath(`${owner}/${name}`)}/installation`,
+        token: this.credentials.jwt(),
+      });
+      return response.data.id;
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.githubStatus === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /** A token for one repository with the given permissions. */
+  repositoryToken(
+    installationId: number,
+    repositoryId: number,
+    permissions: GitHubPermissionSet,
+    fresh = false,
+  ): Promise<InstallationToken> {
+    this.requireConfigured();
+    return this.tokens.get({
+      installationId,
+      repositoryIds: [repositoryId],
+      permissions,
+      fresh,
+    });
+  }
+
+  /**
+   * Creates a pull request. If one exists already for the head branch,
+   * returns that one (`existing: true`).
+   */
+  async createPullRequest(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    input: CreatePullRequestInput,
+  ): Promise<PullRequestInfo & { existing: boolean }> {
+    const { token } = await this.repositoryToken(installationId, repositoryId, {
+      pull_requests: 'write',
+    });
+    try {
+      const response = await this.http.request<RawPullRequest>({
+        method: 'POST',
+        path: `/repos/${repoPath(fullName)}/pulls`,
+        token,
+        body: {
+          title: input.title,
+          body: input.body,
+          head: input.head,
+          base: input.base,
+          draft: input.draft ?? false,
+          maintainer_can_modify: true,
+        },
+      });
+      return { ...toPullRequest(response.data), existing: false };
+    } catch (error) {
+      if (
+        error instanceof GitHubApiError &&
+        error.githubStatus === 422 &&
+        error.details.some((detail) => /already exists/i.test(detail))
+      ) {
+        const owner = fullName.split('/')[0];
+        const open = await this.http.request<RawPullRequest[]>({
+          path: `/repos/${repoPath(fullName)}/pulls`,
+          token,
+          query: { head: `${owner}:${input.head}`, state: 'open' },
+        });
+        if (open.data[0]) {
+          return { ...toPullRequest(open.data[0]), existing: true };
+        }
+      }
+      if (
+        error instanceof GitHubApiError &&
+        error.githubStatus === 422 &&
+        error.details.some((detail) => /^head\b/i.test(detail))
+      ) {
+        throw new GitHubApiError(
+          422,
+          `The branch ${input.head} does not exist on GitHub; push it first`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async getPullRequest(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    number: number,
+  ): Promise<PullRequestInfo> {
+    const { token } = await this.repositoryToken(installationId, repositoryId, {
+      pull_requests: 'read',
+    });
+    const response = await this.http.request<RawPullRequest>({
+      path: `/repos/${repoPath(fullName)}/pulls/${number}`,
+      token,
+    });
+    return toPullRequest(response.data);
+  }
+
+  /**
+   * Creates an empty repository in the account of an installation. For an
+   * organization this is `POST /orgs/{org}/repos` with an installation
+   * token (needs the Administration permission). For a personal account
+   * GitHub lists `POST /user/repos` for installation tokens as well; if
+   * GitHub refuses it, the error says what to do instead.
+   */
+  async createRepository(input: {
+    installation: GitHubInstallation;
+    name: string;
+    private: boolean;
+    description: string | null;
+  }): Promise<CreatedRepository> {
+    const { installation } = input;
+    const { token } = await this.tokens.get({
+      installationId: installation.id,
+      permissions: { administration: 'write', metadata: 'read' },
+      fresh: true,
+    });
+    const organization = installation.accountType === 'Organization';
+    try {
+      const response = await this.http.request<RawRepository>({
+        method: 'POST',
+        path: organization
+          ? `/orgs/${encodeURIComponent(installation.account)}/repos`
+          : '/user/repos',
+        token,
+        body: {
+          name: input.name,
+          private: input.private,
+          ...(input.description ? { description: input.description } : {}),
+          auto_init: false,
+        },
+      });
+      this.listingCache = null;
+      return {
+        id: response.data.id,
+        owner: response.data.owner.login,
+        name: response.data.name,
+        defaultBranch: response.data.default_branch ?? null,
+        htmlUrl: response.data.html_url,
+      };
+    } catch (error) {
+      if (
+        !organization &&
+        error instanceof GitHubApiError &&
+        [401, 403, 404].includes(error.githubStatus)
+      ) {
+        throw new GitHubApiError(
+          error.githubStatus,
+          `GitHub refused to create a repository in the personal account ${installation.account} with the app's installation token (${error.message}). ` +
+            'Create an empty repository there yourself and attach it to the project instead.',
+        );
+      }
+      throw error;
+    } finally {
+      this.tokens.revoke(token).catch(() => undefined);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+
+  private appInfo(): Promise<{ name: string; slug: string; url: string }> {
+    if (!this.app || this.now() - this.app.at > APP_CACHE_MS) {
+      const value = this.http
+        .request<{ name: string; slug: string; html_url: string }>({
+          path: '/app',
+          token: this.credentials.jwt(),
+        })
+        .then(({ data }) => ({
+          name: data.name,
+          slug: data.slug,
+          url: data.html_url,
+        }));
+      this.app = { at: this.now(), value };
+      value.catch(() => {
+        if (this.app?.value === value) {
+          this.app = null;
+        }
+      });
+    }
+    return this.app.value;
+  }
+
+  private async fetchListing(refresh: boolean): Promise<RepositoryListing> {
+    const installations = await this.installations(refresh);
+    const counts = new Map<number, number | null>();
+    const errors = new Map<number, string>();
+    const lists = await Promise.all(
+      installations.map(async (installation) => {
+        try {
+          // Listing only needs metadata; the token covers the whole
+          // installation but cannot read or write code.
+          const { token } = await this.tokens.get({
+            installationId: installation.id,
+            permissions: { metadata: 'read' },
+          });
+          const repositories = await this.http.paginate<
+            { repositories: RawRepository[] },
+            RawRepository
+          >(
+            { path: '/installation/repositories', token },
+            (page) => page.repositories,
+          );
+          counts.set(installation.id, repositories.length);
+          return repositories.map((raw) => toRepository(raw, installation.id));
+        } catch (error) {
+          counts.set(installation.id, null);
+          errors.set(
+            installation.id,
+            `${installation.account}: ${errorText(error)}`,
+          );
+          this.logger.warn(
+            `Listing the repositories of installation ${installation.id} failed: ${errorText(error)}`,
+          );
+          return [];
+        }
+      }),
+    );
+    const seen = new Set<number>();
+    const repositories = lists
+      .flat()
+      .filter((repository) => {
+        if (seen.has(repository.id)) {
+          return false;
+        }
+        seen.add(repository.id);
+        return true;
+      })
+      .sort((a, b) =>
+        a.fullName.localeCompare(b.fullName, 'en', { sensitivity: 'base' }),
+      );
+    return { repositories, counts, errors, fetchedAt: new Date(this.now()) };
+  }
+}

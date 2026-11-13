@@ -4,7 +4,7 @@ import type {
   SessionEvent,
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
-import { type AppConfig, workspaceLayout } from '../../config/app-config';
+import { type AppConfig, testAppConfig } from '../../config/app-config';
 import { openDatabase, type AppDatabase } from '../../db/database';
 import { GitService } from '../../git/git.service';
 import { createOrigin, gitSandbox } from '../../git/testing/git-fixtures';
@@ -40,15 +40,7 @@ export class WorkspaceHarness {
   readonly sessions = new SessionRepository(this.db);
   readonly repositoryRecords = new RepositoryRepository(this.db);
   readonly events: SessionEventEnvelope[] = [];
-  readonly config: AppConfig = {
-    dbDir: ':memory:',
-    ...workspaceLayout(join(this.dir, 'workspace')),
-    setupScriptTimeoutMs: 10_000,
-    sessionIdleTimeoutMs: 0,
-    claudeExecutable: null,
-    allowedOrigins: [],
-    allowedHosts: [],
-  };
+  readonly config: AppConfig = testAppConfig(this.dir);
   repositories!: RepositoriesService;
   workspaces!: SessionWorkspaceService;
   service!: SessionsService;

@@ -8,6 +8,7 @@ import {
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './db/database.module';
+import { GitHubModule } from './github/github.module';
 import { HealthController } from './health/health.controller';
 import { LimitsModule } from './limits/limits.module';
 import { RepositoriesModule } from './repositories/repositories.module';
@@ -29,6 +30,7 @@ const webRoot = resolve(process.env.WEB_ROOT || join(__dirname, 'public'));
     ConfigModule,
     DatabaseModule,
     SecurityModule,
+    GitHubModule,
     LimitsModule,
     RepositoriesModule,
     SessionsModule,

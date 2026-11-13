@@ -9,7 +9,7 @@ import type {
   SessionDto,
   SessionEvent,
 } from '@claude-remote-manager/shared-types';
-import { type AppConfig, workspaceLayout } from '../config/app-config';
+import { type AppConfig, testAppConfig } from '../config/app-config';
 import { openDatabase, type AppDatabase } from '../db/database';
 import { GitService } from '../git/git.service';
 import { createOrigin, gitSandbox } from '../git/testing/git-fixtures';
@@ -134,15 +134,7 @@ describe('SessionsService', () => {
     dir = sandbox.dir;
     db = openDatabase(':memory:');
     git = new GitService();
-    config = {
-      dbDir: ':memory:',
-      ...workspaceLayout(join(dir, 'workspace')),
-      setupScriptTimeoutMs: 10_000,
-      sessionIdleTimeoutMs: 0,
-      claudeExecutable: null,
-      allowedOrigins: [],
-      allowedHosts: [],
-    };
+    config = testAppConfig(dir);
     const origin = join(dir, 'origin', 'acme', 'tool');
     await createOrigin(origin);
     new RepositoryRepository(db).create({

@@ -11,7 +11,7 @@ import { AppModule } from '../app.module';
 import {
   APP_CONFIG,
   type AppConfig,
-  workspaceLayout,
+  testAppConfig,
 } from '../config/app-config';
 import { configureApp } from '../configure-app';
 import {
@@ -39,16 +39,11 @@ export async function startTestApp(
   const dir = mkdtempSync(join(tmpdir(), 'crm-app-'));
   const runner = new FakeAgentRunner();
   const transcripts = new FakeTranscriptReader();
-  const config: AppConfig = {
+  const config: AppConfig = testAppConfig(dir, {
     dbDir: join(dir, 'db'),
-    ...workspaceLayout(join(dir, 'workspace')),
     setupScriptTimeoutMs: 60_000,
-    sessionIdleTimeoutMs: 0,
-    claudeExecutable: null,
-    allowedOrigins: [],
-    allowedHosts: [],
     ...overrides,
-  };
+  });
   const module = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(APP_CONFIG)
     .useValue(config)
