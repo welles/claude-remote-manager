@@ -505,17 +505,37 @@ describe('GitService', () => {
       expect(existsSync(marker)).toBe(false);
     });
 
-    it('pushes the session branch and sets it as upstream', async () => {
-      const bare = join(sandbox.dir, 'bare.git');
-      await git(sandbox.dir, 'clone', '--quiet', '--bare', '--', origin, bare);
+    it('pushes the session branch through the mirror and sets it as upstream', async () => {
       const path = await addSession('push');
-      await git(path, 'remote', 'set-url', 'origin', bare);
+      const base = await git(path, 'rev-parse', 'HEAD');
+      await mkdir(join(path, '.github', 'workflows'), { recursive: true });
+      await commitFile(path, '.github/workflows/ci.yml', 'on: push');
       const commit = await commitFile(path, 'work.txt', 'w');
+      const asked: boolean[] = [];
 
-      expect(await service.pushBranch(path, 'claude/push', null)).toBe(commit);
-      expect(await git(bare, 'rev-parse', 'refs/heads/claude/push')).toBe(
+      expect(
+        await service.pushSessionBranch({
+          mirrorPath: mirror,
+          clonePath: path,
+          branch: 'claude/push',
+          baseCommit: base,
+          auth: async (workflows) => {
+            asked.push(workflows);
+            return null;
+          },
+        }),
+      ).toBe(commit);
+      expect(asked).toEqual([true]);
+      expect(await git(origin, 'rev-parse', 'refs/heads/claude/push')).toBe(
         commit,
       );
+      // No temporary ref and no bundle are left in the mirror.
+      expect(await git(mirror, 'for-each-ref', 'refs/crm')).toBe('');
+      expect(
+        (await readdir(join(mirror, '..'))).filter((name) =>
+          name.endsWith('.bundle'),
+        ),
+      ).toEqual([]);
       expect(await service.remoteBranchCommit(path, 'claude/push')).toBe(
         commit,
       );
@@ -527,7 +547,13 @@ describe('GitService', () => {
     it('refuses to push a branch without commits', async () => {
       const path = await addSession('none');
       await expect(
-        service.pushBranch(path, 'claude/other', null),
+        service.pushSessionBranch({
+          mirrorPath: mirror,
+          clonePath: path,
+          branch: 'claude/other',
+          baseCommit: null,
+          auth: async () => null,
+        }),
       ).rejects.toThrow('has no commits');
     });
 

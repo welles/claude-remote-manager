@@ -1,5 +1,10 @@
-import { execFile } from 'node:child_process';
-import { childEnvironment } from '../common/child-environment';
+import { execFile, spawn } from 'node:child_process';
+import { open } from 'node:fs/promises';
+import {
+  SINGLE_USER,
+  type ProcessLauncher,
+  type ProcessRole,
+} from '../common/process-isolation';
 
 /** A git command that failed; `message` ends with git's last error lines. */
 export class GitError extends Error {
@@ -25,6 +30,14 @@ export interface GitRunOptions {
    * visible to every process on the machine).
    */
   env?: Record<string, string>;
+  /** How processes are started (users, environment); single-user by default. */
+  launcher?: ProcessLauncher;
+  /**
+   * Who runs the command: `api` for the mirrors, `session` for commands in
+   * session clones (their content is the session's, so git must not run
+   * there as the API's user).
+   */
+  as?: ProcessRole;
 }
 
 /** Network operations (clone, fetch) may take long for big repositories. */
@@ -54,8 +67,10 @@ const REPOSITORY_VARIABLES = [
  */
 export function gitEnvironment(
   base: NodeJS.ProcessEnv = process.env,
+  launcher: ProcessLauncher = SINGLE_USER,
+  as: ProcessRole = 'api',
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = childEnvironment({}, { base });
+  const env: NodeJS.ProcessEnv = launcher.environment(as, {}, { base });
   for (const name of REPOSITORY_VARIABLES) {
     delete env[name];
   }
@@ -95,15 +110,22 @@ function lastLines(text: string, count = 3): string {
  */
 export function runGit(
   args: string[],
-  { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, env }: GitRunOptions = {},
+  {
+    cwd,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    env,
+    launcher = SINGLE_USER,
+    as = 'api',
+  }: GitRunOptions = {},
 ): Promise<string> {
+  const command = launcher.command(as, 'git', [...GLOBAL_OPTIONS, ...args]);
   return new Promise((resolve, reject) => {
     execFile(
-      'git',
-      [...GLOBAL_OPTIONS, ...args],
+      command.command,
+      command.args,
       {
         cwd,
-        env: { ...gitEnvironment(), ...env },
+        env: { ...gitEnvironment(process.env, launcher, as), ...env },
         timeout: timeoutMs,
         killSignal: 'SIGKILL',
         maxBuffer: MAX_BUFFER,
@@ -129,6 +151,61 @@ export function runGit(
       },
     );
   });
+}
+
+/**
+ * Runs git and writes its stdout into a new file (e.g. a bundle), as
+ * {@link runGit} does otherwise. The file is created by the API; the git
+ * process only writes to the pipe.
+ */
+export async function runGitToFile(
+  args: string[],
+  file: string,
+  {
+    cwd,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    launcher = SINGLE_USER,
+    as = 'api',
+  }: GitRunOptions = {},
+): Promise<void> {
+  const handle = await open(file, 'wx', 0o600);
+  const output = handle.createWriteStream();
+  const command = launcher.command(as, 'git', [...GLOBAL_OPTIONS, ...args]);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command.command, command.args, {
+        cwd,
+        env: gitEnvironment(process.env, launcher, as),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stderr = '';
+      const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+      child.stdout.pipe(output, { end: false });
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr = (stderr + chunk.toString('utf8')).slice(-4000);
+      });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (code === 0) {
+          output.on('finish', resolve);
+          output.end();
+        } else {
+          const name = args.find((arg) => !arg.startsWith('-')) ?? 'git';
+          reject(
+            new GitError(
+              `git ${name} failed: ${lastLines(stderr) || `exit ${code}`}`,
+              args,
+              code,
+              stderr,
+            ),
+          );
+        }
+      });
+    });
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 /**

@@ -22,6 +22,7 @@ import {
   requireString,
 } from '../common/validation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
+import { handOverToSession } from '../common/ownership';
 import { credentialHelperCommand } from '../git/credential-helper';
 import { GitService, isValidBranchName } from '../git/git.service';
 import { isGitHubRepository } from '../repositories/repository-credentials';
@@ -447,6 +448,7 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
     try {
       await mkdir(dirname(directory.path), { recursive: true });
       await mkdir(directory.path);
+      await handOverToSession(directory.path, this.git.launcher);
     } catch (error) {
       const message = `Could not create the scratch directory: ${errorText(error)}`;
       this.sessions.updateDirectory(session.id, directory.position, {

@@ -221,3 +221,6 @@ export const SINGLE_USER = new ProcessLauncher({ mode: 'single-user' });
 
 /** Secrets Claude Code itself may get in either mode. */
 export const SESSION_SECRETS = CLAUDE_CODE_SECRETS;
+
+/** Nest token of the {@link ProcessLauncher}. */
+export const PROCESS_LAUNCHER = Symbol('PROCESS_LAUNCHER');

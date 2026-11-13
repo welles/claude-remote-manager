@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { AgentTool } from '../agent/agent-runner';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
+import { handOverToSession } from '../common/ownership';
 import { credentialHelperCommand } from '../git/credential-helper';
 import { GitService } from '../git/git.service';
 import { InstallationTokens } from '../github/installation-tokens';
@@ -121,6 +122,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     if (main?.kind === 'clone' && main.repositoryId) {
       const memory = join(this.config.memoryDir, main.repositoryId);
       await mkdir(memory, { recursive: true });
+      // Claude Code writes the memory as the session user.
+      await handOverToSession(memory, this.git.launcher);
       settings['autoMemoryDirectory'] = memory;
     }
     return {

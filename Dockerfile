@@ -35,21 +35,30 @@ RUN npm ci --omit=dev --no-audit --no-fund
 FROM node:24-trixie-slim
 
 ARG NIX_VERSION=2.35.6
+# Two users (see docker/entrypoint.sh): the API runs as "crm", everything a
+# session runs as "claude". The API's UID 1000 matches the usual owner of a
+# mounted key file, so that the API can read it and sessions cannot.
+ARG API_UID=1000
+ARG API_GID=1000
 ARG USER_NAME=claude
-ARG USER_UID=1000
-ARG USER_GID=1000
+ARG USER_UID=1001
+ARG USER_GID=1001
 
+# libcap2-bin: capsh, used by the entrypoint to start the API with its
+# capabilities; setpriv (util-linux) starts session processes.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl git openssh-client tini xz-utils zstd \
+        ca-certificates curl git libcap2-bin openssh-client tini xz-utils zstd \
     && rm -rf /var/lib/apt/lists/*
 
-# The base image ships a "node" user with UID/GID 1000; rename it so the
-# container user has a meaningful name and home directory.
-RUN groupmod -n "${USER_NAME}" -g "${USER_GID}" node \
-    && usermod -l "${USER_NAME}" -u "${USER_UID}" -g "${USER_GID}" -d "/home/${USER_NAME}" -m node
+# The base image ships a "node" user with UID/GID 1000; it becomes the API
+# user, and the session user is added.
+RUN groupmod -n crm -g "${API_GID}" node \
+    && usermod -l crm -u "${API_UID}" -g "${API_GID}" -d /home/crm -m node \
+    && groupadd -g "${USER_GID}" "${USER_NAME}" \
+    && useradd -u "${USER_UID}" -g "${USER_GID}" -d "/home/${USER_NAME}" -m -s /bin/bash "${USER_NAME}"
 
-# Nix, single-user, owned by the app user, with flakes enabled.
+# Nix, single-user, owned by the session user, with flakes enabled.
 COPY docker/nix.conf /etc/nix/nix.conf
 RUN mkdir -m 0755 /nix && chown "${USER_UID}:${USER_GID}" /nix
 
@@ -93,9 +102,10 @@ ENV DATA_DIR=/data \
 # one filesystem, so that session clones can hardlink the mirrors' objects.
 RUN mkdir -p /data/workspace/repos /data/workspace/sessions /data/workspace/scratch \
         /data/db /data/claude /data/git/ssh \
-    && chmod 0700 /data/claude /data/git /data/git/ssh \
-    && ln -s /data/git/ssh "/home/${USER_NAME}/.ssh" \
-    && chown -R "${USER_UID}:${USER_GID}" /data "/home/${USER_NAME}/.ssh"
+    && chmod 0700 /data/claude /data/git /data/git/ssh /data/db \
+    && ln -s /data/git/ssh /home/crm/.ssh \
+    && chown -R "${API_UID}:${API_GID}" /data /home/crm/.ssh \
+    && chown -R "${USER_UID}:${USER_GID}" /data/claude
 
 WORKDIR /app
 COPY --from=build /src/dist/apps/api ./
@@ -110,7 +120,8 @@ RUN claude="$(ls /app/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude
     && claude --version
 
 ENV NODE_ENV=production \
-    PROCESS_ISOLATION=single-user \
+    PROCESS_ISOLATION=separate-users \
+    SESSION_USER=${USER_NAME} \
     PORT=8080 \
     WEB_ROOT=/app/public
 
@@ -123,7 +134,9 @@ ENV APP_VERSION=${VERSION} \
     APP_COMMIT=${COMMIT} \
     APP_COMMIT_TIME=${COMMIT_TIME}
 
-USER ${USER_NAME}
+# Starts as root: the entrypoint gives the volumes their owners and drops
+# to the API user (see docker/entrypoint.sh).
+USER root
 VOLUME ["/data/workspace", "/data/claude", "/data/git", "/data/db", "/nix"]
 EXPOSE 8080
 # The start period covers seeding an empty /nix on the first start.

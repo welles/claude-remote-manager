@@ -1,11 +1,19 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { handOverToSession } from '../common/ownership';
+import {
+  PROCESS_LAUNCHER,
+  SINGLE_USER,
+  type ProcessLauncher,
+} from '../common/process-isolation';
 import {
   GIT_NETWORK_TIMEOUT_MS,
   retryOnLockContention,
   runGit,
+  runGitToFile,
+  type GitRunOptions,
 } from './git-runner';
 import {
   identityEnvironment,
@@ -122,6 +130,12 @@ export class GitService {
   private readonly locks = new KeyedMutex();
   private readonly updates = new Map<string, Promise<MirrorState>>();
 
+  constructor(
+    @Optional()
+    @Inject(PROCESS_LAUNCHER)
+    readonly launcher: ProcessLauncher = SINGLE_USER,
+  ) {}
+
   /** Whether a clone or fetch of this mirror is running or queued. */
   isUpdating(mirrorPath: string): boolean {
     return this.updates.has(mirrorPath);
@@ -231,8 +245,9 @@ export class GitService {
     }
     await mkdir(dirname(path), { recursive: true });
     try {
+      // As the API: only the mirror's owner may hardlink its objects.
       await this.locks.run(mirrorPath, () =>
-        runGit([
+        this.api([
           'clone',
           '--local',
           '--no-checkout',
@@ -242,7 +257,9 @@ export class GitService {
           path,
         ]),
       );
-      const inClone = (args: string[]) => runGit(args, { cwd: path });
+      // From here on the clone is the session's.
+      await handOverToSession(path, this.launcher);
+      const inClone = (args: string[]) => this.inClone(path, args);
       if (remoteUrl !== null) {
         await inClone(['config', '--', 'remote.origin.url', remoteUrl]);
       }
@@ -305,15 +322,19 @@ export class GitService {
           'This repository has a remote; integrate the session branch by pushing to it',
         );
       }
-      await this.git(mirrorPath, [
-        'fetch',
-        '--no-tags',
-        '--quiet',
-        '--',
+      const commit = await this.localBranchCommit(clonePath, sourceBranch);
+      if (!commit) {
+        throw new Error(`The branch ${sourceBranch} has no commits`);
+      }
+      // Without "+": only a fast-forward is accepted.
+      await this.importCommit(
+        mirrorPath,
         clonePath,
-        // Without "+": only a fast-forward is accepted.
-        `refs/heads/${sourceBranch}:refs/heads/${targetBranch}`,
-      ]);
+        sourceBranch,
+        commit,
+        await this.branchCommit(mirrorPath, targetBranch),
+        `refs/heads/${targetBranch}`,
+      );
       return (
         await this.git(mirrorPath, ['rev-parse', `refs/heads/${targetBranch}`])
       ).trim();
@@ -340,9 +361,12 @@ export class GitService {
     try {
       return (
         (
-          await runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], {
-            cwd: path,
-          })
+          await this.inClone(path, [
+            'symbolic-ref',
+            '--quiet',
+            '--short',
+            'HEAD',
+          ])
         ).trim() || null
       );
     } catch {
@@ -373,7 +397,7 @@ export class GitService {
    * stores anything), with the repository path in the request.
    */
   async setCredentialHelper(path: string, helper: string): Promise<void> {
-    const inClone = (args: string[]) => runGit(args, { cwd: path });
+    const inClone = (args: string[]) => this.inClone(path, args);
     await inClone(['config', '--unset-all', 'credential.helper']).catch(
       () => undefined,
     );
@@ -388,7 +412,7 @@ export class GitService {
    * ("empty ident name not allowed") instead of using someone else's.
    */
   async setIdentity(path: string, identity: GitIdentity | null): Promise<void> {
-    const inClone = (args: string[]) => runGit(args, { cwd: path });
+    const inClone = (args: string[]) => this.inClone(path, args);
     await inClone(['config', '--', 'user.useConfigOnly', 'true']);
     await inClone(['config', '--', 'user.name', identity?.name ?? '']);
     await inClone(['config', '--', 'user.email', identity?.email ?? '']);
@@ -396,7 +420,7 @@ export class GitService {
 
   /** Points `origin` of a session clone to another URL. */
   async setOrigin(path: string, url: string): Promise<void> {
-    await runGit(['config', '--', 'remote.origin.url', url], { cwd: path });
+    await this.inClone(path, ['config', '--', 'remote.origin.url', url]);
   }
 
   /** Commit of a local branch of a clone; `null` if unborn or missing. */
@@ -424,42 +448,87 @@ export class GitService {
     path: string,
     head: string,
     base: string | null,
+    { mirror = false }: { mirror?: boolean } = {},
   ): Promise<boolean> {
     const range = base ? [`${base}..${head}`] : [head];
-    const output = await runGit(
-      ['log', '--format=', '--name-only', ...range, '--', '.github/workflows'],
-      { cwd: path },
-    );
+    const args = [
+      'log',
+      '--format=',
+      '--name-only',
+      ...range,
+      '--',
+      '.github/workflows',
+    ];
+    const output = mirror
+      ? await this.git(path, args)
+      : await this.inClone(path, args);
     return output.trim().length > 0;
   }
 
   /**
-   * Pushes the session branch of a clone to `origin` (no force) and sets it
-   * as upstream, so a later `git push` in the clone needs no arguments.
+   * Pushes the session branch of a clone to the remote (no force) and sets
+   * it as the clone's upstream, so a later `git push` there needs no
+   * arguments. The session's commits are brought into the mirror first, as
+   * a bundle the session user writes from the clone; the push itself runs
+   * in the mirror as the API, so the credentials never reach a process of
+   * the session. `auth` gets whether the commits change workflow files.
    * Returns the pushed commit.
    */
-  async pushBranch(
-    path: string,
-    branch: string,
-    auth: GitAuth | null,
-  ): Promise<string> {
+  async pushSessionBranch(options: {
+    mirrorPath: string;
+    clonePath: string;
+    branch: string;
+    baseCommit: string | null;
+    auth: (changesWorkflows: boolean) => Promise<GitAuth | null>;
+  }): Promise<string> {
+    const { mirrorPath, clonePath, branch, baseCommit } = options;
     if (!isValidBranchName(branch)) {
       throw new Error(`"${branch}" is not a valid branch name`);
     }
-    const commit = await this.localBranchCommit(path, branch);
+    const commit = await this.localBranchCommit(clonePath, branch);
     if (!commit) {
       throw new Error(`The branch ${branch} has no commits yet`);
     }
-    await runGit(
-      [
-        'push',
-        '--quiet',
-        '--set-upstream',
-        'origin',
-        `refs/heads/${branch}:refs/heads/${branch}`,
-      ],
-      { cwd: path, timeoutMs: GIT_NETWORK_TIMEOUT_MS, env: auth?.env },
-    );
+    const temporary = `refs/crm/push/${branch}`;
+    await this.locks.run(mirrorPath, async () => {
+      await this.importCommit(
+        mirrorPath,
+        clonePath,
+        branch,
+        commit,
+        baseCommit,
+        `+${temporary}`,
+      );
+      try {
+        const workflows = await this.changesWorkflows(
+          mirrorPath,
+          commit,
+          baseCommit && (await this.hasCommit(mirrorPath, baseCommit))
+            ? baseCommit
+            : null,
+          { mirror: true },
+        );
+        const auth = await options.auth(workflows);
+        await this.git(
+          mirrorPath,
+          ['push', '--quiet', 'origin', `${commit}:refs/heads/${branch}`],
+          { timeoutMs: GIT_NETWORK_TIMEOUT_MS, env: auth?.env },
+        );
+      } finally {
+        await this.git(mirrorPath, ['update-ref', '-d', temporary]).catch(
+          () => undefined,
+        );
+      }
+    });
+    const inClone = (args: string[]) => this.inClone(clonePath, args);
+    await inClone(['update-ref', `refs/remotes/origin/${branch}`, commit]);
+    await inClone(['config', '--', `branch.${branch}.remote`, 'origin']);
+    await inClone([
+      'config',
+      '--',
+      `branch.${branch}.merge`,
+      `refs/heads/${branch}`,
+    ]);
     return commit;
   }
 
@@ -524,12 +593,12 @@ export class GitService {
     try {
       return (
         (
-          await runGit(
-            ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`],
-            {
-              cwd: path,
-            },
-          )
+          await this.inClone(path, [
+            'rev-parse',
+            '--verify',
+            '--quiet',
+            `${ref}^{commit}`,
+          ])
         ).trim() || null
       );
     } catch {
@@ -543,7 +612,128 @@ export class GitService {
     args: string[],
     options: { timeoutMs?: number; env?: Record<string, string> } = {},
   ): Promise<string> {
-    return runGit([`--git-dir=${mirrorPath}`, ...args], options);
+    return this.api([`--git-dir=${mirrorPath}`, ...args], options);
+  }
+
+  /** git as the API (mirrors), without the API's capabilities. */
+  private api(
+    args: string[],
+    options: Omit<GitRunOptions, 'launcher' | 'as'> = {},
+  ): Promise<string> {
+    return runGit(args, { ...options, launcher: this.launcher, as: 'api' });
+  }
+
+  /** git in a session clone, as the session user. */
+  private inClone(
+    path: string,
+    args: string[],
+    options: Omit<GitRunOptions, 'launcher' | 'as' | 'cwd'> = {},
+  ): Promise<string> {
+    return runGit(args, {
+      ...options,
+      cwd: path,
+      launcher: this.launcher,
+      as: 'session',
+    });
+  }
+
+  private async hasCommit(
+    mirrorPath: string,
+    commit: string,
+  ): Promise<boolean> {
+    try {
+      await this.git(mirrorPath, ['cat-file', '-e', `${commit}^{commit}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Brings `commit` (the tip of `branch` in a session clone) into the mirror
+   * as `targetRef` (with leading "+" to force). The session user writes a
+   * bundle of the branch (only what the mirror lacks, if `known` is a
+   * commit it has); the API fetches the bundle. git never runs as the API
+   * in the session's repository. Call with the mirror locked.
+   */
+  private async importCommit(
+    mirrorPath: string,
+    clonePath: string,
+    branch: string,
+    commit: string,
+    known: string | null,
+    targetRef: string,
+  ): Promise<void> {
+    const ref = targetRef.replace(/^\+/, '');
+    if (await this.hasCommit(mirrorPath, commit)) {
+      const current = await this.git(mirrorPath, [
+        'rev-parse',
+        '--verify',
+        '--quiet',
+        ref,
+      ]).catch(() => '');
+      if (!targetRef.startsWith('+') && current.trim()) {
+        // Same rule as a fetch without "+": fast-forward only.
+        await this.git(mirrorPath, [
+          'merge-base',
+          '--is-ancestor',
+          current.trim(),
+          commit,
+        ]).catch(() => {
+          throw new Error(
+            `${ref} cannot be fast-forwarded to ${commit.slice(0, 12)}`,
+          );
+        });
+      }
+      await this.git(mirrorPath, ['update-ref', ref, commit]);
+      return;
+    }
+    const bundle = join(
+      dirname(mirrorPath),
+      `.${basename(mirrorPath)}.import-${randomBytes(4).toString('hex')}.bundle`,
+    );
+    const create = (exclude: string[]) =>
+      runGitToFile(
+        [
+          'bundle',
+          'create',
+          '--quiet',
+          '-',
+          `refs/heads/${branch}`,
+          ...exclude,
+        ],
+        bundle,
+        { cwd: clonePath, launcher: this.launcher, as: 'session' },
+      );
+    try {
+      const prerequisite =
+        known && (await this.hasCommit(mirrorPath, known)) ? [`^${known}`] : [];
+      try {
+        await create(prerequisite);
+      } catch (error) {
+        if (prerequisite.length === 0) {
+          throw error;
+        }
+        await rm(bundle, { force: true });
+        await create([]);
+      }
+      await this.git(mirrorPath, [
+        'fetch',
+        '--no-tags',
+        '--quiet',
+        '--',
+        bundle,
+        `${targetRef.startsWith('+') ? '+' : ''}refs/heads/${branch}:${ref}`,
+      ]);
+      const imported = (await this.git(mirrorPath, ['rev-parse', ref])).trim();
+      if (imported !== commit) {
+        throw new Error(
+          `The session branch moved while it was pushed; try again`,
+        );
+      }
+    } finally {
+      await rm(bundle, { force: true });
+    }
   }
 
   /** Settings every mirror gets. */
@@ -579,7 +769,7 @@ export class GitService {
     }
     await mkdir(dirname(path), { recursive: true });
     try {
-      await runGit([
+      await this.api([
         'init',
         '--quiet',
         '--bare',
@@ -630,7 +820,7 @@ export class GitService {
     }
     const temporary = join(parent, prefix + randomBytes(4).toString('hex'));
     try {
-      await runGit(['init', '--quiet', '--bare', '--', temporary]);
+      await this.api(['init', '--quiet', '--bare', '--', temporary]);
       await this.configureMirror(temporary);
       const config = (name: string, value: string) =>
         this.git(temporary, ['config', '--', name, value]);

@@ -135,19 +135,15 @@ export class SessionGitService {
           `The branch ${directory.branch} has no commits yet`,
         );
       }
-      const auth = await this.credentials.writeAuth(repository, {
-        workflows: await this.git.changesWorkflows(
-          directory.path,
-          head,
-          directory.baseCommit,
-        ),
-      });
       try {
-        return await this.git.pushBranch(
-          directory.path,
-          directory.branch,
-          auth,
-        );
+        return await this.git.pushSessionBranch({
+          mirrorPath: repository.localPath,
+          clonePath: directory.path,
+          branch: directory.branch,
+          baseCommit: directory.baseCommit,
+          auth: (workflows) =>
+            this.credentials.writeAuth(repository, { workflows }),
+        });
       } catch (error) {
         throw this.pushError(error, directory.branch);
       }

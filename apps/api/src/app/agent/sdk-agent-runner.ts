@@ -1,11 +1,14 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import type * as Zod from 'zod';
 import { APP_MCP_SERVER } from '../sessions/approval-grants';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { CLAUDE_CODE_SECRETS } from '../common/child-environment';
 import {
-  CLAUDE_CODE_SECRETS,
-  childEnvironment,
-} from '../common/child-environment';
+  PROCESS_LAUNCHER,
+  SINGLE_USER,
+  type ProcessLauncher,
+} from '../common/process-isolation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import type {
   AgentRun,
@@ -116,6 +119,34 @@ export const SETTING_SOURCES: Sdk.SettingSource[] = [
 /** Lines of Claude Code's stderr kept for error messages. */
 const STDERR_LINES = 5;
 
+/**
+ * Starts Claude Code as the session user (separate-users mode): the SDK's
+ * command goes through `setpriv`, with the environment the SDK built from
+ * the allowlist. stderr is forwarded like the SDK's own spawn does.
+ */
+export function spawnAsSession(
+  launcher: ProcessLauncher,
+  options: Sdk.SpawnOptions,
+  stderr: (data: string) => void,
+): Sdk.SpawnedProcess {
+  const command = launcher.command('session', options.command, options.args);
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(options.env)) {
+    if (value !== undefined) {
+      env[name] = value;
+    }
+  }
+  const child = spawn(command.command, command.args, {
+    cwd: options.cwd,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    signal: options.signal,
+  });
+  child.stderr?.on('data', (chunk: Buffer) => stderr(chunk.toString('utf8')));
+  // With stdio "pipe" the streams exist.
+  return child as ChildProcess & Sdk.SpawnedProcess;
+}
+
 /** Builds the SDK options for a session. Exported for tests. */
 export function buildQueryOptions(
   options: AgentStartOptions,
@@ -123,13 +154,20 @@ export function buildQueryOptions(
   stderr: (data: string) => void,
   baseEnv: NodeJS.ProcessEnv = process.env,
   mcpServers?: Record<string, Sdk.McpServerConfig>,
+  launcher: ProcessLauncher = SINGLE_USER,
 ): Sdk.Options {
   return {
+    ...(launcher.separated
+      ? {
+          spawnClaudeCodeProcess: (spawnOptions: Sdk.SpawnOptions) =>
+            spawnAsSession(launcher, spawnOptions, stderr),
+        }
+      : {}),
     ...(mcpServers && Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
     ...(options.settings ? { settings: options.settings } : {}),
     // Replaces the inherited environment: no app secrets except Claude
-    // Code's own login.
-    env: childEnvironment(options.env, {
+    // Code's own login (with separate users: only allowlisted variables).
+    env: launcher.environment('session', options.env, {
       keep: CLAUDE_CODE_SECRETS,
       base: baseEnv,
     }),
@@ -160,7 +198,12 @@ export function buildQueryOptions(
 export class SdkAgentRunner implements AgentRunner {
   private readonly logger = new Logger(SdkAgentRunner.name);
 
-  constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
+  constructor(
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Optional()
+    @Inject(PROCESS_LAUNCHER)
+    private readonly launcher: ProcessLauncher = SINGLE_USER,
+  ) {}
 
   async start(
     options: AgentStartOptions,
@@ -192,6 +235,7 @@ export class SdkAgentRunner implements AgentRunner {
         },
         process.env,
         await appMcpServers(options.tools),
+        this.launcher,
       ),
     });
 

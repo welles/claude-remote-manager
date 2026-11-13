@@ -403,6 +403,7 @@ export class RepositoriesService implements OnModuleInit {
       record.localPath,
       '--all',
       null,
+      { mirror: true },
     );
     const token = await this.retryNewRepository(() =>
       this.credentials.token(

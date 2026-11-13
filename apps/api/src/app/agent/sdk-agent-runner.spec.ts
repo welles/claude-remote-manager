@@ -1,6 +1,7 @@
 import type { AgentStartOptions } from './agent-runner';
 import { AsyncQueue } from './async-queue';
-import { buildQueryOptions } from './sdk-agent-runner';
+import { ProcessLauncher, type ProcessRole } from '../common/process-isolation';
+import { buildQueryOptions, spawnAsSession } from './sdk-agent-runner';
 
 describe('buildQueryOptions', () => {
   const canUseTool: AgentStartOptions['canUseTool'] = async () => ({
@@ -78,6 +79,85 @@ describe('buildQueryOptions', () => {
     const options = buildQueryOptions(base, { claudeExecutable: null }, stderr);
     expect(options.allowDangerouslySkipPermissions).toBeUndefined();
     expect(options.permissionMode).not.toBe('bypassPermissions');
+  });
+});
+
+describe('Claude Code as the session user', () => {
+  const separated = new ProcessLauncher({
+    mode: 'separate-users',
+    sessionUser: { name: 'claude', uid: 1001, gid: 1001, home: '/home/claude' },
+  });
+
+  it('builds the environment from the allowlist and spawns through the launcher', () => {
+    const options = buildQueryOptions(
+      {
+        cwd: '/work',
+        additionalDirectories: [],
+        model: null,
+        permissionMode: 'default',
+        resume: null,
+        sessionId: null,
+        canUseTool: async () => ({ behavior: 'deny', message: 'no' }),
+        env: { CRM_SESSION_TOKEN: 't' },
+      },
+      { claudeExecutable: null },
+      () => undefined,
+      {
+        PATH: '/bin',
+        HOME: '/home/crm',
+        DB_DIR: '/data/db',
+        GITHUB_APP_PRIVATE_KEY_FILE: '/run/secrets/k',
+        CLAUDE_CODE_OAUTH_TOKEN: 'login',
+      },
+      undefined,
+      separated,
+    );
+    expect(options.env).toEqual({
+      PATH: '/bin',
+      HOME: '/home/claude',
+      USER: 'claude',
+      LOGNAME: 'claude',
+      CLAUDE_CODE_OAUTH_TOKEN: 'login',
+      CRM_SESSION_TOKEN: 't',
+    });
+    expect(typeof options.spawnClaudeCodeProcess).toBe('function');
+  });
+
+  it('runs the command the launcher builds and forwards stderr', async () => {
+    const roles: ProcessRole[] = [];
+    // Tests cannot switch users: run the command as it is.
+    const launcher = new (class extends ProcessLauncher {
+      override command(
+        role: ProcessRole,
+        command: string,
+        args: readonly string[],
+      ) {
+        roles.push(role);
+        return { command, args: [...args] };
+      }
+    })({ mode: 'single-user' });
+    const lines: string[] = [];
+    const child = spawnAsSession(
+      launcher,
+      {
+        command: 'sh',
+        args: ['-c', 'echo "$GREETING" >&2; cat'],
+        env: {
+          PATH: process.env['PATH'] ?? '/bin',
+          GREETING: 'hi',
+          UNSET: undefined,
+        },
+        signal: new AbortController().signal,
+      },
+      (data) => lines.push(data),
+    );
+    child.stdin.end('ping');
+    let output = '';
+    child.stdout.on('data', (chunk: Buffer) => (output += chunk.toString()));
+    await new Promise((resolve) => child.stdout.once('end', resolve));
+    expect(roles).toEqual(['session']);
+    expect(lines.join('')).toBe('hi\n');
+    expect(output).toBe('ping');
   });
 });
 

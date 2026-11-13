@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process';
-import { Injectable } from '@nestjs/common';
-import { childEnvironment } from '../common/child-environment';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import {
+  PROCESS_LAUNCHER,
+  SINGLE_USER,
+  type ProcessLauncher,
+} from '../common/process-isolation';
 
 export interface SetupScriptOptions {
   script: string;
@@ -47,9 +51,23 @@ const CLOSE_GRACE_MS = 2000;
  */
 @Injectable()
 export class SetupScriptRunner {
+  constructor(
+    @Optional()
+    @Inject(PROCESS_LAUNCHER)
+    private readonly launcher: ProcessLauncher = SINGLE_USER,
+  ) {}
+
+  /** Runs the script as the session user (see ProcessIsolation). */
   run(options: SetupScriptOptions): Promise<SetupScriptResult> {
     const started = Date.now();
-    const env = childEnvironment(options.env);
+    const env = this.launcher.environment('session', options.env);
+    const command = this.launcher.command('session', 'bash', [
+      '-e',
+      '-o',
+      'pipefail',
+      '-c',
+      options.script,
+    ]);
     return new Promise((resolve) => {
       let forwarded = 0;
       let pending = '';
@@ -90,16 +108,12 @@ export class SetupScriptRunner {
         }
       };
 
-      const child = spawn(
-        'bash',
-        ['-e', '-o', 'pipefail', '-c', options.script],
-        {
-          cwd: options.cwd,
-          env,
-          detached: true,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        },
-      );
+      const child = spawn(command.command, command.args, {
+        cwd: options.cwd,
+        env,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       child.stdout.on('data', onData);
       child.stderr.on('data', onData);
 
