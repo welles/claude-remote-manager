@@ -190,6 +190,21 @@ describe('session integrations (credentials, tool, memory)', () => {
     harness.approver.answer = () => ({ behavior: 'allow' });
     await ask('Bash', { command: 'git push -u origin HEAD' }, 'push-1');
     expect(harness.grants.hasPushGrant(session.id)).toBe(true);
+    // The approval request says what the push targets.
+    expect(harness.approver.requests.at(-1)?.gitPushes).toEqual([
+      expect.objectContaining({ sessionBranchOnly: true, warnings: [] }),
+    ]);
+    await ask(
+      'Bash',
+      { command: 'git push --force origin HEAD:main' },
+      'push-x',
+    );
+    expect(harness.approver.requests.at(-1)?.gitPushes[0].warnings).toEqual([
+      'Pushes to main, not only the session branch',
+      'Force push: may overwrite commits on the remote',
+    ]);
+    await ask('Bash', { command: 'npm test' }, 'other');
+    expect(harness.approver.requests.at(-1)?.gitPushes).toEqual([]);
 
     harness.runner.last.emit({
       type: 'user',
@@ -202,6 +217,12 @@ describe('session integrations (credentials, tool, memory)', () => {
             tool_use_id: 'push-1',
             content: 'ok',
             is_error: false,
+          },
+          {
+            type: 'tool_result',
+            tool_use_id: 'push-x',
+            content: 'denied',
+            is_error: true,
           },
         ],
       },

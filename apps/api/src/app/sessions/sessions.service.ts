@@ -937,10 +937,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   private canUseTool(live: LiveSession): CanUseTool {
     return async (toolName, input, options) => {
+      const command =
+        toolName === 'Bash' && typeof input['command'] === 'string'
+          ? input['command']
+          : null;
       const decision = await this.approver.decide({
         sessionId: live.id,
         toolName,
         input,
+        gitPushes: command
+          ? await this.workspaces.analyzeGitPushes(live.id, command)
+          : [],
         toolUseId: options.toolUseID,
         title: options.title ?? null,
         description: options.description ?? null,

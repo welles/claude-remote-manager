@@ -1,3 +1,5 @@
+import type { GitPushAnalysis } from './git-push-analysis';
+
 /** A tool use Claude Code asks the host to decide (`canUseTool`). */
 export interface ToolApprovalRequest {
   sessionId: string;
@@ -9,6 +11,12 @@ export interface ToolApprovalRequest {
   description: string | null;
   /** For MCP tools: the server and where it is defined (`sdk`: ours). */
   mcpServer: { name: string; source: string } | null;
+  /**
+   * For Bash commands that run `git push`: what each push would update,
+   * with warnings for anything beyond the session branch (the approval
+   * lets the credential helper write to the whole repository).
+   */
+  gitPushes: GitPushAnalysis[];
   signal: AbortSignal;
 }
 

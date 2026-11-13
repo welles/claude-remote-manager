@@ -22,7 +22,12 @@ import {
   requireString,
 } from '../common/validation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
+import {
+  analyzeGitPushes,
+  type GitPushAnalysis,
+} from '../agent/git-push-analysis';
 import { handOverToSession } from '../common/ownership';
+import { isGitPushCommand } from '../sessions/approval-grants';
 import { credentialHelperCommand } from '../git/credential-helper';
 import { GitService, isValidBranchName } from '../git/git.service';
 import { isGitHubRepository } from '../repositories/repository-credentials';
@@ -134,6 +139,34 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     this.subscription?.unsubscribe();
+  }
+
+  /**
+   * What the `git push` commands in a shell command would update, judged
+   * against the session's branches and what its clones have checked out.
+   */
+  async analyzeGitPushes(
+    sessionId: string,
+    command: string,
+  ): Promise<GitPushAnalysis[]> {
+    if (!isGitPushCommand(command)) {
+      return [];
+    }
+    const session = this.sessions.require(sessionId);
+    const clones = session.directories.filter(
+      (directory) => directory.kind === 'clone' && directory.state === 'ready',
+    );
+    const branches = clones.flatMap((directory) =>
+      directory.branch ? [directory.branch] : [],
+    );
+    const checkedOut: string[] = [];
+    for (const directory of clones) {
+      const branch = await this.git.currentBranch(directory.path);
+      if (branch) {
+        checkedOut.push(branch);
+      }
+    }
+    return analyzeGitPushes(command, branches, checkedOut);
   }
 
   /**
