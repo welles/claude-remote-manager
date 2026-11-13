@@ -84,7 +84,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
               <div class="buttons">
                 <button
                   matButton="filled"
-                  class="danger"
+                  class="app-danger"
                   type="button"
                   [disabled]="busy() || (!orphan.loss?.clean && !acceptLoss())"
                   (click)="remove(orphan)"
@@ -189,10 +189,6 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
     .buttons {
       display: flex;
       gap: 8px;
-    }
-    .danger {
-      --mat-button-filled-container-color: var(--mat-sys-error);
-      --mat-button-filled-label-text-color: var(--mat-sys-on-error);
     }
   `,
 })

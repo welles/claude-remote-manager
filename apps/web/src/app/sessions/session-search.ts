@@ -109,7 +109,7 @@ export function snippetParts(
               <span class="title"
                 >{{ hit.title || 'Untitled session' }}
                 @if (hit.archivedAt) {
-                  <span class="tag">Archived</span>
+                  <span class="app-tag">Archived</span>
                 }
               </span>
               <span class="meta"
@@ -124,7 +124,7 @@ export function snippetParts(
               @for (match of hit.matches; track $index) {
                 <!-- One line: whitespace here would show up around the highlights. -->
                 <!-- prettier-ignore -->
-                <span class="match" data-testid="search-match"><span class="kind">{{ kindLabels[match.kind] }}</span>@for (part of parts(match); track $index) {@if (part.hit) {<mark>{{ part.text }}</mark>} @else {<span>{{ part.text }}</span>}}</span>
+                <span class="match" data-testid="search-match"><span class="app-tag kind">{{ kindLabels[match.kind] }}</span>@for (part of parts(match); track $index) {@if (part.hit) {<mark>{{ part.text }}</mark>} @else {<span>{{ part.text }}</span>}}</span>
               }
             </a>
           }
@@ -171,14 +171,8 @@ export function snippetParts(
     .match {
       font: var(--mat-sys-body-small);
     }
-    .kind,
-    .tag {
-      display: inline-block;
+    .kind {
       margin-right: 6px;
-      padding: 0 6px;
-      border-radius: var(--mat-sys-corner-small);
-      background: var(--mat-sys-surface-container-highest);
-      font: var(--mat-sys-label-small);
     }
     mark {
       background: color-mix(in srgb, var(--mat-sys-primary) 30%, transparent);

@@ -22,11 +22,6 @@
   margin-top: 2px;
 }
 
-.banner {
-  margin: 8px 0 0;
-  color: var(--mat-sys-on-surface-variant);
-}
-
 .conversation {
   display: flex;
   flex-direction: column;
@@ -282,12 +277,6 @@
   overflow-y: auto;
   margin-bottom: 8px;
   overscroll-behavior: contain;
-}
-
-.state-banner {
-  margin: 4px 0;
-  padding: 8px 12px;
-  background: var(--mat-sys-surface-container-high);
 }
 
 .manage {

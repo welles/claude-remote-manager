@@ -109,14 +109,6 @@ pre {
   }
 }
 
-.tag {
-  padding: 0 6px;
-  border-radius: var(--mat-sys-corner-full);
-  background: var(--mat-sys-surface-container-highest);
-  color: var(--mat-sys-on-surface-variant);
-  font: var(--mat-sys-label-small);
-}
-
 .questions {
   display: flex;
   flex-direction: column;
@@ -177,11 +169,6 @@ pre {
   button {
     min-height: 40px;
   }
-}
-
-.danger-button {
-  --mat-button-filled-container-color: var(--mat-sys-error);
-  --mat-button-filled-label-text-color: var(--mat-sys-on-error);
 }
 
 @media (max-width: 480px) {

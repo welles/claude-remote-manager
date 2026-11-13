@@ -1,6 +1,8 @@
 import { TextFieldModule } from '@angular/cdk/text-field';
 import { DecimalPipe, KeyValuePipe } from '@angular/common';
 import { AppDatePipe } from '../ui/dates';
+import { AppBanner } from '../ui/banner';
+import { StatusBadge } from '../ui/status-badge';
 import {
   Component,
   DestroyRef,
@@ -42,13 +44,7 @@ import {
   resolutionText,
   type ConversationItem,
 } from './conversation';
-import {
-  formatCost,
-  formatTokens,
-  statusClass,
-  statusLabel,
-  totalTokens,
-} from './format';
+import { formatCost, formatTokens, totalTokens } from './format';
 import { MarkdownPipe } from './markdown.pipe';
 import { ModelsStore, modelOptionsWith, normalizeModel } from './models-store';
 import { PermissionCard } from './permission-card';
@@ -83,7 +79,9 @@ import { errorMessage } from '../repositories/repositories-api';
   imports: [
     CleanupDialog,
     ContextMeter,
+    AppBanner,
     AppDatePipe,
+    StatusBadge,
     DecimalPipe,
     DeleteSessionDialog,
     SessionTitle,
@@ -122,8 +120,6 @@ export class SessionView implements OnInit {
   private readonly modelsStore = inject(ModelsStore);
   private readonly host = inject(ElementRef);
 
-  protected readonly statusLabel = statusLabel;
-  protected readonly statusClass = statusClass;
   protected readonly resolutionText = resolutionText;
   protected readonly modes = SESSION_PERMISSION_MODES;
   protected readonly modeInfo = PERMISSION_MODE_INFO;

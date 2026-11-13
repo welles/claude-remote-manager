@@ -3,23 +3,21 @@
   @if (session(); as s) {
   <app-session-title [session]="s" (renamed)="session.set($event)" />
   @if (s.archivedAt) {
-  <p class="state-banner" data-testid="archived-banner">
+  <app-banner data-testid="archived-banner">
     Archived {{ s.archivedAt | appDate }}: hidden from the session list, history
     readable. @if (removedDirectories(); as removed) { {{ removed.text }} {{
     removed.verb }} removed, so it cannot be continued. } @else { Unarchive it
     to continue it. }
-  </p>
+  </app-banner>
   } @else if (removedDirectories()) {
-  <p class="state-banner" data-testid="cleaned-banner">
+  <app-banner data-testid="cleaned-banner">
     @let removed = removedDirectories(); {{ removed?.text }} of this session {{
     removed?.verb }} removed: its history can be read, but it cannot be
     continued.
-  </p>
+  </app-banner>
   }
   <div class="facts">
-    <span class="status {{ statusClass(s) }}" data-testid="status"
-      >{{ statusLabel(s) }}</span
-    >
+    <app-status-badge [session]="s" data-testid="status" />
     <span
       data-testid="usage"
       title="Input {{ s.usage.inputTokens }} · Output {{ s.usage.outputTokens }} · Cache write {{ s.usage.cacheCreationInputTokens }} · Cache read {{ s.usage.cacheReadInputTokens }} · Cost: what the requests would have cost at API prices, not what the subscription costs"
@@ -160,9 +158,11 @@
   />
   <app-session-git-panel [session]="s" />
   } @if (incompatible()) {
-  <p class="banner error">The server uses a newer protocol. Reload the page.</p>
+  <app-banner kind="error"
+    >The server uses a newer protocol. Reload the page.</app-banner
+  >
   } @else if (!connected()) {
-  <p class="banner">Connecting to the server…</p>
+  <app-banner role="status">Connecting to the server…</app-banner>
   }
 </header>
 
