@@ -122,8 +122,8 @@ export function lossOf(
             <p>Choose what happens to each directory of the session:</p>
           }
           @if (preview(); as preview) {
-            @if (preview.blocked) {
-              <p class="warning" role="alert">{{ preview.blocked }}.</p>
+            @if (blockedReason(); as reason) {
+              <p class="warning" role="alert">{{ reason }}.</p>
             }
             @if (hasClones()) {
               <a
@@ -328,10 +328,19 @@ export class CleanupDialog {
       )
     );
   });
+  /** Why the chosen operation cannot run now. */
+  protected readonly blockedReason = computed(() => {
+    const preview = this.preview();
+    return (
+      (this.mode() === 'archive'
+        ? preview?.archiveBlocked
+        : preview?.blocked) ?? null
+    );
+  });
   /** Every choice that loses work was accepted. */
   protected readonly ready = computed(() => {
     const preview = this.preview();
-    if (!preview || preview.blocked) {
+    if (!preview || this.blockedReason()) {
       return false;
     }
     return preview.directories.every((directory) => {

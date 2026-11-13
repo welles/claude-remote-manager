@@ -138,6 +138,9 @@ export class SessionManagementService {
     return {
       sessionId,
       blocked: this.cleanupBlocked(record, false),
+      archiveBlocked: record.archivedAt
+        ? 'The session is archived already'
+        : this.cleanupBlocked(record, true),
       directories: (await this.describeAll(record)).map((entry) => entry.view),
       previews: this.previews?.forSession(sessionId).length ?? 0,
     };

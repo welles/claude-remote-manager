@@ -74,9 +74,14 @@ export interface CleanupPreview {
   sessionId: string;
   /**
    * Why the session cannot be cleaned up now (a turn runs, it is being
-   * prepared); `null` if it can.
+   * prepared, it has not ended); `null` if it can.
    */
   blocked: string | null;
+  /**
+   * Why it cannot be archived now; `null` if it can (archiving ends a
+   * session that waits).
+   */
+  archiveBlocked: string | null;
   directories: CleanupDirectory[];
   /** Previews of dev servers that would be stopped. */
   previews: number;

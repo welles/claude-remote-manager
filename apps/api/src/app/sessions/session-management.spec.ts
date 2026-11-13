@@ -223,9 +223,9 @@ describe('SessionManagementService', () => {
       await expect(
         cleanup(session.id, { position: 0, action: 'discard' }),
       ).rejects.toThrow('End the session');
-      expect((await management.cleanupPreview(session.id)).blocked).toContain(
-        'End the session',
-      );
+      const preview = await management.cleanupPreview(session.id);
+      expect(preview.blocked).toContain('End the session');
+      expect(preview.archiveBlocked).toBeNull();
     });
 
     it('never deletes outside the session when the database points elsewhere', async () => {

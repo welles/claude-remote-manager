@@ -1,9 +1,6 @@
 import { openDatabase, type AppDatabase } from '../db/database';
 import { SessionRepository } from '../sessions/session.repository';
-import {
-  newSessionRecord,
-  plainDirectory,
-} from '../sessions/testing/records';
+import { newSessionRecord, plainDirectory } from '../sessions/testing/records';
 import { UsageRepository } from '../sessions/usage.repository';
 import {
   bucketOf,

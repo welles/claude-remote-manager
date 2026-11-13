@@ -121,7 +121,9 @@ describe('session management', () => {
   it('keeps everything by default and archives without cleanup', async () => {
     const view = await openCleanup('archive', {
       sessionId: 's1',
-      blocked: null,
+      // A session that waits cannot be cleaned up, but archived.
+      blocked: 'End the session before cleaning up its clones',
+      archiveBlocked: null,
       directories: [directory()],
       previews: 0,
     });
@@ -139,6 +141,7 @@ describe('session management', () => {
     const view = await openCleanup('cleanup', {
       sessionId: 's1',
       blocked: null,
+      archiveBlocked: null,
       directories: [directory()],
       previews: 0,
     });
@@ -178,6 +181,7 @@ describe('session management', () => {
     const view = await openCleanup('cleanup', {
       sessionId: 's1',
       blocked: 'Claude is working on a turn; stop it first',
+      archiveBlocked: 'Claude is working on a turn; stop it first',
       directories: [directory({ loss: clean, lossAfterIntegration: null })],
       previews: 0,
     });
