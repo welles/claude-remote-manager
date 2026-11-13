@@ -188,3 +188,16 @@ pre {
     flex: 1 1 auto;
   }
 }
+
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    animation: card-enter var(--app-motion) var(--app-ease);
+  }
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}

@@ -3,6 +3,13 @@
   gap: var(--app-space-4);
 }
 
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-4);
+  min-width: 0;
+}
+
 // Two columns on wide screens: identity, GitHub and maintenance on the
 // left, the (long) notifications on the right.
 @media (min-width: 1100px) {
@@ -10,20 +17,10 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: start;
-    grid-auto-flow: row dense;
   }
 
   app-page-bar {
     grid-column: 1 / -1;
-  }
-
-  .notifications {
-    grid-column: 2;
-    grid-row: 2 / span 3;
-  }
-
-  :host > :not(app-page-bar, .notifications) {
-    grid-column: 1;
   }
 }
 

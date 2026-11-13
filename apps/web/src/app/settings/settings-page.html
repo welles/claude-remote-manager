@@ -1,161 +1,167 @@
 <app-page-bar heading="Settings" />
 
-<mat-card appearance="outlined">
-  <mat-card-header>
-    <mat-card-title>Commit identity</mat-card-title>
-  </mat-card-header>
-  <mat-card-content>
-    <p class="hint">
-      Commits in session clones are made with this name and email, by Claude and
-      by you. Sessions with repositories cannot start without it.
-    </p>
-    @if (loaded() && !identitySet()) {
-    <p class="warning" data-testid="identity-missing">
-      Not set yet: set it before starting sessions with repositories.
-    </p>
-    }
-    <form class="identity" (ngSubmit)="save()">
-      <mat-form-field appearance="outline" subscriptSizing="dynamic">
-        <mat-label>Git author name</mat-label>
-        <input
-          matInput
-          name="authorName"
-          [(ngModel)]="authorName"
-          autocomplete="name"
-          data-testid="author-name"
-        />
-      </mat-form-field>
-      <mat-form-field appearance="outline" subscriptSizing="dynamic">
-        <mat-label>Git author email</mat-label>
-        <input
-          matInput
-          name="authorEmail"
-          type="email"
-          [(ngModel)]="authorEmail"
-          autocomplete="email"
-          data-testid="author-email"
-        />
-      </mat-form-field>
-      <button
-        matButton="filled"
-        type="submit"
-        [disabled]="saving() || !loaded()"
-        data-testid="save-identity"
-      >
-        Save
-      </button>
-    </form>
-    @if (message(); as text) {
-    <p
-      class="message"
-      [class.error]="text.error"
-      data-testid="settings-message"
-    >
-      {{ text.text }}
-    </p>
-    }
-  </mat-card-content>
-</mat-card>
-
-<mat-card appearance="outlined" class="notifications">
-  <mat-card-header>
-    <mat-card-title>Notifications</mat-card-title>
-  </mat-card-header>
-  <mat-card-content>
-    <app-notification-settings />
-  </mat-card-content>
-</mat-card>
-
-<mat-card appearance="outlined">
-  <mat-card-header>
-    <mat-card-title>GitHub</mat-card-title>
-  </mat-card-header>
-  <mat-card-content>
-    @if (githubError(); as error) {
-    <p class="error">{{ error }}</p>
-    } @else if (github(); as status) { @if (!status.configured) {
-    <p data-testid="github-not-configured">
-      GitHub is not configured: {{ status.problem }}. Repositories can still be
-      added by clone URL (using the server's own git credentials) and local
-      projects work without it.
-    </p>
-    } @else {
-    <dl class="facts">
-      <dt>App</dt>
-      <dd data-testid="github-app">
-        @if (status.appUrl) {
-        <a [href]="status.appUrl" target="_blank" rel="noopener"
-          >{{ status.appName ?? status.appSlug }}</a
-        >
-        } @else { App {{ status.appId }} }
-      </dd>
-    </dl>
-    @if (status.error) {
-    <p class="error" data-testid="github-error">{{ status.error }}</p>
-    }
-    <h3 class="subheading">Installations</h3>
-    @if (status.installations.length === 0 && !status.error) {
-    <p>The app is not installed on any account yet.</p>
-    }
-    <ul class="installations">
-      @for (installation of status.installations; track installation.id) {
-      <li data-testid="installation">
-        <strong>{{ installation.account }}</strong>
-        <span class="muted"
-          >{{ installation.accountType === 'Organization' ? 'organization' :
-          'account' }} · {{ installation.repositorySelection === 'all' ? 'all
-          repositories' : 'selected repositories' }} @if
-          (installation.repositoryCount !== null) { · {{
-          installation.repositoryCount }} accessible }</span
-        >
-        @if (installation.settingsUrl) {
-        <a [href]="installation.settingsUrl" target="_blank" rel="noopener"
-          >Configure</a
-        >
-        } @if (installation.error) {
-        <span class="error">{{ installation.error }}</span>
-        }
-      </li>
+<div class="column">
+  <mat-card appearance="outlined">
+    <mat-card-header>
+      <mat-card-title>Commit identity</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <p class="hint">
+        Commits in session clones are made with this name and email, by Claude
+        and by you. Sessions with repositories cannot start without it.
+      </p>
+      @if (loaded() && !identitySet()) {
+      <p class="warning" data-testid="identity-missing">
+        Not set yet: set it before starting sessions with repositories.
+      </p>
       }
-    </ul>
-    @if (status.installUrl) {
-    <a
-      matButton="outlined"
-      [href]="status.installUrl"
-      target="_blank"
-      rel="noopener"
-      data-testid="install-app"
-      >Install on another account or organization</a
-    >
-    } } } @else {
-    <mat-progress-bar mode="indeterminate" />
-    }
-  </mat-card-content>
-  <mat-card-actions>
-    <button matButton type="button" (click)="loadGitHub()">Refresh</button>
-  </mat-card-actions>
-</mat-card>
-
-<section class="maintenance" aria-labelledby="maintenance-title">
-  <h2 class="app-section-label" id="maintenance-title">Maintenance</h2>
-  <nav class="links">
-    <a class="link" routerLink="/workspace" data-testid="maintenance-workspace">
-      <app-icon name="clean" />
-      <span class="text">
-        <span class="name">Workspace cleanup</span>
-        <span class="hint"
-          >Leftover clones and scratch directories without a session</span
+      <form class="identity" (ngSubmit)="save()">
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Git author name</mat-label>
+          <input
+            matInput
+            name="authorName"
+            [(ngModel)]="authorName"
+            autocomplete="name"
+            data-testid="author-name"
+          />
+        </mat-form-field>
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Git author email</mat-label>
+          <input
+            matInput
+            name="authorEmail"
+            type="email"
+            [(ngModel)]="authorEmail"
+            autocomplete="email"
+            data-testid="author-email"
+          />
+        </mat-form-field>
+        <button
+          matButton="filled"
+          type="submit"
+          [disabled]="saving() || !loaded()"
+          data-testid="save-identity"
         >
-      </span>
-      <app-icon name="chevron-right" />
-    </a>
-    <a class="link" routerLink="/status" data-testid="maintenance-status">
-      <app-icon name="server" />
-      <span class="text">
-        <span class="name">Server status</span>
-        <span class="hint">Version and commit of the server</span>
-      </span>
-      <app-icon name="chevron-right" />
-    </a>
-  </nav>
-</section>
+          Save
+        </button>
+      </form>
+      @if (message(); as text) {
+      <p
+        class="message"
+        [class.error]="text.error"
+        data-testid="settings-message"
+      >
+        {{ text.text }}
+      </p>
+      }
+    </mat-card-content>
+  </mat-card>
+  <mat-card appearance="outlined">
+    <mat-card-header>
+      <mat-card-title>GitHub</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      @if (githubError(); as error) {
+      <p class="error">{{ error }}</p>
+      } @else if (github(); as status) { @if (!status.configured) {
+      <p data-testid="github-not-configured">
+        GitHub is not configured: {{ status.problem }}. Repositories can still
+        be added by clone URL (using the server's own git credentials) and local
+        projects work without it.
+      </p>
+      } @else {
+      <dl class="facts">
+        <dt>App</dt>
+        <dd data-testid="github-app">
+          @if (status.appUrl) {
+          <a [href]="status.appUrl" target="_blank" rel="noopener"
+            >{{ status.appName ?? status.appSlug }}</a
+          >
+          } @else { App {{ status.appId }} }
+        </dd>
+      </dl>
+      @if (status.error) {
+      <p class="error" data-testid="github-error">{{ status.error }}</p>
+      }
+      <h3 class="subheading">Installations</h3>
+      @if (status.installations.length === 0 && !status.error) {
+      <p>The app is not installed on any account yet.</p>
+      }
+      <ul class="installations">
+        @for (installation of status.installations; track installation.id) {
+        <li data-testid="installation">
+          <strong>{{ installation.account }}</strong>
+          <span class="muted"
+            >{{ installation.accountType === 'Organization' ? 'organization' :
+            'account' }} · {{ installation.repositorySelection === 'all' ? 'all
+            repositories' : 'selected repositories' }} @if
+            (installation.repositoryCount !== null) { · {{
+            installation.repositoryCount }} accessible }</span
+          >
+          @if (installation.settingsUrl) {
+          <a [href]="installation.settingsUrl" target="_blank" rel="noopener"
+            >Configure</a
+          >
+          } @if (installation.error) {
+          <span class="error">{{ installation.error }}</span>
+          }
+        </li>
+        }
+      </ul>
+      @if (status.installUrl) {
+      <a
+        matButton="outlined"
+        [href]="status.installUrl"
+        target="_blank"
+        rel="noopener"
+        data-testid="install-app"
+        >Install on another account or organization</a
+      >
+      } } } @else {
+      <mat-progress-bar mode="indeterminate" />
+      }
+    </mat-card-content>
+    <mat-card-actions>
+      <button matButton type="button" (click)="loadGitHub()">Refresh</button>
+    </mat-card-actions>
+  </mat-card>
+
+  <section class="maintenance" aria-labelledby="maintenance-title">
+    <h2 class="app-section-label" id="maintenance-title">Maintenance</h2>
+    <nav class="links">
+      <a
+        class="link"
+        routerLink="/workspace"
+        data-testid="maintenance-workspace"
+      >
+        <app-icon name="clean" />
+        <span class="text">
+          <span class="name">Workspace cleanup</span>
+          <span class="hint"
+            >Leftover clones and scratch directories without a session</span
+          >
+        </span>
+        <app-icon name="chevron-right" />
+      </a>
+      <a class="link" routerLink="/status" data-testid="maintenance-status">
+        <app-icon name="server" />
+        <span class="text">
+          <span class="name">Server status</span>
+          <span class="hint">Version and commit of the server</span>
+        </span>
+        <app-icon name="chevron-right" />
+      </a>
+    </nav>
+  </section>
+</div>
+<div class="column">
+  <mat-card appearance="outlined" class="notifications">
+    <mat-card-header>
+      <mat-card-title>Notifications</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <app-notification-settings />
+    </mat-card-content>
+  </mat-card>
+</div>

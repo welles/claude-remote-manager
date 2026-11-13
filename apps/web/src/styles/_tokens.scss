@@ -49,8 +49,8 @@
   --app-success: light-dark(#1a7f37, #6fd99a);
   --app-diff-add-fg: var(--app-success);
   --app-diff-del-fg: light-dark(#c8232e, #ff8f86);
-  --app-diff-add-bg: light-dark(rgb(46 160 67 / 14%), rgb(46 160 67 / 20%));
-  --app-diff-del-bg: light-dark(rgb(248 81 73 / 14%), rgb(248 81 73 / 20%));
+  --app-diff-add-bg: light-dark(rgb(46 160 67 / 13%), rgb(46 160 67 / 11%));
+  --app-diff-del-bg: light-dark(rgb(248 81 73 / 13%), rgb(248 81 73 / 11%));
 
   // GitHub issue and pull request states (backgrounds of small labels with
   // white text, and dots).
