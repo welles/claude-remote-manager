@@ -74,6 +74,15 @@ export class SessionGitService {
     private readonly github: GitHubService,
   ) {}
 
+  /** A session; 404 if it does not exist. */
+  sessionRecord(sessionId: string): SessionRecord {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new NotFoundException(`Session ${sessionId} not found`);
+    }
+    return session;
+  }
+
   /** A ready session clone of a repository; 404/409 otherwise. */
   clone(sessionId: string, repositoryId: string): SessionClone {
     const session = this.sessions.get(sessionId);

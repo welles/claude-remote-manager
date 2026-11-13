@@ -1,4 +1,13 @@
 import { Module } from '@nestjs/common';
+import { NoApprovalUiApprover, ToolApprover } from '../agent/tool-approval';
+import { ApprovalGrants } from './approval-grants';
+import { GitCredentialsController } from './git-credentials.controller';
+import { GitCredentialsService } from './git-credentials.service';
+import {
+  SessionAgentSupport,
+  SessionAgentSupportService,
+} from './session-agent-support';
+import { SessionCredentials } from './session-credentials';
 import { SessionGitController } from './session-git.controller';
 import { SessionGitService } from './session-git.service';
 import { AgentRunner } from '../agent/agent-runner';
@@ -20,7 +29,11 @@ import { UsageRepository } from './usage.repository';
 
 @Module({
   imports: [LimitsModule, RepositoriesModule],
-  controllers: [SessionsController, SessionGitController],
+  controllers: [
+    SessionsController,
+    SessionGitController,
+    GitCredentialsController,
+  ],
   providers: [
     SessionRepository,
     SessionEventRepository,
@@ -28,6 +41,12 @@ import { UsageRepository } from './usage.repository';
     SessionsService,
     SessionsGateway,
     SessionGitService,
+    GitCredentialsService,
+    { provide: SessionCredentials, useValue: new SessionCredentials() },
+    { provide: ApprovalGrants, useValue: new ApprovalGrants() },
+    { provide: SessionAgentSupport, useClass: SessionAgentSupportService },
+    // Replaced by the approval dialogs.
+    { provide: ToolApprover, useClass: NoApprovalUiApprover },
     SessionWorkspaceService,
     SetupScriptRunner,
     { provide: AgentRunner, useClass: SdkAgentRunner },

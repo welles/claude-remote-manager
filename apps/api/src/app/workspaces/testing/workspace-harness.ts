@@ -24,10 +24,38 @@ import {
 } from '../../sessions/testing/fake-agent';
 import { UsageRepository } from '../../sessions/usage.repository';
 import { SessionWorkspaceService } from '../session-workspace.service';
+import {
+  NO_APPROVAL_UI_MESSAGE,
+  ToolApprover,
+  type ToolApprovalDecision,
+  type ToolApprovalRequest,
+} from '../../agent/tool-approval';
 import { FakeGitHub } from '../../github/testing/fake-github';
+import { ApprovalGrants } from '../../sessions/approval-grants';
+import { SessionAgentSupportService } from '../../sessions/session-agent-support';
+import { SessionCredentials } from '../../sessions/session-credentials';
+import { SessionGitService } from '../../sessions/session-git.service';
 import { RepositoryCredentials } from '../../repositories/repository-credentials';
 import { SettingsService } from '../../settings/settings.service';
 import { SetupScriptRunner } from '../setup-script-runner';
+
+/**
+ * Stands in for the approval dialogs: answers with `answer`, which denies
+ * like the app does today unless a test replaces it.
+ */
+export class FakeApprover extends ToolApprover {
+  readonly requests: ToolApprovalRequest[] = [];
+  answer: (request: ToolApprovalRequest) => ToolApprovalDecision = () => ({
+    behavior: 'deny',
+    message: NO_APPROVAL_UI_MESSAGE,
+    reason: 'no_approval_ui',
+  });
+
+  async decide(request: ToolApprovalRequest): Promise<ToolApprovalDecision> {
+    this.requests.push(request);
+    return this.answer(request);
+  }
+}
 
 /** Commit identity of the tests. */
 export const TEST_IDENTITY = {
@@ -65,8 +93,13 @@ export class WorkspaceHarness {
   );
   readonly events: SessionEventEnvelope[] = [];
   readonly config: AppConfig = testAppConfig(this.dir);
+  readonly sessionCredentials = new SessionCredentials();
+  readonly grants = new ApprovalGrants();
+  readonly approver = new FakeApprover();
   repositories!: RepositoriesService;
   workspaces!: SessionWorkspaceService;
+  sessionGit!: SessionGitService;
+  support!: SessionAgentSupportService;
   service!: SessionsService;
 
   /** (Re)creates the services on the same database, like a restart. */
@@ -88,6 +121,21 @@ export class WorkspaceHarness {
       this.settings,
     );
     this.workspaces.onModuleInit();
+    this.sessionGit = new SessionGitService(
+      this.sessions,
+      this.repositoryRecords,
+      this.credentials,
+      this.git,
+      this.github.service,
+    );
+    this.support = new SessionAgentSupportService(
+      this.config,
+      this.sessionCredentials,
+      this.grants,
+      this.sessionGit,
+      this.git,
+      this.github.installationTokens,
+    );
     this.service = new SessionsService(
       this.config,
       this.sessions,
@@ -97,6 +145,8 @@ export class WorkspaceHarness {
       this.transcripts,
       new LimitsService(),
       this.workspaces,
+      this.approver,
+      this.support,
     );
     await this.service.onModuleInit();
     this.service.events$.subscribe((event) => this.events.push(event));
@@ -127,7 +177,15 @@ export class WorkspaceHarness {
     await waitFor(
       () => this.sessions.require(sessionId).status !== 'preparing',
     );
-    // Let the process start.
+    // Let the process start (when the session runs).
+    await waitFor(() => {
+      const record = this.sessions.require(sessionId);
+      const cwd = record.directories[0]?.path;
+      return (
+        record.status !== 'running' ||
+        this.runner.runs.some((run) => run.options.cwd === cwd)
+      );
+    });
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 

@@ -22,7 +22,9 @@ import {
   requireString,
 } from '../common/validation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
+import { credentialHelperCommand } from '../git/credential-helper';
 import { GitService, isValidBranchName } from '../git/git.service';
+import { isGitHubRepository } from '../repositories/repository-credentials';
 import { newSlug } from '../git/slug';
 import { RepositoriesService } from '../repositories/repositories.service';
 import type { RepositoryRecord } from '../repositories/repository.repository';
@@ -500,7 +502,11 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
       });
       await this.git.configureClone(directory.path, {
         identity: this.settings.gitIdentity(),
-        credentialHelper: null,
+        // GitHub clones get their credentials from the session manager,
+        // read-only unless the user approved a push.
+        credentialHelper: isGitHubRepository(repository)
+          ? credentialHelperCommand()
+          : null,
       });
       this.sessions.updateDirectory(session.id, directory.position, {
         state: 'ready',

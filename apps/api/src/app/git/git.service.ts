@@ -361,22 +361,25 @@ export class GitService {
     path: string,
     configuration: CloneConfiguration,
   ): Promise<void> {
-    const inClone = (args: string[]) => runGit(args, { cwd: path });
     await this.setIdentity(path, configuration.identity);
     if (configuration.credentialHelper !== null) {
-      await inClone(['config', '--unset-all', 'credential.helper']).catch(
-        () => undefined,
-      );
-      await inClone(['config', '--add', '--', 'credential.helper', '']);
-      await inClone([
-        'config',
-        '--add',
-        '--',
-        'credential.helper',
-        configuration.credentialHelper,
-      ]);
-      await inClone(['config', '--', 'credential.useHttpPath', 'true']);
+      await this.setCredentialHelper(path, configuration.credentialHelper);
     }
+  }
+
+  /**
+   * Makes `helper` the only credential helper of a clone (the list is reset
+   * first, so no helper of the user's or system configuration is asked or
+   * stores anything), with the repository path in the request.
+   */
+  async setCredentialHelper(path: string, helper: string): Promise<void> {
+    const inClone = (args: string[]) => runGit(args, { cwd: path });
+    await inClone(['config', '--unset-all', 'credential.helper']).catch(
+      () => undefined,
+    );
+    await inClone(['config', '--add', '--', 'credential.helper', '']);
+    await inClone(['config', '--add', '--', 'credential.helper', helper]);
+    await inClone(['config', '--', 'credential.useHttpPath', 'true']);
   }
 
   /**

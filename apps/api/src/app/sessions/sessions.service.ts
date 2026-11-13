@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -23,6 +24,7 @@ import {
   type SessionStatus,
 } from '@claude-remote-manager/shared-types';
 import { AgentRunner, type AgentRun } from '../agent/agent-runner';
+import { NoApprovalUiApprover, ToolApprover } from '../agent/tool-approval';
 import {
   optionalEnum,
   optionalString,
@@ -38,6 +40,10 @@ import {
   type SetupOutcome,
 } from '../workspaces/session-workspace.service';
 import { pullRequestDto } from './pull-request-dto';
+import {
+  NoSessionAgentSupport,
+  SessionAgentSupport,
+} from './session-agent-support';
 import { SdkEventMapper, transcriptEntries } from './sdk-event-mapper';
 import {
   SessionEventRepository,
@@ -54,11 +60,7 @@ import {
 import { EMPTY_USAGE, UsageRepository } from './usage.repository';
 import { sumUsage, UsageTracker } from './usage-tracker';
 
-/** What Claude is told, and the user shown, when a tool use needs approval. */
-export const NO_APPROVAL_UI_MESSAGE =
-  'Approval dialogs are not implemented in Claude Remote Manager yet, so this ' +
-  'tool use was denied automatically. Continue without it if you can, ' +
-  'otherwise tell the user what you wanted to do.';
+export { NO_APPROVAL_UI_MESSAGE } from '../agent/tool-approval';
 
 const MAX_MESSAGE_LENGTH = 100_000;
 const MAX_TITLE_LENGTH = 200;
@@ -169,6 +171,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly transcripts: TranscriptReader,
     private readonly limits: LimitsService,
     private readonly workspaces: SessionWorkspaceService,
+    @Optional()
+    private readonly approver: ToolApprover = new NoApprovalUiApprover(),
+    @Optional()
+    private readonly support: SessionAgentSupport = new NoSessionAgentSupport(),
   ) {}
 
   /**
@@ -705,6 +711,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.interruptRequested = false;
     live.closing = null;
     try {
+      const extras = await this.support.prepare(record);
       const run = await this.runner.start(
         {
           cwd: workingDirectory(record),
@@ -713,12 +720,16 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           permissionMode: record.permissionMode,
           ...(await this.resumeTarget(record)),
           canUseTool: this.canUseTool(live),
+          env: extras.env,
+          tools: extras.tools,
+          settings: extras.settings,
         },
         firstMessage,
       );
       live.run = run;
       live.consuming = this.consume(live, run);
     } catch (error) {
+      this.support.released(live.id);
       this.failRun(live, error);
     }
   }
@@ -764,6 +775,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (error) {
       failure = error;
+    }
+    if (live.run === run || this.shuttingDown) {
+      // The process is gone: its token and approvals end with it.
+      this.support.released(live.id);
     }
     if (live.run !== run || this.shuttingDown) {
       return;
@@ -915,20 +930,43 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Approval dialogs come in a later step. Until then every tool use that
-   * needs approval is denied, visibly for the user.
+   * Tool uses that need approval go to the {@link ToolApprover} (until the
+   * approval dialogs exist it denies everything, visibly for the user).
+   * Approved uses are reported to the integrations: an approved `git push`
+   * or `create_pull_request` call is what lets those through.
    */
   private canUseTool(live: LiveSession): CanUseTool {
     return async (toolName, input, options) => {
-      this.append(live, {
-        type: 'permission.denied',
-        toolUseId: options.toolUseID,
+      const decision = await this.approver.decide({
+        sessionId: live.id,
         toolName,
         input,
-        message: NO_APPROVAL_UI_MESSAGE,
-        reason: 'no_approval_ui',
+        toolUseId: options.toolUseID,
+        title: options.title ?? null,
+        description: options.description ?? null,
+        mcpServer: options.mcpServer ?? null,
+        signal: options.signal,
       });
-      return { behavior: 'deny', message: NO_APPROVAL_UI_MESSAGE };
+      if (decision.behavior === 'deny') {
+        this.append(live, {
+          type: 'permission.denied',
+          toolUseId: options.toolUseID,
+          toolName,
+          input,
+          message: decision.message,
+          reason: decision.reason,
+        });
+        return { behavior: 'deny', message: decision.message };
+      }
+      const approvedInput = decision.updatedInput ?? input;
+      this.support.approved(
+        live.id,
+        toolName,
+        approvedInput,
+        options.toolUseID,
+        options.mcpServer ?? null,
+      );
+      return { behavior: 'allow', updatedInput: approvedInput };
     };
   }
 
@@ -1002,6 +1040,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const event = live.log.append(input);
     if (store && STORED_EVENT_TYPES.has(input.type)) {
       this.storedEvents.add(live.id, input, live.anchor);
+    }
+    if (input.type === 'tool.result') {
+      this.support.toolFinished(live.id, input.toolUseId);
     }
     this.events.next({ sessionId: live.id, event });
   }

@@ -1,5 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
+import type * as Zod from 'zod';
+import { APP_MCP_SERVER } from '../sessions/approval-grants';
 import {
   CLAUDE_CODE_SECRETS,
   childEnvironment,
@@ -9,6 +11,7 @@ import type {
   AgentRun,
   AgentRunner,
   AgentStartOptions,
+  AgentTool,
   AgentUserMessage,
 } from './agent-runner';
 import { AsyncQueue } from './async-queue';
@@ -16,6 +19,11 @@ import { AsyncQueue } from './async-queue';
 type SdkModule = typeof Sdk;
 
 let sdkModule: Promise<SdkModule> | undefined;
+let zodModule: Promise<typeof Zod> | undefined;
+
+const nativeImport = new Function('s', 'return import(s)') as <T>(
+  specifier: string,
+) => Promise<T>;
 
 /**
  * Loads the Agent SDK. It is an ES module while the API bundle is CommonJS,
@@ -23,10 +31,73 @@ let sdkModule: Promise<SdkModule> | undefined;
  * leave alone.
  */
 export function loadAgentSdk(): Promise<SdkModule> {
-  sdkModule ??= (
-    new Function('s', 'return import(s)') as (s: string) => Promise<SdkModule>
-  )('@anthropic-ai/claude-agent-sdk');
+  sdkModule ??= nativeImport<SdkModule>('@anthropic-ai/claude-agent-sdk');
   return sdkModule;
+}
+
+/** Zod as ES module, the same instance the Agent SDK imports. */
+function loadZod(): Promise<typeof Zod> {
+  zodModule ??= nativeImport<typeof Zod>('zod');
+  return zodModule;
+}
+
+/**
+ * The app's tools as an in-process MCP server (`createSdkMcpServer`), with
+ * the permission policy `always_ask` for tools that need the user's
+ * approval on every call.
+ */
+export async function appMcpServers(
+  tools: AgentTool[] | undefined,
+): Promise<Record<string, Sdk.McpServerConfig>> {
+  if (!tools || tools.length === 0) {
+    return {};
+  }
+  const sdk = await loadAgentSdk();
+  const z = await loadZod();
+  const server = sdk.createSdkMcpServer({
+    name: APP_MCP_SERVER,
+    version: '1.0.0',
+    alwaysLoad: true,
+    tools: tools.map((definition) =>
+      sdk.tool(
+        definition.name,
+        definition.description,
+        definition.inputSchema(z),
+        async (input) => {
+          try {
+            const result = await definition.handler(
+              input as Record<string, unknown>,
+            );
+            return {
+              content: [{ type: 'text', text: result.text }],
+              ...(result.isError ? { isError: true } : {}),
+            };
+          } catch (error) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: error instanceof Error ? error.message : String(error),
+                },
+              ],
+              isError: true,
+            };
+          }
+        },
+      ),
+    ),
+  });
+  return {
+    [APP_MCP_SERVER]: {
+      ...server,
+      tools: tools
+        .filter((definition) => definition.alwaysAsk)
+        .map((definition) => ({
+          name: definition.name,
+          permission_policy: 'always_ask' as const,
+        })),
+    },
+  };
 }
 
 /**
@@ -51,8 +122,11 @@ export function buildQueryOptions(
   config: Pick<AppConfig, 'claudeExecutable'>,
   stderr: (data: string) => void,
   baseEnv: NodeJS.ProcessEnv = process.env,
+  mcpServers?: Record<string, Sdk.McpServerConfig>,
 ): Sdk.Options {
   return {
+    ...(mcpServers && Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
+    ...(options.settings ? { settings: options.settings } : {}),
     // Replaces the inherited environment: no app secrets except Claude
     // Code's own login.
     env: childEnvironment(options.env, {
@@ -104,15 +178,21 @@ export class SdkAgentRunner implements AgentRunner {
     const stderr: string[] = [];
     const query = sdk.query({
       prompt: input,
-      options: buildQueryOptions(options, this.config, (data) => {
-        this.logger.debug(data.trimEnd());
-        for (const line of data.split('\n')) {
-          if (line.trim()) {
-            stderr.push(line.trim());
+      options: buildQueryOptions(
+        options,
+        this.config,
+        (data) => {
+          this.logger.debug(data.trimEnd());
+          for (const line of data.split('\n')) {
+            if (line.trim()) {
+              stderr.push(line.trim());
+            }
           }
-        }
-        stderr.splice(0, Math.max(0, stderr.length - STDERR_LINES));
-      }),
+          stderr.splice(0, Math.max(0, stderr.length - STDERR_LINES));
+        },
+        process.env,
+        await appMcpServers(options.tools),
+      ),
     });
 
     return {

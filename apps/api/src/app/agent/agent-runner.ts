@@ -5,6 +5,30 @@ import type {
   SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionPermissionMode } from '@claude-remote-manager/shared-types';
+import type * as Zod from 'zod';
+
+/** Result of one of the app's own tools. */
+export interface AgentToolResult {
+  text: string;
+  isError?: boolean;
+}
+
+/**
+ * A tool the app gives Claude (served in-process as MCP server `crm`; the
+ * name Claude sees is `mcp__crm__<name>`).
+ */
+export interface AgentTool {
+  name: string;
+  description: string;
+  /** Input schema as Zod raw shape, built with the Zod the SDK uses. */
+  inputSchema: (z: typeof Zod) => Record<string, Zod.ZodType>;
+  /**
+   * Ask `canUseTool` before every call, even where a permission rule
+   * allows the tool (MCP tool permission policy `always_ask`).
+   */
+  alwaysAsk: boolean;
+  handler: (input: Record<string, unknown>) => Promise<AgentToolResult>;
+}
 
 /** What a Claude Code process is started with. */
 export interface AgentStartOptions {
@@ -21,6 +45,13 @@ export interface AgentStartOptions {
   canUseTool: CanUseTool;
   /** Variables added to the process environment (without app secrets). */
   env?: Record<string, string>;
+  /** The app's own tools for this session. */
+  tools?: AgentTool[];
+  /**
+   * Settings on top of the user's, project's and local settings (Claude
+   * Code's flag settings), e.g. the auto-memory directory.
+   */
+  settings?: Record<string, unknown>;
 }
 
 /** A user message sent into a running Claude Code process. */

@@ -121,8 +121,8 @@ export interface PermissionDeniedEvent extends SessionEventBase {
   input: unknown;
   /** Why it was denied; also what Claude was told. */
   message: string;
-  /** `no_approval_ui`: approval dialogs do not exist yet; `rule`: by Claude Code. */
-  reason: 'no_approval_ui' | 'rule';
+  /** `no_approval_ui`: approval dialogs do not exist yet; `rule`: by Claude Code; `user`: the user said no. */
+  reason: 'no_approval_ui' | 'rule' | 'user';
 }
 
 /** The status of the session changed. */
