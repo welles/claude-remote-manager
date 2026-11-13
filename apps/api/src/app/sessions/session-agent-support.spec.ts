@@ -94,6 +94,9 @@ describe('session integrations (credentials, tool, memory)', () => {
       disableBypassPermissionsMode: 'disable',
       disableAutoMode: 'disable',
     });
+    // No claude.ai connectors of the account (with strictMcpConfig, see
+    // sdk-agent-runner).
+    expect(SESSION_PERMISSION_SETTINGS.disableClaudeAiConnectors).toBe(true);
     expect(existsSync(memory)).toBe(true);
     expect(
       options().tools?.map((entry) => [entry.name, entry.alwaysAsk]),

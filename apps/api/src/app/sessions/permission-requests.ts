@@ -9,7 +9,6 @@ import type {
   PermissionResolutionCause,
   PlanApprovalMode,
   SessionAllowOffer,
-  SessionPermissionMode,
   UserQuestion,
 } from '@claude-remote-manager/shared-types';
 import type {
@@ -132,10 +131,12 @@ function acceptableRule(rule: PermissionRuleValue): boolean {
 
 /**
  * What "Allow for this session" may offer for a request, from Claude Code's
- * suggestions: allow rules, directories and a mode switch (only to `default`
- * or `acceptEdits`), all applied to the session only (never to settings
- * files). `null` when nothing sound remains, and always for pushes, pull
- * requests, questions and plans: each of those needs its own approval.
+ * suggestions: allow rules and directories, applied to the session only
+ * (never to settings files). Never a permission mode switch (`setMode`
+ * suggestions are dropped): the user changes the mode only through the
+ * mode control (and by approving a plan). `null` when nothing sound
+ * remains, and always for pushes, pull requests, questions and plans: each
+ * of those needs its own approval. `offer.mode` is always `null`.
  */
 export function sessionAllowOffer(
   request: Pick<
@@ -170,12 +171,6 @@ export function sessionAllowOffer(
     } else if (suggestion.type === 'addDirectories') {
       updates.push({ ...suggestion, destination: 'session' });
       offer.directories.push(...suggestion.directories);
-    } else if (
-      suggestion.type === 'setMode' &&
-      PLAN_MODES.includes(suggestion.mode as PlanApprovalMode)
-    ) {
-      updates.push({ ...suggestion, destination: 'session' });
-      offer.mode = suggestion.mode as SessionPermissionMode;
     }
   }
   return updates.length > 0 ? { offer, updates } : null;

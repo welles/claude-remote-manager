@@ -84,13 +84,18 @@ export interface PullRequestCall {
 
 /**
  * What "Allow for this session" would allow from now on, in addition to
- * this request: permission rules (e.g. `Bash(npm test:*)`), directories
- * and/or a permission mode. Kept until the session ends (also across
+ * this request: permission rules (e.g. `Bash(npm test:*)`) and/or
+ * directories. Kept until the session ends (also across
  * restarts of its Claude Code process); never written to settings files.
  */
 export interface SessionAllowOffer {
   rules: string[];
   directories: string[];
+  /**
+   * Always `null` from this server: a session-wide allow never switches the
+   * permission mode (the user changes it only through the mode control).
+   * Kept for the protocol; histories from earlier versions may have one.
+   */
   mode: SessionPermissionMode | null;
 }
 

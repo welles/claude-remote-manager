@@ -28,7 +28,9 @@ export interface LaunchExtras {
  * - no bypass mode, and no auto mode: approvals come from the user, not
  *   from a classifier (also not during plan mode);
  * - approval requests do not expire while the user is away (the app
- *   cancels them itself when the turn, session or process ends).
+ *   cancels them itself when the turn, session or process ends);
+ * - the Claude account's claude.ai connectors are not fetched (sessions get
+ *   no MCP servers but the app's own, see `STRICT_MCP_CONFIG`).
  */
 export const SESSION_PERMISSION_SETTINGS = {
   permissions: {
@@ -38,6 +40,7 @@ export const SESSION_PERMISSION_SETTINGS = {
   },
   useAutoModeDuringPlan: false,
   dialogExpiry: 'never',
+  disableClaudeAiConnectors: true,
 };
 
 /** Hooks of the sessions service for the app's integrations. */

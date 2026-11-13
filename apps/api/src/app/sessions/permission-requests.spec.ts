@@ -51,7 +51,7 @@ const allowRules = (
 });
 
 describe('sessionAllowOffer', () => {
-  it('turns suggestions into session-only updates', () => {
+  it('turns suggestions into session-only updates, without mode switches', () => {
     const offer = sessionAllowOffer(
       request(
         'Bash',
@@ -72,14 +72,35 @@ describe('sessionAllowOffer', () => {
     expect(offer?.offer).toEqual({
       rules: ['Bash(npm test:*)'],
       directories: ['/data/other'],
-      mode: 'acceptEdits',
+      mode: null,
     });
-    // Never a settings file.
+    // Never a settings file, never a mode switch.
     expect(offer?.updates.map((update) => update.destination)).toEqual([
       'session',
       'session',
-      'session',
     ]);
+    expect(offer?.updates.map((update) => update.type)).toEqual([
+      'addRules',
+      'addDirectories',
+    ]);
+  });
+
+  it('never offers a permission mode switch for the session', () => {
+    // Claude Code suggests "accept edits" for file changes; the user changes
+    // the mode only through the mode control.
+    expect(
+      sessionAllowOffer(
+        request(
+          'Edit',
+          { file_path: '/work/a.ts' },
+          {
+            suggestions: [
+              { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+            ],
+          },
+        ),
+      ),
+    ).toBeNull();
   });
 
   it('drops what must keep asking or is too broad', () => {

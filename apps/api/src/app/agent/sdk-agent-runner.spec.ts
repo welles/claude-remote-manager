@@ -35,6 +35,7 @@ describe('buildQueryOptions', () => {
       permissionMode: 'default',
       canUseTool,
       sessionId: 'new-id',
+      strictMcpConfig: true,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,

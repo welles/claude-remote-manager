@@ -252,6 +252,13 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 - Settings: sessions get Claude Code's own system prompt and the user, project and local
   settings, including `CLAUDE.md` files of the working directory and the user's; the managed
   policy `/etc/claude-code/CLAUDE.md` is always loaded.
+- MCP servers: sessions get Claude Code's built-in tools and the app's own tools (in-process
+  server `crm`) only. Every process runs with `strictMcpConfig` (`--strict-mcp-config`: MCP
+  servers only from the app's `mcpServers` option, none from the user's configuration, a
+  repository's `.mcp.json`, plugins or agent definitions) and the setting
+  `disableClaudeAiConnectors`, so the Claude account's claude.ai connectors (mail, drive,
+  calendar, task managers, ...) are neither fetched nor reachable. A repository's own
+  `.mcp.json` is not loaded; MCP servers per repository are a later stage.
 
 REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `PATCH /api/sessions/:id`, `POST /api/sessions/:id/messages`,
@@ -291,8 +298,10 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
   which is applied as a session `setMode` update, or keep planning with feedback).
 - "Allow for this session" is offered only from Claude Code's own suggestions for the request,
   rewritten to the destination `session` (never to settings files): allow rules (not for all
-  Bash commands, not for prefixes covering `git push`, not for the app's tools), directories,
-  or a switch to `acceptEdits`. It is never offered for pushes, pull requests, questions, plans
+  Bash commands, not for prefixes covering `git push`, not for the app's tools) and
+  directories. It never switches the permission mode (Claude Code's `setMode` suggestions, e.g.
+  "accept edits" for a file change, are dropped): the mode changes only through the mode control
+  and by approving a plan. It is never offered for pushes, pull requests, questions, plans
   or when Claude Code says not to (`suppressAlwaysAllowRule`): each push and each pull request
   needs its own approval (see [Push and pull requests](#push-and-pull-requests)). Rules and
   directories allowed for the session are given to every later Claude Code process of the

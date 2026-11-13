@@ -118,6 +118,17 @@ export const SETTING_SOURCES: Sdk.SettingSource[] = [
   'local',
 ];
 
+/**
+ * Sessions get Claude Code's built-in tools and the app's own tools only:
+ * MCP servers come only from the `mcpServers` option (the app's in-process
+ * server), never from the user's or a project's configuration (`.mcp.json`
+ * of a repository), plugins or the Claude account's claude.ai connectors
+ * (mail, drive, calendar, ...). `strictMcpConfig` is what keeps them out
+ * (`--strict-mcp-config`); `disableClaudeAiConnectors` in the session's
+ * settings keeps the connectors from being fetched at all.
+ */
+export const STRICT_MCP_CONFIG = true;
+
 /** Lines of Claude Code's stderr kept for error messages. */
 const STDERR_LINES = 5;
 
@@ -166,6 +177,7 @@ export function buildQueryOptions(
         }
       : {}),
     ...(mcpServers && Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
+    strictMcpConfig: STRICT_MCP_CONFIG,
     ...(options.settings ? { settings: options.settings } : {}),
     // Replaces the inherited environment: no app secrets except Claude
     // Code's own login (with separate users: only allowlisted variables).
@@ -287,6 +299,8 @@ export class SdkAgentRunner implements AgentRunner {
         // Readable for the session user; nothing is written there.
         cwd: tmpdir(),
         settingSources: ['user'],
+        strictMcpConfig: STRICT_MCP_CONFIG,
+        settings: { disableClaudeAiConnectors: true },
         permissionMode: 'default',
         ...(this.config.claudeExecutable
           ? { pathToClaudeCodeExecutable: this.config.claudeExecutable }

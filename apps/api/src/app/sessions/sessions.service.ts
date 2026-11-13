@@ -1385,10 +1385,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         resolution.mode &&
         resolution.mode !== this.requireRecord(live.id).permissionMode
       ) {
+        // Only an approved plan switches the mode (session-wide allows never
+        // include a mode switch).
         this.applySettings(
           live.id,
           { permissionMode: resolution.mode },
-          resolution.sessionAllow ? 'user' : 'plan',
+          'plan',
         );
       }
       this.support.approved(
