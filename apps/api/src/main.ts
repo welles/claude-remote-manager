@@ -2,6 +2,8 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app/app.module';
+import { checkSeparateUsers } from './app/common/process-isolation';
+import { APP_CONFIG, type AppConfig } from './app/config/app-config';
 import { configureApp } from './app/configure-app';
 
 async function bootstrap() {
@@ -9,6 +11,14 @@ async function bootstrap() {
     bodyParser: false,
   });
   const globalPrefix = 'api';
+  const config = app.get<AppConfig>(APP_CONFIG);
+  // Refuses to start when the separation of users cannot work.
+  checkSeparateUsers(config.isolation);
+  Logger.log(
+    config.isolation.mode === 'separate-users'
+      ? `Session processes run as ${config.isolation.sessionUser.name}`
+      : 'PROCESS_ISOLATION=single-user: session processes run as the API user (local development only)',
+  );
   configureApp(app);
   // Run onModuleDestroy/onApplicationShutdown hooks on SIGTERM/SIGINT, e.g.
   // to stop sessions and dev servers when the container stops.

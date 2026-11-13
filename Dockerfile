@@ -110,6 +110,7 @@ RUN claude="$(ls /app/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude
     && claude --version
 
 ENV NODE_ENV=production \
+    PROCESS_ISOLATION=single-user \
     PORT=8080 \
     WEB_ROOT=/app/public
 

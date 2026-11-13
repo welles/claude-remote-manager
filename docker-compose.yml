@@ -13,6 +13,15 @@ services:
       - '127.0.0.1:8080:8080'
     environment:
       TZ: ${TZ:-UTC}
+      # Authentication of the API (required, no default). Behind Cloudflare
+      # Access the API verifies the Access token itself:
+      #   AUTH_MODE: cloudflare-access
+      #   CF_ACCESS_TEAM_DOMAIN: <team>.cloudflareaccess.com
+      #   CF_ACCESS_AUD: <application audience tag>
+      #   CF_ACCESS_ALLOWED_EMAILS: you@example.com   (optional)
+      # This local setup publishes the port on loopback only and runs
+      # unauthenticated:
+      AUTH_MODE: none
       # Public host name the app is reached under (behind the tunnel); the
       # API refuses other Host headers except loopback names.
       # ALLOWED_HOSTS: crm.example.com

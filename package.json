@@ -7,8 +7,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "nx serve web",
-    "start:api": "nx serve api",
+    "start": "AUTH_MODE=none PROCESS_ISOLATION=single-user nx serve web",
+    "start:api": "AUTH_MODE=none PROCESS_ISOLATION=single-user nx serve api",
     "build": "nx run-many -t build",
     "test": "nx run-many -t test",
     "lint": "nx run-many -t lint",

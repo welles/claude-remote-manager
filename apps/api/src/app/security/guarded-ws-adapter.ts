@@ -1,6 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import { Logger, type INestApplicationContext } from '@nestjs/common';
 import { WsAdapter } from '@nestjs/platform-ws';
+import type { Authenticator } from '../auth/authenticator';
 import type { RequestPolicy } from './request-policy';
 
 /**
@@ -13,6 +14,7 @@ export class GuardedWsAdapter extends WsAdapter {
   constructor(
     app: INestApplicationContext,
     private readonly policy: RequestPolicy,
+    private readonly authenticator: Authenticator,
   ) {
     super(app);
   }
@@ -25,12 +27,30 @@ export class GuardedWsAdapter extends WsAdapter {
         callback: (result: boolean, code?: number, message?: string) => void,
       ) => {
         const verdict = this.policy.check('GET', info.req.headers, true);
-        if (verdict.ok) {
-          callback(true);
-        } else {
+        if (!verdict.ok) {
           this.guardLogger.warn(`Refused WebSocket upgrade: ${verdict.reason}`);
           callback(false, verdict.status, verdict.reason);
+          return;
         }
+        const path = new URL(info.req.url ?? '/', 'http://x').pathname;
+        this.authenticator
+          .check('GET', path, info.req.headers, info.req.socket)
+          .then((auth) => {
+            if (auth.ok) {
+              callback(true);
+            } else {
+              this.guardLogger.warn(
+                `Refused WebSocket upgrade: ${auth.reason}`,
+              );
+              callback(false, auth.status, auth.reason);
+            }
+          })
+          .catch((error: unknown) => {
+            this.guardLogger.error(
+              `WebSocket authentication failed: ${String(error)}`,
+            );
+            callback(false, 500, 'Authentication failed');
+          });
       },
     });
   }

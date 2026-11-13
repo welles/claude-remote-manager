@@ -1,4 +1,11 @@
 import { homedir } from 'node:os';
+import { normalizeTeamDomain } from '../auth/access-jwt';
+import { AUTH_MODES, type AuthConfig } from '../auth/authenticator';
+import {
+  ISOLATION_MODES,
+  lookupUser,
+  type ProcessIsolation,
+} from '../common/process-isolation';
 import { join, resolve } from 'node:path';
 
 /** Settings of the API, read from the environment once at startup. */
@@ -38,6 +45,10 @@ export interface AppConfig {
   memoryDir: string;
   /** GitHub App; `null` when not configured. */
   github: GitHubAppConfig | null;
+  /** Who runs the session processes, see ProcessIsolation. */
+  isolation: ProcessIsolation;
+  /** How requests are authenticated, see Authenticator. */
+  auth: AuthConfig;
 }
 
 /**
@@ -74,7 +85,10 @@ type Env = Record<string, string | undefined>;
  * session workspace (mirrors, session clones, scratch directories) outside
  * of it, so Claude never works inside this repository.
  */
-export function loadAppConfig(env: Env = process.env): AppConfig {
+export function loadAppConfig(
+  env: Env = process.env,
+  passwd?: string,
+): AppConfig {
   const value = (name: string) => env[name]?.trim() || undefined;
   const devDataDir = join(homedir(), '.local/share/claude-remote-manager');
   const dir = (name: string, fallback: string) =>
@@ -127,7 +141,66 @@ export function loadAppConfig(env: Env = process.env): AppConfig {
             : null,
         }
       : null,
+    isolation: loadIsolation(
+      value('PROCESS_ISOLATION'),
+      value('SESSION_USER'),
+      passwd,
+    ),
+    auth: loadAuth(value),
   };
+}
+
+/** `AUTH_MODE` has no default either: `none` must be chosen explicitly. */
+function loadAuth(value: (name: string) => string | undefined): AuthConfig {
+  const mode = value('AUTH_MODE');
+  if (mode === 'none') {
+    return { mode };
+  }
+  if (mode === 'cloudflare-access') {
+    const team = value('CF_ACCESS_TEAM_DOMAIN');
+    const audiences = list(value('CF_ACCESS_AUD'));
+    if (!team || audiences.length === 0) {
+      throw new Error(
+        'AUTH_MODE=cloudflare-access needs CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD',
+      );
+    }
+    return {
+      mode,
+      access: {
+        teamDomain: normalizeTeamDomain(team),
+        audiences,
+        allowedEmails: list(value('CF_ACCESS_ALLOWED_EMAILS')).map((email) =>
+          email.toLowerCase(),
+        ),
+      },
+    };
+  }
+  throw new Error(
+    `AUTH_MODE must be set to ${AUTH_MODES.join(' or ')} (none only for local development: the API is then unauthenticated)`,
+  );
+}
+
+/**
+ * `PROCESS_ISOLATION` has no default: the image sets `separate-users`,
+ * local development has to choose `single-user` explicitly.
+ */
+function loadIsolation(
+  mode: string | undefined,
+  sessionUser: string | undefined,
+  passwd?: string,
+): ProcessIsolation {
+  if (mode === 'single-user') {
+    return { mode };
+  }
+  if (mode === 'separate-users') {
+    return {
+      mode,
+      sessionUser: lookupUser(sessionUser ?? 'claude', passwd),
+    };
+  }
+  throw new Error(
+    `PROCESS_ISOLATION must be set to ${ISOLATION_MODES.join(' or ')} (single-user only for local development)`,
+  );
 }
 
 /** Configuration for tests: everything below `dir`, no GitHub App. */
@@ -146,6 +219,8 @@ export function testAppConfig(
     internalApiUrl: 'http://127.0.0.1:3000',
     memoryDir: join(dir, 'memory'),
     github: null,
+    isolation: { mode: 'single-user' },
+    auth: { mode: 'none' },
     ...overrides,
   };
 }
