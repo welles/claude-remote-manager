@@ -20,6 +20,7 @@ import {
   SESSION_PERMISSION_MODES,
   type ContextUsage,
   type CreateSessionRequest,
+  type FileDiff,
   type LogPosition,
   type PermissionRequestEvent,
   type PermissionResponseResult,
@@ -67,6 +68,11 @@ import {
   type EventAnchor,
 } from './session-event.repository';
 import { buildHistory, SessionLog, type LogSnapshot } from './session-log';
+import { changedFile, proposedDiff, withInputDiffs } from '../diffs/tool-diffs';
+import {
+  FileAccessError,
+  SessionFileAccess,
+} from '../files/session-file-access';
 import {
   additionalDirectories,
   SessionRepository,
@@ -87,6 +93,9 @@ const MODEL_PATTERN = /^[\w.[\]-]{1,100}$/;
 export const SESSION_ENV: Readonly<Record<string, string>> = {
   CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
 };
+
+/** Files larger than this are diffed from the tool input for approvals. */
+export const PROPOSED_DIFF_MAX_BYTES = 1024 * 1024;
 
 /** Context usage is re-read at most this often while a turn runs. */
 export const CONTEXT_REFRESH_INTERVAL_MS = 5000;
@@ -228,6 +237,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly approver: ToolApprover = new UserToolApprover(),
     @Optional()
     private readonly support: SessionAgentSupport = new NoSessionAgentSupport(),
+    @Optional()
+    private readonly files: SessionFileAccess = new SessionFileAccess(),
   ) {}
 
   /**
@@ -793,10 +804,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           record.createdAt.toISOString(),
         );
       }
-      for (const item of buildHistory(
-        entries,
-        this.storedEvents.list(record.id),
-      )) {
+      const history = withInputDiffs(
+        buildHistory(entries, this.storedEvents.list(record.id)),
+        (event, at) => ({ event, at }),
+      );
+      for (const item of history) {
         live.log.append(item.event, item.at);
       }
       if (failed) {
@@ -1352,6 +1364,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           (mcpServer === null || mcpServer.source === 'sdk')
             ? this.pullRequestCall(live.id, input)
             : null,
+        diff: await this.proposedChange(live.id, toolName, input),
         toolUseId: options.toolUseID,
         title: options.title ?? null,
         description: options.description ?? null,
@@ -1402,6 +1415,52 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
       return { ...result, updatedInput: approvedInput };
     };
+  }
+
+  /**
+   * The change a file tool call would make, for its approval: against the
+   * file's current content when it is a text file inside the session's
+   * directories (read as the session user), otherwise from the input.
+   */
+  private async proposedChange(
+    sessionId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+  ): Promise<FileDiff | null> {
+    const path = changedFile(toolName, input);
+    if (!path) {
+      return null;
+    }
+    let current: string | null | undefined;
+    try {
+      const file = await this.files.read(
+        this.readyDirectories(sessionId),
+        path,
+        PROPOSED_DIFF_MAX_BYTES,
+      );
+      current =
+        file.truncated || file.data.includes(0)
+          ? undefined
+          : file.data.toString('utf8');
+    } catch (error) {
+      current =
+        error instanceof FileAccessError && error.code === 'not_found'
+          ? null
+          : undefined;
+    }
+    try {
+      return proposedDiff(toolName, input, current);
+    } catch (error) {
+      this.logger.warn(`Could not diff ${path}: ${String(error)}`);
+      return null;
+    }
+  }
+
+  /** Paths of a session's directories that exist. */
+  private readyDirectories(sessionId: string): string[] {
+    return this.requireRecord(sessionId)
+      .directories.filter((directory) => directory.state === 'ready')
+      .map((directory) => directory.path);
   }
 
   /**

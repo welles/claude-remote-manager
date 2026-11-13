@@ -188,6 +188,74 @@ describe('SdkEventMapper', () => {
     ]);
   });
 
+  it('adds the diff of file changes from the structured tool result', () => {
+    mapper.map(
+      assistant('m1', [
+        {
+          type: 'tool_use',
+          id: 'edit-1',
+          name: 'Edit',
+          input: { file_path: '/w/a.ts', old_string: 'a', new_string: 'b' },
+        },
+        { type: 'tool_use', id: 'read-1', name: 'Read', input: {} },
+      ]),
+    );
+    const patch = [
+      {
+        oldStart: 4,
+        oldLines: 1,
+        newStart: 4,
+        newLines: 1,
+        lines: ['-a', '+b'],
+      },
+    ];
+    const events = mapper.map(
+      sdk({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'edit-1', content: 'Updated' },
+          ],
+        },
+        parent_tool_use_id: null,
+        tool_use_result: { filePath: '/w/a.ts', structuredPatch: patch },
+      }),
+    );
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'tool.result', toolUseId: 'edit-1' }),
+      {
+        type: 'tool.diff',
+        toolUseId: 'edit-1',
+        source: 'result',
+        parentToolUseId: null,
+        diff: expect.objectContaining({
+          path: '/w/a.ts',
+          hunks: patch,
+          approximate: false,
+        }),
+      },
+    ]);
+    // Other tools' results get no diff.
+    expect(
+      mapper
+        .map(
+          sdk({
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [
+                { type: 'tool_result', tool_use_id: 'read-1', content: 'x' },
+              ],
+            },
+            parent_tool_use_id: null,
+            tool_use_result: { filePath: '/w/a.ts', structuredPatch: patch },
+          }),
+        )
+        .map((event) => event.type),
+    ).toEqual(['tool.result']);
+  });
+
   it('truncates long tool results', () => {
     const [event] = mapper.map(
       sdk({

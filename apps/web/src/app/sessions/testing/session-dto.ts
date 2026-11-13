@@ -1,4 +1,7 @@
-import type { SessionDto } from '@claude-remote-manager/shared-types';
+import type {
+  SessionDirectoryDto,
+  SessionDto,
+} from '@claude-remote-manager/shared-types';
 
 /** A session as the API returns it, for tests. */
 export const sessionDto = (
@@ -47,5 +50,13 @@ export const sessionDto = (
   },
   context: null,
   pullRequests: [],
+  ...overrides,
+});
+
+/** A directory of a session (the main clone of {@link sessionDto}). */
+export const sessionDirectory = (
+  overrides: Partial<SessionDirectoryDto> = {},
+): SessionDirectoryDto => ({
+  ...sessionDto().directories[0],
   ...overrides,
 });

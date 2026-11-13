@@ -9,11 +9,14 @@ import {
   PERMISSION_MODE_INFO,
   type PermissionRequestEvent,
   type PermissionResponse,
+  type SessionDirectoryDto,
   type PlanApprovalMode,
   type UserQuestion,
 } from '@claude-remote-manager/shared-types';
+import { FileDiffCard } from '../diffs/file-diff-card';
 import { MarkdownPipe } from './markdown.pipe';
 import { requestSummary } from './permission-summary';
+import { sessionPath } from './session-directories';
 
 /** Value of the "own answer" choice of a single-select question. */
 export const OTHER = '\u0000other';
@@ -51,6 +54,7 @@ export function answerOf(
 @Component({
   selector: 'app-permission-card',
   imports: [
+    FileDiffCard,
     MarkdownPipe,
     MatButtonModule,
     MatCheckboxModule,
@@ -69,10 +73,16 @@ export class PermissionCard {
   /** E.g. "1 of 3" when more requests wait. */
   readonly position = input<string | null>(null);
   readonly answer = output<PermissionResponse>();
+  /** The session's directories, to name changed files shortly. */
+  readonly directories = input<SessionDirectoryDto[]>([]);
 
   protected readonly modeInfo = PERMISSION_MODE_INFO;
   protected readonly other = OTHER;
   protected readonly summary = computed(() => requestSummary(this.request()));
+  protected readonly diffLabel = computed(() => {
+    const diff = this.request().diff;
+    return diff ? sessionPath(diff.path, this.directories()) : null;
+  });
   protected readonly heading = computed(() => {
     switch (this.request().kind) {
       case 'question':

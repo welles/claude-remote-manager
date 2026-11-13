@@ -80,6 +80,7 @@
     "@nestjs/serve-static": "^5.0.5",
     "@nestjs/websockets": "^11.0.0",
     "better-sqlite3": "^13.1.1",
+    "diff": "^9.0.0",
     "drizzle-orm": "^0.45.4",
     "marked": "^18.2.0",
     "reflect-metadata": "^0.2.0",

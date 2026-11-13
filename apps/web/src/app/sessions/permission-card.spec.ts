@@ -4,7 +4,9 @@ import type {
   PermissionResponse,
 } from '@claude-remote-manager/shared-types';
 import { answerOf, OTHER, PermissionCard } from './permission-card';
+import { fileDiff } from '../diffs/testing/file-diffs';
 import { permissionRequest } from './testing/permission-events';
+import { sessionDirectory } from './testing/session-dto';
 
 describe('PermissionCard', () => {
   let fixture: ComponentFixture<PermissionCard>;
@@ -48,6 +50,30 @@ describe('PermissionCard', () => {
     expect(element.querySelector('[data-testid="allow-session"]')).toBeNull();
     await click(element, 'allow');
     expect(answers).toEqual([{ decision: 'allow' }]);
+  });
+
+  it('shows a file change as a diff instead of its raw text', async () => {
+    const element = await render(
+      permissionRequest({
+        toolName: 'Edit',
+        title: null,
+        input: {
+          file_path: '/work/app/src/a.ts',
+          old_string: 'const b = 2;',
+          new_string: 'const b = 3;\nconst c = 4;',
+        },
+        diff: fileDiff(),
+      }),
+    );
+    fixture.componentRef.setInput('directories', [
+      sessionDirectory({ path: '/work/app' }),
+    ]);
+    await fixture.whenStable();
+    const diff = element.querySelector('[data-testid="request-diff"]');
+    expect(diff?.querySelector('.path')?.textContent).toBe('src/a.ts');
+    expect(diff?.querySelectorAll('tr.add')).toHaveLength(2);
+    expect(element.textContent).toContain('Edit a file');
+    expect(element.textContent).not.toContain('Replace');
   });
 
   it('offers "allow for this session" with what it allows', async () => {

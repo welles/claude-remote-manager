@@ -201,6 +201,7 @@ export function describeRequest(
     sessionAllow: offer,
     questions: kind === 'question' ? parseQuestions(request.input) : null,
     plan: kind === 'plan' ? planText(request.input) : null,
+    diff: request.diff ?? null,
   };
 }
 

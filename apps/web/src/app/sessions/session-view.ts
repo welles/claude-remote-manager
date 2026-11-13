@@ -47,8 +47,9 @@ import { MarkdownPipe } from './markdown.pipe';
 import { ModelsStore, modelOptionsWith } from './models-store';
 import { PermissionCard } from './permission-card';
 import { ContextMeter } from './context-meter';
+import { FileDiffCard } from '../diffs/file-diff-card';
 import { QueuedMessages } from './queued-messages';
-import { SessionDirectories } from './session-directories';
+import { SessionDirectories, sessionPath } from './session-directories';
 import { TodoPanel } from './todo-panel';
 import { todoList } from './todos';
 import { SessionGitPanel } from './session-git-panel';
@@ -61,6 +62,7 @@ import { newId } from './sessions-api';
   imports: [
     ContextMeter,
     DecimalPipe,
+    FileDiffCard,
     KeyValuePipe,
     MarkdownPipe,
     MatButtonModule,
@@ -382,6 +384,11 @@ export class SessionView implements OnInit {
       default:
         return item.state;
     }
+  }
+
+  /** A path of the session, relative to its directories. */
+  protected sessionPath(path: string): string {
+    return sessionPath(path, this.session()?.directories ?? []);
   }
 
   protected inputJson(input: unknown): string {

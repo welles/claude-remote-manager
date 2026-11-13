@@ -8,10 +8,13 @@ import { sessionEvents } from '../db/schema';
  * Event types the app produces itself, i.e. that are not in the Claude Code
  * transcript. They are stored; conversation events (user and assistant
  * text, tool calls and results) are rebuilt from the transcript, and status
- * changes and text deltas are live-only.
+ * changes and text deltas are live-only. Diffs of file changes are stored:
+ * the transcript as the Agent SDK returns it lacks Claude Code's structured
+ * tool results.
  */
 export const STORED_EVENT_TYPES: ReadonlySet<SessionEventInput['type']> =
   new Set([
+    'tool.diff',
     'permission.request',
     'permission.resolved',
     'permission.denied',

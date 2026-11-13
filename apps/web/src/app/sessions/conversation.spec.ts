@@ -12,6 +12,7 @@ import {
   toolSummary,
   type ConversationItem,
 } from './conversation';
+import { fileDiff } from '../diffs/testing/file-diffs';
 import {
   permissionRequest,
   permissionResolved,
@@ -169,6 +170,54 @@ describe('conversation', () => {
         result: null,
       }),
     ]);
+  });
+
+  it('attaches file diffs to their tool call', () => {
+    const diff = fileDiff();
+    const items = buildConversation([
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId: 't1',
+        name: 'Edit',
+        input: { file_path: diff.path },
+        parentToolUseId: null,
+      }),
+      event({
+        type: 'tool.diff',
+        toolUseId: 't1',
+        diff,
+        source: 'result',
+        parentToolUseId: null,
+      }),
+      // A diff of an unknown call changes nothing.
+      event({
+        type: 'tool.diff',
+        toolUseId: 'other',
+        diff,
+        source: 'input',
+        parentToolUseId: null,
+      }),
+    ]);
+    expect(items).toEqual([
+      expect.objectContaining({
+        key: 'tool:t1',
+        diff: { diff, source: 'result' },
+      }),
+    ]);
+    // A later call event (e.g. replayed) keeps the diff.
+    const again = applyEvent(
+      items,
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId: 't1',
+        name: 'Edit',
+        input: { file_path: diff.path },
+        parentToolUseId: null,
+      }),
+    );
+    expect(again[0]).toMatchObject({ diff: { source: 'result' } });
   });
 
   it('shows turn results, notices and errors, but not status changes', () => {

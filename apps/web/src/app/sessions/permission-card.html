@@ -122,7 +122,14 @@
     </div>
     }
   </dl>
-  @if (r.pullRequest; as pull) {
+  @if (r.diff; as diff) {
+  <app-file-diff-card
+    class="diff"
+    [diff]="diff"
+    [label]="diffLabel()"
+    data-testid="request-diff"
+  />
+  } @if (r.pullRequest; as pull) {
   <dl class="fields" data-testid="pull-request">
     <div class="field">
       <dt>Repository</dt>

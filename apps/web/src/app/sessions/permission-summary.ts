@@ -52,6 +52,8 @@ export function requestSummary(
     }
   };
   let action = request.displayName ?? request.toolName;
+  // The change itself is shown as a diff.
+  const diffed = Boolean(request.diff);
   switch (request.toolName) {
     case 'Bash':
       action = 'Run a command';
@@ -61,8 +63,10 @@ export function requestSummary(
     case 'Edit':
       action = 'Edit a file';
       add('File', input['file_path'], true);
-      add('Replace', input['old_string'], true);
-      add('With', input['new_string'], true);
+      if (!diffed) {
+        add('Replace', input['old_string'], true);
+        add('With', input['new_string'], true);
+      }
       if (input['replace_all'] === true) {
         add('All occurrences', 'yes');
       }
@@ -75,13 +79,17 @@ export function requestSummary(
     case 'Write':
       action = 'Write a file';
       add('File', input['file_path'], true);
-      add('Content', input['content'], true);
+      if (!diffed) {
+        add('Content', input['content'], true);
+      }
       break;
     case 'NotebookEdit':
       action = 'Edit a notebook';
       add('Notebook', input['notebook_path'], true);
       add('Cell', input['cell_id'], true);
-      add('New content', input['new_source'], true);
+      if (!diffed) {
+        add('New content', input['new_source'], true);
+      }
       break;
     case 'Read':
       action = 'Read a file';

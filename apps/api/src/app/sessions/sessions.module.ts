@@ -21,6 +21,7 @@ import { LimitsService } from '../limits/limits.service';
 import { RepositoriesModule } from '../repositories/repositories.module';
 import { SessionWorkspaceService } from '../workspaces/session-workspace.service';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
+import { SessionFileAccess } from '../files/session-file-access';
 import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
 import { SessionsController } from './sessions.controller';
@@ -54,6 +55,7 @@ import { ModelsService } from './models.service';
     ModelsService,
     SessionWorkspaceService,
     SetupScriptRunner,
+    SessionFileAccess,
     { provide: AgentRunner, useClass: SdkAgentRunner },
     { provide: TranscriptReader, useClass: SdkTranscriptReader },
   ],

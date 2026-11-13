@@ -534,6 +534,53 @@ describe('SessionsService', () => {
       return service.pendingPermissions(sessionId)[0];
     };
 
+    it('shows file changes against the file’s current content', async () => {
+      const session = await startSession();
+      const clone = cloneOf(session);
+      // README.md of the test repository is "# Test\n".
+      void ask('Edit', {
+        file_path: join(clone, 'README.md'),
+        old_string: '# Test',
+        new_string: '# Tested',
+      });
+      const request = await pending(session.id);
+      expect(request.diff).toMatchObject({
+        path: join(clone, 'README.md'),
+        status: 'modified',
+        approximate: false,
+        hunks: [{ oldStart: 1, newStart: 1, lines: ['-# Test', '+# Tested'] }],
+      });
+      await service.respondToPermission(session.id, request.requestId, {
+        decision: 'deny',
+        message: 'no',
+      });
+
+      // A new file, and a file outside the session's directories (only
+      // from the input; never read).
+      void ask(
+        'Write',
+        { file_path: join(clone, 'new.txt'), content: 'n' },
+        { toolUseID: 't2' },
+      );
+      let next = await pending(session.id);
+      expect(next.diff).toMatchObject({ status: 'added', approximate: false });
+      await service.respondToPermission(session.id, next.requestId, {
+        decision: 'deny',
+        message: 'no',
+      });
+      void ask(
+        'Write',
+        { file_path: join(dir, 'outside.txt'), content: 'n' },
+        { toolUseID: 't3' },
+      );
+      next = await pending(session.id);
+      expect(next.diff).toMatchObject({ status: 'added', approximate: true });
+      expect((await pending(session.id)).diff?.hunks[0].lines).toEqual([
+        '+n',
+        '\\ No newline at end of file',
+      ]);
+    });
+
     it('makes the session wait for the user until one answer allows it', async () => {
       const session = await startSession();
       const decision = ask(

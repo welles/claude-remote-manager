@@ -1,0 +1,54 @@
+@let d = diff(); @if (d.binary) {
+<p class="note" data-testid="diff-binary">Binary file, no text diff.</p>
+} @else if (d.hunks.length === 0) {
+<p class="note" data-testid="diff-empty">
+  @if (d.truncated) { Too large to show. } @else if (d.status === 'renamed' ||
+  d.status === 'copied') { Content unchanged. } @else { No changed lines. }
+</p>
+} @else {
+<div class="scroll">
+  @if (layout() === 'split') {
+  <table class="diff split" data-testid="diff-split">
+    @for (row of split().slice(0, shown()); track $index) { @if (row.kind ===
+    'hunk') {
+    <tr class="hunk">
+      <td colspan="4">{{ row.text }}</td>
+    </tr>
+    } @else {
+    <tr>
+      <td class="num">{{ row.left?.number }}</td>
+      <!-- prettier-ignore -->
+      <td class="code {{ row.left?.type ?? 'empty' }}">{{ row.left?.text }}</td>
+      <td class="num">{{ row.right?.number }}</td>
+      <!-- prettier-ignore -->
+      <td class="code {{ row.right?.type ?? 'empty' }}">{{ row.right?.text }}</td>
+    </tr>
+    } }
+  </table>
+  } @else {
+  <table class="diff" data-testid="diff-unified">
+    @for (row of unified().slice(0, shown()); track $index) { @if (row.kind ===
+    'hunk') {
+    <tr class="hunk">
+      <td colspan="3">{{ row.text }}</td>
+    </tr>
+    } @else {
+    <tr class="{{ row.type }}">
+      <td class="num">{{ row.oldNumber }}</td>
+      <td class="num">{{ row.newNumber }}</td>
+      <!-- prettier-ignore -->
+      <td class="code">{{ sign[row.type] }}{{ row.text }}</td>
+    </tr>
+    } }
+  </table>
+  }
+</div>
+@if (shown() < total()) {
+<button matButton (click)="expanded.set(true)" data-testid="diff-expand">
+  Show all {{ total() }} lines
+</button>
+} @if (d.truncated) {
+<p class="note" data-testid="diff-truncated">
+  The change is longer; the rest is not shown.
+</p>
+} }

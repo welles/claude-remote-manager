@@ -12,6 +12,26 @@ export function directoryName(directory: SessionDirectoryDto): string {
   return directory.path.split('/').filter(Boolean).at(-1) ?? directory.path;
 }
 
+/**
+ * A path of the session, short: relative to the working directory, or the
+ * repository's name and the path in its clone; other paths unchanged.
+ */
+export function sessionPath(
+  path: string,
+  directories: SessionDirectoryDto[],
+): string {
+  for (const directory of directories) {
+    const root = directory.path.replace(/\/+$/, '');
+    if (path.startsWith(`${root}/`)) {
+      const relative = path.slice(root.length + 1);
+      return directory.role === 'main' || directories.length === 1
+        ? relative
+        : `${directoryName(directory)}/${relative}`;
+    }
+  }
+  return path;
+}
+
 /** The directories of a session (collapsed: repository names). */
 @Component({
   selector: 'app-session-directories',

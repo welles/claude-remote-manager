@@ -3,6 +3,7 @@ import type {
   SessionMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionEventInput } from '@claude-remote-manager/shared-types';
+import { diffFromToolResult, FILE_CHANGE_TOOLS } from '../diffs/tool-diffs';
 
 /** Tool results longer than this are truncated in events. */
 export const MAX_TOOL_RESULT_LENGTH = 8000;
@@ -127,6 +128,11 @@ export class SdkEventMapper {
   private readonly streamingMessage = new Map<string, string>();
   /** Indices of streamed text blocks not yet completed, per message ID. */
   private readonly pendingTextBlocks = new Map<string, number[]>();
+  /** File-changing tool calls waiting for their result, by tool use ID. */
+  private readonly fileCalls = new Map<
+    string,
+    { name: string; input: unknown }
+  >();
 
   map(message: SDKMessage): SessionEventInput[] {
     switch (message.type) {
@@ -147,20 +153,65 @@ export class SdkEventMapper {
             text: `API error: ${message.error}`,
           });
         }
+        for (const event of events) {
+          if (event.type === 'tool.call' && FILE_CHANGE_TOOLS.has(event.name)) {
+            this.fileCalls.set(event.toolUseId, {
+              name: event.name,
+              input: event.input,
+            });
+          }
+        }
         return events;
       }
-      case 'user':
-        return userContentEvents(
+      case 'user': {
+        const events = userContentEvents(
           message.uuid ?? '',
           message.message.content,
           message.parent_tool_use_id,
           false,
         );
+        return [...events, ...this.toolDiffs(events, message.tool_use_result)];
+      }
       case 'system':
         return this.mapSystem(message);
       default:
         return [];
     }
+  }
+
+  /**
+   * Diffs of file changes whose results are in `events`, from Claude Code's
+   * structured result (`tool_use_result`: one per user message, the result
+   * of its tool call).
+   */
+  private toolDiffs(
+    events: SessionEventInput[],
+    structured: unknown,
+  ): SessionEventInput[] {
+    const diffs: SessionEventInput[] = [];
+    for (const event of events) {
+      if (event.type !== 'tool.result') {
+        continue;
+      }
+      const call = this.fileCalls.get(event.toolUseId);
+      if (!call) {
+        continue;
+      }
+      this.fileCalls.delete(event.toolUseId);
+      const diff = event.isError
+        ? null
+        : diffFromToolResult(call.name, call.input, structured);
+      if (diff) {
+        diffs.push({
+          type: 'tool.diff',
+          toolUseId: event.toolUseId,
+          diff,
+          source: 'result',
+          parentToolUseId: event.parentToolUseId,
+        });
+      }
+    }
+    return diffs;
   }
 
   private mapStreamEvent(

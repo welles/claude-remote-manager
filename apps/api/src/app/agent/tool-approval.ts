@@ -3,6 +3,7 @@ import type {
   PermissionUpdate,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
+  FileDiff,
   GitPushAnalysis,
   PermissionRequestEvent,
   PermissionResolutionCause,
@@ -42,6 +43,8 @@ export interface ToolApprovalRequest {
   gitPushes: GitPushAnalysis[];
   /** For the app's `create_pull_request` tool: the pull request. */
   pullRequest: PullRequestCall | null;
+  /** For file changes: the change it would make. */
+  diff?: FileDiff | null;
   /** Claude Code's suggestions for not asking again (`canUseTool`). */
   suggestions: PermissionUpdate[];
   /** Claude Code says not to offer "don't ask again" for this request. */

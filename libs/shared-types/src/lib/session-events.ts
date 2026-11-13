@@ -1,3 +1,4 @@
+import type { FileDiff, ToolDiffSource } from './diffs';
 import type { AccountLimits } from './limits';
 import type {
   GitPushAnalysis,
@@ -103,6 +104,21 @@ export interface ToolResultEvent extends SessionEventBase {
 }
 
 /**
+ * What a tool call changed in a file (`Edit`, `Write`, `NotebookEdit`),
+ * shown on the tool call. Stored: from the tool's result while the session
+ * runs (`source: 'result'`, with the file's line numbers); for tool calls
+ * without a stored diff (older histories) the history rebuilds it from the
+ * tool's input (`source: 'input'`, `diff.approximate`).
+ */
+export interface ToolDiffEvent extends SessionEventBase {
+  type: 'tool.diff';
+  toolUseId: string;
+  diff: FileDiff;
+  source: ToolDiffSource;
+  parentToolUseId: string | null;
+}
+
+/**
  * Claude needs the user's decision: a tool use that needs approval, a
  * question (`AskUserQuestion`) or a plan (`ExitPlanMode`). It stays pending
  * until a `permission.resolved` with the same `requestId` follows; every
@@ -143,6 +159,12 @@ export interface PermissionRequestEvent extends SessionEventBase {
   questions: UserQuestion[] | null;
   /** For `plan`: the plan (Markdown). */
   plan: string | null;
+  /**
+   * For file changes (`Edit`, `Write`, `NotebookEdit`): the change it would
+   * make, against the file's current content where it could be read
+   * (absent from older servers).
+   */
+  diff?: FileDiff | null;
 }
 
 /** A `permission.request` was answered or cancelled. */
@@ -320,6 +342,7 @@ export type SessionEvent =
   | AssistantTextEvent
   | ToolCallEvent
   | ToolResultEvent
+  | ToolDiffEvent
   | PermissionRequestEvent
   | PermissionResolvedEvent
   | PermissionDeniedEvent

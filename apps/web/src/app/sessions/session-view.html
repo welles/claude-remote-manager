@@ -129,7 +129,15 @@
     >
     }
   </details>
-  @if (item.permission; as permission) {
+  @if (item.diff; as change) {
+  <app-file-diff-card
+    class="tool-diff"
+    [class.nested]="item.nested"
+    [diff]="change.diff"
+    [label]="sessionPath(change.diff.path)"
+    data-testid="tool-diff"
+  />
+  } @if (item.permission; as permission) {
   <p
     class="permission-line"
     [class.permission-denied]="permission.resolved?.decision === 'deny'"
@@ -213,6 +221,7 @@
       [request]="request"
       [enabled]="connected() && !answering().has(request.requestId)"
       [position]="requests().length > 1 ? '1 of ' + requests().length : null"
+      [directories]="session()?.directories ?? []"
       (answer)="respond(request, $event)"
     />
     }

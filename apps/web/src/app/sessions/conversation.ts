@@ -1,12 +1,14 @@
 import {
   PERMISSION_MODE_INFO,
   type AssistantDraft,
+  type FileDiff,
   type PermissionRequestEvent,
   type PermissionResolvedEvent,
   type PrepareProgressEvent,
   type SessionEvent,
   type SettingsChangedEvent,
   type SetupResultEvent,
+  type ToolDiffSource,
   type UsageTotals,
 } from '@claude-remote-manager/shared-types';
 
@@ -38,6 +40,8 @@ export type ConversationItem =
       denied: string | null;
       /** Set when the user was asked (approval, question or plan). */
       permission: ToolPermission | null;
+      /** What the call changed in a file (`Edit`, `Write`, ...). */
+      diff: { diff: FileDiff; source: ToolDiffSource } | null;
     }
   | {
       /**
@@ -218,6 +222,7 @@ export function applyEvent(
         result: existing?.kind === 'tool' ? existing.result : null,
         denied: existing?.kind === 'tool' ? existing.denied : null,
         permission: existing?.kind === 'tool' ? existing.permission : null,
+        diff: existing?.kind === 'tool' ? existing.diff : null,
       };
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
     }
@@ -236,6 +241,19 @@ export function applyEvent(
           content: event.content,
           truncated: event.truncated,
         },
+      });
+    }
+    case 'tool.diff': {
+      const index = items.findIndex(
+        (item) => item.key === `tool:${event.toolUseId}`,
+      );
+      const existing = items[index];
+      if (existing?.kind !== 'tool') {
+        return items;
+      }
+      return replaceAt(items, index, {
+        ...existing,
+        diff: { diff: event.diff, source: event.source },
       });
     }
     case 'permission.denied': {
@@ -257,6 +275,7 @@ export function applyEvent(
           result: null,
           denied: event.message,
           permission: null,
+          diff: null,
         },
       ];
     }
@@ -281,6 +300,7 @@ export function applyEvent(
           result: null,
           denied: null,
           permission,
+          diff: null,
         },
       ];
     }
