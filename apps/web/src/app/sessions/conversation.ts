@@ -9,6 +9,7 @@ import {
   type SessionEvent,
   type SettingsChangedEvent,
   type SetupResultEvent,
+  type ShownFileDto,
   type ToolDiffSource,
   type UsageTotals,
 } from '@claude-remote-manager/shared-types';
@@ -43,6 +44,14 @@ export type ConversationItem =
       permission: ToolPermission | null;
       /** What the call changed in a file (`Edit`, `Write`, ...). */
       diff: { diff: FileDiff; source: ToolDiffSource } | null;
+      /** Files shown by the call (`show_file`, images read or written). */
+      shown: ShownFileDto[];
+    }
+  | {
+      /** A file shown without a known tool call. */
+      kind: 'file';
+      key: string;
+      file: ShownFileDto;
     }
   | {
       /**
@@ -230,6 +239,7 @@ export function applyEvent(
         denied: existing?.kind === 'tool' ? existing.denied : null,
         permission: existing?.kind === 'tool' ? existing.permission : null,
         diff: existing?.kind === 'tool' ? existing.diff : null,
+        shown: existing?.kind === 'tool' ? existing.shown : [],
       };
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
     }
@@ -263,6 +273,25 @@ export function applyEvent(
         diff: { diff: event.diff, source: event.source },
       });
     }
+    case 'file.shown': {
+      const index = event.toolUseId
+        ? items.findIndex((item) => item.key === `tool:${event.toolUseId}`)
+        : -1;
+      const existing = items[index];
+      if (existing?.kind === 'tool') {
+        if (existing.shown.some((file) => file.id === event.file.id)) {
+          return items;
+        }
+        return replaceAt(items, index, {
+          ...existing,
+          shown: [...existing.shown, event.file],
+        });
+      }
+      return [
+        ...items,
+        { kind: 'file', key: `file:${event.file.id}`, file: event.file },
+      ];
+    }
     case 'permission.denied': {
       const key = `tool:${event.toolUseId}`;
       const index = items.findIndex((item) => item.key === key);
@@ -283,6 +312,7 @@ export function applyEvent(
           denied: event.message,
           permission: null,
           diff: null,
+          shown: [],
         },
       ];
     }
@@ -308,6 +338,7 @@ export function applyEvent(
           denied: null,
           permission,
           diff: null,
+          shown: [],
         },
       ];
     }

@@ -146,6 +146,13 @@
     [label]="sessionPath(change.diff.path)"
     data-testid="tool-diff"
   />
+  } @for (file of item.shown; track file.id) {
+  <app-shown-file-card
+    class="shown"
+    [class.nested]="item.nested"
+    [file]="file"
+    (open)="openFile($event)"
+  />
   } @if (item.permission; as permission) {
   <p
     class="permission-line"
@@ -176,7 +183,13 @@
       Edit and send again
     </button>
   </div>
-  } } @case ('settings') {
+  } } @case ('file') {
+  <app-shown-file-card
+    class="shown"
+    [file]="item.file"
+    (open)="openFile($event)"
+  />
+  } @case ('settings') {
   <p class="notice" data-testid="settings-changed">{{ item.text }}</p>
   } @case ('notice') {
   <p class="notice notice-{{ item.level }}">{{ item.text }}</p>
@@ -291,3 +304,6 @@
     (interrupt)="interrupt()"
   />
 </footer>
+@if (viewing(); as file) {
+<app-file-viewer [file]="file" (closed)="viewing.set(null)" />
+}

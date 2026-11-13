@@ -13,6 +13,7 @@ import {
   type ConversationItem,
 } from './conversation';
 import { fileDiff } from '../diffs/testing/file-diffs';
+import { shownFile } from '../shown-files/testing/shown-file';
 import {
   permissionRequest,
   permissionResolved,
@@ -218,6 +219,32 @@ describe('conversation', () => {
       }),
     );
     expect(again[0]).toMatchObject({ diff: { source: 'result' } });
+  });
+
+  it('puts shown files on their tool call, or on their own', () => {
+    const file = shownFile();
+    const items = buildConversation([
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId: 't1',
+        name: 'mcp__crm__show_file',
+        input: { path: 'report.md' },
+        parentToolUseId: null,
+      }),
+      event({ type: 'file.shown', toolUseId: 't1', file }),
+      // Repeated: once.
+      event({ type: 'file.shown', toolUseId: 't1', file }),
+      event({
+        type: 'file.shown',
+        toolUseId: null,
+        file: shownFile({ id: 'f2' }),
+      }),
+    ]);
+    expect(items).toEqual([
+      expect.objectContaining({ key: 'tool:t1', shown: [file] }),
+      { kind: 'file', key: 'file:f2', file: shownFile({ id: 'f2' }) },
+    ]);
   });
 
   it('shows turn results, notices and errors, but not status changes', () => {

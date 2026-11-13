@@ -27,6 +27,7 @@ import {
   type ServerMessage,
   type SessionDto,
   type SessionPermissionMode,
+  type ShownFileDto,
 } from '@claude-remote-manager/shared-types';
 import {
   applyDraft,
@@ -49,6 +50,8 @@ import { ModelsStore, modelOptionsWith } from './models-store';
 import { PermissionCard } from './permission-card';
 import { ContextMeter } from './context-meter';
 import { MessageImages } from '../attachments/message-images';
+import { ShownFileCard } from '../shown-files/shown-file-card';
+import { FileViewer } from '../shown-files/file-viewer';
 import { MessageComposer, type ComposedMessage } from './message-composer';
 import { FileDiffCard } from '../diffs/file-diff-card';
 import { QueuedMessages } from './queued-messages';
@@ -77,6 +80,8 @@ import { newId } from './sessions-api';
     MessageImages,
     PermissionCard,
     QueuedMessages,
+    FileViewer,
+    ShownFileCard,
     RouterLink,
     SessionDirectories,
     SessionGitPanel,
@@ -392,6 +397,14 @@ export class SessionView implements OnInit {
       default:
         return item.state;
     }
+  }
+
+  /** The file open in the viewer. */
+  protected readonly viewing = signal<ShownFileDto | null>(null);
+
+  /** Opens a file Claude showed in the viewer. */
+  protected openFile(file: ShownFileDto): void {
+    this.viewing.set(file);
   }
 
   /** A path of the session, relative to its directories. */

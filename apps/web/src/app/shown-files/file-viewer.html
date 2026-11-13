@@ -1,0 +1,81 @@
+@let f = file();
+<!-- Escape closes it too (see the host's keydown handler). -->
+<div
+  class="backdrop"
+  (click)="closed.emit()"
+  (keydown.enter)="closed.emit()"
+  tabindex="-1"
+></div>
+<div class="sheet">
+  <header class="head">
+    <div class="title">
+      <h2>{{ f.name }}</h2>
+      <p class="meta">{{ size() }} · <span class="path">{{ f.path }}</span></p>
+      @if (f.caption) {
+      <p class="caption">{{ f.caption }}</p>
+      } @if (!f.snapshot) {
+      <p class="note" data-testid="live-note">
+        Too large to keep a copy: this is the file as it is now.
+      </p>
+      }
+    </div>
+    <div class="actions">
+      <a matButton [href]="downloadUrl()" data-testid="download">Download</a>
+      @if (f.kind !== 'binary') {
+      <a matButton [href]="url()" target="_blank" rel="noopener">New tab</a>
+      }
+      <button
+        matButton="filled"
+        (click)="closed.emit()"
+        data-testid="close-viewer"
+      >
+        Close
+      </button>
+    </div>
+  </header>
+  <div class="body" [class.framed]="f.kind === 'html' || f.kind === 'pdf'">
+    @if (loading()) {
+    <mat-progress-bar mode="indeterminate" />
+    } @if (error(); as message) {
+    <p class="error">{{ message }}</p>
+    } @switch (f.kind) { @case ('image') {
+    <img class="image" [src]="url()" [alt]="f.caption ?? f.name" />
+    } @case ('html') { @if (frameUrl(); as frame) {
+    <iframe
+      class="frame"
+      [src]="frame"
+      sandbox="allow-scripts"
+      referrerpolicy="no-referrer"
+      [title]="f.name"
+      data-testid="html-frame"
+    ></iframe>
+    } } @case ('pdf') { @if (frameUrl(); as frame) {
+    <iframe
+      class="frame"
+      [src]="frame"
+      [title]="f.name"
+      data-testid="pdf-frame"
+    ></iframe>
+    } } @case ('markdown') { @if (tooLarge()) {
+    <p class="note">Too large to show here. Download it instead.</p>
+    } @else if (text(); as markdown) {
+    <div
+      class="markdown"
+      [innerHTML]="markdown | markdown"
+      data-testid="markdown"
+    ></div>
+    } } @case ('text') { @if (tooLarge()) {
+    <p class="note">Too large to show here. Download it instead.</p>
+    } @else if (highlighted(); as html) {
+    <!-- prettier-ignore -->
+    <pre class="code"><code class="hljs" [innerHTML]="html" data-testid="code"></code></pre>
+    } @else if (text(); as plain) {
+    <!-- prettier-ignore -->
+    <pre class="code"><code>{{ plain }}</code></pre>
+    } } @default {
+    <p class="note" data-testid="binary">
+      This file cannot be shown here. Download it to open it.
+    </p>
+    } }
+  </div>
+</div>

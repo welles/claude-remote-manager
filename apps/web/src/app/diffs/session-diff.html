@@ -51,8 +51,7 @@ repository.repositoryId; let r = $index) {
   <p class="empty">No changes.</p>
   } @else {
   <ul class="files" data-testid="file-list">
-    @for (file of repository.files; track $index; let f =
-    $index) {
+    @for (file of repository.files; track $index; let f = $index) {
     <li>
       <span
         class="letter letter-{{ file.status }}"
@@ -80,8 +79,8 @@ repository.repositoryId; let r = $index) {
     Showing {{ repository.files.length }} of {{ repository.fileCount }} changed
     files.
   </p>
-  } @for (file of repository.files; track $index; let f =
-  $index) { @let shownFile = shown(repository, file);
+  } @for (file of repository.files; track $index; let f = $index) { @let
+  shownFile = shown(repository, file);
   <details class="file" open [id]="anchor(r, f)" data-testid="file-diff">
     <summary>
       <span class="letter letter-{{ file.status }}"
