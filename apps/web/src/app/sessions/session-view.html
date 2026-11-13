@@ -103,8 +103,14 @@
   } @for (item of items(); track item.key) { @switch (item.kind) { @case
   ('user') {
   <!-- prettier-ignore -->
-  <div class="user-message">@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}{{ item.text }}</div>
-  } @case ('assistant') {
+  <div class="user-message">@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" /></div>
+  @if (item.contextLength) {
+  <app-message-context
+    [sessionId]="sessionId()"
+    [messageId]="item.id"
+    [length]="item.contextLength"
+  />
+  } } @case ('assistant') {
   <div
     class="assistant-text markdown"
     [class.nested]="item.nested"
@@ -172,7 +178,9 @@
   </details>
   } } } @case ('queued') { @if (item.state === 'withdrawn') {
   <div class="withdrawn" data-testid="withdrawn">
-    <span class="withdrawn-text">{{ item.text }}</span>
+    <span class="withdrawn-text"
+      ><app-message-text [text]="item.text" [references]="item.references"
+    /></span>
     @if (item.attachments.length > 0) {
     <app-message-images [attachments]="item.attachments" />
     }
@@ -300,6 +308,7 @@
     [running]="running()"
     [sessionId]="sessionId()"
     [showRepository]="(session()?.directories?.length ?? 0) > 1"
+    [githubRepositories]="githubRepositories()"
     (send)="send($event)"
     (interrupt)="interrupt()"
   />

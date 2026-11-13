@@ -1,19 +1,41 @@
 <form (ngSubmit)="create()" class="form">
-  <mat-form-field appearance="outline" class="full">
-    <mat-label>What should Claude do?</mat-label>
-    <textarea
-      matInput
-      name="prompt"
-      [(ngModel)]="prompt"
-      (keydown)="onPromptKeydown($event)"
-      (paste)="onPaste($event)"
-      cdkTextareaAutosize
-      rows="3"
-      data-testid="new-prompt"
-      #promptField
-    ></textarea>
-    <mat-hint>Ctrl+Enter to start · paste or attach images</mat-hint>
-  </mat-form-field>
+  <div class="prompt">
+    <mat-form-field appearance="outline" class="full">
+      <mat-label>What should Claude do?</mat-label>
+      <textarea
+        matInput
+        name="prompt"
+        [(ngModel)]="prompt"
+        (keydown)="onPromptKeydown($event)"
+        (input)="onPromptInput($event)"
+        (click)="onPromptCaret($event)"
+        (keyup)="onPromptCaret($event)"
+        (blur)="references.close()"
+        (paste)="onPaste($event)"
+        cdkTextareaAutosize
+        rows="3"
+        data-testid="new-prompt"
+        #promptField
+      ></textarea>
+      <mat-hint
+        >Ctrl+Enter to start · paste or attach images@if
+        (githubRepositories().length > 0) { · # for issues and pull requests
+        }</mat-hint
+      >
+    </mat-form-field>
+    <app-reference-suggestions
+      [autocomplete]="references"
+      [showRepository]="githubRepositories().length > 1"
+      [below]="true"
+      (chosen)="references.choose($event, promptField)"
+    />
+  </div>
+  <app-reference-chips
+    [text]="promptText()"
+    [repositories]="githubRepositories()"
+    [options]="referenceOptions()"
+    (optionsChange)="setReferenceOptions($event)"
+  />
   <div class="images">
     <app-draft-images [drafts]="images" />
     <button

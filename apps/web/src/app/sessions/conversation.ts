@@ -3,6 +3,7 @@ import {
   type AssistantDraft,
   type AttachmentDto,
   type FileDiff,
+  type MessageReference,
   type PermissionRequestEvent,
   type PermissionResolvedEvent,
   type PrepareProgressEvent,
@@ -22,7 +23,17 @@ export interface ToolPermission {
 
 /** One entry of the rendered conversation. */
 export type ConversationItem =
-  | { kind: 'user'; key: string; text: string; attachments: AttachmentDto[] }
+  | {
+      kind: 'user';
+      key: string;
+      /** Message ID. */
+      id: string;
+      text: string;
+      attachments: AttachmentDto[];
+      references: MessageReference[];
+      /** Length of the GitHub context Claude got with it, if any. */
+      contextLength: number | null;
+    }
   | {
       kind: 'assistant';
       key: string;
@@ -63,6 +74,7 @@ export type ConversationItem =
       id: string;
       text: string;
       attachments: AttachmentDto[];
+      references: MessageReference[];
       state: 'queued' | 'withdrawn';
       reason: string | null;
     }
@@ -184,8 +196,11 @@ export function applyEvent(
         {
           kind: 'user',
           key: `user:${event.id}`,
+          id: event.id,
           text: event.text,
           attachments: event.attachments ?? [],
+          references: event.references ?? [],
+          contextLength: event.contextLength ?? null,
         },
       ];
     case 'assistant.delta': {
@@ -366,6 +381,7 @@ export function applyEvent(
           id: event.id,
           text: event.text,
           attachments: event.attachments ?? [],
+          references: event.references ?? [],
           state: 'queued',
           reason: null,
         },

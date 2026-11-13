@@ -285,4 +285,70 @@ describe('NewSessionForm', () => {
       http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
     ).toEqual({ prompt: '', attachmentIds: ['a1'], scratch: true });
   });
+  it('completes # references from the chosen GitHub repositories and sends them', async () => {
+    const { fixture, form, element } = await render([
+      {
+        ...repository('r1', 'acme/app'),
+        github: { repositoryId: 1, installationId: 2, htmlUrl: '' },
+      },
+      repository('r2', 'acme/plain'),
+    ]);
+    form.chooseRepository(0, 'r1');
+    http
+      .expectOne('/api/repositories/r1/branches')
+      .flush({ defaultBranch: 'main', branches: [] });
+    await fixture.whenStable();
+    const textarea = element.querySelector(
+      '[data-testid="new-prompt"]',
+    ) as HTMLTextAreaElement;
+    textarea.value = 'Fix #1';
+    textarea.setSelectionRange(6, 6);
+    textarea.dispatchEvent(new Event('input'));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    http
+      .expectOne(
+        (request) =>
+          request.url === '/api/github/references' &&
+          request.params.get('repositories') === 'acme/app' &&
+          request.params.get('query') === '1',
+      )
+      .flush({
+        results: [
+          {
+            repository: 'acme/app',
+            number: 17,
+            kind: 'issue',
+            title: 'Crash',
+            state: 'open',
+            draft: false,
+            url: 'https://github.com/acme/app/issues/17',
+            author: null,
+            updatedAt: null,
+          },
+        ],
+        errors: [],
+      });
+    await fixture.whenStable();
+    (
+      element.querySelector(
+        '[data-testid="reference-suggestion"]',
+      ) as HTMLElement
+    ).dispatchEvent(new MouseEvent('mousedown'));
+    await fixture.whenStable();
+    expect(form.prompt).toBe('Fix #17 ');
+    form.create();
+    const request = http.expectOne('/api/sessions');
+    expect(request.request.body).toMatchObject({
+      prompt: 'Fix #17',
+      references: [{ token: '#17', repository: 'acme/app', number: 17 }],
+    });
+    request.flush(sessionDto());
+    // The chip asked GitHub about #17 meanwhile (or does so now).
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    http
+      .match('/api/github/references/acme/app/17')
+      .forEach((pending) =>
+        pending.flush({ message: 'x' }, { status: 404, statusText: 'x' }),
+      );
+  });
 });

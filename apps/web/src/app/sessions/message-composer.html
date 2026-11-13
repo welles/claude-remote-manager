@@ -17,6 +17,17 @@
     }
   </ul>
   }
+  <app-reference-suggestions
+    [autocomplete]="references"
+    [showRepository]="githubRepositories().length > 1"
+    (chosen)="references.choose($event, textarea)"
+  />
+  <app-reference-chips
+    [text]="draft()"
+    [repositories]="githubRepositories()"
+    [options]="referenceOptions()"
+    (optionsChange)="setReferenceOptions($event)"
+  />
   <app-draft-images [drafts]="images" />
   <div class="composer-row">
     <mat-form-field
@@ -33,7 +44,7 @@
         (paste)="onPaste($event)"
         (click)="onCaret($event)"
         (keyup)="onCaret($event)"
-        (blur)="closeMention()"
+        (blur)="closeSuggestions()"
         #textarea
         role="combobox"
         aria-autocomplete="list"

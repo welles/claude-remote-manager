@@ -54,7 +54,15 @@ describe('conversation', () => {
       }),
     );
     expect(items).toEqual([
-      { kind: 'user', key: 'user:u1', text: 'Hi', attachments: [] },
+      {
+        kind: 'user',
+        key: 'user:u1',
+        id: 'u1',
+        text: 'Hi',
+        attachments: [],
+        references: [],
+        contextLength: null,
+      },
       {
         kind: 'assistant',
         key: 'text:m1:0',

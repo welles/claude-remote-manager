@@ -593,6 +593,59 @@ describe('SessionView', () => {
     expect(image.alt).toBe('shot.png');
   });
 
+  it('shows references of messages as chips and what Claude got', async () => {
+    const { harness, socket, element } = await open();
+    const http = TestBed.inject(HttpTestingController);
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto(),
+      events: [
+        event({
+          type: 'user.message',
+          id: 'u1',
+          text: 'Fix #12 please',
+          references: [
+            {
+              token: '#12',
+              repository: 'acme/app',
+              number: 12,
+              comments: true,
+              diff: false,
+              status: 'resolved',
+              kind: 'issue',
+              title: 'Login fails',
+              state: 'open',
+              draft: false,
+              url: 'https://github.com/acme/app/issues/12',
+              error: null,
+              notes: ['Only the latest 50 of 80 comments were included'],
+            },
+          ],
+          contextLength: 2048,
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const message = element.querySelector('.user-message');
+    expect(words(message)).toBe('Fix #12 Login fails +comments please');
+    const context = element.querySelector(
+      '[data-testid="message-context"]',
+    ) as HTMLDetailsElement;
+    expect(words(context.querySelector('summary'))).toBe(
+      'GitHub context for Claude (2.0k characters)',
+    );
+    context.open = true;
+    context.dispatchEvent(new Event('toggle'));
+    http
+      .expectOne('/api/sessions/s1/messages/u1/context')
+      .flush({ messageId: 'u1', context: 'The app attached…', references: [] });
+    await harness.fixture.whenStable();
+    expect(context.querySelector('pre')?.textContent).toBe('The app attached…');
+  });
+
   it('switches model and mode and shows the task list', async () => {
     const { harness, socket, element, text } = await open();
     history(socket, sessionDto({ status: 'waiting' }), [

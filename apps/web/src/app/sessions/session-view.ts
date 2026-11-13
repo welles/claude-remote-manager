@@ -50,6 +50,9 @@ import { ModelsStore, modelOptionsWith } from './models-store';
 import { PermissionCard } from './permission-card';
 import { ContextMeter } from './context-meter';
 import { MessageImages } from '../attachments/message-images';
+import { MessageContext } from '../github-references/message-context';
+import { MessageText } from '../github-references/message-text';
+import { sessionGitHubRepositories } from '../github-references/references';
 import { ShownFileCard } from '../shown-files/shown-file-card';
 import { FileViewer } from '../shown-files/file-viewer';
 import { MessageComposer, type ComposedMessage } from './message-composer';
@@ -77,7 +80,9 @@ import { newId } from './sessions-api';
     MatProgressBarModule,
     MatSelectModule,
     MessageComposer,
+    MessageContext,
     MessageImages,
+    MessageText,
     PermissionCard,
     QueuedMessages,
     FileViewer,
@@ -149,6 +154,10 @@ export class SessionView implements OnInit {
       null
     );
   });
+  /** GitHub repositories of the session for `#` references. */
+  protected readonly githubRepositories = computed(() =>
+    sessionGitHubRepositories(this.session()),
+  );
   /** The session has clones, so the changes page has something to show. */
   protected readonly hasRepositories = computed(
     () =>
@@ -239,6 +248,9 @@ export class SessionView implements OnInit {
       ...(message.attachmentIds.length > 0
         ? { attachmentIds: message.attachmentIds }
         : {}),
+      ...(message.references.length > 0
+        ? { references: message.references }
+        : {}),
       requestId,
     });
     if (!sent) {
@@ -292,7 +304,12 @@ export class SessionView implements OnInit {
 
   /** Puts a message that was not sent back into the input. */
   protected edit(item: Extract<ConversationItem, { kind: 'queued' }>): void {
-    this.composer()?.restore(item.id, item.text, item.attachments);
+    this.composer()?.restore(
+      item.id,
+      item.text,
+      item.attachments,
+      item.references,
+    );
   }
 
   /** Switches the model (`''`: default) or the permission mode. */

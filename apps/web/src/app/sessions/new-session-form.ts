@@ -30,6 +30,13 @@ import {
   type SessionPermissionMode,
 } from '@claude-remote-manager/shared-types';
 import { GitHubRepositoryPicker } from '../github/github-repository-picker';
+import { ReferenceAutocomplete } from '../github-references/reference-autocomplete';
+import { ReferenceChips } from '../github-references/reference-chips';
+import { ReferenceSuggestions } from '../github-references/reference-suggestions';
+import {
+  draftReferences,
+  type ReferenceOptions,
+} from '../github-references/references';
 import {
   RepositoriesApi,
   errorMessage,
@@ -89,6 +96,8 @@ export interface SessionPrefill {
     MatFormFieldModule,
     MatInputModule,
     MatSelectModule,
+    ReferenceChips,
+    ReferenceSuggestions,
     RouterLink,
     TextFieldModule,
   ],
@@ -137,6 +146,32 @@ export class NewSessionForm implements OnInit {
   protected readonly chosenIds = computed(
     () => new Set(this.choices().map((choice) => choice.repositoryId)),
   );
+  /**
+   * GitHub repositories chosen for the session, the main one first: `#`
+   * searches them, `#12` refers to the first.
+   */
+  protected readonly githubRepositories = computed(() =>
+    this.mode() === 'scratch'
+      ? []
+      : this.choices()
+          .map((choice) =>
+            this.repositories().find(
+              (repository) => repository.id === choice.repositoryId,
+            ),
+          )
+          .filter((repository) => !!repository?.github)
+          .map((repository) => repository?.fullName ?? ''),
+  );
+  /** The prompt as a signal, for the reference chips. */
+  protected readonly promptText = signal('');
+  protected readonly references = new ReferenceAutocomplete(
+    () => this.githubRepositories(),
+    (value) => this.setPrompt(value),
+  );
+  /** Comments and diffs chosen per reference. */
+  protected readonly referenceOptions = signal<
+    ReadonlyMap<string, ReferenceOptions>
+  >(new Map());
 
   constructor() {
     effect(() => {
@@ -144,7 +179,7 @@ export class NewSessionForm implements OnInit {
       if (prefill) {
         // Only the prefill is tracked, not the images it adds.
         untracked(() => {
-          this.prompt = prefill.prompt;
+          this.setPrompt(prefill.prompt);
           if (prefill.files.length > 0) {
             this.images.add(prefill.files);
           }
@@ -277,8 +312,14 @@ export class NewSessionForm implements OnInit {
         repositoryId: choice.repositoryId,
         ...(choice.baseBranch ? { baseBranch: choice.baseBranch } : {}),
       }));
+    const references = draftReferences(
+      this.prompt.trim(),
+      this.githubRepositories(),
+      this.referenceOptions(),
+    );
     const request: CreateSessionRequest = {
       prompt: this.prompt.trim(),
+      ...(references.length > 0 ? { references } : {}),
       ...(this.images.ids().length > 0
         ? { attachmentIds: this.images.ids() }
         : {}),
@@ -297,7 +338,8 @@ export class NewSessionForm implements OnInit {
     this.sessionsApi.create(request).subscribe({
       next: (session) => {
         this.creating.set(false);
-        this.prompt = '';
+        this.setPrompt('');
+        this.referenceOptions.set(new Map());
         this.images.clear();
         this.projectName = '';
         this.created.emit(session);
@@ -329,7 +371,37 @@ export class NewSessionForm implements OnInit {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       this.create();
+      return;
     }
+    this.references.keydown(event, event.target as HTMLTextAreaElement);
+  }
+
+  protected onPromptInput(event: Event): void {
+    const field = event.target as HTMLTextAreaElement;
+    this.promptText.set(field.value);
+    this.references.update(field);
+  }
+
+  /** Caret moved: the `#` reference being typed may have changed. */
+  protected onPromptCaret(event: Event): void {
+    const key = (event as KeyboardEvent).key;
+    if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(key)) {
+      this.references.update(event.target as HTMLTextAreaElement);
+    }
+  }
+
+  protected setReferenceOptions(change: {
+    key: string;
+    options: ReferenceOptions;
+  }): void {
+    this.referenceOptions.update((options) =>
+      new Map(options).set(change.key, change.options),
+    );
+  }
+
+  private setPrompt(value: string): void {
+    this.prompt = value;
+    this.promptText.set(value);
   }
 
   private updateChoice(index: number, patch: Partial<RepositoryChoice>): void {

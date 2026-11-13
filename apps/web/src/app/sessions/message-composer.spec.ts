@@ -70,7 +70,9 @@ describe('MessageComposer', () => {
     await fixture.whenStable();
     expect(button('send').disabled).toBe(false);
     button('send').click();
-    expect(sent).toEqual([{ id: null, text: '', attachmentIds: ['a1'] }]);
+    expect(sent).toEqual([
+      { id: null, text: '', attachmentIds: ['a1'], references: [] },
+    ]);
     fixture.componentInstance.clear();
     await fixture.whenStable();
     expect(element.querySelector('[data-testid="draft-image"]')).toBeNull();
@@ -109,7 +111,9 @@ describe('MessageComposer', () => {
     textarea.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }),
     );
-    expect(sent).toEqual([{ id: null, text: 'Look', attachmentIds: ['a2'] }]);
+    expect(sent).toEqual([
+      { id: null, text: 'Look', attachmentIds: ['a2'], references: [] },
+    ]);
   });
 
   it('sends a message that was not sent again under its ID', async () => {
@@ -125,7 +129,9 @@ describe('MessageComposer', () => {
       ).src,
     ).toContain('/api/attachments/a1');
     button('send').click();
-    expect(sent).toEqual([{ id: 'm1', text: 'Again', attachmentIds: ['a1'] }]);
+    expect(sent).toEqual([
+      { id: 'm1', text: 'Again', attachmentIds: ['a1'], references: [] },
+    ]);
   });
 
   it('completes @ references from the session’s files', async () => {
@@ -184,5 +190,136 @@ describe('MessageComposer', () => {
     // Without "@" before the caret: no request.
     await type('plain text');
     http.expectNone('/api/sessions/s1/files');
+  });
+  it('completes # references from GitHub and sends them with the chosen extras', async () => {
+    fixture.componentRef.setInput('githubRepositories', [
+      'acme/app',
+      'acme/lib',
+    ]);
+    await fixture.whenStable();
+    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const type = async (value: string) => {
+      textarea.value = value;
+      textarea.setSelectionRange(value.length, value.length);
+      textarea.dispatchEvent(new Event('input'));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    };
+    const summary = (repository: string, number: number, title: string) => ({
+      repository,
+      number,
+      kind: number === 3 ? 'pull_request' : 'issue',
+      title,
+      state: 'open',
+      draft: false,
+      url: `https://github.com/${repository}/issues/${number}`,
+      author: 'bob',
+      updatedAt: null,
+    });
+    await type('Fix #log');
+    http
+      .expectOne(
+        (request) =>
+          request.url === '/api/github/references' &&
+          request.params.get('query') === 'log' &&
+          request.params.get('repositories') === 'acme/app,acme/lib',
+      )
+      .flush({
+        results: [
+          summary('acme/app', 12, 'Login fails'),
+          summary('acme/lib', 3, 'Log helper'),
+        ],
+        errors: ['acme/lib: rate limit'],
+      });
+    await fixture.whenStable();
+    const options = element.querySelectorAll(
+      '[data-testid="reference-suggestion"]',
+    );
+    expect([...options].map((option) => words(option))).toEqual([
+      '#12 Login fails acme/app Issue',
+      '#3 Log helper acme/lib PR',
+    ]);
+    expect(
+      element.querySelector('[data-testid="reference-search-error"]')
+        ?.textContent,
+    ).toContain('rate limit');
+    const key = (name: string) =>
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: name, cancelable: true }),
+      );
+    key('Enter');
+    await fixture.whenStable();
+    // The main repository's issues are written as #12.
+    expect(textarea.value).toBe('Fix #12 ');
+    await type('Fix #12 and #log');
+    http
+      .expectOne((request) => request.url === '/api/github/references')
+      .flush({ results: [summary('acme/lib', 3, 'Log helper')], errors: [] });
+    await fixture.whenStable();
+    key('Enter');
+    await fixture.whenStable();
+    expect(textarea.value).toBe('Fix #12 and acme/lib#3 ');
+    expect(sent).toEqual([]);
+
+    // The chips show what the references are.
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    http.expectOne('/api/github/references/acme/app/12').flush({
+      ...summary('acme/app', 12, 'Login fails'),
+      body: 'Steps',
+      bodyTruncated: false,
+      labels: [],
+      comments: 2,
+      createdAt: null,
+      closedAt: null,
+      pull: null,
+    });
+    http
+      .expectOne('/api/github/references/acme/lib/3')
+      .flush(
+        { message: 'Not found' },
+        { status: 404, statusText: 'Not Found' },
+      );
+    await fixture.whenStable();
+    const chips = element.querySelectorAll('[data-testid="reference-chip"]');
+    expect([...chips].map((chip) => words(chip))).toEqual([
+      '#12 Login fails',
+      'acme/lib#3 not found',
+    ]);
+
+    // Comments for #12, chosen in its preview.
+    (chips[0] as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('[data-testid="reference-comments"]'),
+      ).not.toBeNull(),
+    );
+    const comments = document.querySelector(
+      '[data-testid="reference-comments"]',
+    ) as HTMLInputElement;
+    comments.checked = true;
+    comments.dispatchEvent(new Event('change'));
+    await fixture.whenStable();
+    expect(words(chips[0])).toBe('#12 Login fails +comments');
+    const link = document.querySelector(
+      '[data-testid="reference-link"]',
+    ) as HTMLAnchorElement;
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toBe('noopener noreferrer');
+
+    button('send').click();
+    expect(sent.at(-1)?.references).toEqual([
+      { token: '#12', repository: 'acme/app', number: 12, comments: true },
+      { token: 'acme/lib#3', repository: 'acme/lib', number: 3 },
+    ]);
+  });
+
+  it('offers nothing for # without GitHub repositories', async () => {
+    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = 'Fix #1';
+    textarea.setSelectionRange(6, 6);
+    textarea.dispatchEvent(new Event('input'));
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    http.expectNone((request) => request.url.startsWith('/api/github'));
+    button('send').click();
+    expect(sent.at(-1)?.references).toEqual([]);
   });
 });

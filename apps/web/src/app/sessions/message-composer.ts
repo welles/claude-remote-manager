@@ -19,7 +19,17 @@ import {
   ATTACHMENT_MEDIA_TYPES,
   type AttachmentDto,
   type FileMention,
+  type MessageReference,
+  type MessageReferenceRequest,
 } from '@claude-remote-manager/shared-types';
+import { ReferenceAutocomplete } from '../github-references/reference-autocomplete';
+import { ReferenceChips } from '../github-references/reference-chips';
+import { ReferenceSuggestions } from '../github-references/reference-suggestions';
+import {
+  draftReferences,
+  optionsOf,
+  type ReferenceOptions,
+} from '../github-references/references';
 import { AttachmentDrafts, imageFiles } from '../attachments/attachment-drafts';
 import { AttachmentsApi } from '../attachments/attachments-api';
 import { DraftImages } from '../attachments/draft-images';
@@ -34,13 +44,16 @@ export interface ComposedMessage {
   id: string | null;
   text: string;
   attachmentIds: string[];
+  /** GitHub issues and pull requests referenced in the text. */
+  references: MessageReferenceRequest[];
 }
 
 /**
  * The input of the session view: text, images (paste, drop or pick; each
  * uploaded right away and removable), `@` references to files of the
- * session (autocomplete over all its directories) and the Send and Stop
- * buttons.
+ * session (autocomplete over all its directories), `#` references to
+ * GitHub issues and pull requests (autocomplete, chips with the choice to
+ * give Claude comments and diffs) and the Send and Stop buttons.
  */
 @Component({
   selector: 'app-message-composer',
@@ -49,6 +62,8 @@ export interface ComposedMessage {
     MatButtonModule,
     MatFormFieldModule,
     MatInputModule,
+    ReferenceChips,
+    ReferenceSuggestions,
     TextFieldModule,
   ],
   templateUrl: './message-composer.html',
@@ -66,6 +81,11 @@ export class MessageComposer {
   readonly sessionId = input<string | null>(null);
   /** Name the repository of files (sessions with several directories). */
   readonly showRepository = input(false);
+  /**
+   * GitHub repositories of the session, the main one first: `#` searches
+   * them, `#12` refers to the first. Without, `#` offers nothing.
+   */
+  readonly githubRepositories = input<string[]>([]);
   readonly send = output<ComposedMessage>();
   readonly interrupt = output<void>();
 
@@ -82,6 +102,15 @@ export class MessageComposer {
     () => this.mention() !== null && this.suggestions().length > 0,
   );
   private readonly queries = new Subject<string>();
+  /** `#` autocomplete. */
+  protected readonly references = new ReferenceAutocomplete(
+    () => this.githubRepositories(),
+    (value) => this.draft.set(value),
+  );
+  /** Comments and diffs chosen per reference (`owner/repo#12` key). */
+  protected readonly referenceOptions = signal<
+    ReadonlyMap<string, ReferenceOptions>
+  >(new Map());
 
   constructor() {
     this.queries
@@ -115,8 +144,16 @@ export class MessageComposer {
   private reuseId: string | null = null;
 
   /** Puts a message that was not sent back into the input. */
-  restore(id: string, text: string, attachments: AttachmentDto[]): void {
+  restore(
+    id: string,
+    text: string,
+    attachments: AttachmentDto[],
+    references: readonly MessageReference[] = [],
+  ): void {
     this.draft.set(this.draft().trim() ? `${this.draft()}\n\n${text}` : text);
+    this.referenceOptions.update(
+      (options) => new Map([...options, ...optionsOf(references)]),
+    );
     if (attachments.length > 0) {
       // The images belong to that message: send it under its ID again.
       this.reuseId = id;
@@ -129,6 +166,16 @@ export class MessageComposer {
     this.draft.set('');
     this.images.clear();
     this.reuseId = null;
+    this.referenceOptions.set(new Map());
+  }
+
+  protected setReferenceOptions(change: {
+    key: string;
+    options: ReferenceOptions;
+  }): void {
+    this.referenceOptions.update((options) =>
+      new Map(options).set(change.key, change.options),
+    );
   }
 
   protected submit(): void {
@@ -139,6 +186,11 @@ export class MessageComposer {
       id: this.reuseId,
       text: this.draft().trim(),
       attachmentIds: this.images.ids(),
+      references: draftReferences(
+        this.draft().trim(),
+        this.githubRepositories(),
+        this.referenceOptions(),
+      ),
     });
   }
 
@@ -152,6 +204,9 @@ export class MessageComposer {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       this.submit();
+      return;
+    }
+    if (this.references.keydown(event, event.target as HTMLTextAreaElement)) {
       return;
     }
     if (!this.suggesting()) {
@@ -211,7 +266,16 @@ export class MessageComposer {
     this.suggestions.set([]);
   }
 
+  protected closeSuggestions(): void {
+    this.closeMention();
+    this.references.close();
+  }
+
   private findMention(field: HTMLTextAreaElement): void {
+    if (this.references.update(field)) {
+      this.closeMention();
+      return;
+    }
     if (!this.sessionId() || field.selectionStart !== field.selectionEnd) {
       this.closeMention();
       return;
