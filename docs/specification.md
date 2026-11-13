@@ -74,7 +74,7 @@ Sitzungen arbeiten meist unbeobachtet, daher meldet das Backend wichtige Ereigni
 Das Angular-Frontend nutzt als installierbare PWA zusätzlich:
 
 - **Aktionen in Benachrichtigungen:** Freigabe-Anfragen lassen sich direkt in der Push-Nachricht mit „Erlauben“ oder „Ablehnen“ beantworten, ohne die App zu öffnen. „Erlauben“ heißt einmal erlauben (nie für die ganze Sitzung, kein Moduswechsel); Pushes, die mehr als den Sitzungs-Branch ändern, bekommen kein „Erlauben“. Kommt die Antwort nicht an (Access abgelaufen, offline), öffnet sich die Sitzung mit der weiter offenen Anfrage.
-- **Badge am App-Icon:** Badging API zeigt die Zahl der Sitzungen, die auf den Nutzer warten (Status „wartet“).
+- **Badge am App-Icon:** Badging API zeigt die Zahl der Sitzungen, die auf den Nutzer warten: offene Freigabe, Rückfrage oder Plan, oder ein fehlgeschlagenes Setup-Skript, das die erste Nachricht zurückhält; eine Sitzung, deren Turn fertig ist und die nur auf die nächste Nachricht wartet, zählt nicht. „Wartende Sitzungen“ zeigt genau diese.
 - **Share Target:** Links, Screenshots oder Text aus anderen Apps lassen sich an die PWA teilen und werden zum Prompt einer neuen Sitzung (das Formular wird vorausgefüllt; der Service Worker nimmt den Upload selbst entgegen, die API bleibt bei JSON).
 - **App-Shortcuts:** Langes Drücken auf das Icon bietet „Neue Sitzung“ und „Wartende Sitzungen“.
 - **Offline-Shell:** Die App startet sofort und zeigt den zuletzt bekannten Stand der Sitzungsliste, auch bei kurzer Verbindungsunterbrechung.

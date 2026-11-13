@@ -122,7 +122,7 @@ describe('SessionList', () => {
       ),
     ].map((row) => row.textContent?.replace(/\s+/g, ' ').trim() ?? '');
 
-  it('shows only waiting sessions from the "Waiting sessions" shortcut', async () => {
+  it('shows only sessions that need the user from the "Waiting sessions" shortcut', async () => {
     await TestBed.inject(Router).navigateByUrl('/?waiting=1');
     const fixture = await render();
     http.expectOne('/api/repositories').flush({
@@ -131,7 +131,10 @@ describe('SessionList', () => {
     });
     http.expectOne('/api/sessions').flush({
       sessions: [
-        sessionDto({ id: 's1', title: 'Needs me' }),
+        sessionDto({ id: 's1', title: 'Needs me', waitingFor: 'permission' }),
+        sessionDto({ id: 's3', title: 'Setup', waitingFor: 'setup' }),
+        // Finished its turn, waits for the next message: not blocked.
+        sessionDto({ id: 's4', title: 'Idle', waitingFor: 'message' }),
         sessionDto({
           id: 's2',
           title: 'Busy',
@@ -141,15 +144,17 @@ describe('SessionList', () => {
       ],
     });
     await fixture.whenStable();
-    expect(rows(fixture)).toHaveLength(1);
-    expect(rows(fixture)[0]).toContain('Needs me');
+    expect(rows(fixture)).toHaveLength(2);
+    expect(rows(fixture).join(' ')).toContain('Needs me');
+    expect(rows(fixture).join(' ')).toContain('Setup');
     const filter = (fixture.nativeElement as HTMLElement).querySelector(
       '[data-testid="waiting-filter"]',
     ) as HTMLElement;
     expect(filter.textContent?.trim()).toBe('Show all');
     filter.click();
     await fixture.whenStable();
-    expect(rows(fixture)).toHaveLength(2);
+    expect(rows(fixture)).toHaveLength(4);
+    expect(filter.textContent?.trim()).toBe('Needs you (2)');
   });
 
   it('shows the last known list, marked as stale, when offline', async () => {

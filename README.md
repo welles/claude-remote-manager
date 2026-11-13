@@ -617,10 +617,14 @@ web build runs it first):
   again", a full navigation that goes through the Access login and back. A WebSocket that
   cannot connect triggers the same check. Navigations pass redirects to the browser
   untouched. With `AUTH_MODE=none` none of this triggers.
-- **Badge**: the app icon shows the number of sessions waiting for the user (status
-  `waiting`), set by the open app and by every push message (Badging API, installed app).
+- **Badge**: the app icon shows the number of sessions blocked on the user: an open
+  approval request, question or plan, or a failed setup script holding the first message
+  back (`needsUser` in the shared types). A session whose turn finished and that waits for
+  the next message does not count. Set by the open app and by every push message (Badging
+  API, installed app).
 - **App shortcuts**: "New session" (`/?new=1`, the cursor goes into the form) and "Waiting
-  sessions" (`/?waiting=1`, only waiting sessions).
+  sessions" (`/?waiting=1`): the list filtered to the sessions that need the user ("Needs
+  you", the same sessions the badge counts).
 - **Share target**: links, text and images shared to the installed app become a new session's
   prompt and images: the service worker takes the operating system's form post
   (`POST /share-target`, multipart) itself, keeps it in the Cache API (dropped after a day if

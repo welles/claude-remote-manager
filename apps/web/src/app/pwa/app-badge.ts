@@ -1,5 +1,8 @@
 import { Injectable, inject } from '@angular/core';
-import type { SessionDto } from '@claude-remote-manager/shared-types';
+import {
+  needsUser,
+  type SessionDto,
+} from '@claude-remote-manager/shared-types';
 import { SessionSocket } from '../sessions/session-socket';
 import { SessionsApi } from '../sessions/sessions-api';
 
@@ -8,11 +11,11 @@ type BadgeNavigator = Navigator & {
   clearAppBadge?: () => Promise<void>;
 };
 
-/** Sessions that wait for the user (any `waiting`: message, approval, setup). */
-export function waitingCount(sessions: Iterable<SessionDto>): number {
+/** Sessions blocked on the user (see `needsUser`): the badge's number. */
+export function needsUserCount(sessions: Iterable<SessionDto>): number {
   let count = 0;
   for (const session of sessions) {
-    if (session.status === 'waiting') {
+    if (needsUser(session)) {
       count++;
     }
   }
@@ -30,8 +33,8 @@ export function setBadge(
 }
 
 /**
- * Keeps the app icon's badge at the number of sessions waiting for the
- * user while the app is open; push messages update it while it is closed.
+ * Keeps the app icon's badge at the number of sessions blocked on the
+ * user (open approval, question, plan, or failed setup) while the app is open; push messages update it while it is closed.
  */
 @Injectable({ providedIn: 'root' })
 export class AppBadge {
@@ -48,7 +51,7 @@ export class AppBadge {
     this.socket.messages$.subscribe((message) => {
       if (message.type === 'session.updated') {
         this.sessions.set(message.session.id, message.session);
-        setBadge(waitingCount(this.sessions.values()));
+        setBadge(needsUserCount(this.sessions.values()));
       }
     });
     this.api.list().subscribe({
@@ -58,7 +61,7 @@ export class AppBadge {
             this.sessions.set(session.id, session);
           }
         }
-        setBadge(waitingCount(this.sessions.values()));
+        setBadge(needsUserCount(this.sessions.values()));
       },
       error: () => undefined,
     });

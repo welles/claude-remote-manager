@@ -405,6 +405,8 @@ describe('notifications', () => {
         title: 'Finished: Fix the login',
         body: 'The login works again.\nFix the login · scratch',
         actions: [],
+        // Waiting for the next message is not blocked on the user.
+        badge: 0,
       },
     ]);
     expect(ntfy.messages.at(-1)).toMatchObject({ priority: 3 });

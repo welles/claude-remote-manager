@@ -7,8 +7,9 @@ import {
   NotFoundException,
   type OnModuleDestroy,
 } from '@nestjs/common';
-import type {
-  ApprovalActionRequest,
+import {
+  needsUser,
+  type ApprovalActionRequest,
   ApprovalActionResult,
   NotificationStatusDto,
   PullRequestDto,
@@ -374,11 +375,9 @@ export class NotificationsService implements OnModuleDestroy {
 
   // -------------------------------------------------------------------------
 
-  /** Sessions waiting for the user, for the app icon's badge. */
+  /** Sessions blocked on the user (see `needsUser`), for the app icon's badge. */
   badge(): number {
-    return this.sessions
-      .list()
-      .filter((session) => session.status === 'waiting').length;
+    return this.sessions.list().filter(needsUser).length;
   }
 
   private sessionOrNull(sessionId: string) {

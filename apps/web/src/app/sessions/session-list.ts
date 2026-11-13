@@ -15,7 +15,10 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import type { SessionDto } from '@claude-remote-manager/shared-types';
+import {
+  needsUser,
+  type SessionDto,
+} from '@claude-remote-manager/shared-types';
 import { SHARE_CACHE, sharedPrompt, takeShare } from '../../sw/share-store';
 import {
   formatCost,
@@ -32,7 +35,8 @@ import { SessionsApi } from './sessions-api';
 /**
  * Start page: all sessions with their status, and a form for a new one.
  * Query parameters of the app shortcuts and the share target: `new` puts
- * the cursor into the form, `waiting` shows only waiting sessions, `share`
+ * the cursor into the form, `waiting` shows only sessions that need the user (open approval,
+ * question, plan or failed setup; the same count as the badge), `share`
  * fills the form with content shared to the app. Without a connection it
  * shows the last known list, marked as stale.
  */
@@ -76,14 +80,11 @@ export class SessionList implements OnInit, AfterViewInit {
       b.updatedAt.localeCompare(a.updatedAt),
     ),
   );
-  protected readonly waitingCount = computed(
-    () =>
-      this.sessions().filter((session) => session.status === 'waiting').length,
+  protected readonly needsYouCount = computed(
+    () => this.sessions().filter(needsUser).length,
   );
   protected readonly shown = computed(() =>
-    this.waitingOnly()
-      ? this.sessions().filter((session) => session.status === 'waiting')
-      : this.sessions(),
+    this.waitingOnly() ? this.sessions().filter(needsUser) : this.sessions(),
   );
 
   constructor() {

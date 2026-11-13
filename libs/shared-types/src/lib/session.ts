@@ -41,6 +41,23 @@ export type SessionStatus =
 export type SessionWaitingFor = 'message' | 'permission' | 'setup';
 
 /**
+ * Whether a session is blocked on the user: it waits for an answer to an
+ * approval request, question or plan (`waitingFor: 'permission'`), or for a
+ * decision about the first message after a failed setup script
+ * (`'setup'`). A session whose turn finished and that waits for the next
+ * message does not count. Used for the app icon's badge (API and web app)
+ * and the session list's "Needs you" filter, so that they always agree.
+ */
+export function needsUser(
+  session: Pick<SessionDto, 'status' | 'waitingFor'>,
+): boolean {
+  return (
+    session.status === 'waiting' &&
+    (session.waitingFor === 'permission' || session.waitingFor === 'setup')
+  );
+}
+
+/**
  * Permission modes a session may use. Mirrors the Agent SDK's modes without
  * `bypassPermissions`, which this app never uses.
  */

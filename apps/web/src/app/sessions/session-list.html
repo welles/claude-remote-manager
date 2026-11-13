@@ -20,7 +20,7 @@
     [attr.aria-pressed]="waitingOnly()"
     data-testid="waiting-filter"
   >
-    {{ waitingOnly() ? 'Show all' : 'Waiting (' + waitingCount() + ')' }}
+    {{ waitingOnly() ? 'Show all' : 'Needs you (' + needsYouCount() + ')' }}
   </button>
   }
 </div>
@@ -37,7 +37,7 @@
 } @else if (sessions().length === 0) {
 <p class="empty">No sessions yet.</p>
 } @else if (shown().length === 0) {
-<p class="empty" data-testid="no-waiting">No session waits for you.</p>
+<p class="empty" data-testid="no-waiting">No session needs you.</p>
 } @else {
 <nav class="sessions" [class.stale-list]="staleSince() !== null">
   @for (session of shown(); track session.id) {
