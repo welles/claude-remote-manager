@@ -6,6 +6,22 @@
   <a matButton routerLink="/settings">Settings</a>
   <a matButton routerLink="/status" class="status-link">Server</a>
 </mat-toolbar>
+@if (access.state() === 'expired') {
+<div class="banner" role="alert" data-testid="access-expired">
+  <span>Your sign-in has expired. Nothing you send reaches the server.</span>
+  <button matButton="filled" type="button" (click)="access.signIn()">
+    Sign in again
+  </button>
+</div>
+} @else if (access.state() === 'offline') {
+<div class="banner offline" role="status" data-testid="offline">
+  <span
+    >Offline: the server cannot be reached. What you see may be out of
+    date.</span
+  >
+  <button matButton type="button" (click)="access.check()">Retry</button>
+</div>
+}
 <main class="content">
   <router-outlet />
 </main>

@@ -1,5 +1,6 @@
 import { Injectable, InjectionToken, inject, signal } from '@angular/core';
 import { Subject } from 'rxjs';
+import { AccessSession } from '../pwa/access-session';
 import {
   SESSION_PROTOCOL_VERSION,
   type ClientMessage,
@@ -32,6 +33,8 @@ export class SessionSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly subscriptions = new Map<string, PositionSource>();
   private readonly incoming = new Subject<ServerMessage>();
+  private readonly connectedChanges = new Subject<boolean>();
+  private readonly access = inject(AccessSession);
 
   /** Whether the connection is open. */
   readonly connected = signal(false);
@@ -39,6 +42,8 @@ export class SessionSocket {
   readonly incompatible = signal(false);
   /** All frames from the server. */
   readonly messages$ = this.incoming.asObservable();
+  /** `true` when the connection opens, `false` when it closes. */
+  readonly connectedChanges$ = this.connectedChanges.asObservable();
 
   /** Opens the connection if it is not open or opening yet. */
   connect(): void {
@@ -48,9 +53,13 @@ export class SessionSocket {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = this.createSocket(`${protocol}//${location.host}/api/ws`);
     this.socket = socket;
+    let opened = false;
     socket.onopen = () => {
+      opened = true;
       this.attempt = 0;
       this.connected.set(true);
+      this.access.reachable();
+      this.connectedChanges.next(true);
       for (const [sessionId, position] of this.subscriptions) {
         this.sendSubscribe(sessionId, position);
       }
@@ -78,6 +87,14 @@ export class SessionSocket {
       }
       this.socket = null;
       this.connected.set(false);
+      if (opened) {
+        this.connectedChanges.next(false);
+      } else {
+        // Refused or unreachable: maybe the Access sign-in expired (the
+        // upgrade then ends at the Access login, which a WebSocket cannot
+        // show).
+        void this.access.check();
+      }
       this.scheduleReconnect();
     };
   }

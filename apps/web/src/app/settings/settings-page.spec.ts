@@ -6,6 +6,7 @@ import {
 import { TestBed } from '@angular/core/testing';
 import type { GitHubStatusDto } from '@claude-remote-manager/shared-types';
 import { words } from '../testing/text';
+import { notificationStatus } from './testing/notification-status';
 import { SettingsPage } from './settings-page';
 
 const status = (overrides: Partial<GitHubStatusDto> = {}): GitHubStatusDto => ({
@@ -63,6 +64,7 @@ describe('SettingsPage', () => {
     fixture.detectChanges();
     http.expectOne('/api/settings').flush(settings);
     http.expectOne('/api/github/status').flush(github);
+    http.expectOne('/api/notifications').flush(notificationStatus());
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();

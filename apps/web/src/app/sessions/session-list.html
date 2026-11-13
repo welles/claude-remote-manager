@@ -1,22 +1,46 @@
+@if (shareNotice(); as notice) {
+<p class="notice" data-testid="share-notice">{{ notice }}</p>
+}
 <mat-card appearance="outlined" class="new-session">
   <mat-card-header>
     <mat-card-title>New session</mat-card-title>
   </mat-card-header>
   <mat-card-content>
-    <app-new-session-form (created)="open($event)" />
+    <app-new-session-form [prefill]="prefill()" (created)="open($event)" />
   </mat-card-content>
 </mat-card>
 
-<h2 class="heading">Sessions</h2>
-@if (loading()) {
+<div class="heading-row">
+  <h2 class="heading">Sessions</h2>
+  @if (sessions().length > 0) {
+  <button
+    matButton
+    type="button"
+    (click)="showWaiting(!waitingOnly())"
+    [attr.aria-pressed]="waitingOnly()"
+    data-testid="waiting-filter"
+  >
+    {{ waitingOnly() ? 'Show all' : 'Waiting (' + waitingCount() + ')' }}
+  </button>
+  }
+</div>
+@if (staleSince(); as since) {
+<p class="stale" role="status" data-testid="stale-list">
+  Offline: the sessions as of {{ since | date: 'short' }}. They may be out of
+  date.
+  <button matButton type="button" (click)="load()">Retry</button>
+</p>
+} @if (loading() && sessions().length === 0) {
 <mat-progress-spinner mode="indeterminate" diameter="32" />
 } @else if (loadError(); as error) {
 <p class="error">{{ error }}</p>
 } @else if (sessions().length === 0) {
 <p class="empty">No sessions yet.</p>
+} @else if (shown().length === 0) {
+<p class="empty" data-testid="no-waiting">No session waits for you.</p>
 } @else {
-<nav class="sessions">
-  @for (session of sessions(); track session.id) {
+<nav class="sessions" [class.stale-list]="staleSince() !== null">
+  @for (session of shown(); track session.id) {
   <a
     class="session"
     [routerLink]="['/sessions', session.id]"

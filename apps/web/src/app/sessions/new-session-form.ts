@@ -2,9 +2,14 @@ import { TextFieldModule } from '@angular/cdk/text-field';
 import {
   Component,
   computed,
+  effect,
   inject,
+  input,
   output,
   signal,
+  viewChild,
+  untracked,
+  type ElementRef,
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -61,6 +66,13 @@ const emptyChoice = (): RepositoryChoice => ({
   baseBranch: '',
 });
 
+/** Content shared to the app (share target) for a new session. */
+export interface SessionPrefill {
+  prompt: string;
+  /** Images, uploaded like attached ones. */
+  files: File[];
+}
+
 /**
  * Form for a new session: the prompt, where the session works (a main
  * repository or a new project, plus further repositories, each optionally
@@ -90,6 +102,10 @@ export class NewSessionForm implements OnInit {
 
   /** The session was created. */
   readonly created = output<SessionDto>();
+  /** Fills in the prompt and images, e.g. from content shared to the app. */
+  readonly prefill = input<SessionPrefill | null>(null);
+  private readonly promptField =
+    viewChild<ElementRef<HTMLTextAreaElement>>('promptField');
 
   /** Models from Claude Code; `''` stands for its default. */
   protected readonly modelOptions = computed(() =>
@@ -121,6 +137,29 @@ export class NewSessionForm implements OnInit {
   protected readonly chosenIds = computed(
     () => new Set(this.choices().map((choice) => choice.repositoryId)),
   );
+
+  constructor() {
+    effect(() => {
+      const prefill = this.prefill();
+      if (prefill) {
+        // Only the prefill is tracked, not the images it adds.
+        untracked(() => {
+          this.prompt = prefill.prompt;
+          if (prefill.files.length > 0) {
+            this.images.add(prefill.files);
+          }
+          this.focusPrompt();
+        });
+      }
+    });
+  }
+
+  /** Puts the cursor into the prompt (e.g. for the "New session" shortcut). */
+  focusPrompt(): void {
+    const field = this.promptField()?.nativeElement;
+    field?.focus();
+    field?.scrollIntoView?.({ block: 'center' });
+  }
 
   ngOnInit(): void {
     this.modelsStore.load();

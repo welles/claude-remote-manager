@@ -8,11 +8,12 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import type { GitHubStatusDto } from '@claude-remote-manager/shared-types';
 import { GitHubApi } from '../github/github-api';
 import { errorMessage } from '../repositories/repositories-api';
+import { NotificationSettings } from './notification-settings';
 import { SettingsApi } from './settings-api';
 
 /**
- * Settings of the app: the commit identity of session clones (later also
- * notifications) and the state of the GitHub App.
+ * Settings of the app: the commit identity of session clones,
+ * notifications and the state of the GitHub App.
  */
 @Component({
   selector: 'app-settings-page',
@@ -23,6 +24,7 @@ import { SettingsApi } from './settings-api';
     MatFormFieldModule,
     MatInputModule,
     MatProgressSpinnerModule,
+    NotificationSettings,
   ],
   templateUrl: './settings-page.html',
   styleUrl: './settings-page.scss',
