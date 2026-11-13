@@ -46,6 +46,9 @@ describe('offline shell rules', () => {
       `${ORIGIN}/cdn-cgi/access/login`,
       `${ORIGIN}/sw.js`,
       'https://team.cloudflareaccess.com/login',
+      // Previews of dev servers are other origins: never handled or cached.
+      'https://demo-abc123-5173.preview.example.com/',
+      'https://demo-abc123-5173.preview.example.com/main.js',
     ]) {
       expect([url, handledRequest({ method: 'GET', url }, ORIGIN)]).toEqual([
         url,

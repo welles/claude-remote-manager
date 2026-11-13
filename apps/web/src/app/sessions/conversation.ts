@@ -7,6 +7,8 @@ import {
   type PermissionRequestEvent,
   type PermissionResolvedEvent,
   type PrepareProgressEvent,
+  type PreviewDto,
+  type PreviewStoppedEvent,
   type SessionEvent,
   type SettingsChangedEvent,
   type SetupResultEvent,
@@ -59,6 +61,8 @@ export type ConversationItem =
       diff: { diff: FileDiff; source: ToolDiffSource } | null;
       /** Files shown by the call (`show_file`, images read or written). */
       shown: ShownFileDto[];
+      /** Previews the call exposed (`expose_port`), as they were then. */
+      previews: PreviewDto[];
       /**
        * Set when the app carried the call out itself (autofix: git add,
        * commit, push), with the real outcome.
@@ -70,6 +74,12 @@ export type ConversationItem =
       kind: 'file';
       key: string;
       file: ShownFileDto;
+    }
+  | {
+      /** A preview exposed without a known tool call, as it was then. */
+      kind: 'preview';
+      key: string;
+      preview: PreviewDto;
     }
   | {
       /**
@@ -177,6 +187,12 @@ function specialSummary(
       return Array.isArray(fields['todos'])
         ? `${fields['todos'].length} tasks`
         : null;
+    case 'mcp__crm__expose_port':
+      return `port ${String(fields['port'] ?? '?')}${
+        typeof fields['name'] === 'string' ? ` · ${fields['name']}` : ''
+      }`;
+    case 'mcp__crm__stop_preview':
+      return `port ${String(fields['port'] ?? '?')}`;
     default:
       return null;
   }
@@ -263,6 +279,7 @@ export function applyEvent(
         permission: existing?.kind === 'tool' ? existing.permission : null,
         diff: existing?.kind === 'tool' ? existing.diff : null,
         shown: existing?.kind === 'tool' ? existing.shown : [],
+        previews: existing?.kind === 'tool' ? existing.previews : [],
         byApp: existing?.kind === 'tool' ? existing.byApp : null,
       };
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
@@ -329,6 +346,39 @@ export function applyEvent(
         { kind: 'file', key: `file:${event.file.id}`, file: event.file },
       ];
     }
+    case 'preview.exposed': {
+      const index = event.toolUseId
+        ? items.findIndex((item) => item.key === `tool:${event.toolUseId}`)
+        : -1;
+      const existing = items[index];
+      if (existing?.kind === 'tool') {
+        if (existing.previews.some((p) => p.id === event.preview.id)) {
+          return items;
+        }
+        return replaceAt(items, index, {
+          ...existing,
+          previews: [...existing.previews, event.preview],
+        });
+      }
+      return [
+        ...items,
+        {
+          kind: 'preview',
+          key: `preview:${event.preview.id}:${event.seq}`,
+          preview: event.preview,
+        },
+      ];
+    }
+    case 'preview.stopped':
+      return [
+        ...items,
+        {
+          kind: 'notice',
+          key: `preview-stopped:${event.seq}`,
+          level: 'info',
+          text: previewStoppedText(event),
+        },
+      ];
     case 'permission.denied': {
       const key = `tool:${event.toolUseId}`;
       const index = items.findIndex((item) => item.key === key);
@@ -350,6 +400,7 @@ export function applyEvent(
           permission: null,
           diff: null,
           shown: [],
+          previews: [],
           byApp: null,
         },
       ];
@@ -377,6 +428,7 @@ export function applyEvent(
           permission,
           diff: null,
           shown: [],
+          previews: [],
           byApp: null,
         },
       ];
@@ -528,6 +580,17 @@ export function applyEvent(
       // elsewhere or not yet.
       return items;
   }
+}
+
+/** One line saying that a preview was stopped, and by whom. */
+export function previewStoppedText(event: PreviewStoppedEvent): string {
+  const by =
+    event.by === 'user'
+      ? 'by you'
+      : event.by === 'claude'
+        ? 'by Claude'
+        : 'because the session ended';
+  return `Preview "${event.name}" (port ${event.port}) stopped ${by}`;
 }
 
 /** One line describing a change of model or permission mode. */

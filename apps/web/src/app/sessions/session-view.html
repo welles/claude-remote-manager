@@ -89,6 +89,10 @@
   } @if (todos().length > 0) {
   <app-todo-panel [todos]="todos()" />
   }
+  <app-session-previews
+    [previews]="s.previews"
+    (embed)="embedPreview($event)"
+  />
   <app-session-git-panel [session]="s" />
   } @if (incompatible()) {
   <p class="banner error">The server uses a newer protocol. Reload the page.</p>
@@ -163,6 +167,13 @@
     [file]="file"
     (open)="openFile($event)"
   />
+  } @for (preview of item.previews; track preview.id) {
+  <app-preview-card
+    class="shown"
+    [class.nested]="item.nested"
+    [preview]="current(preview)"
+    (embed)="embedPreview($event)"
+  />
   } @if (item.permission; as permission) {
   <p
     class="permission-line"
@@ -200,6 +211,12 @@
     class="shown"
     [file]="item.file"
     (open)="openFile($event)"
+  />
+  } @case ('preview') {
+  <app-preview-card
+    class="shown"
+    [preview]="current(item.preview)"
+    (embed)="embedPreview($event)"
   />
   } @case ('settings') {
   <p class="notice" data-testid="settings-changed">{{ item.text }}</p>
@@ -319,4 +336,6 @@
 </footer>
 @if (viewing(); as file) {
 <app-file-viewer [file]="file" (closed)="viewing.set(null)" />
+} @if (embedded(); as preview) {
+<app-preview-frame [preview]="preview" (closed)="closePreview()" />
 }

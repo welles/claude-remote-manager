@@ -14,6 +14,7 @@ import {
 } from './conversation';
 import { fileDiff } from '../diffs/testing/file-diffs';
 import { shownFile } from '../shown-files/testing/shown-file';
+import { preview } from '../previews/testing/preview';
 import {
   permissionRequest,
   permissionResolved,
@@ -253,6 +254,62 @@ describe('conversation', () => {
     expect(items).toEqual([
       expect.objectContaining({ key: 'tool:t1', shown: [file] }),
       { kind: 'file', key: 'file:f2', file: shownFile({ id: 'f2' }) },
+    ]);
+  });
+
+  it('puts exposed previews on their tool call and notes stopped ones', () => {
+    const exposed = preview();
+    const items = buildConversation([
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId: 't1',
+        name: 'mcp__crm__expose_port',
+        input: { port: 5173, name: 'Web app' },
+        parentToolUseId: null,
+      }),
+      event({ type: 'preview.exposed', toolUseId: 't1', preview: exposed }),
+      event({ type: 'preview.exposed', toolUseId: 't1', preview: exposed }),
+      event({
+        type: 'preview.exposed',
+        toolUseId: null,
+        preview: preview({ id: 'p2' }),
+      }),
+      event({
+        type: 'preview.stopped',
+        toolUseId: null,
+        previewId: exposed.id,
+        port: 5173,
+        name: 'Web app',
+        by: 'user',
+      }),
+      event({
+        type: 'preview.stopped',
+        toolUseId: null,
+        previewId: 'p2',
+        port: 5173,
+        name: 'Web app',
+        by: 'session_end',
+      }),
+    ]);
+    expect(items).toEqual([
+      expect.objectContaining({
+        key: 'tool:t1',
+        summary: 'port 5173 · Web app',
+        previews: [exposed],
+      }),
+      expect.objectContaining({
+        kind: 'preview',
+        preview: preview({ id: 'p2' }),
+      }),
+      expect.objectContaining({
+        kind: 'notice',
+        text: 'Preview "Web app" (port 5173) stopped by you',
+      }),
+      expect.objectContaining({
+        kind: 'notice',
+        text: 'Preview "Web app" (port 5173) stopped because the session ended',
+      }),
     ]);
   });
 

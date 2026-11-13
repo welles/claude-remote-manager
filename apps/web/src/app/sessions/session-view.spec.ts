@@ -15,6 +15,7 @@ import { SessionView } from './session-view';
 import { FakeWebSocket, fakeWebSocketFactory } from './testing/fake-websocket';
 import { permissionRequest } from './testing/permission-events';
 import { sessionDto } from './testing/session-dto';
+import { preview } from '../previews/testing/preview';
 
 const LOG = 'log-1';
 let seq = 0;
@@ -354,6 +355,70 @@ describe('SessionView', () => {
     expect(notes[0]).toBe(
       'Run by the app (autofix): Committed; pushed claude/x of acme/app at 1a2b3c4',
     );
+  });
+
+  it('lists running previews, embeds them and follows their state', async () => {
+    const { harness, socket, element } = await open();
+    const running = preview();
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto({ previews: [running] }),
+      events: [
+        event({
+          type: 'tool.call',
+          messageId: 'm',
+          toolUseId: 't1',
+          name: 'mcp__crm__expose_port',
+          input: { port: 5173, name: 'Web app' },
+          parentToolUseId: null,
+        }),
+        event({
+          type: 'preview.exposed',
+          toolUseId: 't1',
+          preview: preview({ state: 'unreachable' }),
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const panel = element.querySelector(
+      '[data-testid="session-previews"]',
+    ) as HTMLElement;
+    expect(panel.textContent).toContain('Web app');
+    // The history's card shows the preview as it is now.
+    const cards = [
+      ...element.querySelectorAll('[data-testid="preview-card"]'),
+    ].map((card) => card.getAttribute('data-state'));
+    expect(cards).toEqual(['running', 'running']);
+
+    (
+      panel.querySelector('[data-testid="preview-embed"]') as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    expect(
+      element
+        .querySelector('[data-testid="preview-frame"]')
+        ?.getAttribute('src'),
+    ).toBe(running.url);
+
+    // Stopped elsewhere: the frame goes, the cards say so.
+    socket.receive({
+      type: 'session.updated',
+      session: sessionDto({ previews: [] }),
+    });
+    await harness.fixture.whenStable();
+    expect(element.querySelector('[data-testid="preview-frame"]')).toBeNull();
+    expect(element.textContent).toContain('This preview was stopped');
+    expect(
+      element.querySelector('[data-testid="session-previews"]'),
+    ).toBeNull();
+    expect(
+      element
+        .querySelector('[data-testid="preview-card"]')
+        ?.getAttribute('data-state'),
+    ).toBe('stopped');
   });
 
   it('shows the directories and the preparation, and holds messages back meanwhile', async () => {

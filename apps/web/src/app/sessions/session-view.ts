@@ -27,6 +27,7 @@ import {
   type ServerMessage,
   type SessionDto,
   type SessionPermissionMode,
+  type PreviewDto,
   type ShownFileDto,
 } from '@claude-remote-manager/shared-types';
 import {
@@ -54,6 +55,10 @@ import { MessageContext } from '../github-references/message-context';
 import { MessageText } from '../github-references/message-text';
 import { sessionGitHubRepositories } from '../github-references/references';
 import { ShownFileCard } from '../shown-files/shown-file-card';
+import { PreviewCard } from '../previews/preview-card';
+import { PreviewFrame } from '../previews/preview-frame';
+import { currentPreview } from '../previews/previews-api';
+import { SessionPreviews } from '../previews/session-previews';
 import { FileViewer } from '../shown-files/file-viewer';
 import { MessageComposer, type ComposedMessage } from './message-composer';
 import { FileDiffCard } from '../diffs/file-diff-card';
@@ -84,12 +89,15 @@ import { newId } from './sessions-api';
     MessageImages,
     MessageText,
     PermissionCard,
+    PreviewCard,
+    PreviewFrame,
     QueuedMessages,
     FileViewer,
     ShownFileCard,
     RouterLink,
     SessionDirectories,
     SessionGitPanel,
+    SessionPreviews,
     TextFieldModule,
     TodoPanel,
   ],
@@ -421,6 +429,25 @@ export class SessionView implements OnInit {
 
   /** The file open in the viewer. */
   protected readonly viewing = signal<ShownFileDto | null>(null);
+  /** The preview shown in a frame; its state follows the session. */
+  private readonly embeddedPreview = signal<PreviewDto | null>(null);
+  protected readonly embedded = computed(() => {
+    const preview = this.embeddedPreview();
+    return preview ? this.current(preview) : null;
+  });
+
+  /** A preview (e.g. from the history) as it is now. */
+  protected current(preview: PreviewDto): PreviewDto {
+    return currentPreview(preview, this.session()?.previews ?? []);
+  }
+
+  protected embedPreview(preview: PreviewDto): void {
+    this.embeddedPreview.set(preview);
+  }
+
+  protected closePreview(): void {
+    this.embeddedPreview.set(null);
+  }
 
   /** Opens a file Claude showed in the viewer. */
   protected openFile(file: ShownFileDto): void {
