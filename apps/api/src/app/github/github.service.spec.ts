@@ -190,9 +190,10 @@ describe('GitHubService', () => {
     });
   });
 
-  it('explains when GitHub refuses a repository in a personal account', async () => {
+  it('refuses repositories in personal accounts without asking GitHub', async () => {
     github.addInstallation('alice');
     const [installation] = await github.service.installations();
+    const before = github.requests.length;
     await expect(
       github.service.createRepository({
         installation,
@@ -201,15 +202,7 @@ describe('GitHubService', () => {
         description: null,
       }),
     ).rejects.toThrow('attach it to the project instead');
-    github.userRepositoryCreation = true;
-    await expect(
-      github.service.createRepository({
-        installation,
-        name: 'x',
-        private: true,
-        description: null,
-      }),
-    ).resolves.toMatchObject({ owner: 'alice', name: 'x' });
+    expect(github.requests.length).toBe(before);
   });
 
   it('parses GitHub clone URLs', () => {

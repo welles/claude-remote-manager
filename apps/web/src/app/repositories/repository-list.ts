@@ -159,8 +159,15 @@ export class RepositoryList implements OnInit {
             message: `GitHub is not configured: ${status.problem}`,
           });
         }
-        this.owners.set(status.installations);
-        this.publishOwner ||= status.installations[0]?.account ?? '';
+        // The app can create repositories only in organizations.
+        const organizations = status.installations.filter(
+          (installation) => installation.accountType === 'Organization',
+        );
+        this.owners.set(organizations);
+        this.publishOwner ||= organizations[0]?.account ?? '';
+        if (organizations.length === 0) {
+          this.publishMode = 'attach';
+        }
       },
       error: () => this.owners.set([]),
     });

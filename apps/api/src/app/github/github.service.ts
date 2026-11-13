@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type {
   GitHubInstallationDto,
   GitHubRepositoryDto,
@@ -12,6 +12,10 @@ import {
   type GitHubPermissionSet,
   type InstallationToken,
 } from './installation-tokens';
+
+/** Why the app cannot create repositories in personal accounts. */
+export const PERSONAL_ACCOUNT_CREATION =
+  'The GitHub App cannot create repositories in a personal account (GitHub refuses its installation token there). Create an empty repository on GitHub and attach it to the project instead.';
 
 /** Host of clone URLs of GitHub repositories. */
 export const GITHUB_HOST = 'github.com';
@@ -428,11 +432,14 @@ export class GitHubService {
   }
 
   /**
-   * Creates an empty repository in the account of an installation. For an
-   * organization this is `POST /orgs/{org}/repos` with an installation
-   * token (needs the Administration permission). For a personal account
-   * GitHub lists `POST /user/repos` for installation tokens as well; if
-   * GitHub refuses it, the error says what to do instead.
+   * Creates an empty repository in an organization the app is installed
+   * on: `POST /orgs/{org}/repos` with an installation token (needs the
+   * Administration permission). Personal accounts are refused before
+   * asking GitHub: GitHub's documentation lists `POST /user/repos` for
+   * installation tokens, but tried with this app it answered 403 ("Rate
+   * Limit Exceeded", with `x-accepted-github-permissions: administration=
+   * write; repository_creation=write`), so creating a repository there
+   * needs a user access token. Attach an existing empty repository instead.
    */
   async createRepository(input: {
     installation: GitHubInstallation;
@@ -441,18 +448,18 @@ export class GitHubService {
     description: string | null;
   }): Promise<CreatedRepository> {
     const { installation } = input;
+    if (installation.accountType !== 'Organization') {
+      throw new BadRequestException(PERSONAL_ACCOUNT_CREATION);
+    }
     const { token } = await this.tokens.get({
       installationId: installation.id,
       permissions: { administration: 'write', metadata: 'read' },
       fresh: true,
     });
-    const organization = installation.accountType === 'Organization';
     try {
       const response = await this.http.request<RawRepository>({
         method: 'POST',
-        path: organization
-          ? `/orgs/${encodeURIComponent(installation.account)}/repos`
-          : '/user/repos',
+        path: `/orgs/${encodeURIComponent(installation.account)}/repos`,
         token,
         body: {
           name: input.name,
@@ -469,19 +476,6 @@ export class GitHubService {
         defaultBranch: response.data.default_branch ?? null,
         htmlUrl: response.data.html_url,
       };
-    } catch (error) {
-      if (
-        !organization &&
-        error instanceof GitHubApiError &&
-        [401, 403, 404].includes(error.githubStatus)
-      ) {
-        throw new GitHubApiError(
-          error.githubStatus,
-          `GitHub refused to create a repository in the personal account ${installation.account} with the app's installation token (${error.message}). ` +
-            'Create an empty repository there yourself and attach it to the project instead.',
-        );
-      }
-      throw error;
     } finally {
       this.tokens.revoke(token).catch(() => undefined);
     }

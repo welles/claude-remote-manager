@@ -86,8 +86,6 @@ export class FakeGitHub {
     true;
   /** Answers a request before the fake does, e.g. with an error. */
   intercept: ((request: RecordedRequest) => Response | undefined) | null = null;
-  /** Whether `POST /user/repos` works with installation tokens. */
-  userRepositoryCreation = false;
   private nextId = 1000;
 
   readonly fetch: FetchLike = async (url, init) => this.handle(url, init);
@@ -493,7 +491,8 @@ export class FakeGitHub {
           (installation.type !== 'Organization' ||
             installation.account.toLowerCase() !==
               decodeURIComponent(match?.[1] ?? '').toLowerCase())) ||
-        (!organization && !this.userRepositoryCreation)
+        // What GitHub answered for this app's installation token.
+        !organization
       ) {
         return denied();
       }

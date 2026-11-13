@@ -56,6 +56,12 @@ interface ListInternals {
   fetch(repository: RepositoryDto): void;
   editSetup(repository: RepositoryDto): void;
   saveSetup(repository: RepositoryDto): void;
+  openPublish(repository: RepositoryDto): void;
+  publish(repository: RepositoryDto): void;
+  publishMode: 'create' | 'attach';
+  publishOwner: string;
+  publishExisting: string;
+  owners(): { account: string }[];
 }
 
 describe('RepositoryList', () => {
@@ -240,6 +246,82 @@ describe('RepositoryList', () => {
     http.expectOne('/api/repositories').flush({
       repositories: [],
       strayDirectories: [],
+    });
+  });
+
+  describe('putting a local project on GitHub', () => {
+    const project = () =>
+      repository({
+        id: 'p1',
+        owner: 'local',
+        name: 'tool',
+        fullName: 'local/tool',
+        cloneUrl: null,
+        local: true,
+        clones: [],
+      });
+    const status = (accounts: [string, string][]) => ({
+      configured: true,
+      installations: accounts.map(([account, accountType], id) => ({
+        id,
+        account,
+        accountType,
+        repositorySelection: 'all',
+        repositoryCount: 1,
+        settingsUrl: null,
+        error: null,
+      })),
+    });
+
+    it('creates repositories only in organizations', async () => {
+      const { list } = await render([project()]);
+      list.openPublish(project());
+      http.expectOne('/api/github/status').flush(
+        status([
+          ['alice', 'User'],
+          ['acme', 'Organization'],
+        ]),
+      );
+      expect(list.owners().map((owner) => owner.account)).toEqual(['acme']);
+      expect(list.publishMode).toBe('create');
+      list.publish(project());
+      const request = http.expectOne('/api/repositories/p1/github');
+      expect(request.request.body).toEqual({
+        mode: 'create',
+        owner: 'acme',
+        name: 'tool',
+        private: true,
+      });
+      request.flush(project());
+    });
+
+    it('offers only attaching when the app is installed on the personal account alone', async () => {
+      const { list, fixture, all } = await render([project()]);
+      list.openPublish(project());
+      http.expectOne('/api/github/status').flush(status([['alice', 'User']]));
+      fixture.detectChanges();
+      expect(list.publishMode).toBe('attach');
+      expect(all('attach-hint')[0]).toContain(
+        'create an empty repository on GitHub',
+      );
+      list.publishExisting = 'alice/tool';
+      list.publish(project());
+      http
+        .expectOne((request) => request.url === '/api/github/repositories')
+        .flush({
+          repositories: [{ id: 7, fullName: 'alice/tool' }],
+          total: 1,
+          page: 1,
+          perPage: 100,
+          fetchedAt: '',
+          errors: [],
+        });
+      const attach = http.expectOne('/api/repositories/p1/github');
+      expect(attach.request.body).toEqual({
+        mode: 'attach',
+        githubRepositoryId: 7,
+      });
+      attach.flush(project());
     });
   });
 });

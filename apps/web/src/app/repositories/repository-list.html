@@ -140,15 +140,17 @@
         data-testid="publish-form"
       >
         <p class="muted">
-          Creates a repository on GitHub (or uses an existing, empty one),
-          pushes the project's branches there and makes it a normal GitHub
-          repository. Existing session clones keep working.
+          Creates a repository in an organization on GitHub (or uses an
+          existing, empty one), pushes the project's branches there and makes it
+          a normal GitHub repository. Existing session clones keep working.
         </p>
         <div class="publish-row">
           <mat-form-field appearance="outline" subscriptSizing="dynamic">
             <mat-label>How</mat-label>
             <mat-select name="publishMode" [(ngModel)]="publishMode">
-              <mat-option value="create">Create a new repository</mat-option>
+              <mat-option value="create" [disabled]="owners().length === 0"
+                >Create a new repository in an organization</mat-option
+              >
               <mat-option value="attach">Use an existing repository</mat-option>
             </mat-select>
           </mat-form-field>
@@ -181,6 +183,10 @@
             >Private</mat-checkbox
           >
           } @else {
+          <p class="muted" data-testid="attach-hint">
+            For your personal account, create an empty repository on GitHub
+            first (the app cannot create it there) and enter it here.
+          </p>
           <mat-form-field appearance="outline" subscriptSizing="dynamic">
             <mat-label>Repository (owner/name)</mat-label>
             <input
