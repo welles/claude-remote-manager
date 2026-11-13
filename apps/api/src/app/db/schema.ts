@@ -246,6 +246,34 @@ export const appSettings = sqliteTable('app_settings', {
   updatedAt: timestamp('updated_at').notNull(),
 });
 
+/**
+ * Images attached to user messages. The file is
+ * `<filesDir>/attachments/<id>` (owned by the API, not readable by
+ * sessions). Uploaded before the message is sent; `session_id` and
+ * `message_id` are set when a message (or a new session's first message)
+ * takes it. Unclaimed uploads are removed after a day.
+ */
+export const attachments = sqliteTable(
+  'attachments',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id').references(() => sessions.id, {
+      onDelete: 'cascade',
+    }),
+    /** ID of the user message (also the transcript entry's UUID). */
+    messageId: text('message_id'),
+    /** Position in the message. */
+    position: integer('position').notNull().default(0),
+    name: text('name'),
+    mediaType: text('media_type').notNull(),
+    size: integer('size').notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index('attachments_message').on(table.sessionId, table.messageId),
+  ],
+);
+
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
 export type SessionDirectoryRow = typeof sessionDirectories.$inferSelect;
@@ -254,3 +282,4 @@ export type SessionEventRow = typeof sessionEvents.$inferSelect;
 export type PullRequestRow = typeof pullRequests.$inferSelect;
 export type UsageRecordRow = typeof usageRecords.$inferSelect;
 export type NewUsageRecordRow = typeof usageRecords.$inferInsert;
+export type AttachmentRow = typeof attachments.$inferSelect;

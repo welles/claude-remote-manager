@@ -15,6 +15,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { RouterLink } from '@angular/router';
 import {
+  ATTACHMENT_MEDIA_TYPES,
   PERMISSION_MODE_INFO,
   SESSION_PERMISSION_MODES,
   type CreateSessionRequest,
@@ -29,6 +30,9 @@ import {
   errorMessage,
 } from '../repositories/repositories-api';
 import { ModelsStore } from './models-store';
+import { AttachmentDrafts, imageFiles } from '../attachments/attachment-drafts';
+import { AttachmentsApi } from '../attachments/attachments-api';
+import { DraftImages } from '../attachments/draft-images';
 import { SessionsApi } from './sessions-api';
 
 /** Permission modes offered for new sessions, in this order. */
@@ -65,6 +69,7 @@ const emptyChoice = (): RepositoryChoice => ({
 @Component({
   selector: 'app-new-session-form',
   imports: [
+    DraftImages,
     FormsModule,
     GitHubRepositoryPicker,
     MatButtonModule,
@@ -102,6 +107,9 @@ export class NewSessionForm implements OnInit {
   );
 
   protected prompt = '';
+  /** Images for the first message. */
+  protected readonly images = new AttachmentDrafts(inject(AttachmentsApi));
+  protected readonly accept = ATTACHMENT_MEDIA_TYPES.join(',');
   protected model = '';
   protected permissionMode: SessionPermissionMode = 'default';
   protected projectName = '';
@@ -203,7 +211,11 @@ export class NewSessionForm implements OnInit {
   }
 
   protected canStart(): boolean {
-    if (!this.prompt.trim() || this.creating()) {
+    if (
+      (!this.prompt.trim() && this.images.ids().length === 0) ||
+      this.images.busy() ||
+      this.creating()
+    ) {
       return false;
     }
     switch (this.mode()) {
@@ -228,6 +240,9 @@ export class NewSessionForm implements OnInit {
       }));
     const request: CreateSessionRequest = {
       prompt: this.prompt.trim(),
+      ...(this.images.ids().length > 0
+        ? { attachmentIds: this.images.ids() }
+        : {}),
       ...(this.model ? { model: this.model } : {}),
       ...(this.permissionMode !== 'default'
         ? { permissionMode: this.permissionMode }
@@ -244,6 +259,7 @@ export class NewSessionForm implements OnInit {
       next: (session) => {
         this.creating.set(false);
         this.prompt = '';
+        this.images.clear();
         this.projectName = '';
         this.created.emit(session);
       },
@@ -254,6 +270,20 @@ export class NewSessionForm implements OnInit {
         );
       },
     });
+  }
+
+  protected onPaste(event: ClipboardEvent): void {
+    const files = imageFiles(event.clipboardData?.items ?? null);
+    if (files.length > 0) {
+      event.preventDefault();
+      this.images.add(files);
+    }
+  }
+
+  protected onPick(event: Event): void {
+    const field = event.target as HTMLInputElement;
+    this.images.add(imageFiles(field.files));
+    field.value = '';
   }
 
   protected onPromptKeydown(event: KeyboardEvent): void {

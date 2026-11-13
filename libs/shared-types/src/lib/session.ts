@@ -245,8 +245,13 @@ export interface SessionRepositoryRequest {
  * Or, with `scratch`, in an empty directory of its own without git.
  */
 export interface CreateSessionRequest {
-  /** First user message; sent once the session's directories are ready. */
+  /**
+   * First user message; sent once the session's directories are ready.
+   * May be empty when images are attached.
+   */
   prompt: string;
+  /** Uploaded images (`POST /api/attachments`) for the first message. */
+  attachmentIds?: string[];
   title?: string;
   /** Model name or alias such as `sonnet`, `opus` or `haiku`. */
   model?: string;

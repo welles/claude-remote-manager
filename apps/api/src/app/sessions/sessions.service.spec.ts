@@ -41,6 +41,8 @@ import {
   waitFor,
 } from './testing/fake-agent';
 import { UsageRepository } from './usage.repository';
+import { AttachmentStore } from '../attachments/attachment.store';
+import { pngImage } from '../attachments/testing/images';
 
 const MSG_2 = '2b1f4c2e-8f3a-4d6b-9c1e-0a7d5e3f2b10';
 const MSG_3 = '3c2e5d3f-9a4b-4e7c-8d2f-1b8e6f4a3c21';
@@ -67,6 +69,7 @@ describe('SessionsService', () => {
   let service: SessionsService;
   let events: SessionEventEnvelope[];
   let updates: SessionDto[];
+  let attachments: AttachmentStore;
 
   const createService = async () => {
     const sessions = new SessionRepository(db);
@@ -97,6 +100,10 @@ describe('SessionsService', () => {
         new SetupScriptRunner(),
         settings,
       ),
+      undefined,
+      undefined,
+      undefined,
+      attachments,
     );
     await created.onModuleInit();
     created.events$.subscribe((event) => events.push(event));
@@ -163,11 +170,14 @@ describe('SessionsService', () => {
     limits = new LimitsService();
     events = [];
     updates = [];
+    attachments = new AttachmentStore(config, db);
+    await attachments.onModuleInit();
     service = await createService();
   });
 
   afterEach(async () => {
     await service.onModuleDestroy();
+    attachments.onModuleDestroy();
     db.$client.close();
     sandbox.cleanup();
   });
@@ -1049,6 +1059,123 @@ describe('SessionsService', () => {
       });
       await flush();
       expect(service.get(session.id).permissionMode).toBe('plan');
+    });
+  });
+
+  describe('images', () => {
+    const upload = (width = 4) =>
+      attachments.create(pngImage(width), 'image/png', `${width}.png`);
+    const image = (width = 4) => ({
+      mediaType: 'image/png',
+      data: pngImage(width).toString('base64'),
+    });
+
+    it('sends images with messages, also queued ones, and keeps them in the history', async () => {
+      const first = await upload(1);
+      const session = await startSession({
+        prompt: 'What is this?',
+        attachmentIds: [first.id],
+      });
+      expect(runner.last.sent[0]).toMatchObject({
+        text: 'What is this?',
+        images: [image(1)],
+      });
+      expect(conversation(events.map(({ event }) => event))[1]).toMatchObject({
+        type: 'user.message',
+        attachments: [first],
+      });
+
+      // While Claude works: queued with its images, sent when the turn ends.
+      const second = await upload(2);
+      await service.send(session.id, {
+        id: MSG_2,
+        text: '',
+        attachmentIds: [second.id],
+      });
+      expect(lastEvent('message.queued')).toMatchObject({
+        id: MSG_2,
+        attachments: [second],
+      });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent[1]).toEqual({
+        id: MSG_2,
+        text: '',
+        images: [image(2)],
+      });
+      expect(lastEvent('user.message')).toMatchObject({
+        id: MSG_2,
+        attachments: [second],
+      });
+      // Sending the same message again changes nothing.
+      await service.send(session.id, {
+        id: MSG_2,
+        text: '',
+        attachmentIds: [second.id],
+      });
+      expect(runner.last.sent).toHaveLength(2);
+
+      // Rebuilt from the transcript: the images come from the store.
+      transcripts.transcripts.set('sdk-1', [
+        {
+          type: 'user',
+          uuid: MSG_2,
+          session_id: 'sdk-1',
+          parent_tool_use_id: null,
+          parent_agent_id: null,
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: 'x' },
+              },
+            ],
+          },
+        },
+      ]);
+      runner.last.emit(resultMessage(2, 0), {
+        type: 'system',
+        subtype: 'init',
+        session_id: 'sdk-1',
+      });
+      await flush();
+      await service.onModuleDestroy();
+      service = await createService();
+      const history = await service.subscribe(session.id);
+      expect(
+        history.events.find((event) => event.type === 'user.message'),
+      ).toMatchObject({ id: MSG_2, text: '', attachments: [second] });
+    });
+
+    it('refuses empty messages and foreign uploads', async () => {
+      const session = await startSession();
+      await expect(
+        service.send(session.id, { id: MSG_2, text: '  ' }),
+      ).rejects.toThrow('must not be blank');
+      await expect(
+        service.send(session.id, {
+          id: MSG_2,
+          text: 'x',
+          attachmentIds: ['5b1f4c2e-8f3a-4d6b-9c1e-0a7d5e3f2b10'],
+        }),
+      ).rejects.toThrow(BadRequestException);
+      const used = await upload();
+      attachments.claim([used.id], session.id, MSG_3);
+      await expect(
+        service.send(session.id, {
+          id: MSG_2,
+          text: 'x',
+          attachmentIds: [used.id],
+        }),
+      ).rejects.toThrow('another message');
+      await expect(
+        service.create({
+          prompt: '',
+          attachmentIds: [used.id],
+          repositories: [{ repositoryId: REPO_ID }],
+        }),
+      ).rejects.toThrow('another message');
     });
   });
 

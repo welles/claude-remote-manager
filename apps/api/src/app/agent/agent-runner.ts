@@ -60,11 +60,20 @@ export interface AgentStartOptions {
   settings?: Record<string, unknown>;
 }
 
+/** An image of a user message (base64). */
+export interface AgentUserImage {
+  mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  data: string;
+}
+
 /** A user message sent into a running Claude Code process. */
 export interface AgentUserMessage {
   /** Client-side UUID; Claude Code echoes it on the answer. */
   id: string;
+  /** May be empty when there are images. */
   text: string;
+  /** Images, sent as image content before the text. */
+  images?: AgentUserImage[];
 }
 
 /**

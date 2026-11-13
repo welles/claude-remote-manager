@@ -160,6 +160,32 @@ export function spawnAsSession(
   return child as ChildProcess & Sdk.SpawnedProcess;
 }
 
+/**
+ * Content of a user message: the text, or with images Messages API image
+ * blocks (base64) followed by the text block. Claude Code expands `@path`
+ * file mentions in the text either way.
+ */
+export function userContent(
+  message: AgentUserMessage,
+): Sdk.SDKUserMessage['message']['content'] {
+  if (!message.images || message.images.length === 0) {
+    return message.text;
+  }
+  return [
+    ...message.images.map((image) => ({
+      type: 'image' as const,
+      source: {
+        type: 'base64' as const,
+        media_type: image.mediaType,
+        data: image.data,
+      },
+    })),
+    ...(message.text.trim()
+      ? [{ type: 'text' as const, text: message.text }]
+      : []),
+  ];
+}
+
 /** Builds the SDK options for a session. Exported for tests. */
 export function buildQueryOptions(
   options: AgentStartOptions,
@@ -230,7 +256,7 @@ export class SdkAgentRunner implements AgentRunner {
     const input = new AsyncQueue<Sdk.SDKUserMessage>();
     const toSdk = (message: AgentUserMessage): Sdk.SDKUserMessage => ({
       type: 'user',
-      message: { role: 'user', content: message.text },
+      message: { role: 'user', content: userContent(message) },
       parent_tool_use_id: null,
       uuid: message.id as Sdk.SDKUserMessage['uuid'],
     });

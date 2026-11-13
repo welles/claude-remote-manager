@@ -33,6 +33,7 @@ describe('loadAppConfig', () => {
     const devData = join(homedir(), '.local/share/claude-remote-manager');
     expect(loadAppConfig(DEV)).toEqual({
       dbDir: resolve('data/db'),
+      filesDir: resolve('data/db/files'),
       workspaceDir: join(devData, 'workspace'),
       reposDir: join(devData, 'workspace', 'repos'),
       sessionsDir: join(devData, 'workspace', 'sessions'),
@@ -77,6 +78,7 @@ describe('loadAppConfig', () => {
       ),
     ).toEqual({
       dbDir: '/data/db',
+      filesDir: '/data/db/files',
       workspaceDir: '/data/workspace',
       reposDir: '/data/workspace/repos',
       sessionsDir: '/data/workspace/sessions',

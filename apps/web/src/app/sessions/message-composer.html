@@ -1,0 +1,59 @@
+<div (dragover)="onDragOver($event)" (drop)="onDrop($event)">
+  <app-draft-images [drafts]="images" />
+  <div class="composer-row">
+    <mat-form-field
+      appearance="outline"
+      class="input"
+      subscriptSizing="dynamic"
+    >
+      <mat-label>{{ label() }}</mat-label>
+      <textarea
+        matInput
+        [value]="draft()"
+        (input)="onInput($event)"
+        (keydown)="onKeydown($event)"
+        (paste)="onPaste($event)"
+        cdkTextareaAutosize
+        cdkAutosizeMinRows="1"
+        cdkAutosizeMaxRows="8"
+        data-testid="message-input"
+      ></textarea>
+    </mat-form-field>
+    <div class="buttons">
+      <button
+        matButton="filled"
+        (click)="submit()"
+        [disabled]="!canSend()"
+        data-testid="send"
+      >
+        Send
+      </button>
+      <button
+        matButton
+        (click)="picker.click()"
+        title="Attach images (or paste or drop them)"
+        data-testid="attach-image"
+      >
+        Image
+      </button>
+      <input
+        #picker
+        type="file"
+        [accept]="accept"
+        multiple
+        hidden
+        (change)="onPick($event)"
+        data-testid="image-picker"
+      />
+      @if (running()) {
+      <button
+        matButton="outlined"
+        (click)="interrupt.emit()"
+        data-testid="interrupt"
+      >
+        Stop
+      </button>
+      }
+    </div>
+  </div>
+</div>

@@ -129,3 +129,21 @@ function checkString(
   }
   return value;
 }
+
+/** An optional array of UUIDs (e.g. attachment IDs), at most `max`. */
+export function optionalUuidArray(
+  object: Record<string, unknown>,
+  field: string,
+  max: number,
+): string[] {
+  const value = object[field];
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > max || !value.every(isUuid)) {
+    throw new BadRequestException(
+      `${field} must be an array of at most ${max} UUIDs`,
+    );
+  }
+  return value as string[];
+}

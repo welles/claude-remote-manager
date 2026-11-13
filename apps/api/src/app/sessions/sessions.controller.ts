@@ -56,7 +56,7 @@ export class SessionsController {
   @HttpCode(202)
   async send(
     @Param('id') id: string,
-    @Body() body: { id?: string; text: string },
+    @Body() body: { id?: string; text: string; attachmentIds?: string[] },
   ): Promise<void> {
     await this.sessions.send(id, body);
   }

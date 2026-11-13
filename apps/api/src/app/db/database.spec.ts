@@ -36,6 +36,7 @@ describe('openDatabase', () => {
     expect(existsSync(join(location, DATABASE_FILE_NAME))).toBe(true);
     expect(tables(db)).toEqual([
       'app_settings',
+      'attachments',
       'pull_requests',
       'repositories',
       'session_directories',

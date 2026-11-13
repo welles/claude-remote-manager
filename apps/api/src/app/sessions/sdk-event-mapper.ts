@@ -90,6 +90,7 @@ export function userContentEvents(
 ): SessionEventInput[] {
   const events: SessionEventInput[] = [];
   const texts: string[] = typeof content === 'string' ? [content] : [];
+  let images = 0;
   for (const block of blocksOf(content)) {
     if (
       block.type === 'tool_result' &&
@@ -104,14 +105,21 @@ export function userContentEvents(
       });
     } else if (block.type === 'text' && typeof block['text'] === 'string') {
       texts.push(block['text']);
+    } else if (block.type === 'image') {
+      images++;
     }
   }
   if (includeText && parentToolUseId === null) {
     // Interruptions are shown through the stored turn result instead.
-    for (const text of texts) {
-      if (!GENERATED_USER_TEXT.test(text) && text.trim()) {
-        events.push({ type: 'user.message', id, text });
-      }
+    const typed = texts.filter(
+      (text) => !GENERATED_USER_TEXT.test(text) && text.trim(),
+    );
+    for (const text of typed) {
+      events.push({ type: 'user.message', id, text });
+    }
+    if (typed.length === 0 && images > 0) {
+      // A message of images only (the images come from the app's store).
+      events.push({ type: 'user.message', id, text: '' });
     }
   }
   return events;

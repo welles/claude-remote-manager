@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AttachmentsModule } from '../attachments/attachments.module';
 import { ToolApprover } from '../agent/tool-approval';
 import { ApprovalGrants } from './approval-grants';
 import { GitCredentialsController } from './git-credentials.controller';
@@ -35,7 +36,7 @@ import { ModelsController } from './models.controller';
 import { ModelsService } from './models.service';
 
 @Module({
-  imports: [LimitsModule, RepositoriesModule],
+  imports: [AttachmentsModule, LimitsModule, RepositoriesModule],
   controllers: [
     SessionsController,
     SessionGitController,

@@ -6,12 +6,32 @@
       name="prompt"
       [(ngModel)]="prompt"
       (keydown)="onPromptKeydown($event)"
+      (paste)="onPaste($event)"
       cdkTextareaAutosize
       rows="3"
       data-testid="new-prompt"
     ></textarea>
-    <mat-hint>Ctrl+Enter to start</mat-hint>
+    <mat-hint>Ctrl+Enter to start · paste or attach images</mat-hint>
   </mat-form-field>
+  <div class="images">
+    <app-draft-images [drafts]="images" />
+    <button
+      matButton
+      type="button"
+      (click)="picker.click()"
+      data-testid="new-attach-image"
+    >
+      Attach images
+    </button>
+    <input
+      #picker
+      type="file"
+      [accept]="accept"
+      multiple
+      hidden
+      (change)="onPick($event)"
+    />
+  </div>
 
   <div class="workspace">
     <mat-button-toggle-group

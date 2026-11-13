@@ -11,7 +11,13 @@ import type { ConversationItem } from './conversation';
       @for (item of messages(); track item.key) {
         <li class="queued-message" data-testid="queued-message">
           <span class="queued-label">Queued</span>
-          <span class="queued-text" [title]="item.text">{{ item.text }}</span>
+          <span class="queued-text" [title]="item.text">{{
+            item.attachments.length > 0
+              ? (item.attachments.length === 1
+                  ? '[1 image] '
+                  : '[' + item.attachments.length + ' images] ') + item.text
+              : item.text
+          }}</span>
           <button
             matButton
             (click)="remove.emit(item.id)"

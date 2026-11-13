@@ -1,3 +1,4 @@
+import type { AttachmentDto } from './attachments';
 import type { FileDiff, ToolDiffSource } from './diffs';
 import type { AccountLimits } from './limits';
 import type {
@@ -54,7 +55,10 @@ export interface UserMessageEvent extends SessionEventBase {
   type: 'user.message';
   /** Client-side ID of the message, when it came from this app. */
   id: string;
+  /** May be empty when the message is only images. */
   text: string;
+  /** Images sent with the message (absent from older servers). */
+  attachments?: AttachmentDto[];
 }
 
 /**
@@ -197,6 +201,7 @@ export interface MessageQueuedEvent extends SessionEventBase {
   /** Client-side ID of the message; the later `user.message` keeps it. */
   id: string;
   text: string;
+  attachments?: AttachmentDto[];
 }
 
 /**
@@ -486,7 +491,10 @@ export interface SendMessageMessage {
   sessionId: string;
   /** Client-generated ID (UUID), echoed in `user.message`. */
   id: string;
+  /** May be empty when images are attached. */
   text: string;
+  /** Uploaded images (`POST /api/attachments`) to send with it. */
+  attachmentIds?: string[];
   requestId?: string;
 }
 

@@ -154,6 +154,9 @@ describe('authentication', () => {
       ['DELETE', '/api/sessions/x/queued-messages/y'],
       ['GET', '/api/models'],
       ['GET', '/api/limits'],
+      // Images for messages.
+      ['POST', '/api/attachments'],
+      ['GET', '/api/attachments/x'],
       // What the session changed.
       ['GET', '/api/sessions/x/diff'],
       ['GET', '/api/sessions/x/diff/file?repositoryId=r&path=a'],

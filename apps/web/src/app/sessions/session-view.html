@@ -102,7 +102,8 @@
   <mat-progress-bar mode="indeterminate" />
   } @for (item of items(); track item.key) { @switch (item.kind) { @case
   ('user') {
-  <div class="user-message">{{ item.text }}</div>
+  <!-- prettier-ignore -->
+  <div class="user-message">@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}{{ item.text }}</div>
   } @case ('assistant') {
   <div
     class="assistant-text markdown"
@@ -165,10 +166,13 @@
   } } } @case ('queued') { @if (item.state === 'withdrawn') {
   <div class="withdrawn" data-testid="withdrawn">
     <span class="withdrawn-text">{{ item.text }}</span>
+    @if (item.attachments.length > 0) {
+    <app-message-images [attachments]="item.attachments" />
+    }
     <span class="withdrawn-reason"
       >Not sent{{ item.reason ? ': ' + item.reason : '' }}</span
     >
-    <button matButton (click)="edit(item.text)" data-testid="edit-withdrawn">
+    <button matButton (click)="edit(item)" data-testid="edit-withdrawn">
       Edit and send again
     </button>
   </div>
@@ -276,45 +280,12 @@
   } @if (error(); as message) {
   <p class="error" data-testid="error">{{ message }}</p>
   }
-  <div class="composer-row">
-    <mat-form-field
-      appearance="outline"
-      class="input"
-      subscriptSizing="dynamic"
-    >
-      <mat-label
-        >{{ preparing() ? 'Available when the preparation is done' : running() ?
-        'Queue a message' : 'Message' }}</mat-label
-      >
-      <textarea
-        matInput
-        [value]="draft()"
-        (input)="onInput($event)"
-        (keydown)="onKeydown($event)"
-        cdkTextareaAutosize
-        cdkAutosizeMinRows="1"
-        cdkAutosizeMaxRows="8"
-        data-testid="message-input"
-      ></textarea>
-    </mat-form-field>
-    <div class="buttons">
-      <button
-        matButton="filled"
-        (click)="send()"
-        [disabled]="!draft().trim() || !connected() || preparing() || heldBack()"
-        data-testid="send"
-      >
-        Send
-      </button>
-      @if (running()) {
-      <button
-        matButton="outlined"
-        (click)="interrupt()"
-        data-testid="interrupt"
-      >
-        Stop
-      </button>
-      }
-    </div>
-  </div>
+  <app-message-composer
+    [(draft)]="draft"
+    [label]="composerLabel()"
+    [disabled]="!connected() || preparing() || heldBack()"
+    [running]="running()"
+    (send)="send($event)"
+    (interrupt)="interrupt()"
+  />
 </footer>

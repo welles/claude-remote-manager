@@ -13,6 +13,11 @@ export interface AppConfig {
   /** Directory of the SQLite database. */
   dbDir: string;
   /**
+   * The API's own files next to the database: images attached to messages
+   * and snapshots of files Claude showed. Sessions cannot write there.
+   */
+  filesDir: string;
+  /**
    * Volume with everything sessions work on. Its subdirectories must be on
    * one filesystem, so that session clones hardlink the mirrors' objects.
    */
@@ -107,8 +112,10 @@ export function loadAppConfig(
   if (appId !== undefined && !/^\d+$/.test(appId)) {
     throw new Error('GITHUB_APP_ID must be the numeric App ID');
   }
+  const dbDir = resolve(value('DB_DIR') ?? 'data/db');
   return {
-    dbDir: resolve(value('DB_DIR') ?? 'data/db'),
+    dbDir,
+    filesDir: resolve(value('FILES_DIR') ?? join(dbDir, 'files')),
     ...workspaceLayout(workspaceDir),
     setupScriptTimeoutMs: minutes('SETUP_SCRIPT_TIMEOUT_MINUTES', 15, 0.1),
     sessionIdleTimeoutMs: minutes('SESSION_IDLE_TIMEOUT_MINUTES', 60, 0),
@@ -210,6 +217,7 @@ export function testAppConfig(
 ): AppConfig {
   return {
     dbDir: ':memory:',
+    filesDir: join(dir, 'files'),
     ...workspaceLayout(join(dir, 'workspace')),
     setupScriptTimeoutMs: 10_000,
     sessionIdleTimeoutMs: 0,

@@ -55,7 +55,10 @@ interface FormInternals {
   canStart(): boolean;
   create(): void;
   addFromGitHub(repository: RepositoryDto): void;
+  images: AttachmentDrafts;
 }
+
+import type { AttachmentDrafts } from '../attachments/attachment-drafts';
 
 describe('NewSessionForm', () => {
   let http: HttpTestingController;
@@ -260,5 +263,26 @@ describe('NewSessionForm', () => {
       '[data-testid="repository-select"]',
     );
     expect(select?.textContent).toContain('local/tool (local project)');
+  });
+
+  it('starts a session with images for the first message', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:preview');
+    URL.revokeObjectURL = vi.fn();
+    const { form } = await render([]);
+    form.setMode('scratch');
+    expect(form.canStart()).toBe(false);
+    form.images.add([
+      new File([new Uint8Array([1])], 'shot.png', { type: 'image/png' }),
+    ]);
+    // Not before the upload is done.
+    expect(form.canStart()).toBe(false);
+    http
+      .expectOne('/api/attachments')
+      .flush({ id: 'a1', name: 'shot.png', mediaType: 'image/png', size: 1 });
+    expect(form.canStart()).toBe(true);
+    form.create();
+    expect(
+      http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
+    ).toEqual({ prompt: '', attachmentIds: ['a1'], scratch: true });
   });
 });

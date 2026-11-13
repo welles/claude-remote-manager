@@ -564,6 +564,35 @@ describe('SessionView', () => {
     ).toBe('Stopped one');
   });
 
+  it('shows the images of messages', async () => {
+    const { harness, socket, element } = await open();
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto(),
+      events: [
+        event({
+          type: 'user.message',
+          id: 'u1',
+          text: 'What is this?',
+          attachments: [
+            { id: 'a1', name: 'shot.png', mediaType: 'image/png', size: 9 },
+          ],
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const message = element.querySelector('.user-message');
+    expect(message?.textContent).toBe('What is this?');
+    const image = message?.querySelector(
+      '[data-testid="message-image"] img',
+    ) as HTMLImageElement;
+    expect(image.getAttribute('src')).toBe('/api/attachments/a1');
+    expect(image.alt).toBe('shot.png');
+  });
+
   it('switches model and mode and shows the task list', async () => {
     const { harness, socket, element, text } = await open();
     history(socket, sessionDto({ status: 'waiting' }), [

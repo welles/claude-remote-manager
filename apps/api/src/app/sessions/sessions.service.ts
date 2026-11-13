@@ -17,7 +17,9 @@ import type {
   SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
   SESSION_PERMISSION_MODES,
+  type AttachmentDto,
   type ContextUsage,
   type CreateSessionRequest,
   type FileDiff,
@@ -34,7 +36,12 @@ import {
   type SessionWaitingFor,
   type UpdateSessionRequest,
 } from '@claude-remote-manager/shared-types';
-import { AgentRunner, type AgentRun } from '../agent/agent-runner';
+import {
+  AgentRunner,
+  type AgentRun,
+  type AgentUserMessage,
+} from '../agent/agent-runner';
+import { AttachmentStore } from '../attachments/attachment.store';
 import {
   ToolApprover,
   type PermissionResolvedInput,
@@ -46,8 +53,8 @@ import {
   optionalEnum,
   optionalString,
   optionalUuid,
+  optionalUuidArray,
   requireObject,
-  requireString,
 } from '../common/validation';
 import { TranscriptReader } from '../agent/transcript-reader';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
@@ -104,6 +111,13 @@ export const CONTEXT_REFRESH_INTERVAL_MS = 5000;
 interface UserMessage {
   id: string;
   text: string;
+  /** Images of the message (`[]` without). */
+  attachments: AttachmentDto[];
+}
+
+/** A queued message, ready for Claude Code (images loaded). */
+interface QueuedMessage extends UserMessage {
+  agent: AgentUserMessage;
 }
 
 /** Error text, completed with Claude Code's last stderr line if any. */
@@ -165,7 +179,7 @@ interface LiveSession {
    * Messages sent while a turn runs; they go to Claude when it ends. Held
    * by the app (not Claude Code's own queue) so that they can be removed.
    */
-  queue: UserMessage[];
+  queue: QueuedMessage[];
   /** Status and `waitingFor` last published (`status/waitingFor`). */
   publishedStatus: string;
   /** Why the current process is being closed on purpose. */
@@ -239,6 +253,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly support: SessionAgentSupport = new NoSessionAgentSupport(),
     @Optional()
     private readonly files: SessionFileAccess = new SessionFileAccess(),
+    // Not a union type: Nest injects by the parameter's declared class.
+    @Optional()
+    private readonly attachments?: AttachmentStore,
   ) {}
 
   /**
@@ -366,13 +383,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   async create(request: CreateSessionRequest): Promise<SessionDto> {
     const body = requireObject(request);
-    const prompt = requireString(body, 'prompt', {
-      notBlank: true,
-      maxLength: MAX_MESSAGE_LENGTH,
-    });
+    const { text: prompt, attachmentIds } = this.messageContent(body, 'prompt');
     const title =
       optionalString(body, 'title', { maxLength: MAX_TITLE_LENGTH })?.trim() ||
-      titleFromPrompt(prompt);
+      titleFromPrompt(prompt) ||
+      (attachmentIds.length === 1 ? 'Image' : 'Images');
     const model = optionalString(body, 'model')?.trim() || null;
     if (model && !MODEL_PATTERN.test(model)) {
       throw new BadRequestException('model is not a valid model name');
@@ -381,6 +396,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       optionalEnum(body, 'permissionMode', SESSION_PERMISSION_MODES) ??
       'default';
 
+    this.attachmentStore(attachmentIds).check(attachmentIds);
     const plan = await this.workspaces.plan(request, title);
     const message = { id: randomUUID(), text: prompt };
     let record: SessionRecord;
@@ -407,6 +423,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       throw error;
     }
+    const attachments = this.attachmentStore(attachmentIds).claim(
+      attachmentIds,
+      record.id,
+      message.id,
+    );
     const live = this.liveSession(record.id);
     live.historyLoaded = Promise.resolve();
     this.append(live, {
@@ -414,7 +435,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       status: 'preparing',
       waitingFor: null,
     });
-    this.appendUserMessage(live, message);
+    this.appendUserMessage(live, { ...message, attachments });
     const dto = this.toDto(record);
     this.updates.next(dto);
     this.startPreparation(live, message);
@@ -428,13 +449,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   async send(
     sessionId: string,
-    message: { id?: string; text: string },
+    message: { id?: string; text: string; attachmentIds?: string[] },
   ): Promise<void> {
     const body = requireObject(message);
-    const text = requireString(body, 'text', {
-      notBlank: true,
-      maxLength: MAX_MESSAGE_LENGTH,
-    });
+    const { text, attachmentIds } = this.messageContent(body, 'text');
     // The ID goes to Claude Code as the message UUID.
     const id = optionalUuid(body, 'id') ?? randomUUID();
     const record = this.requireRecord(sessionId);
@@ -444,20 +462,35 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live.starting) {
       await live.starting;
     }
-    if (live.run && this.requireRecord(sessionId).status === 'running') {
-      if (
-        live.queue.some((queued) => queued.id === id) ||
-        live.log.findLast('user.message')?.id === id
-      ) {
-        return;
-      }
-      live.queue.push({ id, text });
-      this.append(live, { type: 'message.queued', id, text });
+    if (
+      live.queue.some((queued) => queued.id === id) ||
+      live.log.findLast('user.message')?.id === id
+    ) {
+      // Sent twice (e.g. a retry after a reconnect).
       return;
     }
-    this.appendUserMessage(live, { id, text });
+    const attachments = this.attachmentStore(attachmentIds).claim(
+      attachmentIds,
+      sessionId,
+      id,
+    );
+    const agent = await this.agentMessage(sessionId, { id, text });
+    if (live.starting) {
+      await live.starting;
+    }
+    if (live.run && this.requireRecord(sessionId).status === 'running') {
+      live.queue.push({ id, text, attachments, agent });
+      this.append(live, {
+        type: 'message.queued',
+        id,
+        text,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      });
+      return;
+    }
+    this.appendUserMessage(live, { id, text, attachments });
     if (live.run) {
-      live.run.send({ id, text });
+      live.run.send(agent);
       this.setStatus(live, 'running');
     } else {
       this.setStatus(live, 'running');
@@ -797,10 +830,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         }
       }
       // Nothing else is logged before the history is loaded.
+      const images = this.attachments?.forSession(record.id) ?? new Map();
       if (record.pendingMessage) {
         // Not sent to Claude (yet), so not in the transcript.
         live.log.append(
-          { type: 'user.message', ...record.pendingMessage },
+          withAttachments(
+            { type: 'user.message', ...record.pendingMessage },
+            images,
+          ),
           record.createdAt.toISOString(),
         );
       }
@@ -809,7 +846,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         (event, at) => ({ event, at }),
       );
       for (const item of history) {
-        live.log.append(item.event, item.at);
+        live.log.append(withAttachments(item.event, images), item.at);
       }
       if (failed) {
         // Live-only: the transcript may be readable next time.
@@ -984,7 +1021,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           tools: extras.tools,
           settings: extras.settings,
         },
-        firstMessage,
+        await this.agentMessage(live.id, firstMessage),
       );
       live.run = run;
       live.consuming = this.consume(live, run);
@@ -1200,7 +1237,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         reason: null,
       });
       this.appendUserMessage(live, message);
-      run.send(message);
+      run.send(message.agent);
     }
     return messages.length;
   }
@@ -1611,13 +1648,63 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.events.next({ sessionId: live.id, event });
   }
 
-  private appendUserMessage(
-    live: LiveSession,
-    message: { id: string; text: string },
-  ): void {
-    this.append(live, { type: 'user.message', ...message });
+  private appendUserMessage(live: LiveSession, message: UserMessage): void {
+    this.append(live, {
+      type: 'user.message',
+      id: message.id,
+      text: message.text,
+      ...(message.attachments.length > 0
+        ? { attachments: message.attachments }
+        : {}),
+    });
     // Claude Code uses the message ID as the transcript entry's UUID.
     live.anchor = { uuid: message.id, userId: message.id };
+  }
+
+  /**
+   * Text and images of a message: the text may be empty when images are
+   * attached.
+   */
+  private messageContent(
+    body: Record<string, unknown>,
+    field: 'text' | 'prompt',
+  ): { text: string; attachmentIds: string[] } {
+    const attachmentIds = optionalUuidArray(
+      body,
+      'attachmentIds',
+      MAX_ATTACHMENTS_PER_MESSAGE,
+    );
+    const text = optionalString(body, field, { maxLength: MAX_MESSAGE_LENGTH });
+    if (text === undefined && attachmentIds.length === 0) {
+      throw new BadRequestException(`${field} must be a string`);
+    }
+    if (!text?.trim() && attachmentIds.length === 0) {
+      throw new BadRequestException(`${field} must not be blank`);
+    }
+    return { text: text ?? '', attachmentIds };
+  }
+
+  /** The attachment store, required when a message names attachments. */
+  private attachmentStore(
+    ids: string[],
+  ): Pick<AttachmentStore, 'check' | 'claim'> {
+    if (this.attachments) {
+      return this.attachments;
+    }
+    if (ids.length > 0) {
+      throw new BadRequestException('Attachments are not available');
+    }
+    return { check: () => undefined, claim: () => [] };
+  }
+
+  /** A message as Claude Code gets it, with its images. */
+  private async agentMessage(
+    sessionId: string,
+    message: { id: string; text: string },
+  ): Promise<AgentUserMessage> {
+    const images =
+      (await this.attachments?.agentImages(sessionId, message.id)) ?? [];
+    return images.length > 0 ? { ...message, images } : { ...message };
   }
 
   /**
@@ -1717,3 +1804,15 @@ const statusKey = (status: {
   status: SessionStatus;
   waitingFor: SessionWaitingFor | null;
 }) => `${status.status}/${status.waitingFor ?? ''}`;
+
+/** A user message event with its images from the attachment store. */
+function withAttachments(
+  event: SessionEventInput,
+  images: Map<string, AttachmentDto[]>,
+): SessionEventInput {
+  if (event.type !== 'user.message') {
+    return event;
+  }
+  const attachments = images.get(event.id);
+  return attachments ? { ...event, attachments } : event;
+}

@@ -1,11 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
-import type {
-  ClientMessage,
-  PermissionResponse,
-  UpdateSessionRequest,
+import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  type ClientMessage,
+  type PermissionResponse,
+  type UpdateSessionRequest,
 } from '@claude-remote-manager/shared-types';
 import {
   optionalString,
+  optionalUuidArray,
   requireObject,
   requireString,
   requireInteger,
@@ -84,6 +86,15 @@ export function parseClientFrame(raw: unknown): ClientMessage {
         sessionId: requireUuid(frame, 'sessionId'),
         id: requireUuid(frame, 'id'),
         text: requireString(frame, 'text'),
+        ...(frame['attachmentIds'] !== undefined
+          ? {
+              attachmentIds: optionalUuidArray(
+                frame,
+                'attachmentIds',
+                MAX_ATTACHMENTS_PER_MESSAGE,
+              ),
+            }
+          : {}),
         ...base,
       };
     case 'permission.respond':

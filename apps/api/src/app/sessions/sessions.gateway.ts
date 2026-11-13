@@ -161,6 +161,7 @@ export class SessionsGateway
         await this.sessions.send(message.sessionId, {
           id: message.id,
           text: message.text,
+          attachmentIds: message.attachmentIds,
         });
         return;
       case 'interrupt':

@@ -170,24 +170,6 @@
   background: var(--mat-sys-surface);
 }
 
-.composer-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
-
-.input {
-  flex: 1;
-  min-width: 0;
-}
-
-.buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-bottom: 4px;
-}
-
 .end {
   margin-left: -12px;
 }

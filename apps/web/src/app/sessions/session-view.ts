@@ -7,6 +7,7 @@ import {
   computed,
   inject,
   signal,
+  viewChild,
   type OnInit,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -47,6 +48,8 @@ import { MarkdownPipe } from './markdown.pipe';
 import { ModelsStore, modelOptionsWith } from './models-store';
 import { PermissionCard } from './permission-card';
 import { ContextMeter } from './context-meter';
+import { MessageImages } from '../attachments/message-images';
+import { MessageComposer, type ComposedMessage } from './message-composer';
 import { FileDiffCard } from '../diffs/file-diff-card';
 import { QueuedMessages } from './queued-messages';
 import { SessionDirectories, sessionPath } from './session-directories';
@@ -70,6 +73,8 @@ import { newId } from './sessions-api';
     MatInputModule,
     MatProgressBarModule,
     MatSelectModule,
+    MessageComposer,
+    MessageImages,
     PermissionCard,
     QueuedMessages,
     RouterLink,
@@ -159,6 +164,14 @@ export class SessionView implements OnInit {
    * ngModel, whose asynchronous write could leave sent text in the box).
    */
   protected readonly draft = signal('');
+  private readonly composer = viewChild(MessageComposer);
+  protected readonly composerLabel = computed(() =>
+    this.preparing()
+      ? 'Available when the preparation is done'
+      : this.running()
+        ? 'Queue a message'
+        : 'Message',
+  );
 
   /** Request IDs of frames this view sent, to show their errors. */
   private readonly pending = new Set<string>();
@@ -211,17 +224,16 @@ export class SessionView implements OnInit {
     this.destroyRef.onDestroy(() => this.socket.unsubscribe(this.sessionId()));
   }
 
-  protected send(): void {
-    const text = this.draft().trim();
-    if (!text) {
-      return;
-    }
+  protected send(message: ComposedMessage): void {
     const requestId = newId();
     const sent = this.socket.send({
       type: 'message.send',
       sessionId: this.sessionId(),
-      id: newId(),
-      text,
+      id: message.id ?? newId(),
+      text: message.text,
+      ...(message.attachmentIds.length > 0
+        ? { attachmentIds: message.attachmentIds }
+        : {}),
       requestId,
     });
     if (!sent) {
@@ -230,7 +242,7 @@ export class SessionView implements OnInit {
     }
     this.pending.add(requestId);
     this.error.set(null);
-    this.draft.set('');
+    this.composer()?.clear();
     this.stickToBottom = true;
   }
 
@@ -273,9 +285,9 @@ export class SessionView implements OnInit {
     }
   }
 
-  /** Puts the text of a message that was not sent back into the input. */
-  protected edit(text: string): void {
-    this.draft.set(this.draft().trim() ? `${this.draft()}\n\n${text}` : text);
+  /** Puts a message that was not sent back into the input. */
+  protected edit(item: Extract<ConversationItem, { kind: 'queued' }>): void {
+    this.composer()?.restore(item.id, item.text, item.attachments);
   }
 
   /** Switches the model (`''`: default) or the permission mode. */
@@ -341,17 +353,6 @@ export class SessionView implements OnInit {
       })
     ) {
       this.pending.add(requestId);
-    }
-  }
-
-  protected onInput(event: Event): void {
-    this.draft.set((event.target as HTMLTextAreaElement).value);
-  }
-
-  protected onKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      this.send();
     }
   }
 

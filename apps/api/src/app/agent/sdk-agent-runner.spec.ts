@@ -1,7 +1,11 @@
 import type { AgentStartOptions } from './agent-runner';
 import { AsyncQueue } from './async-queue';
 import { ProcessLauncher, type ProcessRole } from '../common/process-isolation';
-import { buildQueryOptions, spawnAsSession } from './sdk-agent-runner';
+import {
+  buildQueryOptions,
+  spawnAsSession,
+  userContent,
+} from './sdk-agent-runner';
 
 describe('buildQueryOptions', () => {
   const canUseTool: AgentStartOptions['canUseTool'] = async () => ({
@@ -175,5 +179,33 @@ describe('AsyncQueue', () => {
     queue.close();
     expect(await waiting).toEqual({ value: undefined, done: true });
     expect(() => queue.push(3)).toThrow('closed');
+  });
+});
+
+describe('userContent', () => {
+  it('sends text alone, or images before the text', () => {
+    expect(userContent({ id: 'm', text: 'Hi @README.md' })).toBe(
+      'Hi @README.md',
+    );
+    expect(
+      userContent({
+        id: 'm',
+        text: 'What is this?',
+        images: [{ mediaType: 'image/png', data: 'AAA' }],
+      }),
+    ).toEqual([
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: 'AAA' },
+      },
+      { type: 'text', text: 'What is this?' },
+    ]);
+    expect(
+      userContent({
+        id: 'm',
+        text: ' ',
+        images: [{ mediaType: 'image/gif', data: 'B' }],
+      }),
+    ).toHaveLength(1);
   });
 });

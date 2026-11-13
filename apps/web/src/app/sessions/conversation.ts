@@ -1,6 +1,7 @@
 import {
   PERMISSION_MODE_INFO,
   type AssistantDraft,
+  type AttachmentDto,
   type FileDiff,
   type PermissionRequestEvent,
   type PermissionResolvedEvent,
@@ -20,7 +21,7 @@ export interface ToolPermission {
 
 /** One entry of the rendered conversation. */
 export type ConversationItem =
-  | { kind: 'user'; key: string; text: string }
+  | { kind: 'user'; key: string; text: string; attachments: AttachmentDto[] }
   | {
       kind: 'assistant';
       key: string;
@@ -52,6 +53,7 @@ export type ConversationItem =
       key: string;
       id: string;
       text: string;
+      attachments: AttachmentDto[];
       state: 'queued' | 'withdrawn';
       reason: string | null;
     }
@@ -170,7 +172,12 @@ export function applyEvent(
     case 'user.message':
       return [
         ...items,
-        { kind: 'user', key: `user:${event.id}`, text: event.text },
+        {
+          kind: 'user',
+          key: `user:${event.id}`,
+          text: event.text,
+          attachments: event.attachments ?? [],
+        },
       ];
     case 'assistant.delta': {
       const key = `text:${event.messageId}:${event.blockIndex}`;
@@ -327,6 +334,7 @@ export function applyEvent(
           key: `queued:${event.id}`,
           id: event.id,
           text: event.text,
+          attachments: event.attachments ?? [],
           state: 'queued',
           reason: null,
         },

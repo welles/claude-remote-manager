@@ -417,6 +417,26 @@ describe('transcriptEntries', () => {
     ]);
   });
 
+  it('keeps messages of images only, without text', () => {
+    const entries = transcriptEntries([
+      {
+        type: 'user',
+        uuid: 'img',
+        session_id: 's',
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: {
+          role: 'user',
+          content: [{ type: 'image', source: { type: 'base64', data: 'x' } }],
+        },
+      },
+    ] as SessionMessage[]);
+    expect(entries[0]).toMatchObject({
+      isUserMessage: true,
+      events: [{ type: 'user.message', id: 'img', text: '' }],
+    });
+  });
+
   it('groups events by entry and marks user messages', () => {
     expect(
       transcriptEntries([
