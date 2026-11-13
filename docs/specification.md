@@ -46,6 +46,7 @@ Im Eingabefeld lassen sich Issues und Pull Requests wie in GitHub referenzieren.
 - **Anzeige:** Referenzen erscheinen im Prompt und im Verlauf als Chip mit Titel, Status (offen, gemerged, geschlossen) und Link; beim Überfahren eine kurze Vorschau.
 - **Kontext für Claude:** Beim Absenden hängt das Backend Titel, Beschreibung und auf Wunsch Kommentare bzw. den Diff des PRs als Kontext an.
 - **Datenquelle:** GitHub-API über die GitHub App, mit kurzem Cache.
+- **Umsetzung (entschieden):** Kommentare und PR-Diff wählt der Nutzer pro Referenz in der Vorschau des Chips (Standard: aus); die Vorschau öffnet beim Überfahren mit der Maus und beim Antippen. Größen sind begrenzt (Beschreibung, die neuesten 50 Kommentare, Diff, Gesamtkontext); Gekürztes wird Claude und dem Nutzer gesagt. Nicht auflösbare Referenzen (nicht gefunden, Rate-Limit, GitHub nicht erreichbar) halten die Nachricht nicht auf: der Chip zeigt es, Claude erfährt, dass der Inhalt fehlt. Der Inhalt aus GitHub gilt als nicht vertrauenswürdig: Er geht als eigene, markierte Nachricht vor der Nachricht des Nutzers an Claude, ohne `@`-Expansion und Slash-Commands, und ist im Verlauf aufklappbar; dieselbe Schnittstelle nutzt die PR-Automatik.
 
 ## PR-Automatik pro Sitzung
 

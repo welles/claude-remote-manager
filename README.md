@@ -13,7 +13,8 @@ are chosen per session and switchable while it runs; messages sent while Claude 
 queued; Claude's task list, the context window and the account's plan limits are shown; every
 file change appears as a diff in the history and in approvals, and a changes page shows the
 whole session's diff per repository and file; images can be attached to messages, files of the
-session referenced with `@`, and Claude shows files to the user with `show_file`; session
+session referenced with `@`, GitHub issues and pull requests with `#` (Claude gets their
+content as untrusted context), and Claude shows files to the user with `show_file`; session
 branches are pushed and pull requests created by button, or by Claude after the user's
 approval; usage is recorded per request. Sessions notify the user over Web Push and ntfy
 (approvals with Allow and Deny right in the notification), and the web app is an installable
@@ -317,7 +318,9 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `GET /api/models`, `GET /api/limits`, `GET /api/health`, `GET /api/sessions/:id/diff`,
 `GET /api/sessions/:id/diff/file`, `GET /api/sessions/:id/files`, `POST /api/attachments`,
 `GET /api/attachments/:id`, `GET /api/shown-files/:id`, `GET /api/shown-files/:id/content`,
-`GET /api/shown-files/:id/live`, `GET /api/notifications`, `PUT /api/notifications/preferences`,
+`GET /api/shown-files/:id/live`, `GET /api/github/references`,
+`GET /api/github/references/:owner/:repo/:number`,
+`GET /api/sessions/:id/messages/:messageId/context`, `GET /api/notifications`, `PUT /api/notifications/preferences`,
 `POST /api/notifications/push-subscriptions`, `POST /api/notifications/push-subscriptions/remove`,
 `DELETE /api/notifications/push-subscriptions/:id`, `POST /api/notifications/test`,
 `POST /api/notifications/approval-actions`. WebSocket: `/api/ws` with the versioned protocol in
@@ -391,6 +394,92 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   viewer renders Markdown (sanitized), highlights code (highlight.js, loaded on first use) and
   embeds PDFs. Snapshots and attachments belong to their session (database cascade, and
   removal of files without a row at startup); there is no session deletion yet (cleanup step).
+
+### GitHub references (`#123`)
+
+Typing `#` in the input (session view and new-session form) offers issues and pull requests
+of the session's GitHub repositories (in the form: the GitHub repositories chosen there), by
+number (prefix) or title words; nothing typed after `#` lists the most recently updated.
+`owner/repo#…` searches that repository instead, if the GitHub App's installations can
+access it. Sessions without a GitHub repository (scratch, local projects) offer nothing for a
+bare `#`. Choosing inserts `#12` for the session's first GitHub repository and
+`owner/repo#12` for others. Every reference in the text becomes a chip above the input
+(title, state as colour: open, draft, merged, closed; "not found" or "unavailable" when
+GitHub cannot answer); its preview has author, labels, branch and size of a pull request, the
+start of the description (GitHub Markdown through the Markdown pipe: no remote images), the
+link to GitHub (new tab, `noopener noreferrer`) and two choices, off by default: "Give Claude
+the comments" and, for pull requests, "Give Claude the diff". The preview opens on hover with
+a mouse and on click or tap everywhere (a tap outside closes it), so on a phone the link is
+never one accidental tap away. In the history the references of a message are chips in its
+text, with the state at sending time; "GitHub context for Claude" below the message shows the
+context exactly as Claude got it (loaded when opened). Chips survive reloads, API restarts,
+queued and withdrawn messages ("Edit and send again" restores the choices) and a first
+message held back by a failed setup script.
+
+- **API**: `GET /api/github/references?query=&repositories=a/b,c/d` (suggestions, at most 20,
+  errors per repository), `GET /api/github/references/:owner/:repo/:number` (preview),
+  `references` on `message.send`, `POST /api/sessions/:id/messages` and `POST /api/sessions`
+  (`token`, `repository`, `number`, `comments`, `diff`; at most 10),
+  `GET /api/sessions/:id/messages/:messageId/context`.
+- **Names and requests**: repository names are checked against GitHub's naming rules
+  (`isRepositoryFullName`) and looked up in the installations' repository list (refreshed at
+  most every 15 s for an unknown name) before anything is requested; a name in a message never
+  makes the API call another host or path. Tokens are minted per repository with
+  `issues: read` + `pull_requests: read` (and `contents: read` only for a pull request's
+  diff, which GitHub renders only for tokens that can read the code); nothing reaches session
+  processes.
+- **GitHub requests** (cached 60 s each): the 100 most recently updated issues and pull
+  requests per repository, the search API for title words, single items (`/issues/:n`, plus
+  `/pulls/:n` for pull requests), comments (the latest 100 of issue comments and of review
+  comments, plus reviews), the diff (`application/vnd.github.diff`; when GitHub refuses it as
+  too large, per-file patches of up to 300 files).
+- **Limits** (`CONTEXT_LIMITS`): description 8,000 characters, the latest 50 comments, 4,000
+  characters per comment and 40,000 for all comments of a reference, diff 60,000 characters,
+  150,000 for the whole context of a message (later references are cut first). Whatever is
+  cut is said in the context (for Claude) and in the reference's `notes` (shown in the chip's
+  preview).
+- **Failures**: a reference that cannot be resolved (not found, no access, rate limit, GitHub
+  unreachable, no answer within 20 s) does not stop the message: its chip says why and Claude
+  is told that its content is missing and not to guess it. Comments or a diff that fail to load
+  are reported the same way.
+- **Storage**: `message_contexts` (one row per message with references or context): the
+  resolved references, the context text Claude got and its transcript UUID. The history adds
+  references to `user.message` (`references`, `contextLength`) from it; `message.queued`
+  events carry them as well.
+
+**Untrusted content.** Issue and pull request text and comments are written by anyone who can
+open an issue, so they are data for Claude, never instructions, and must not be able to use
+Claude Code's own input handling. The context goes to Claude Code as a user message of its own,
+right before the user's message (`sdkUserMessages` in `apps/api/src/app/agent/sdk-agent-runner.ts`):
+
+- `client_composed: true`: Claude Code delivers the text as written: no `@path` expansion, no
+  slash command;
+- `shouldQuery: false`: it starts no turn; Claude Code merges it into the next message, the
+  user's own, whose text keeps `@` expansion and the context Claude Code attaches at the start
+  of a turn (nested `CLAUDE.md`, skill listing, reminders), which `client_composed` would
+  skip for a turn it starts. Claude Code answers it with a result of zero turns, which the app
+  does not count as the end of a turn;
+- `isSynthetic: true`: Claude Code prefixes it with `[MESSAGE FROM NON-USER SOURCE - NOT USER
+INPUT]` and leaves it out of the conversation `getSessionMessages` returns (the app also
+  drops it by its UUID when rebuilding a history).
+
+Inside, `formatUntrustedContext` (`apps/api/src/app/agent/untrusted-context.ts`) says where the
+content comes from, that the user did not write it and that instructions in it are not to be
+followed, and wraps each item in `<untrusted-content-<random> ref=… author=… url=…>`: the tag
+name ends with 16 random hex characters per message, so content cannot close it early; text
+that imitates the wrapper or `<system…>` markup gets a backslash after its `<`. Checked with the
+bundled Claude Code 2.1.322 (a local fake Messages API recording what Claude Code sends, and a
+real session): only the last text block of a message and its `pasted_content` are `@`-expanded
+(so `pasted_content` is not an option), a context message as above is never expanded or run,
+the user's own `@README.md` after it is, and the turn-start context is still attached.
+
+**For the PR automation** (and anything else that gives Claude outside content):
+`SessionsService.sendMessage(sessionId, { text, origin: 'app', untrusted, references })` sends
+a message with untrusted context (`UntrustedContext`: `source`, `purpose`, items with
+attributes and content), queues it behind a running turn or resumes the session like a user
+message, stores it like one (`origin: 'app'` on the `user.message`) and keeps messages in the
+order they arrived. Text of origin `app` is delivered as typed and must contain no `@` and not
+start with `/`: put variable content (check names, logs, comments) into `untrusted`.
 
 ### Approval requests
 
@@ -606,6 +695,9 @@ its branches and tags, and points the existing session clones' `origin` there (s
   PR automation builds on this table.
 - `app_settings`: settings edited in the UI (key, JSON value): the commit identity, and under
   `notifications` which events go to which channel.
+- `message_contexts`: per user message with GitHub references or untrusted context: the
+  references as resolved, the context text Claude got, the transcript UUID of the context
+  message and the origin (`user`, or `app` for messages the app composed).
 - `push_subscriptions`: the devices that receive Web Push (endpoint, keys, readable label,
   last success or error); removed when the push service reports them gone.
 
@@ -699,9 +791,10 @@ Permissions the app needs (repository permissions):
 | Pull requests  | read/write | creating pull requests and reading their state                          |
 | Workflows      | read/write | pushing commits that change `.github/workflows` (only then requested)   |
 | Administration | read/write | creating repositories for local projects (organizations)                |
+| Issues         | read       | `#` references: issues, comments, search                                |
 
-Issues, Checks, Commit statuses and Actions (read) are for later steps (GitHub references in
-the prompt, PR automation); the webhook is not used yet. Install the app on your account and
+Checks, Commit statuses and Actions (read) are for the PR automation; the webhook is not used
+yet. Install the app on your account and
 on organizations and choose the repositories there; the Settings page lists the
 installations with their repository counts and links to install the app on further accounts.
 
@@ -732,6 +825,8 @@ or logs:
 | credential helper, normally            | `contents: read`                                                     |
 | credential helper, approved push       | `contents: write` (+ `workflows`), fresh, revoked when the push ends |
 | create a repository                    | `administration: write`, fresh, revoked afterwards                   |
+| `#` references: issues, comments       | `issues: read` + `pull_requests: read`                               |
+| `#` references: a pull request's diff  | `issues: read` + `pull_requests: read` + `contents: read`            |
 
 If the installation of a repository changed (app reinstalled), the current one is looked up
 and stored.
