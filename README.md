@@ -841,18 +841,18 @@ operation, reused for at most ten minutes, and given to git only through the env
 one command (`GIT_CONFIG_*`), never through arguments, git config, remote URLs, the database
 or logs:
 
-| Operation                                 | Token                                                                |
-| ----------------------------------------- | -------------------------------------------------------------------- |
-| listing an installation's repositories    | `metadata: read`, whole installation                                 |
-| clone and fetch of a mirror               | `contents: read`                                                     |
-| push by button                            | `contents: write` (+ `workflows: write` if workflow files changed)   |
-| create / read a pull request              | `pull_requests: write` + `contents: read` / `pull_requests: read`    |
-| credential helper, normally               | `contents: read`                                                     |
-| credential helper, approved push          | `contents: write` (+ `workflows`), fresh, revoked when the push ends |
-| create a repository                       | `administration: write`, fresh, revoked afterwards                   |
-| `#` references: issues, comments          | `issues: read` + `pull_requests: read`                               |
-| `#` references: a pull request's diff     | `issues: read` + `pull_requests: read` + `contents: read`            |
-| PR automation: reading state and feedback | `metadata`, `checks`, `statuses`, `pull_requests`, `actions`: read   |
+| Operation                                 | Token                                                                        |
+| ----------------------------------------- | ---------------------------------------------------------------------------- |
+| listing an installation's repositories    | `metadata: read`, whole installation                                         |
+| clone and fetch of a mirror               | `contents: read`                                                             |
+| push by button                            | `contents: write` (+ `workflows: write` if workflow files changed)           |
+| create / read a pull request              | `pull_requests: write` + `contents: read` / `pull_requests: read`            |
+| credential helper, normally               | `contents: read`                                                             |
+| credential helper, approved push          | `contents: write` (+ `workflows`), fresh, revoked when the push ends         |
+| create a repository                       | `administration: write`, fresh, revoked afterwards                           |
+| `#` references: issues, comments          | `issues: read` + `pull_requests: read`                                       |
+| `#` references: a pull request's diff     | `issues: read` + `pull_requests: read` + `contents: read`                    |
+| PR automation: reading state and feedback | `metadata`, `checks`, `statuses`, `pull_requests`, `actions`, `issues`: read |
 
 If the installation of a repository changed (app reinstalled), the current one is looked up
 and stored.
@@ -946,12 +946,12 @@ and "Stop autofix" while a run goes on (`apps/api/src/app/pr-automation`).
 GitHub's state is the source of truth: webhook deliveries and polling only say _when_ to look.
 A check (`PrAutomationService.check`) reads the pull request through the API with an
 installation token for that repository (`metadata`, `checks`, `statuses`, `pull_requests`,
-`actions`: read), stores state and head commit, and acts. Checks of one pull request run one
+`actions`, `issues`: read), stores state and head commit, and acts. Checks of one pull request run one
 at a time; one asked for meanwhile runs afterwards.
 
 - **Webhook** `POST /api/github/webhook` (the GitHub App's webhook, events `pull_request`,
-  `pull_request_review`, `pull_request_review_comment`, `check_run`, `check_suite`,
-  `status`; `ping` is answered). It is the one route reachable without the Cloudflare Access
+  `pull_request_review`, `pull_request_review_comment`, `issue_comment` (only comments on
+  pull requests are followed), `check_run`, `check_suite`, `status`; `ping` is answered). It is the one route reachable without the Cloudflare Access
   login, exempt from the Access check and from the request guard, and authenticated only by
   its signature:
   - without a secret (`GITHUB_WEBHOOK_SECRET_FILE` or `CRM_SECRET_GITHUB_WEBHOOK_SECRET`,
@@ -971,8 +971,9 @@ at a time; one asked for meanwhile runs afterwards.
     and the file are kept from child processes; the entrypoint checks the file's owner).
 - **Polling**: every open pull request with autofix or autoclose is checked every
   `PR_POLL_INTERVAL_SECONDS` (default 120 s without webhook secret, 900 s as backstop with
-  one; `0` turns polling off), one after another. A check costs about five requests
-  (pull request, check runs, statuses, reviews, review comments) plus permission lookups
+  one; `0` turns polling off), one after another. A check costs about six requests
+  (pull request, check runs, statuses, reviews, review comments, conversation comments) plus
+  permission lookups
   (cached ten minutes) and logs of failed jobs; a rate limit pauses the automation until
   GitHub's reset time. Pull requests without automation are read when their session is
   opened, as before.
@@ -981,12 +982,13 @@ at a time; one asked for meanwhile runs afterwards.
 
 - **What counts**: failed check runs (`failure`, `timed_out`, `startup_failure`) and commit
   statuses (`failure`, `error`) of the head commit GitHub reports now; failures of older
-  commits are stale and ignored, checks that are queued or running are not failures. Reviews
-  and review comments created after autofix was turned on (or after the last run), by users
+  commits are stale and ignored, checks that are queued or running are not failures. Reviews,
+  review comments and comments in the pull request's conversation created after autofix was
+  turned on (or after the last run), by users
   whose permission on the repository is admin, maintain or write
   (`GET /repos/{owner}/{repo}/collaborators/{user}/permission`); bots (the app itself,
   Actions, other apps) and everybody else never start a run. Approvals and empty reviews ask
-  for nothing and are skipped. Conversation comments on the pull request do not count.
+  for nothing and are skipped.
 - **Coalescing**: one run handles everything that is current: all failed checks of the head
   commit (the run waits until the commit's other checks have finished, at most 30 minutes
   after the first failure) and all new reviews and comments, also when a review comes with
@@ -1018,23 +1020,50 @@ at a time; one asked for meanwhile runs afterwards.
 - **Several pull requests** (one per repository): switches, counts and runs are per pull
   request; a session runs one autofix run at a time, the others wait until it is idle again.
 
-### Pushing during autofix
+### git during autofix
 
-While autofix is on for an open pull request, a `git push` of exactly its session branch
-needs no approval, and the app does that push itself: when Claude runs a command that is
-nothing but `git push` (optionally `cd <clone> &&` before it or `git -C <clone>`) and the
-push analysis says it pushes only the session branch (no force, no delete, no tags or
-`--all`/`--mirror`, remote `origin` or none), the app pushes the session branch of that clone
-(or of every autofix clone with new commits) like the Push button: the commits go into the
-mirror as a bundle and the API pushes `<commit>:refs/heads/<session branch>` without force,
-with a token that never reaches the session. The command is not run; Claude gets the outcome
-as the tool result (shown as an error of that tool call, with a notice "Autofix pushed …").
-So what is pushed does not depend on the command text, aliases, hooks or the clone's git
-configuration. Everything else asks the owner as the permission mode says, and pending
-approvals notify as usual: combined commands (`git commit … && git push`), other branches,
-force, tags, deletions, other repositories, and pushes whose new commits change
-`.github/workflows` (they could reach the repository's secrets). The permission mode is never
-changed by the automation, and bypass modes stay unavailable.
+While autofix is on for an open pull request, Claude may stage, commit and push its session
+branch without approval: a Bash command that is nothing but `git add`, `git commit` and
+`git push` joined with `&&` (optionally `cd <clone> &&` first or `git -C <clone>`), read
+strictly (`apps/api/src/app/pr-automation/autofix-git.ts`). The app carries such a command
+out itself instead of a shell, step by step, stopping at the first failure like `&&`:
+
+- `git add` (`-A`, `-u`, paths inside the clone; no `-f`, `-p`, pathspec magic, `..` or
+  absolute paths) and `git commit` (message with `-m`/`--message`, `-a`, `-q`, `-s`,
+  `--amend` only of a commit no remote-tracking branch has, since amending a pushed commit
+  would need a force push) run as the session user in that clone, on its session branch.
+- `git push` must be last and, by the push analysis, push only the session branch (no force,
+  no delete, no tags or `--all`/`--mirror`, remote `origin` or none). The app pushes the
+  session branch like the Push button: the commits go into the mirror as a bundle and the API
+  pushes `<commit>:refs/heads/<session branch>` without force, with a token that never
+  reaches the session. A push alone without directory pushes every autofix clone with new
+  commits; `add` and `commit` without `cd`/`-C` are accepted only in a session with a single
+  clone (the shell's directory is unknown).
+- Anything else in the command (other commands, pipes, `;`, redirections, subshells,
+  command substitution or here-documents, unquoted globs, `git -c …`, other git commands or
+  options) makes the whole command go to the owner as the permission mode says, as do
+  other branches and repositories, force, tags and deletions. When new commits change
+  `.github/workflows`, the commit is made but the push is not: Claude is told so, and a
+  `git push` of its own then asks the owner (workflows can reach the repository's secrets).
+
+**Hooks and configuration.** A commit would normally run the clone's hooks, and `git add` can
+run clean filters, fsmonitor or signing programs named in git configuration. These are code
+from the clone that Claude itself can write, so running them without approval would let any
+command run unapproved. The app therefore runs these commands with hooks off
+(`core.hooksPath=/dev/null`, as all its git commands), without global and system
+configuration (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`; the session user's own
+`~/.gitconfig` is Claude's to write), with fsmonitor and commit signing off, and only when the
+clone's own configuration holds nothing but what git and the app write there (core basics,
+`remote.origin`, `branch.*`, identity, the credential helper); otherwise it asks. Repository
+hooks such as linters therefore do not run for autofix commits (`--no-verify` is accepted, as
+it changes nothing); CI checks the result.
+
+**What Claude and the owner see.** Claude Code runs only a command that prints the app's
+report (`printf … | base64 -d`, failing with exit status 1 when a step failed), so Claude gets
+the real output of every step and a failure never looks like success. The history shows the
+tool call as "done by the app" or "failed" with what the app did ("Staged; Committed; pushed
+… at …"), from a stored `tool.by_app` event that survives reloads and restarts. The
+permission mode is never changed by the automation, and bypass modes stay unavailable.
 
 ### Merge and close
 
@@ -1058,8 +1087,8 @@ were removed cannot be resumed.
    UID 1000 (`GITHUB_WEBHOOK_SECRET_FILE`, Compose secret `github-webhook-secret`).
 2. In the GitHub App's settings: Webhook active, URL
    `https://<public host>/api/github/webhook`, content type `application/json`, the same
-   secret, SSL verification on. Subscribe to the events Check run, Check suite, Pull request,
-   Pull request review, Pull request review comment and Status.
+   secret, SSL verification on. Subscribe to the events Check run, Check suite, Issue
+   comment, Pull request, Pull request review, Pull request review comment and Status.
 3. In Cloudflare Access: a Bypass policy (or a separate application with a Bypass policy) for
    exactly the path `/api/github/webhook` of the public host, nothing else. Without it GitHub's
    deliveries end at the Access login; polling still works then, at its slower backstop
