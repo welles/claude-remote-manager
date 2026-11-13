@@ -1,18 +1,20 @@
 import { Pipe, type PipeTransform } from '@angular/core';
 
 /**
- * The one locale rule of the app: dates and times are formatted with
- * `Intl` in the browser's locale (order of day and month, 24- or 12-hour
- * clock), never with Angular's locale data. Words the app writes itself
- * ("now", "yesterday", "min") are English like the rest of the UI.
- * Tests pass a fixed locale instead.
+ * The one date rule of the app: English like the rest of the UI, day
+ * before month and a 24-hour clock ("15 Oct", "Mon 21:15",
+ * "13 Nov 2026, 16:27"), whatever the browser's language; the time zone is
+ * the browser's. Formatted with `Intl` (`en-GB`), never with Angular's
+ * locale data.
  */
+export const APP_LOCALE = 'en-GB';
+
 const formats = new Map<string, Intl.DateTimeFormat>();
 
-/** A cached `Intl.DateTimeFormat` in the browser's (or the given) locale. */
+/** A cached `Intl.DateTimeFormat` in the app's (or the given) locale. */
 export function dateFormat(
   options: Intl.DateTimeFormatOptions,
-  locale?: string,
+  locale: string = APP_LOCALE,
 ): Intl.DateTimeFormat {
   const key = `${locale ?? ''}|${JSON.stringify(options)}`;
   let format = formats.get(key);
@@ -24,10 +26,10 @@ export function dateFormat(
 }
 
 /**
- * - `dateTime`: short date and time, e.g. `13.11.26, 16:27`;
- * - `long`: medium date and time, e.g. `13.11.2026, 16:27`;
- * - `date`: medium date;
- * - `time`: time only;
+ * - `dateTime`: date and time, e.g. `13 Nov 2026, 16:27`;
+ * - `long`: the same with the weekday, e.g. `Fri, 13 Nov 2026, 16:27`;
+ * - `date`: e.g. `13 Nov 2026`;
+ * - `time`: e.g. `16:27`;
  * - `relative`: `now`, `5 min`, `3 h`, `yesterday`, then the date.
  */
 export type DateStyle = 'dateTime' | 'long' | 'date' | 'time' | 'relative';
@@ -36,10 +38,25 @@ const STYLES: Record<
   Exclude<DateStyle, 'relative'>,
   Intl.DateTimeFormatOptions
 > = {
-  dateTime: { dateStyle: 'short', timeStyle: 'short' },
-  long: { dateStyle: 'medium', timeStyle: 'short' },
-  date: { dateStyle: 'medium' },
-  time: { timeStyle: 'short' },
+  dateTime: {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  },
+  long: {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  },
+  date: { day: 'numeric', month: 'short', year: 'numeric' },
+  time: { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' },
 };
 
 function toDate(value: string | number | Date): Date {
@@ -90,8 +107,13 @@ export function formatClock(
   const date = toDate(value);
   return dateFormat(
     sameDay(date, new Date(now))
-      ? { hour: '2-digit', minute: '2-digit' }
-      : { weekday: 'short', hour: '2-digit', minute: '2-digit' },
+      ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }
+      : {
+          weekday: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
+        },
     locale,
   ).format(date);
 }

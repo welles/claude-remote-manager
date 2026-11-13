@@ -17,21 +17,17 @@ describe('dates', () => {
     );
   });
 
-  it('uses one locale for dates and times', () => {
+  it('formats in English, day before month, 24-hour clock', () => {
     const date = new Date(2026, 10, 13, 16, 27);
-    expect(formatDate(date, 'dateTime', now, 'de-DE')).toBe('13.11.26, 16:27');
-    expect(formatDate(date, 'dateTime', now, 'en-US')).toBe(
-      '11/13/26, 4:27 PM',
-    );
-    expect(formatDate(date, 'time', now, 'de-DE')).toBe('16:27');
+    expect(formatDate(date, 'dateTime', now)).toBe('13 Nov 2026, 16:27');
+    expect(formatDate(date, 'long', now)).toBe('Fri, 13 Nov 2026, 16:27');
+    expect(formatDate(date, 'date', now)).toBe('13 Nov 2026');
+    expect(formatDate(date, 'time', now)).toBe('16:27');
+    expect(formatRelative(new Date(2026, 9, 15, 9, 0), now)).toBe('15 Oct');
   });
 
   it('adds the weekday to clock times of other days', () => {
-    expect(formatClock(new Date(2026, 10, 13, 21, 15), now, 'en-GB')).toBe(
-      '21:15',
-    );
-    expect(formatClock(new Date(2026, 10, 16, 21, 15), now, 'en-GB')).toBe(
-      'Mon 21:15',
-    );
+    expect(formatClock(new Date(2026, 10, 13, 21, 15), now)).toBe('21:15');
+    expect(formatClock(new Date(2026, 10, 16, 21, 15), now)).toBe('Mon 21:15');
   });
 });
