@@ -63,16 +63,18 @@ Sitzungen arbeiten meist unbeobachtet, daher meldet das Backend wichtige Ereigni
 - **Web Push:** Das Angular-Frontend ist eine PWA mit Service Worker; Push über Web Push mit VAPID-Schlüsseln. Auf iOS nur, wenn die App zum Home-Bildschirm hinzugefügt ist.
 - **ntfy:** Das Backend sendet zusätzlich an einen konfigurierbaren ntfy-Server und -Topic und authentifiziert sich dabei mit einem Access-Token (Bearer-Header). Der Token ist Pflicht und wird als Secret übergeben, nicht im Image oder in der Datenbank im Klartext.
 - **Ereignisse:** Claude wartet auf eine Freigabe, Sitzung ist fertig oder hängt, Autofix gibt nach dem Versuchslimit auf, PR wurde gemerged oder geschlossen.
-- **Ziel:** Ein Tipp auf die Benachrichtigung öffnet direkt die betreffende Sitzung.
+- **Ziel:** Ein Tipp auf die Benachrichtigung öffnet direkt die betreffende Sitzung (für ntfy-Links über die öffentliche URL der App, `PUBLIC_URL`).
 - **Einstellungen:** Pro Ereignistyp und Kanal ein- und ausschaltbar.
+- **Festlegungen:** „Fertig“ heißt: ein Turn ist zu Ende und Claude wartet auf die nächste Nachricht (das ausdrückliche Beenden einer Sitzung meldet nichts). „Hängt“ heißt: Status `running` und seit `SESSION_STALL_MINUTES` (Standard 15) kein Ereignis von Claude; einmal pro Hänger, erneut erst nach neuer Aktivität. Eine fehlgeschlagene Sitzung (auch ein fehlgeschlagenes Setup-Skript) meldet sofort. Rückfragen von Claude melden wie Freigaben, ohne Erlauben/Ablehnen. Inhalt: Sitzungstitel, Repositories, bei Freigaben Aktion mit gekürztem Befehl oder Dateipfad.
+- **Nur was aktuell ist:** Zu einer Sitzung, die ein Client gerade sichtbar und aktiv zeigt, wird nichts gemeldet. Nicht mehr aktuelle Benachrichtigungen werden zurückgezogen (Web Push: per Tag geschlossen, außer auf Apple-Geräten; ntfy: per Sequenz-ID gelöscht).
 
 ## PWA-Funktionen
 
 Das Angular-Frontend nutzt als installierbare PWA zusätzlich:
 
-- **Aktionen in Benachrichtigungen:** Freigabe-Anfragen lassen sich direkt in der Push-Nachricht mit „Erlauben“ oder „Ablehnen“ beantworten, ohne die App zu öffnen.
-- **Badge am App-Icon:** Badging API zeigt die Zahl der Sitzungen, die auf den Nutzer warten.
-- **Share Target:** Links, Screenshots oder Text aus anderen Apps lassen sich an die PWA teilen und werden zum Prompt einer neuen Sitzung.
+- **Aktionen in Benachrichtigungen:** Freigabe-Anfragen lassen sich direkt in der Push-Nachricht mit „Erlauben“ oder „Ablehnen“ beantworten, ohne die App zu öffnen. „Erlauben“ heißt einmal erlauben (nie für die ganze Sitzung, kein Moduswechsel); Pushes, die mehr als den Sitzungs-Branch ändern, bekommen kein „Erlauben“. Kommt die Antwort nicht an (Access abgelaufen, offline), öffnet sich die Sitzung mit der weiter offenen Anfrage.
+- **Badge am App-Icon:** Badging API zeigt die Zahl der Sitzungen, die auf den Nutzer warten (Status „wartet“).
+- **Share Target:** Links, Screenshots oder Text aus anderen Apps lassen sich an die PWA teilen und werden zum Prompt einer neuen Sitzung (das Formular wird vorausgefüllt; der Service Worker nimmt den Upload selbst entgegen, die API bleibt bei JSON).
 - **App-Shortcuts:** Langes Drücken auf das Icon bietet „Neue Sitzung“ und „Wartende Sitzungen“.
 - **Offline-Shell:** Die App startet sofort und zeigt den zuletzt bekannten Stand der Sitzungsliste, auch bei kurzer Verbindungsunterbrechung.
 - **Hinweis Cloudflare Access:** Läuft die Access-Sitzung ab, kann die installierte PWA auf der Login-Seite hängen bleiben. Lange Sitzungsdauer in Access wählen und abgelaufene Anmeldung im Frontend erkennen und sauber zur Neuanmeldung führen.

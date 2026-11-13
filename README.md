@@ -15,7 +15,10 @@ file change appears as a diff in the history and in approvals, and a changes pag
 whole session's diff per repository and file; images can be attached to messages, files of the
 session referenced with `@`, and Claude shows files to the user with `show_file`; session
 branches are pushed and pull requests created by button, or by Claude after the user's
-approval; usage is recorded per request. The cleanup of sessions follows.
+approval; usage is recorded per request. Sessions notify the user over Web Push and ntfy
+(approvals with Allow and Deny right in the notification), and the web app is an installable
+PWA with an offline shell, badge, shortcuts and a share target. The cleanup of sessions
+follows.
 
 ## Workspace layout
 
@@ -82,30 +85,40 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 
 ### Environment variables of the API
 
-| Variable                            | Default (development)                                                                            | Purpose                                                                            |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                                            |
-| `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                                     |
-| `FILES_DIR`                         | `$DB_DIR/files`                                                                                  | The API's own files: attached images, snapshots of shown files (not for sessions)  |
-| `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem                                |
-| `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                          |
-| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them                         |
-| `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                      |
-| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts                                  |
-| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                                           |
-| `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                                     |
-| `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret                        |
-| `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                                        |
-| `AUTH_MODE`                         | none, required                                                                                   | `cloudflare-access` or `none`, see [Authentication](#authentication)               |
-| `CF_ACCESS_TEAM_DOMAIN`             | none                                                                                             | Team domain (`<team>.cloudflareaccess.com`) for `cloudflare-access`                |
-| `CF_ACCESS_AUD`                     | none                                                                                             | Application Audience (AUD) tag(s), comma-separated                                 |
-| `CF_ACCESS_ALLOWED_EMAILS`          | none (everyone Access lets in)                                                                   | Optional comma-separated email allowlist                                           |
-| `PROCESS_ISOLATION`                 | none, required (image: `separate-users`)                                                         | `separate-users` or `single-user`, see [Users](#users-and-what-sessions-can-reach) |
-| `SESSION_USER`                      | `claude`                                                                                         | OS user of session processes with `separate-users`                                 |
-| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API                    |
-| `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                                    |
-| `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                                   |
-| `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                                   |
+| Variable                            | Default (development)                                                                            | Purpose                                                                               |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                                               |
+| `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                                        |
+| `FILES_DIR`                         | `$DB_DIR/files`                                                                                  | The API's own files: attached images, snapshots of shown files (not for sessions)     |
+| `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem                                   |
+| `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                             |
+| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them                            |
+| `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                         |
+| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts                                     |
+| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                                              |
+| `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                                        |
+| `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret                           |
+| `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                                           |
+| `AUTH_MODE`                         | none, required                                                                                   | `cloudflare-access` or `none`, see [Authentication](#authentication)                  |
+| `CF_ACCESS_TEAM_DOMAIN`             | none                                                                                             | Team domain (`<team>.cloudflareaccess.com`) for `cloudflare-access`                   |
+| `CF_ACCESS_AUD`                     | none                                                                                             | Application Audience (AUD) tag(s), comma-separated                                    |
+| `CF_ACCESS_ALLOWED_EMAILS`          | none (everyone Access lets in)                                                                   | Optional comma-separated email allowlist                                              |
+| `PROCESS_ISOLATION`                 | none, required (image: `separate-users`)                                                         | `separate-users` or `single-user`, see [Users](#users-and-what-sessions-can-reach)    |
+| `SESSION_USER`                      | `claude`                                                                                         | OS user of session processes with `separate-users`                                    |
+| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API                       |
+| `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                                       |
+| `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                                      |
+| `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                                      |
+| `PUBLIC_URL`                        | none                                                                                             | Public URL of the app, e.g. `https://crm.example.com`: ntfy links open sessions there |
+| `SESSION_STALL_MINUTES`             | `15`                                                                                             | A running turn without any event this long "hangs" (notification); `0` never          |
+| `NTFY_URL`                          | none (ntfy off)                                                                                  | ntfy server, e.g. `https://ntfy.example.com`                                          |
+| `NTFY_TOPIC`                        | none                                                                                             | ntfy topic (letters, digits, `_`, `-`)                                                |
+| `NTFY_TOKEN_FILE`                   | none                                                                                             | File with the ntfy access token (required with `NTFY_URL`), e.g. a Docker secret      |
+| `CRM_SECRET_NTFY_TOKEN`             | none                                                                                             | The ntfy access token itself, instead of the file                                     |
+| `VAPID_PRIVATE_KEY_FILE`            | none (keys generated into `DB_DIR`)                                                              | File with the VAPID private key (base64url), to use own keys                          |
+| `CRM_SECRET_VAPID_PRIVATE_KEY`      | none                                                                                             | The VAPID private key itself, instead of the file                                     |
+| `VAPID_PUBLIC_KEY`                  | derived from the private key                                                                     | Optional; checked against the private key                                             |
+| `VAPID_SUBJECT`                     | `PUBLIC_URL` if https, else a placeholder `mailto:`                                              | Contact for the push services (`mailto:` or `https:`)                                 |
 
 Secrets of the app are never passed to the processes it starts (Claude Code, setup scripts,
 its own git commands): every variable named `CRM_SECRET_*` is removed, plus a registry of fixed
@@ -141,6 +154,7 @@ user's approval.
 Exempt, each with its own protection (`AUTH_EXEMPT_ROUTES` in
 `apps/api/src/app/auth/authenticator.ts`): `GET /api/health` (no data) and
 `POST /api/git/credentials` (session process token); later the GitHub webhook (signature).
+The notification routes (settings, devices, tests, the approval buttons) are not exempt.
 
 **Session processes cannot call the API.** With `PROCESS_ISOLATION=separate-users`, connections
 over loopback from a process of the session user (looked up in the kernel's socket table,
@@ -173,14 +187,18 @@ WebSocket upgrade passes a guard (`apps/api/src/app/security`):
   needs a CORS preflight, which the API never answers.
 
 Routes that need another protection (e.g. a signed webhook) are exempted in
-`REQUEST_GUARD_EXEMPT_ROUTES`.
+`REQUEST_GUARD_EXEMPT_ROUTES`. The PWA's share target is not one of them: the operating
+system's form post (`POST /share-target`, multipart) is taken by the service worker and never
+reaches the API (see [Web app (PWA)](#web-app-pwa)); without a service worker the post
+finds no route (404).
 
 The web app's pages (everything outside `/api`) carry a Content Security Policy (`APP_CSP` in
 `apps/api/src/app/configure-app.ts`): scripts only from the app's own files (the production
 build inlines none; critical CSS inlining is off for that), images only from the app, `data:`
 and `blob:`, connections (API, WebSocket) and frames only to the app's origin, no plugins, no
 `<base>` elsewhere, and the app itself may not be framed. Styles need `'unsafe-inline'`
-because Angular inserts component styles at runtime. Rendered Markdown (Claude's messages,
+because Angular inserts component styles at runtime. The service worker and the manifest need
+nothing beyond `worker-src 'self'` and `manifest-src 'self'` (both same-origin). Rendered Markdown (Claude's messages,
 plans, shown Markdown files) never loads remote resources either: images other than `data:`
 become links (also from raw HTML), and links open in a new tab without referrer. Otherwise
 content from a repository or a web page could make Claude write an image URL that sends data
@@ -299,7 +317,10 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `GET /api/models`, `GET /api/limits`, `GET /api/health`, `GET /api/sessions/:id/diff`,
 `GET /api/sessions/:id/diff/file`, `GET /api/sessions/:id/files`, `POST /api/attachments`,
 `GET /api/attachments/:id`, `GET /api/shown-files/:id`, `GET /api/shown-files/:id/content`,
-`GET /api/shown-files/:id/live`. WebSocket: `/api/ws` with the versioned protocol in
+`GET /api/shown-files/:id/live`, `GET /api/notifications`, `PUT /api/notifications/preferences`,
+`POST /api/notifications/push-subscriptions`, `POST /api/notifications/push-subscriptions/remove`,
+`DELETE /api/notifications/push-subscriptions/:id`, `POST /api/notifications/test`,
+`POST /api/notifications/approval-actions`. WebSocket: `/api/ws` with the versioned protocol in
 `libs/shared-types/src/lib/session-events.ts`.
 
 ### Diffs
@@ -409,6 +430,117 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
   request waits for the user as long as the process lives; the idle timeout does not apply
   while one is pending.
 
+## Notifications
+
+Sessions run unattended, so the API reports what needs the user, over two channels, each
+switchable per event on the Settings page (stored in `app_settings`):
+
+| Event                         | When                                                                               | Withdrawn when                           |
+| ----------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------- |
+| Claude needs you              | an approval request, a question or a plan to review                                | it is answered or cancelled, anywhere    |
+| Turn finished                 | a turn ended and Claude waits for the next message (not after Stop or a denial)    | the next turn starts or the session ends |
+| Session hangs                 | a running turn without any event for `SESSION_STALL_MINUTES` (once per stall)      | activity resumes or the turn ends        |
+| Session failed                | the session failed, or a setup script failed and the first message is held back    | the session continues                    |
+| Autofix gave up               | the PR automation reached its attempt limit (reported by the PR automation)        | –                                        |
+| Pull request merged or closed | a pull request of the session was merged or closed (reported by the PR automation) | –                                        |
+
+Ending a session ("End session") notifies nobody. Notifications carry the session title and
+its repositories, approvals the action and the command or file path (shortened, relative to
+the clone), questions the first question; a tap opens the session.
+
+**Nothing is sent about a session that is in front of the user.** Every window of the web app
+reports over the WebSocket which session it shows and whether the user is active there
+(`presence` frames: page visible and focused, input within the last 5 minutes), repeated every
+30 seconds; the API counts a report for 75 seconds (a phone put away stops repeating it). A
+subscription alone does not count.
+
+**Web Push** (`apps/api/src/app/notifications/web-push.channel.ts`, library `web-push`): every
+browser or device that turned notifications on (Settings page, on a click; the permission
+prompt needs a user gesture) is stored in `push_subscriptions`. Messages are encrypted for each
+device (RFC 8291) and signed with the server's VAPID key (RFC 8292). The VAPID keys are
+generated on the first start into `DB_DIR/vapid-keys.json` (mode `0600` in the API's `0700`
+data directory; a looser mode is corrected at startup) or taken from `VAPID_PRIVATE_KEY_FILE` /
+`CRM_SECRET_VAPID_PRIVATE_KEY`; the private key is never returned by the API, logged or given
+to other processes. Changing the keys means turning notifications on again on each device.
+Subscriptions the push service reports gone (404, 410) are removed. Each notification has a
+tag; a later one with the same tag replaces it, and a withdrawal closes it on the device (sent
+with the same `Topic`, so a push service still holding the notification for an offline device
+replaces it). Apple's push service gets no withdrawals: Safari requires every push to show a
+notification and revokes subscriptions otherwise, so on iPhone and iPad a notification that
+is no longer current stays until it is dismissed or tapped (the session then shows the
+current state). On iOS and iPadOS Web Push works only in the app added to the Home Screen;
+the Settings page says so in Safari.
+
+**Allow and Deny in the notification**: approval notifications of tool uses offer "Allow
+once" and "Deny" where the platform shows buttons (not on iOS). The service worker sends the
+answer as an ordinary request of the app to `POST /api/notifications/approval-actions`
+(session, request, `allow` or `deny`), with the browser's cookies: the request passes the
+Cloudflare Access check and the request guard like every other one, and the notification
+carries no token that would let anyone holding it answer. The route answers only that pending
+request of that session: Allow is allow once (never "for this session", never a mode change),
+Deny is a denial without message (the turn stops). A request answered or cancelled before is
+left as it is (`already_resolved`, and the notification says so). Pushes that update more than
+the session branch (force, delete, other branches, everything) get no Allow button (and the
+route refuses Allow for them): their warnings do not fit a notification. If the answer does not
+get through (expired Access session, offline, server error), a notification says "Not
+allowed: still waiting" and the session opens, through the Access login if needed, with the
+request still pending.
+
+**ntfy**: with `NTFY_URL` and `NTFY_TOPIC` the API publishes to that topic (JSON publishing,
+`Authorization: Bearer <token>`). The token is required (the API refuses to start without
+`NTFY_TOKEN_FILE` or `CRM_SECRET_NTFY_TOKEN`), read once at startup and kept only in memory:
+never in the image, the database, logs, API responses or the environment of session
+processes (`CRM_SECRET_*` is removed from child environments; the file is checked by the
+entrypoint like the GitHub key). The Settings page shows server and topic read-only and
+whether a token is set. Messages carry title, details, priority (high for approvals) and, with
+`PUBLIC_URL`, a click link to the session. ntfy gets no Allow/Deny buttons: they would have to
+call the API without the browser's Access session. Each notification has an ntfy sequence ID
+derived from its tag; withdrawing it deletes it in the ntfy apps
+(`DELETE /<topic>/<sequence ID>`, ntfy 2.15 or later; older servers ignore it).
+
+"Send test notification" exists per channel; a refused token is reported with ntfy's answer
+(e.g. `HTTP 401: unauthorized`), never with the token.
+
+**For the PR automation**: `NotificationsService` (exported by `NotificationsModule`) has
+`notifyAutofixGaveUp(sessionId, pullRequest, attempts, reason)` and
+`notifyPullRequestClosed(sessionId, pullRequest)` (merged or closed by `pullRequest.state`);
+preferences, presence and channels apply as for the other events.
+
+## Web app (PWA)
+
+The web app is an installable PWA (`apps/web/public/manifest.webmanifest`, icons in
+`apps/web/public/icons`, made from `assets/icon/*.svg`) with a service worker
+(`apps/web/src/sw/`, built by `apps/web/scripts/build-service-worker.mjs` into `/sw.js`; the
+web build runs it first):
+
+- **Offline shell**: the app's page is fetched from the network first and cached; the built
+  files are cached as they load (the app preloads all pages after the start). Offline, after
+  4 seconds without an answer, or when the tunnel in front answers with an error because the
+  server is down (502, 503, 504, 52x, 530), the app starts from the cache. The session list
+  shows the last list this browser loaded, marked as stale with its time, and reloads when
+  the connection is back. `/api` is never cached by the service worker. Only the app's own
+  page is cached as shell: redirected answers, non-HTML answers and pages that are not the app
+  (e.g. the Access login page) are never stored.
+- **Expired Cloudflare Access session**: API calls then end at the Access login (a redirect
+  that fetch reports as a network error, or a `401`/`403` from Access or the API's own token
+  check). The app then asks the health endpoint without following redirects; a redirect or a
+  `401`/`403` there comes from Access, so it shows "Your sign-in has expired" with "Sign in
+  again", a full navigation that goes through the Access login and back. A WebSocket that
+  cannot connect triggers the same check. Navigations pass redirects to the browser
+  untouched. With `AUTH_MODE=none` none of this triggers.
+- **Badge**: the app icon shows the number of sessions waiting for the user (status
+  `waiting`), set by the open app and by every push message (Badging API, installed app).
+- **App shortcuts**: "New session" (`/?new=1`, the cursor goes into the form) and "Waiting
+  sessions" (`/?waiting=1`, only waiting sessions).
+- **Share target**: links, text and images shared to the installed app become a new session's
+  prompt and images: the service worker takes the operating system's form post
+  (`POST /share-target`, multipart) itself, keeps it in the Cache API (dropped after a day if
+  unused) and opens `/?share=<id>`; the new-session form is filled in and the images are
+  uploaded like attached ones (`POST /api/attachments`). The API never sees the form post,
+  so its request guard stays JSON-only.
+- The manifest is loaded with credentials (`crossorigin="use-credentials"`), as Cloudflare
+  Access needs its cookie for it.
+
 ## Repositories and session clones
 
 ```
@@ -472,7 +604,10 @@ its branches and tags, and points the existing session clones' `origin` there (s
   base branch, creator (`user`/`claude`), opened/closed/merged times and when the state was
   last read from GitHub (open ones at most once a minute when the session is opened). The
   PR automation builds on this table.
-- `app_settings`: settings edited in the UI (key, JSON value): the commit identity.
+- `app_settings`: settings edited in the UI (key, JSON value): the commit identity, and under
+  `notifications` which events go to which channel.
+- `push_subscriptions`: the devices that receive Web Push (endpoint, keys, readable label,
+  last success or error); removed when the push service reports them gone.
 
 ### How a session gets its directories
 
@@ -790,7 +925,9 @@ secrets:
 
 Compose bind-mounts the file with its host owner and mode; it must be readable by the API user
 (UID 1000) and not by the session user (UID 1001), e.g. owned by UID 1000 with mode `0400`
-or `0600`. The entrypoint refuses to start otherwise. Or without Compose:
+or `0600`. The entrypoint refuses to start otherwise. The same applies to the ntfy token
+(`NTFY_TOKEN_FILE`) and an own VAPID private key (`VAPID_PRIVATE_KEY_FILE`); generated VAPID
+keys live in `/data/db/vapid-keys.json` (owned by `crm`, mode `0600`). Or without Compose:
 `docker run -v /path/github-app.pem:/run/secrets/github-app-key:ro -e GITHUB_APP_ID=…
 -e GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github-app-key …`. Never put the key into the image
 or the compose file itself.
