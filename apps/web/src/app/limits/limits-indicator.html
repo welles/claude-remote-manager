@@ -1,0 +1,57 @@
+<button
+  matButton
+  class="indicator"
+  [class.stale]="stale()"
+  [matMenuTriggerFor]="details"
+  aria-label="Plan limits"
+  data-testid="limits"
+>
+  @for (view of headline(); track view.type) {
+  <span class="value level-{{ view.level }}" [class.old]="view.resetPassed"
+    ><span class="short">{{ view.short }}</span> {{ view.percentText }}</span
+  >
+  } @empty {
+  <span class="value">Limits ?</span>
+  }
+</button>
+<mat-menu #details="matMenu" class="limits-menu" xPosition="before">
+  <div class="details" data-testid="limits-details">
+    <p class="title">Plan limits (whole account)</p>
+    @for (view of views(); track view.type) {
+    <div class="window" data-testid="limit">
+      <div class="row">
+        <span class="label">{{ view.label }}</span>
+        <span class="percent level-{{ view.level }}"
+          >{{ view.percentText }}</span
+        >
+      </div>
+      <div
+        class="bar"
+        role="progressbar"
+        [attr.aria-valuenow]="view.percent"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <div
+          class="fill level-{{ view.level }}"
+          [style.width.%]="view.percent ?? 0"
+        ></div>
+      </div>
+      <span class="reset">{{ view.resetText }}</span>
+    </div>
+    } @empty {
+    <p class="hint">
+      Not known yet: Claude Code reports the limits with the first answer of a
+      session (or when they are read on request).
+    </p>
+    }
+    <p class="hint" [class.warn]="stale()">
+      @if (failed()) { Could not load the limits. } @else if (updated()) { Last
+      updated {{ updated() }}@if (stale()) { (may be outdated)}. } @else { Never
+      updated. }
+    </p>
+    <button matButton (click)="refresh()" data-testid="limits-refresh">
+      Refresh
+    </button>
+  </div>
+</mat-menu>
