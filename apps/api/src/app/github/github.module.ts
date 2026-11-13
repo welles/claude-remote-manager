@@ -63,6 +63,7 @@ import { InstallationTokens } from './installation-tokens';
   ],
   exports: [
     GitHubService,
+    GitHubHttp,
     GitHubAppCredentials,
     InstallationTokens,
     GitHubIssues,

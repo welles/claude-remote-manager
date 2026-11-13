@@ -56,7 +56,28 @@ export interface AppConfig {
   auth: AuthConfig;
   /** Notifications (Web Push, ntfy). */
   notifications: NotificationsConfig;
+  /** PR automation: webhook and polling. */
+  prAutomation: PrAutomationConfig;
 }
+
+/**
+ * Where the PR automation learns about pull requests: GitHub webhooks of
+ * the GitHub App (signed with a secret that is not part of this object,
+ * see `pr-automation/webhook-secret.ts`) and polling.
+ */
+export interface PrAutomationConfig {
+  /** File with the webhook secret; `null` to read the secret variable. */
+  webhookSecretFile: string | null;
+  /**
+   * How often open pull requests with automation are read from GitHub; 0
+   * turns polling off. `null`: 2 minutes without a webhook secret, 15
+   * minutes (as backstop for lost deliveries) with one.
+   */
+  pollIntervalMs: number | null;
+}
+
+/** Secret variable with the GitHub webhook secret, as alternative to a file. */
+export const WEBHOOK_SECRET_VARIABLE = 'CRM_SECRET_GITHUB_WEBHOOK_SECRET';
 
 /**
  * Configuration of the notifications. Secrets (the ntfy token, the VAPID
@@ -199,6 +220,34 @@ export function loadAppConfig(
     ),
     auth: loadAuth(value),
     notifications: loadNotifications(value, minutes),
+    prAutomation: loadPrAutomation(value),
+  };
+}
+
+/** Shortest polling interval that can be configured. */
+export const MIN_POLL_INTERVAL_SECONDS = 30;
+
+function loadPrAutomation(
+  value: (name: string) => string | undefined,
+): PrAutomationConfig {
+  const file = value('GITHUB_WEBHOOK_SECRET_FILE');
+  const interval = value('PR_POLL_INTERVAL_SECONDS');
+  let pollIntervalMs: number | null = null;
+  if (interval !== undefined) {
+    const seconds = Number(interval);
+    if (
+      !Number.isInteger(seconds) ||
+      (seconds !== 0 && seconds < MIN_POLL_INTERVAL_SECONDS)
+    ) {
+      throw new Error(
+        `PR_POLL_INTERVAL_SECONDS must be 0 (off) or a whole number >= ${MIN_POLL_INTERVAL_SECONDS}`,
+      );
+    }
+    pollIntervalMs = seconds * 1000;
+  }
+  return {
+    webhookSecretFile: file ? resolve(file) : null,
+    pollIntervalMs,
   };
 }
 
@@ -351,6 +400,7 @@ export function testAppConfig(
       ntfy: null,
       vapid: { publicKey: null, privateKeyFile: null, subject: null },
     },
+    prAutomation: { webhookSecretFile: null, pollIntervalMs: 0 },
     ...overrides,
   };
 }

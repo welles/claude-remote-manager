@@ -27,7 +27,9 @@ export const AUTH_MODES = ['cloudflare-access', 'none'] as const;
  * Routes without Access token, each with its own protection:
  * - the health check (container health probe, no data);
  * - the credential endpoint of session clones (session process token);
- * - later the GitHub webhook (signature).
+ * - the GitHub webhook (signature over the body with a secret sessions
+ *   never get; see `pr-automation/webhook.controller.ts`). Sessions may not
+ *   call it: they have no reason to, and nothing they send is trusted.
  * `sessions`: processes of sessions may call it.
  */
 export const AUTH_EXEMPT_ROUTES: readonly {
@@ -37,6 +39,7 @@ export const AUTH_EXEMPT_ROUTES: readonly {
 }[] = [
   { method: 'GET', path: '/api/health', sessions: true },
   { method: 'POST', path: '/api/git/credentials', sessions: true },
+  { method: 'POST', path: '/api/github/webhook', sessions: false },
 ];
 
 export type AuthVerdict =

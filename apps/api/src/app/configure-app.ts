@@ -1,6 +1,10 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import type { NextFunction, Request, Response } from 'express';
+import { raw, type NextFunction, type Request, type Response } from 'express';
 import { Authenticator } from './auth/authenticator';
+import {
+  WEBHOOK_MAX_BODY_BYTES,
+  WEBHOOK_PATH,
+} from './pr-automation/webhook.controller';
 import { GuardedWsAdapter } from './security/guarded-ws-adapter';
 import { RequestPolicy } from './security/request-policy';
 
@@ -68,6 +72,12 @@ export function configureApp(app: NestExpressApplication): void {
     }
     next();
   });
+  // The GitHub webhook's signature covers the raw body: read it as is
+  // (JSON only, bounded) before the JSON parser would.
+  app.use(
+    WEBHOOK_PATH,
+    raw({ type: 'application/json', limit: WEBHOOK_MAX_BODY_BYTES }),
+  );
   app.useBodyParser('json', { limit: MAX_BODY_SIZE });
   // Plain WebSockets for streaming session events (see SessionsGateway),
   // with the same origin checks as HTTP requests.

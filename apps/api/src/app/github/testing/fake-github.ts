@@ -50,6 +50,8 @@ export interface FakePullRequest {
   state: 'open' | 'closed';
   merged: boolean;
   createdAt: string;
+  /** Head commit (40 hex digits). */
+  headSha: string;
 }
 
 /** An issue or pull request for references (`#12`). */
@@ -94,6 +96,31 @@ export interface FakeIssue {
   } | null;
 }
 
+/** A check run of a commit (PR automation). */
+export interface FakeCheckRun {
+  id: number;
+  name: string;
+  status: 'queued' | 'in_progress' | 'completed';
+  conclusion: string | null;
+  app: string;
+  title?: string;
+  summary?: string;
+}
+
+/** A review or review comment of a pull request created through the app. */
+export interface FakeReviewItem {
+  kind: 'review' | 'review_comment';
+  id: number;
+  author: string;
+  authorType?: 'User' | 'Bot';
+  body: string;
+  createdAt: string;
+  state?: string;
+  path?: string;
+  line?: number;
+  diffHunk?: string;
+}
+
 export interface RecordedRequest {
   method: string;
   path: string;
@@ -129,6 +156,21 @@ export class FakeGitHub {
   /** Whether a head branch exists on GitHub (for pull requests). */
   headExists: (repository: FakeRepository, head: string) => boolean = () =>
     true;
+  /** Check runs and commit statuses per commit SHA. */
+  readonly checkRuns = new Map<string, FakeCheckRun[]>();
+  readonly statuses = new Map<
+    string,
+    { context: string; state: string; description?: string }[]
+  >();
+  /** Reviews and review comments per `<repository id>#<number>`. */
+  readonly reviewItems = new Map<string, FakeReviewItem[]>();
+  /** Permission per login (`admin`, `write`, `read`, ...); others 404. */
+  readonly collaborators = new Map<string, string>();
+  /** Logs of GitHub Actions jobs by job ID. */
+  readonly jobLogs = new Map<number, string>();
+  /** Head commit GitHub reports for a new pull request's branch. */
+  headSha: (repository: FakeRepository, head: string) => string = () =>
+    'a'.repeat(40);
   /** Answers a request before the fake does, e.g. with an error. */
   intercept: ((request: RecordedRequest) => Response | undefined) | null = null;
   private nextId = 1000;
@@ -317,7 +359,7 @@ export class FakeGitHub {
       merged_at: pull.merged ? '2026-01-02T00:00:00Z' : null,
       closed_at: pull.state === 'closed' ? '2026-01-02T00:00:00Z' : null,
       created_at: pull.createdAt,
-      head: { ref: pull.head },
+      head: { ref: pull.head, sha: pull.headSha },
       base: { ref: pull.base },
     };
   }
@@ -510,6 +552,132 @@ export class FakeGitHub {
     });
   }
 
+  /** Routes the PR automation reads: checks, statuses, reviews, logs. */
+  private automationRoute(request: RecordedRequest): Response | undefined {
+    const { method, path, auth } = request;
+    const match =
+      /^\/repos\/([^/]+)\/([^/]+)\/(commits\/([0-9a-f]{40})\/(check-runs|status)|pulls\/(\d+)\/(reviews|comments)|collaborators\/([^/]+)\/permission|actions\/jobs\/(\d+)\/logs)$/.exec(
+        path,
+      );
+    if (method !== 'GET' || !match) {
+      return undefined;
+    }
+    const found = this.repositoryByName(
+      decodeURIComponent(match[1]),
+      decodeURIComponent(match[2]),
+    );
+    if (!found) {
+      return json(404, { message: 'Not Found' });
+    }
+    const { repository } = found;
+    const denied = () =>
+      json(403, { message: 'Resource not accessible by integration' });
+    const [, , , , sha, commitPart, number, pullPart, login, job] = match;
+    if (sha) {
+      if (commitPart === 'check-runs') {
+        if (!this.allows(auth, repository, 'checks', 'read')) {
+          return denied();
+        }
+        const runs = this.checkRuns.get(sha) ?? [];
+        return json(200, {
+          total_count: runs.length,
+          check_runs: runs.map((run) => ({
+            id: run.id,
+            name: run.name,
+            status: run.status,
+            conclusion: run.conclusion,
+            html_url: `https://github.com/${repository.owner}/${repository.name}/runs/${run.id}`,
+            app: { slug: run.app },
+            output: { title: run.title ?? null, summary: run.summary ?? null },
+          })),
+        });
+      }
+      if (!this.allows(auth, repository, 'statuses', 'read')) {
+        return denied();
+      }
+      return json(200, {
+        state: 'failure',
+        statuses: (this.statuses.get(sha) ?? []).map((status) => ({
+          ...status,
+          target_url: 'https://ci.example.com/build',
+        })),
+      });
+    }
+    if (number) {
+      if (
+        !this.pulls.some(
+          (pull) =>
+            pull.repositoryId === repository.id &&
+            pull.number === Number(number),
+        )
+      ) {
+        return undefined;
+      }
+      if (!this.allows(auth, repository, 'pull_requests', 'read')) {
+        return denied();
+      }
+      const items = (
+        this.reviewItems.get(`${repository.id}#${number}`) ?? []
+      ).filter((item) =>
+        pullPart === 'reviews'
+          ? item.kind === 'review'
+          : item.kind === 'review_comment',
+      );
+      const user = (item: FakeReviewItem) => ({
+        login: item.author,
+        type: item.authorType ?? 'User',
+      });
+      return pullPart === 'reviews'
+        ? this.page(
+            request,
+            items.map((item) => ({
+              id: item.id,
+              user: user(item),
+              body: item.body,
+              state: item.state ?? 'COMMENTED',
+              submitted_at: item.createdAt,
+            })),
+          )
+        : json(
+            200,
+            items
+              .slice()
+              .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+              .map((item) => ({
+                id: item.id,
+                user: user(item),
+                body: item.body,
+                created_at: item.createdAt,
+                path: item.path,
+                line: item.line ?? null,
+                diff_hunk: item.diffHunk ?? null,
+              })),
+          );
+    }
+    if (login) {
+      if (!this.allows(auth, repository, 'metadata', 'read')) {
+        return denied();
+      }
+      const permission = this.collaborators.get(decodeURIComponent(login));
+      return permission
+        ? json(200, {
+            permission: permission === 'maintain' ? 'write' : permission,
+            role_name: permission,
+          })
+        : json(404, { message: 'Not Found' });
+    }
+    if (!this.allows(auth, repository, 'actions', 'read')) {
+      return denied();
+    }
+    const log = this.jobLogs.get(Number(job));
+    return log === undefined
+      ? json(404, { message: 'Not Found' })
+      : new Response(log, {
+          status: 200,
+          headers: { 'content-type': 'text/plain' },
+        });
+  }
+
   /** Token check for repository endpoints. */
   private allows(
     auth: RecordedRequest['auth'],
@@ -539,6 +707,10 @@ export class FakeGitHub {
       json(403, { message: 'Resource not accessible by integration' });
     let match: RegExpExecArray | null;
 
+    const automationResponse = this.automationRoute(request);
+    if (automationResponse) {
+      return automationResponse;
+    }
     const issueResponse = this.issueRoute(request);
     if (issueResponse) {
       return issueResponse;
@@ -748,6 +920,7 @@ export class FakeGitHub {
         state: 'open',
         merged: false,
         createdAt: new Date().toISOString(),
+        headSha: this.headSha(repository, head),
       };
       this.pulls.push(pull);
       return json(201, this.rawPull(pull));

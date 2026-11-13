@@ -27,6 +27,11 @@ export interface GitHubRequest {
    * text.
    */
   accept?: string;
+  /**
+   * For text answers (`accept` set): keep only the last `bytes` bytes and
+   * stop reading after `maxRead` bytes (e.g. CI logs, which can be large).
+   */
+  tail?: { bytes: number; maxRead: number };
 }
 
 export interface GitHubResponse<T> {
@@ -46,6 +51,48 @@ export interface GitHubHttpOptions {
 }
 
 const RETRIES = 2;
+
+/**
+ * The end of a response body: at most `bytes` bytes, read from at most the
+ * first `maxRead` bytes of the body (the rest is not downloaded). Decoded as
+ * UTF-8; a character cut at the start is dropped.
+ */
+export async function readTail(
+  response: Response,
+  { bytes, maxRead }: { bytes: number; maxRead: number },
+): Promise<string> {
+  if (!response.body) {
+    return '';
+  }
+  const reader = response.body.getReader();
+  let chunks: Uint8Array[] = [];
+  let kept = 0;
+  let read = 0;
+  try {
+    while (read < maxRead) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      read += value.byteLength;
+      chunks.push(value);
+      kept += value.byteLength;
+      while (chunks.length > 1 && kept - chunks[0].byteLength >= bytes) {
+        kept -= chunks[0].byteLength;
+        chunks = chunks.slice(1);
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const all = Buffer.concat(chunks);
+  let start = Math.max(0, all.length - bytes);
+  // Skip UTF-8 continuation bytes of a character cut at the start.
+  while (start < all.length && start > 0 && (all[start] & 0xc0) === 0x80) {
+    start++;
+  }
+  return all.subarray(start).toString('utf8');
+}
 
 /** `<https://…?page=2>; rel="next", …` → the next URL. */
 export function nextLink(header: string | null): string | null {
@@ -169,7 +216,10 @@ export class GitHubHttp {
         );
       }
       if (response.ok) {
-        const text = await response.text();
+        const text =
+          request.tail && request.accept
+            ? await readTail(response, request.tail)
+            : await response.text();
         return {
           status: response.status,
           data: (request.accept ? text : text ? JSON.parse(text) : null) as T,

@@ -12,6 +12,7 @@ import { GitHubModule } from './github/github.module';
 import { HealthController } from './health/health.controller';
 import { LimitsModule } from './limits/limits.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { PrAutomationModule } from './pr-automation/pr-automation.module';
 import { RepositoriesModule } from './repositories/repositories.module';
 import {
   REQUEST_GUARD_EXEMPT_ROUTES,
@@ -38,6 +39,7 @@ const webRoot = resolve(process.env.WEB_ROOT || join(__dirname, 'public'));
     RepositoriesModule,
     SessionsModule,
     NotificationsModule,
+    PrAutomationModule,
     ...(existsSync(webRoot)
       ? [
           ServeStaticModule.forRoot({

@@ -30,10 +30,14 @@ services:
       # URLs still work).
       # GITHUB_APP_ID: '123456'
       # GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app-key
+      # PR automation: the secret of the GitHub App's webhook (without it
+      # the webhook refuses everything and pull requests are polled).
+      # GITHUB_WEBHOOK_SECRET_FILE: /run/secrets/github-webhook-secret
     # The key file must be readable by UID 1000 (the API user) and not by
     # UID 1001 (the session user), e.g. owned by 1000 with mode 0400.
     # secrets:
     #   - github-app-key
+    #   - github-webhook-secret
     # Log in to Claude as the session user:
     #   docker compose exec -u claude claude-remote-manager claude
     volumes:
@@ -54,6 +58,8 @@ services:
 # secrets:
 #   github-app-key:
 #     file: ./secrets/github-app.pem
+#   github-webhook-secret:
+#     file: ./secrets/github-webhook-secret
 
 volumes:
   workspace:

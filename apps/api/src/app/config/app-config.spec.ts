@@ -54,6 +54,7 @@ describe('loadAppConfig', () => {
         ntfy: null,
         vapid: { publicKey: null, privateKeyFile: null, subject: null },
       },
+      prAutomation: { webhookSecretFile: null, pollIntervalMs: null },
     });
   });
 
@@ -85,6 +86,8 @@ describe('loadAppConfig', () => {
           NTFY_TOPIC: 'crm-alerts',
           NTFY_TOKEN_FILE: '/run/secrets/ntfy-token',
           VAPID_SUBJECT: 'mailto:admin@example.com',
+          GITHUB_WEBHOOK_SECRET_FILE: '/run/secrets/github-webhook-secret',
+          PR_POLL_INTERVAL_SECONDS: '300',
         },
         PASSWD,
       ),
@@ -137,7 +140,23 @@ describe('loadAppConfig', () => {
           subject: 'mailto:admin@example.com',
         },
       },
+      prAutomation: {
+        webhookSecretFile: '/run/secrets/github-webhook-secret',
+        pollIntervalMs: 300_000,
+      },
     });
+  });
+
+  it('accepts polling intervals of 0 (off) and from 30 seconds', () => {
+    expect(
+      loadAppConfig({ ...DEV, PR_POLL_INTERVAL_SECONDS: '0' }).prAutomation
+        .pollIntervalMs,
+    ).toBe(0);
+    for (const value of ['10', '-5', '1.5', 'often']) {
+      expect(() =>
+        loadAppConfig({ ...DEV, PR_POLL_INTERVAL_SECONDS: value }),
+      ).toThrow('PR_POLL_INTERVAL_SECONDS');
+    }
   });
 
   it('rejects a GitHub App ID that is not numeric', () => {

@@ -604,6 +604,94 @@ export class GitService {
     });
   }
 
+  /**
+   * What deleting a session clone would lose: uncommitted files (modified,
+   * staged, untracked and not ignored), commits on local branches that no
+   * remote-tracking branch of the clone has (and that are not reachable
+   * from `knownRemoteCommits`, e.g. a pull request's head on GitHub), and
+   * stash entries. Lists hold at most `limit` entries; counts are complete.
+   * git runs as the session user, without taking locks.
+   */
+  async cloneLoss(
+    path: string,
+    {
+      knownRemoteCommits = [],
+      limit = 50,
+    }: {
+      knownRemoteCommits?: string[];
+      limit?: number;
+    } = {},
+  ): Promise<{
+    uncommittedFiles: string[];
+    uncommittedCount: number;
+    unpushedCommits: { branch: string; sha: string; subject: string }[];
+    unpushedCount: number;
+    stashes: number;
+  }> {
+    const inClone = (args: string[]) =>
+      this.inClone(path, ['--no-optional-locks', ...args]);
+    const status = await inClone([
+      'status',
+      '--porcelain=v1',
+      '-z',
+      '--untracked-files=all',
+      '--ignore-submodules=none',
+    ]);
+    const files: string[] = [];
+    const entries = status.split('\0');
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index];
+      if (entry.length < 4) {
+        continue;
+      }
+      files.push(entry.slice(3));
+      if (/^[RC]/.test(entry)) {
+        index++; // the original path of a rename or copy
+      }
+    }
+    const known: string[] = [];
+    for (const commit of knownRemoteCommits) {
+      if (/^[0-9a-f]{40}$/.test(commit) && (await this.verify(path, commit))) {
+        known.push(commit);
+      }
+    }
+    const range = ['--branches', '--not', '--remotes', ...known];
+    const count = Number(
+      (await inClone(['rev-list', '--count', ...range])).trim() || '0',
+    );
+    const log =
+      count > 0
+        ? await inClone([
+            'log',
+            `--max-count=${limit}`,
+            '--source',
+            '--format=%H%x09%S%x09%s',
+            ...range,
+          ])
+        : '';
+    const unpushedCommits = log
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [sha, source, ...subject] = line.split('\t');
+        return {
+          sha,
+          branch: source.replace(/^refs\/heads\//, ''),
+          subject: subject.join('\t'),
+        };
+      });
+    const stash = await inClone(['stash', 'list', '--format=%H']).catch(
+      () => '',
+    );
+    return {
+      uncommittedFiles: files.slice(0, limit),
+      uncommittedCount: files.length,
+      unpushedCommits,
+      unpushedCount: count,
+      stashes: stash.split('\n').filter(Boolean).length,
+    };
+  }
+
   /** Whether the mirror has a remote (`false` for a local project). */
   async hasRemote(mirrorPath: string): Promise<boolean> {
     try {

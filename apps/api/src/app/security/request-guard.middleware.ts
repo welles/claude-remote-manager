@@ -2,6 +2,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  RequestMethod,
   type NestMiddleware,
 } from '@nestjs/common';
 import type { RouteInfo } from '@nestjs/common/interfaces';
@@ -12,8 +13,13 @@ import { RequestPolicy } from './request-policy';
 /**
  * Routes the request guard does not check, e.g. a webhook endpoint that
  * verifies a signature instead. Add exemptions here, each with a reason.
+ * - the GitHub webhook: called by GitHub, not a browser; authenticated
+ *   only by the signature of its raw JSON body (the controller accepts
+ *   nothing else, see `pr-automation/webhook.controller.ts`).
  */
-export const REQUEST_GUARD_EXEMPT_ROUTES: RouteInfo[] = [];
+export const REQUEST_GUARD_EXEMPT_ROUTES: RouteInfo[] = [
+  { path: 'github/webhook', method: RequestMethod.POST },
+];
 
 /**
  * The only routes whose bodies are not JSON, with the content types they

@@ -136,8 +136,8 @@ as_session env HOME="/home/$SESSION_USER" PATH="$PATH" sh -eu -c '
 '
 
 # --- Secret files ------------------------------------------------------------
-# The GitHub App key, the ntfy token and the VAPID private key must be
-# readable by the API and not by sessions.
+# The GitHub App key, the webhook secret, the ntfy token and the VAPID
+# private key must be readable by the API and not by sessions.
 check_secret_file() { # variable-name
   file="$(eval "printf '%s' \"\${$1:-}\"")"
   [ -n "$file" ] || return 0
@@ -149,6 +149,7 @@ check_secret_file() { # variable-name
   fi
 }
 check_secret_file GITHUB_APP_PRIVATE_KEY_FILE
+check_secret_file GITHUB_WEBHOOK_SECRET_FILE
 check_secret_file NTFY_TOKEN_FILE
 check_secret_file VAPID_PRIVATE_KEY_FILE
 

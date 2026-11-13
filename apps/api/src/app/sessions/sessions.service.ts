@@ -68,6 +68,10 @@ import {
   SHOW_FILE_TOOL_NAME,
 } from './approval-grants';
 import { sessionAllows, unresolvedRequests } from './permission-requests';
+import {
+  SessionAutomationHooks,
+  type AutoPushOutcome,
+} from './session-automation-hooks';
 import { UserToolApprover } from './user-tool-approver';
 import {
   optionalEnum,
@@ -339,6 +343,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly githubReferences?: GitHubReferencesService,
     @Optional()
     private readonly contexts?: MessageContextRepository,
+    @Optional()
+    private readonly automation?: SessionAutomationHooks,
   ) {}
 
   /**
@@ -1684,6 +1690,29 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       const gitPushes = command
         ? await this.workspaces.analyzeGitPushes(live.id, command)
         : [];
+      if (command && gitPushes.length > 0 && this.automation?.autoPush) {
+        // During autofix the app pushes the session branch itself.
+        let outcome: AutoPushOutcome | null = null;
+        try {
+          outcome = await this.automation.autoPush(live.id, command, gitPushes);
+        } catch (error) {
+          this.logger.warn(
+            `Autofix push of ${live.id} failed: ${errorMessage(error)}`,
+          );
+        }
+        if (outcome) {
+          this.append(live, {
+            type: 'notice',
+            level: 'info',
+            text: outcome.notice,
+          });
+          return {
+            behavior: 'deny',
+            message: outcome.message,
+            interrupt: false,
+          };
+        }
+      }
       const decision = await this.approver.decide({
         sessionId: live.id,
         toolName,
@@ -2169,6 +2198,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       usage: totals,
       context: this.live.get(record.id)?.context ?? null,
       pullRequests: record.pullRequests.map(pullRequestDto),
+      autoclosedAt: record.autoclosedAt?.toISOString() ?? null,
     };
   }
 }

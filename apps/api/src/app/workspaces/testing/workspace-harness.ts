@@ -35,6 +35,8 @@ import { FakeGitHub } from '../../github/testing/fake-github';
 import { ApprovalGrants } from '../../sessions/approval-grants';
 import { SessionAgentSupportService } from '../../sessions/session-agent-support';
 import { SessionCredentials } from '../../sessions/session-credentials';
+import { SessionAutomationHooks } from '../../sessions/session-automation-hooks';
+import { MessageContextRepository } from '../../sessions/message-context.repository';
 import { SessionGitService } from '../../sessions/session-git.service';
 import { RepositoryCredentials } from '../../repositories/repository-credentials';
 import { SettingsService } from '../../settings/settings.service';
@@ -104,6 +106,8 @@ export class WorkspaceHarness {
   readonly sessionCredentials = new SessionCredentials();
   readonly grants = new ApprovalGrants();
   readonly approver = new RecordingApprover();
+  /** Hooks for the PR automation (set by its tests). */
+  readonly hooks = new SessionAutomationHooks();
   repositories!: RepositoriesService;
   workspaces!: SessionWorkspaceService;
   sessionGit!: SessionGitService;
@@ -167,6 +171,9 @@ export class WorkspaceHarness {
       undefined,
       undefined,
       this.shownFiles,
+      undefined,
+      new MessageContextRepository(this.db),
+      this.hooks,
     );
     const service = this.service;
     this.shownFiles.shown$.subscribe(({ sessionId, toolUseId, file }) =>

@@ -90,7 +90,7 @@ export function deviceLabel(userAgent: string | undefined): string {
  * sent about a session that an active client shows (see ViewerPresence).
  *
  * Other parts of the app report their events here; the PR automation
- * (later step) calls {@link notifyAutofixGaveUp} and
+ * (`pr-automation/`) calls {@link notifyAutofixGaveUp} and
  * {@link notifyPullRequestClosed}.
  */
 @Injectable()
@@ -212,6 +212,8 @@ export class NotificationsService implements OnModuleDestroy {
   notifyPullRequestClosed(
     sessionId: string,
     pullRequest: PullRequestDto,
+    /** What autoclose did, e.g. that a clone was kept. */
+    note: string | null = null,
   ): boolean {
     const session = this.sessionOrNull(sessionId);
     const merged = pullRequest.state === 'merged';
@@ -222,6 +224,7 @@ export class NotificationsService implements OnModuleDestroy {
       title: `${merged ? 'Merged' : 'Closed'}: ${pullRequestLabel(pullRequest)}`,
       body: [
         shorten(pullRequest.title, 120),
+        note ? shorten(note, 160) : null,
         session ? sessionContext(session) : null,
       ]
         .filter(Boolean)

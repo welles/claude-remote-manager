@@ -13,6 +13,7 @@ import {
   SessionAgentSupportService,
 } from './session-agent-support';
 import { SessionCredentials } from './session-credentials';
+import { SessionAutomationHooks } from './session-automation-hooks';
 import { SessionGitController } from './session-git.controller';
 import { SessionGitService } from './session-git.service';
 import { AgentRunner } from '../agent/agent-runner';
@@ -70,6 +71,10 @@ import { ModelsService } from './models.service';
     GitCredentialsService,
     { provide: SessionCredentials, useValue: new SessionCredentials() },
     { provide: ApprovalGrants, useValue: new ApprovalGrants() },
+    {
+      provide: SessionAutomationHooks,
+      useValue: new SessionAutomationHooks(),
+    },
     { provide: SessionAgentSupport, useClass: SessionAgentSupportService },
     { provide: ToolApprover, useValue: new UserToolApprover() },
     ModelsService,
@@ -81,7 +86,13 @@ import { ModelsService } from './models.service';
     { provide: AgentRunner, useClass: SdkAgentRunner },
     { provide: TranscriptReader, useClass: SdkTranscriptReader },
   ],
-  exports: [SessionsService, ViewerPresence],
+  exports: [
+    SessionsService,
+    ViewerPresence,
+    SessionRepository,
+    SessionGitService,
+    SessionAutomationHooks,
+  ],
 })
 export class SessionsModule {
   constructor(

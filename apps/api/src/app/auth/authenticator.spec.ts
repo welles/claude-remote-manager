@@ -126,6 +126,14 @@ describe('authentication', () => {
     ).toBe(401);
     expect((await get('/api/models')).status).toBe(401);
     expect((await get('/api/sessions/x/diff')).status).toBe(401);
+    expect(
+      (await postJson(app.port, '/api/sessions/x/autofix/stop', {})).status,
+    ).toBe(401);
+    // The webhook needs no Access token: its signature is checked instead
+    // (no secret configured here, so it refuses everything).
+    const webhook = await postJson(app.port, '/api/github/webhook', {});
+    expect(webhook.status).toBe(503);
+    expect((await get('/api/github/webhook')).status).toBe(401);
   });
 
   it('refuses session processes, whatever token they bring', async () => {
@@ -178,6 +186,13 @@ describe('authentication', () => {
       ['DELETE', '/api/notifications/push-subscriptions/x'],
       ['POST', '/api/notifications/test'],
       ['POST', '/api/notifications/approval-actions'],
+      // PR automation: switches, stopping a run, kept clones, and the
+      // webhook (sessions never get its secret; they may not even try).
+      ['PATCH', '/api/sessions/x/pull-requests/1/automation'],
+      ['POST', '/api/sessions/x/autofix/stop'],
+      ['GET', '/api/sessions/x/repositories/y/clone-loss'],
+      ['POST', '/api/sessions/x/repositories/y/discard-clone'],
+      ['POST', '/api/github/webhook'],
     ] as const) {
       const response =
         method === 'GET' || method === 'DELETE'
