@@ -25,8 +25,8 @@
       @if (clone.directory.pushedCommit; as pushed) {
       <span class="pushed" data-testid="pushed"
         >pushed <code>{{ pushed.slice(0, 7) }}</code> @if
-        (clone.directory.pushedAt) { {{ clone.directory.pushedAt | date: 'short'
-        }} }</span
+        (clone.directory.pushedAt) { {{ clone.directory.pushedAt | appDate }}
+        }</span
       >
       }
       <span class="spacer"></span>

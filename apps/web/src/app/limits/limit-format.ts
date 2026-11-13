@@ -2,6 +2,7 @@ import type {
   AccountLimits,
   RateLimitWindow,
 } from '@claude-remote-manager/shared-types';
+import { formatClock } from '../ui/dates';
 
 /** Values older than this are marked as possibly outdated. */
 export const STALE_AFTER_MS = 15 * 60_000;
@@ -64,13 +65,7 @@ export function formatDuration(ms: number): string {
 
 /** Local time, with the weekday when it is not today. */
 export function formatTime(iso: string, now: number): string {
-  const time = new Date(iso);
-  const sameDay = time.toDateString() === new Date(now).toDateString();
-  return time.toLocaleString(undefined, {
-    ...(sameDay ? {} : { weekday: 'short' }),
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatClock(iso, now);
 }
 
 export function limitView(window: RateLimitWindow, now: number): LimitView {

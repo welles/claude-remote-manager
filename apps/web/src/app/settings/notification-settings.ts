@@ -1,4 +1,4 @@
-import { DatePipe } from '@angular/common';
+import { AppDatePipe } from '../ui/dates';
 import {
   Component,
   computed,
@@ -49,7 +49,7 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
 @Component({
   selector: 'app-notification-settings',
   imports: [
-    DatePipe,
+    AppDatePipe,
     MatButtonModule,
     MatCheckboxModule,
     MatProgressSpinnerModule,

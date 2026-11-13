@@ -1,4 +1,4 @@
-import { DatePipe } from '@angular/common';
+import { AppDatePipe } from '../ui/dates';
 import { Component, computed, inject, input, signal } from '@angular/core';
 import { TextFieldModule } from '@angular/cdk/text-field';
 import { FormsModule } from '@angular/forms';
@@ -43,7 +43,7 @@ export const PULL_REQUEST_STATE_LABELS: Record<
 @Component({
   selector: 'app-session-git-panel',
   imports: [
-    DatePipe,
+    AppDatePipe,
     DiscardCloneDialog,
     FormsModule,
     MatButtonModule,

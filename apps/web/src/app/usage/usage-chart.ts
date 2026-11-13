@@ -3,6 +3,7 @@ import type {
   UsageStatistics,
   UsageTotals,
 } from '@claude-remote-manager/shared-types';
+import { dateFormat } from '../ui/dates';
 
 /** What the chart shows. */
 export type UsageMeasure = 'cost' | 'tokens';
@@ -94,14 +95,10 @@ export function bucketLabel(
 ): string {
   const date = new Date(`${bucket}T00:00:00Z`);
   return granularity === 'month'
-    ? date.toLocaleDateString(undefined, {
-        month: 'short',
-        year: 'numeric',
-        timeZone: 'UTC',
-      })
-    : date.toLocaleDateString(undefined, {
-        day: 'numeric',
-        month: 'short',
-        timeZone: 'UTC',
-      });
+    ? dateFormat({ month: 'short', year: 'numeric', timeZone: 'UTC' }).format(
+        date,
+      )
+    : dateFormat({ day: 'numeric', month: 'short', timeZone: 'UTC' }).format(
+        date,
+      );
 }

@@ -42,8 +42,7 @@
 <!-- The search results replace the list. -->
 } @else { @if (staleSince(); as since) {
 <p class="stale" role="status" data-testid="stale-list">
-  Offline: the sessions as of {{ since | date: 'short' }}. They may be out of
-  date.
+  Offline: the sessions as of {{ since | appDate }}. They may be out of date.
   <button matButton type="button" (click)="load()">Retry</button>
 </p>
 } @if (loading() && sessions().length === 0) {
@@ -71,7 +70,7 @@
         data-testid="session-status"
         >{{ statusLabel(session) }}</span
       >
-      <span>{{ session.updatedAt | date: 'short' }}</span>
+      <span>{{ session.updatedAt | appDate }}</span>
       @if (workspaceLabel(session); as workspace) {
       <span class="workspace">{{ workspace }}</span>
       } @if (session.model) {

@@ -1,4 +1,4 @@
-import { DatePipe } from '@angular/common';
+import { AppDatePipe } from '../ui/dates';
 import {
   Component,
   DestroyRef,
@@ -43,7 +43,7 @@ export const cloneSlug = (path: string) =>
 @Component({
   selector: 'app-repository-list',
   imports: [
-    DatePipe,
+    AppDatePipe,
     FormsModule,
     GitHubRepositoryPicker,
     MatButtonModule,

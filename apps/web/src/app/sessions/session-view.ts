@@ -1,5 +1,6 @@
 import { TextFieldModule } from '@angular/cdk/text-field';
-import { DatePipe, DecimalPipe, KeyValuePipe } from '@angular/common';
+import { DecimalPipe, KeyValuePipe } from '@angular/common';
+import { AppDatePipe } from '../ui/dates';
 import {
   Component,
   DestroyRef,
@@ -82,7 +83,7 @@ import { errorMessage } from '../repositories/repositories-api';
   imports: [
     CleanupDialog,
     ContextMeter,
-    DatePipe,
+    AppDatePipe,
     DecimalPipe,
     DeleteSessionDialog,
     SessionTitle,

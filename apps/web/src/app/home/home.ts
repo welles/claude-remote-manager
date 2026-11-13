@@ -1,4 +1,4 @@
-import { DatePipe } from '@angular/common';
+import { AppDatePipe } from '../ui/dates';
 import { httpResource } from '@angular/common/http';
 import { Component } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
@@ -8,7 +8,12 @@ import type { HealthResponse } from '@claude-remote-manager/shared-types';
 
 @Component({
   selector: 'app-home',
-  imports: [DatePipe, MatButtonModule, MatCardModule, MatProgressSpinnerModule],
+  imports: [
+    AppDatePipe,
+    MatButtonModule,
+    MatCardModule,
+    MatProgressSpinnerModule,
+  ],
   templateUrl: './home.html',
   styleUrl: './home.scss',
 })

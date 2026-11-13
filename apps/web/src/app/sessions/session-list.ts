@@ -1,4 +1,4 @@
-import { DatePipe } from '@angular/common';
+import { AppDatePipe } from '../ui/dates';
 import {
   Component,
   DestroyRef,
@@ -46,7 +46,7 @@ import { SessionsApi } from './sessions-api';
 @Component({
   selector: 'app-session-list',
   imports: [
-    DatePipe,
+    AppDatePipe,
     LimitsSummary,
     MatButtonModule,
     MatCardModule,

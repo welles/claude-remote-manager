@@ -17,6 +17,7 @@ import type {
   UsageStatistics,
 } from '@claude-remote-manager/shared-types';
 import { formatCost, formatTokens, totalTokens } from '../sessions/format';
+import { dateFormat } from '../ui/dates';
 import {
   axisTicks,
   bucketLabel,
@@ -219,12 +220,12 @@ export class UsagePage implements OnInit {
     const from = new Date(`${statistics.from}T00:00:00Z`);
     const to = new Date(`${statistics.to}T00:00:00Z`);
     const format = (date: Date) =>
-      date.toLocaleDateString(undefined, {
+      dateFormat({
         day: 'numeric',
         month: 'short',
         year: 'numeric',
         timeZone: 'UTC',
-      });
+      }).format(date);
     return `${format(from)} – ${format(to)}`;
   }
 }

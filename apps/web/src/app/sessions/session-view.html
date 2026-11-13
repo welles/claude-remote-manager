@@ -4,10 +4,10 @@
   <app-session-title [session]="s" (renamed)="session.set($event)" />
   @if (s.archivedAt) {
   <p class="state-banner" data-testid="archived-banner">
-    Archived {{ s.archivedAt | date: 'short' }}: hidden from the session list,
-    history readable. @if (removedDirectories(); as removed) { {{ removed.text
-    }} {{ removed.verb }} removed, so it cannot be continued. } @else {
-    Unarchive it to continue it. }
+    Archived {{ s.archivedAt | appDate }}: hidden from the session list, history
+    readable. @if (removedDirectories(); as removed) { {{ removed.text }} {{
+    removed.verb }} removed, so it cannot be continued. } @else { Unarchive it
+    to continue it. }
   </p>
   } @else if (removedDirectories()) {
   <p class="state-banner" data-testid="cleaned-banner">

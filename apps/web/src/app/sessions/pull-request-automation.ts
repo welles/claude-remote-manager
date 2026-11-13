@@ -1,4 +1,4 @@
-import { DatePipe } from '@angular/common';
+import { AppDatePipe } from '../ui/dates';
 import { Component, computed, inject, input, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import {
@@ -27,7 +27,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
  */
 @Component({
   selector: 'app-pull-request-automation',
-  imports: [DatePipe, MatButtonModule, MatSlideToggleModule],
+  imports: [AppDatePipe, MatButtonModule, MatSlideToggleModule],
   template: `
     @let automation = pull().automation;
     <div class="automation" data-testid="pr-automation">
@@ -107,7 +107,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       </p>
     } @else if (automation.lastRunAt) {
       <p class="note" data-testid="autofix-last-run">
-        Last autofix run {{ automation.lastRunAt | date: 'short' }} for
+        Last autofix run {{ automation.lastRunAt | appDate }} for
         {{ trigger() }}.
       </p>
     }

@@ -11,7 +11,7 @@ import { FormsModule } from '@angular/forms';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { DatePipe } from '@angular/common';
+import { AppDatePipe } from '../ui/dates';
 import { RouterLink } from '@angular/router';
 import {
   Subject,
@@ -64,7 +64,7 @@ export function snippetParts(
 @Component({
   selector: 'app-session-search',
   imports: [
-    DatePipe,
+    AppDatePipe,
     FormsModule,
     MatFormFieldModule,
     MatInputModule,
@@ -113,7 +113,7 @@ export function snippetParts(
                 }
               </span>
               <span class="meta"
-                >{{ hit.updatedAt | date: 'short' }}
+                >{{ hit.updatedAt | appDate }}
                 @if (hit.repositories.length > 0) {
                   · {{ hit.repositories.join(' + ') }}
                 }

@@ -69,9 +69,9 @@
       <span>
         <strong>{{ device.label }}</strong>
         <span class="muted">
-          · {{ device.pushService }} · since {{ device.createdAt | date: 'short'
-          }} @if (device.lastSuccessAt) { · last sent {{ device.lastSuccessAt |
-          date: 'short' }} }</span
+          · {{ device.pushService }} · since {{ device.createdAt | appDate }}
+          @if (device.lastSuccessAt) { · last sent {{ device.lastSuccessAt |
+          appDate }} }</span
         >
         @if (device.lastError) {
         <span class="error"> · {{ device.lastError }}</span>

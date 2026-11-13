@@ -106,7 +106,7 @@
         } @else if (!repository.activity) {
         <span>Not cloned</span>
         } @if (repository.fetchedAt) {
-        <span>Fetched {{ repository.fetchedAt | date: 'short' }}</span>
+        <span>Fetched {{ repository.fetchedAt | appDate }}</span>
         }
       </div>
       <div class="paths">
