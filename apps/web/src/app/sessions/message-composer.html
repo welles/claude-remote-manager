@@ -1,6 +1,12 @@
 <div class="composer" (dragover)="onDragOver($event)" (drop)="onDrop($event)">
   @if (suggesting()) {
-  <ul class="mentions" role="listbox" aria-label="Files" data-testid="mentions">
+  <ul
+    id="mention-list"
+    class="mentions"
+    role="listbox"
+    aria-label="Files"
+    data-testid="mentions"
+  >
     @for (file of suggestions(); track file.mention; let i = $index) {
     <li
       role="option"
@@ -48,7 +54,7 @@
         #textarea
         role="combobox"
         aria-autocomplete="list"
-        aria-controls="mention-list"
+        [attr.aria-controls]="suggesting() ? 'mention-list' : null"
         [attr.aria-expanded]="suggesting()"
         cdkTextareaAutosize
         cdkAutosizeMinRows="1"

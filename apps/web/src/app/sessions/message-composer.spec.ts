@@ -175,6 +175,10 @@ describe('MessageComposer', () => {
       'src/login.ts acme/app',
       'docs/log book.md acme/lib',
     ]);
+    // The combobox points at the list it controls.
+    const list = element.querySelector('[data-testid="mentions"]');
+    expect(list?.id).toBeTruthy();
+    expect(textarea.getAttribute('aria-controls')).toBe(list?.id);
     const key = (name: string) =>
       textarea.dispatchEvent(
         new KeyboardEvent('keydown', { key: name, cancelable: true }),
@@ -184,6 +188,7 @@ describe('MessageComposer', () => {
     await fixture.whenStable();
     expect(textarea.value).toBe('Look at @"/w/acme/lib/docs/log book.md" ');
     expect(element.querySelector('[data-testid="mentions"]')).toBeNull();
+    expect(textarea.hasAttribute('aria-controls')).toBe(false);
     // Enter sent nothing.
     expect(sent).toEqual([]);
 
