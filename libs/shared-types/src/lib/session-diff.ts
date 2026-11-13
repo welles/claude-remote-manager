@@ -2,7 +2,7 @@ import type { FileDiff } from './diffs';
 
 /*
  * Diff of a whole session (`GET /api/sessions/:id/diff`): what each of its
- * session clones changed against the commit it started from, per file,
+ * session clones changed against the merge base with its base branch, per file,
  * with uncommitted changes and untracked (not ignored) files. Also used by
  * the cleanup of sessions.
  */
@@ -23,7 +23,26 @@ export interface SessionDiffFile extends FileDiff {
   content: SessionDiffContent;
 }
 
-/** What a session clone changed against the commit it started from. */
+/**
+ * What a session diff compares a clone against:
+ * - `merge_base`: the merge base of `HEAD` and the base branch as the clone
+ *   knows it (`origin/<base branch>`), like a pull request: changes merged
+ *   or rebased in from the base branch are not the session's;
+ * - `start_commit`: the commit the session branch started at, when there
+ *   is no such merge base (`fallbackReason` says why).
+ */
+export interface DiffComparison {
+  commit: string;
+  basis: 'merge_base' | 'start_commit';
+  /** Ref of the base branch the merge base was taken with, e.g. `origin/main`. */
+  ref: string | null;
+  fallbackReason: string | null;
+}
+
+/**
+ * What a session clone changed: the working tree (with staged and
+ * untracked, not ignored files) against {@link DiffComparison}.
+ */
 export interface RepositoryDiff {
   repositoryId: string;
   /** `owner/name`. */
@@ -31,7 +50,10 @@ export interface RepositoryDiff {
   path: string;
   branch: string | null;
   baseBranch: string | null;
-  baseCommit: string | null;
+  /** The commit the session branch started at. */
+  startCommit: string | null;
+  /** What the diff compares against; `null` when unavailable. */
+  comparison: DiffComparison | null;
   /** Commit checked out in the clone (`HEAD`). */
   headCommit: string | null;
   /** `unavailable`: no diff (clone removed, no base commit, git failed). */

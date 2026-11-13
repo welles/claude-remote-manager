@@ -32,10 +32,18 @@ repository.repositoryId; let r = $index) {
     <h2>{{ repository.repository }}</h2>
     <p class="meta">
       @if (repository.branch) {
-      <code>{{ repository.branch }}</code> } @if (repository.baseCommit) {
-      against <code>{{ repository.baseBranch ?? 'base' }}</code> at
-      <code>{{ repository.baseCommit.slice(0, 12) }}</code>
-      } @if (repository.state === 'ok') { ·
+      <code>{{ repository.branch }}</code> } @if (repository.comparison; as
+      comparison) { @if (comparison.basis === 'merge_base') {
+      <span data-testid="comparison"
+        >&#32;compared with <code>{{ comparison.ref }}</code> at its merge base
+        <code>{{ comparison.commit.slice(0, 12) }}</code></span
+      >
+      } @else {
+      <span data-testid="comparison"
+        >&#32;compared with the commit it started from
+        <code>{{ comparison.commit.slice(0, 12) }}</code></span
+      >
+      } } @if (repository.state === 'ok') { ·
       <span data-testid="repository-summary"
         >{{ repository.fileCount }} {{ repository.fileCount === 1 ? 'file' :
         'files' }} changed,
@@ -44,6 +52,13 @@ repository.repositoryId; let r = $index) {
       >
       }
     </p>
+    @if (repository.comparison?.fallbackReason; as reason) {
+    <p class="meta" data-testid="comparison-fallback">
+      {{ reason }} Changes brought in from
+      <code>{{ repository.baseBranch ?? 'the base branch' }}</code> may show as
+      the session's.
+    </p>
+    }
   </header>
   @if (repository.state !== 'ok') {
   <p class="error">{{ repository.message }}</p>

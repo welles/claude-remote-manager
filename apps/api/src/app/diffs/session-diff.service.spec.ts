@@ -161,7 +161,14 @@ describe('SessionDiffService', () => {
       path: app,
       branch: 'claude/s1',
       baseBranch: 'main',
-      baseCommit: baseApp,
+      startCommit: baseApp,
+      // These clones have no origin: compared against the start commit.
+      comparison: {
+        commit: baseApp,
+        basis: 'start_commit',
+        ref: null,
+        fallbackReason: 'The clone does not know origin/main.',
+      },
       headCommit: await git(app, 'rev-parse', 'HEAD'),
       state: 'ok',
       fileCount: 5,
@@ -565,5 +572,128 @@ describe('pairing files and patches', () => {
       hunks: [],
     });
     expect(diffFile(change, undefined, 100).content).toBe('omitted');
+  });
+});
+
+describe('SessionDiffService against the base branch', () => {
+  let sandbox: ReturnType<typeof gitSandbox>;
+  let db: AppDatabase;
+  let sessions: SessionRepository;
+  let service: SessionDiffService;
+  let upstream: string;
+  let clone: string;
+  let start: string;
+
+  const paths = async () =>
+    (await service.sessionDiff('s1')).repositories[0].files.map(
+      (file) => `${file.status} ${file.path}`,
+    );
+
+  beforeEach(async () => {
+    sandbox = gitSandbox('crm-session-diff-base-');
+    db = openDatabase(':memory:');
+    sessions = new SessionRepository(db);
+    service = new SessionDiffService(sessions);
+    upstream = join(sandbox.dir, 'upstream');
+    start = await createOrigin(upstream);
+    clone = join(sandbox.dir, 'sessions', 's1', 'acme', 'app');
+    await git(sandbox.dir, 'clone', '--quiet', '--', upstream, clone);
+    await git(clone, 'switch', '--quiet', '-c', 'claude/s1');
+    new RepositoryRepository(db).create({
+      id: 'r-app',
+      owner: 'acme',
+      name: 'app',
+      cloneUrl: upstream,
+      localPath: join(sandbox.dir, 'repos', 'app'),
+      setupScript: null,
+    });
+    sessions.create({
+      id: 's1',
+      title: null,
+      model: null,
+      permissionMode: 'default',
+      status: 'waiting',
+      slug: 's1',
+      pendingMessage: null,
+      directories: [
+        {
+          path: clone,
+          kind: 'clone',
+          repositoryId: 'r-app',
+          branch: 'claude/s1',
+          baseBranch: 'main',
+          state: 'ready',
+          setupStatus: 'none',
+        },
+      ],
+    });
+    sessions.updateDirectory('s1', 0, { baseCommit: start });
+    // The session's work, and newer work on the base branch.
+    await commitFile(clone, 'session.txt', 'mine\n');
+    await commitFile(upstream, 'upstream.txt', 'theirs\n');
+    await git(clone, 'fetch', '--quiet', 'origin');
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    sandbox.cleanup();
+  });
+
+  it('leaves out base branch changes merged into the session branch', async () => {
+    await git(clone, 'merge', '--quiet', '--no-edit', 'origin/main');
+    const newBase = await git(clone, 'rev-parse', 'origin/main');
+    await writeFile(join(clone, 'untracked.md'), 'u\n');
+    expect(await paths()).toEqual(['added session.txt', 'added untracked.md']);
+    expect((await service.sessionDiff('s1')).repositories[0]).toMatchObject({
+      startCommit: start,
+      comparison: {
+        commit: newBase,
+        basis: 'merge_base',
+        ref: 'origin/main',
+        fallbackReason: null,
+      },
+    });
+    // Against the start commit it would include the merged file.
+    expect(newBase).not.toBe(start);
+  });
+
+  it('leaves out base branch changes after a rebase', async () => {
+    await git(clone, 'rebase', '--quiet', 'origin/main');
+    expect(await paths()).toEqual(['added session.txt']);
+    // Not merged in: the base branch's newer work is not the session's
+    // either way.
+    await git(clone, 'reset', '--quiet', '--hard', start);
+    await commitFile(clone, 'other.txt', 'x\n');
+    expect(await paths()).toEqual(['added other.txt']);
+  });
+
+  it('falls back to the start commit and says why', async () => {
+    await git(clone, 'merge', '--quiet', '--no-edit', 'origin/main');
+    await git(clone, 'remote', 'remove', 'origin');
+    const diff = (await service.sessionDiff('s1')).repositories[0];
+    expect(diff.comparison).toEqual({
+      commit: start,
+      basis: 'start_commit',
+      ref: null,
+      fallbackReason: 'The clone does not know origin/main.',
+    });
+    // The merged base branch work shows then.
+    expect(diff.files.map((file) => file.path).sort()).toEqual([
+      'session.txt',
+      'upstream.txt',
+    ]);
+
+    // Unrelated histories.
+    await git(clone, 'remote', 'add', 'origin', join(sandbox.dir, 'other'));
+    await git(sandbox.dir, 'init', '--quiet', '--', join(sandbox.dir, 'other'));
+    await commitFile(join(sandbox.dir, 'other'), 'o.txt', 'o');
+    await git(clone, 'fetch', '--quiet', 'origin');
+    expect(
+      (await service.sessionDiff('s1')).repositories[0].comparison,
+    ).toMatchObject({
+      basis: 'start_commit',
+      fallbackReason:
+        'The session branch and origin/main have no common history.',
+    });
   });
 });

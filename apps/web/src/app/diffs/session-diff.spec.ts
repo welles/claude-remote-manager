@@ -28,7 +28,13 @@ const repository = (
   path: '/w/acme/app',
   branch: 'claude/x',
   baseBranch: 'main',
-  baseCommit: '0123456789abcdef0123',
+  startCommit: '0123456789abcdef0123',
+  comparison: {
+    commit: 'abcdef0123456789abcd',
+    basis: 'merge_base',
+    ref: 'origin/main',
+    fallbackReason: null,
+  },
   headCommit: 'fedcba',
   state: 'ok',
   message: null,
@@ -115,6 +121,35 @@ describe('SessionDiff', () => {
     expect(sections[0].querySelectorAll('app-diff-view')).toHaveLength(3);
     expect(words(sections[1])).toContain(
       'The clone is not available (removed).',
+    );
+    expect(words(sections[0].querySelector('[data-testid="comparison"]'))).toBe(
+      'compared with origin/main at its merge base abcdef012345',
+    );
+    expect(
+      sections[0].querySelector('[data-testid="comparison-fallback"]'),
+    ).toBeNull();
+  });
+
+  it('says when it compares with the start commit, and why', async () => {
+    const element = await render(
+      response([
+        repository({
+          comparison: {
+            commit: '0123456789abcdef0123',
+            basis: 'start_commit',
+            ref: null,
+            fallbackReason: 'The clone does not know origin/main.',
+          },
+        }),
+      ]),
+    );
+    expect(words(element.querySelector('[data-testid="comparison"]'))).toBe(
+      'compared with the commit it started from 0123456789ab',
+    );
+    expect(
+      words(element.querySelector('[data-testid="comparison-fallback"]')),
+    ).toBe(
+      "The clone does not know origin/main. Changes brought in from main may show as the session's.",
     );
   });
 

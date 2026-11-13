@@ -313,19 +313,27 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 - In approvals: a request for a file change carries the change against the file's current
   content (read as the session user, up to 1 MB, only inside the session's directories;
   otherwise from the input).
-- Whole session: `GET /api/sessions/:id/diff` compares every clone with its `base_commit`:
-  commits of the session, uncommitted changes and untracked files that are not ignored,
-  renames, binary files. git runs in the clone as the session user, with external diff tools
-  and text conversions off and hooks disabled; untracked files are added as intent-to-add
-  entries to a temporary copy of the clone's index (in its git directory, removed afterwards),
-  so the clone's index and objects stay untouched. Paths come from `-z` output, so any file
-  name works. Limits: 1000 files listed per repository, 3000 diff lines per file and 20000 in
-  total; files left out are marked `too_large` or `omitted` and loaded one at a time
-  (`GET /api/sessions/:id/diff/file?repositoryId=&path=&oldPath=`, up to 20000 lines). The
-  web app shows it on the session's changes page (`/sessions/:id/changes`), unified or side by
-  side (kept per browser; unified by default on narrow screens); the component is meant for
-  the cleanup dialog too. A clone that merged newer base changes shows them as well (the diff
-  is against the commit the session started from).
+- Whole session: `GET /api/sessions/:id/diff` compares every clone, like a pull request, with
+  the merge base of `HEAD` and `origin/<base branch>`: the base branch as the clone knows it,
+  set when the clone was made from the freshly fetched mirror and moved only by the session's
+  own `git fetch`, i.e. what the session merges or rebases from. Changes merged or rebased in
+  from the base branch are therefore not shown as the session's. Without a base branch, without
+  that ref or without common history it falls back to the commit the session branch started
+  at (`startCommit`); the response says what it compared with (`comparison`: commit, basis,
+  ref, reason of a fallback) and the changes page shows it. Included: commits of the session,
+  uncommitted and staged changes and untracked files that are not ignored, renames, binary
+  files. git runs in the clone as the session user, with external diff tools and text
+  conversions off and hooks disabled; untracked files are added as intent-to-add entries to a
+  temporary copy of the clone's index (in its git directory, removed afterwards; copies left
+  by a stopped server are removed after ten minutes), so the clone's index and objects stay
+  untouched. File list and patches come from one `git diff --raw --numstat -p -z` run, so they
+  cannot be paired wrongly while the session keeps writing, and paths come from `-z` output,
+  so any file name works. Limits: 1000 files listed per repository, 3000 diff lines per file
+  and 20000 in total; files left out are marked `too_large` or `omitted` and loaded one at a
+  time (`GET /api/sessions/:id/diff/file?repositoryId=&path=&oldPath=`, up to 20000 lines).
+  The web app shows it on the session's changes page (`/sessions/:id/changes`), unified or
+  side by side (kept per browser; unified by default on narrow screens); the component is
+  meant for the cleanup dialog too.
 
 ### Images, `@` references and shown files
 
@@ -453,8 +461,8 @@ its branches and tags, and points the existing session clones' `origin` there (s
   has not been sent to Claude).
 - `session_directories`: the session's directories in order; position 0 is the working
   directory, the others are additional directories. `kind` is `clone` (with `repository_id`,
-  `branch`, `base_branch`, `base_commit` — the commit the branch started at, for diffs of the
-  whole session — and `setup_status`), `scratch`, or `directory` (sessions from before session
+  `branch`, `base_branch`, `base_commit` — the commit the branch started at, the fallback
+  comparison point of the session diff — and `setup_status`), `scratch`, or `directory` (sessions from before session
   clones). `state` is `pending`, `ready`, `failed` or `removed`. This table is the only source
   of a session's directories (the former `sessions.cwd` was migrated into it).
   `pushed_commit`/`pushed_at`: what was last pushed of the session branch (by button, or seen

@@ -9,6 +9,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import type {
+  DiffComparison,
   RepositoryDiff,
   SessionDiffFile,
   SessionDiffLimits,
@@ -155,7 +156,8 @@ export class SessionDiffService {
       path: directory.path,
       branch: directory.branch,
       baseBranch: directory.baseBranch,
-      baseCommit: directory.baseCommit,
+      startCommit: directory.baseCommit,
+      comparison: null,
       headCommit: null,
       state: 'unavailable',
       message: null,
@@ -199,17 +201,19 @@ export class SessionDiffService {
     additions: number;
     deletions: number;
     headCommit: string | null;
+    comparison: DiffComparison | null;
     message: string | null;
   }> {
     const cwd = directory.path;
-    const baseCommit = directory.baseCommit;
-    if (!baseCommit || directory.state !== 'ready') {
+    const startCommit = directory.baseCommit;
+    if (!startCommit || directory.state !== 'ready') {
       return {
         files: [],
         fileCount: 0,
         additions: 0,
         deletions: 0,
         headCommit: null,
+        comparison: null,
         message: 'The clone is not available.',
       };
     }
@@ -225,6 +229,12 @@ export class SessionDiffService {
       (
         await git(['rev-parse', '--verify', '--quiet', 'HEAD']).catch(() => '')
       ).trim() || null;
+    const comparison = await this.comparison(
+      git,
+      directory.baseBranch,
+      headCommit,
+      startCommit,
+    );
     const gitDir = (await git(['rev-parse', '--absolute-git-dir'])).trim();
     const index = join(
       gitDir,
@@ -268,7 +278,7 @@ export class SessionDiffService {
           '--numstat',
           '-p',
           '-z',
-          baseCommit,
+          comparison.commit,
           ...pathspec,
         ],
         budget,
@@ -289,11 +299,66 @@ export class SessionDiffService {
         fileCount: changes.length,
         ...totals,
         headCommit,
+        comparison,
         message: null,
       };
     } finally {
       await this.remove(index);
     }
+  }
+
+  /**
+   * What to compare the clone against: the merge base of `HEAD` and the
+   * base branch as the clone knows it, `origin/<base branch>` (what the
+   * session merges or rebases from; it is the remote-tracking ref of the
+   * remote branch, set when the clone was made from the freshly fetched
+   * mirror and moved by the session's own `git fetch`, so it is exactly
+   * what the session could have brought in). Falls back to the commit
+   * the session branch started at, saying why.
+   */
+  private async comparison(
+    git: (args: string[]) => Promise<string>,
+    baseBranch: string | null,
+    headCommit: string | null,
+    startCommit: string,
+  ): Promise<DiffComparison> {
+    const fallback = (reason: string): DiffComparison => ({
+      commit: startCommit,
+      basis: 'start_commit',
+      ref: null,
+      fallbackReason: reason,
+    });
+    if (!baseBranch) {
+      return fallback('The clone has no base branch.');
+    }
+    if (!headCommit) {
+      return fallback('The session branch has no commit.');
+    }
+    const ref = `origin/${baseBranch}`;
+    const known = (
+      await git([
+        'rev-parse',
+        '--verify',
+        '--quiet',
+        // Starts with "refs/", so never read as an option.
+        `refs/remotes/${ref}^{commit}`,
+      ]).catch(() => '')
+    ).trim();
+    if (!known) {
+      return fallback(`The clone does not know ${ref}.`);
+    }
+    const mergeBase = (
+      await git(['merge-base', 'HEAD', known]).catch(() => '')
+    ).trim();
+    if (!mergeBase) {
+      return fallback(`The session branch and ${ref} have no common history.`);
+    }
+    return {
+      commit: mergeBase,
+      basis: 'merge_base',
+      ref,
+      fallbackReason: null,
+    };
   }
 
   /**
