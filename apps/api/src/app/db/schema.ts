@@ -190,6 +190,16 @@ export const sessionEvents = sqliteTable(
   (table) => [index('session_events_session').on(table.sessionId, table.id)],
 );
 
+/**
+ * Settings of the app that the user edits in the UI (not secrets: those
+ * come from the environment). One row per setting, the value as JSON.
+ */
+export const appSettings = sqliteTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value', { mode: 'json' }).notNull(),
+  updatedAt: timestamp('updated_at').notNull(),
+});
+
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
 export type SessionDirectoryRow = typeof sessionDirectories.$inferSelect;

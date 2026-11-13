@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { AgentRunner } from '../agent/agent-runner';
 import { TranscriptReader } from '../agent/transcript-reader';
 import { AppModule } from '../app.module';
@@ -18,6 +18,8 @@ import {
   FakeAgentRunner,
   FakeTranscriptReader,
 } from '../sessions/testing/fake-agent';
+import { SettingsService } from '../settings/settings.service';
+import { withTestIdentity } from '../workspaces/testing/workspace-harness';
 
 /** The whole API on a random port, with a fake Claude Code. */
 export interface TestApp {
@@ -35,6 +37,15 @@ export interface TestApp {
 
 export async function startTestApp(
   overrides: Partial<AppConfig> = {},
+  {
+    identity = true,
+    configure,
+  }: {
+    /** Set the test commit identity (sessions need one). */
+    identity?: boolean;
+    /** Further provider overrides, e.g. a fake GitHub. */
+    configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder;
+  } = {},
 ): Promise<TestApp> {
   const dir = mkdtempSync(join(tmpdir(), 'crm-app-'));
   const runner = new FakeAgentRunner();
@@ -44,19 +55,25 @@ export async function startTestApp(
     setupScriptTimeoutMs: 60_000,
     ...overrides,
   });
-  const module = await Test.createTestingModule({ imports: [AppModule] })
+  let builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(APP_CONFIG)
     .useValue(config)
     .overrideProvider(AgentRunner)
     .useValue(runner)
     .overrideProvider(TranscriptReader)
-    .useValue(transcripts)
-    .compile();
+    .useValue(transcripts);
+  if (configure) {
+    builder = configure(builder);
+  }
+  const module = await builder.compile();
   const app = module.createNestApplication<NestExpressApplication>({
     logger: false,
     bodyParser: false,
   });
   configureApp(app);
+  if (identity) {
+    withTestIdentity(app.get(SettingsService));
+  }
   await app.listen(0, '127.0.0.1');
   const { port } = app.getHttpServer().address() as AddressInfo;
   let closed = false;

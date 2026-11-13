@@ -24,7 +24,23 @@ import {
 } from '../../sessions/testing/fake-agent';
 import { UsageRepository } from '../../sessions/usage.repository';
 import { SessionWorkspaceService } from '../session-workspace.service';
+import { SettingsService } from '../../settings/settings.service';
 import { SetupScriptRunner } from '../setup-script-runner';
+
+/** Commit identity of the tests. */
+export const TEST_IDENTITY = {
+  name: 'Test Author',
+  email: 'author@example.com',
+};
+
+/** Settings with the test commit identity. */
+export function withTestIdentity(settings: SettingsService): SettingsService {
+  settings.update({
+    gitAuthorName: TEST_IDENTITY.name,
+    gitAuthorEmail: TEST_IDENTITY.email,
+  });
+  return settings;
+}
 
 /**
  * Sessions service with real git, real setup scripts and real temporary
@@ -39,6 +55,7 @@ export class WorkspaceHarness {
   readonly transcripts = new FakeTranscriptReader();
   readonly sessions = new SessionRepository(this.db);
   readonly repositoryRecords = new RepositoryRepository(this.db);
+  readonly settings = withTestIdentity(new SettingsService(this.db));
   readonly events: SessionEventEnvelope[] = [];
   readonly config: AppConfig = testAppConfig(this.dir);
   repositories!: RepositoriesService;
@@ -51,6 +68,7 @@ export class WorkspaceHarness {
       this.config,
       this.repositoryRecords,
       this.git,
+      this.settings,
     );
     this.workspaces = new SessionWorkspaceService(
       this.config,
@@ -58,7 +76,9 @@ export class WorkspaceHarness {
       this.repositories,
       this.git,
       new SetupScriptRunner(),
+      this.settings,
     );
+    this.workspaces.onModuleInit();
     this.service = new SessionsService(
       this.config,
       this.sessions,
@@ -122,6 +142,7 @@ export class WorkspaceHarness {
 
   async close(): Promise<void> {
     await this.service?.onModuleDestroy();
+    this.workspaces?.onModuleDestroy();
     this.db.$client.close();
     this.sandbox.cleanup();
   }

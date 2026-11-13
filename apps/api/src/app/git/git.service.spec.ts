@@ -11,13 +11,38 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { GitService, isValidBranchName, parseRemoteHead } from './git.service';
+import { githubTokenAuth } from './git-auth';
+import {
+  GitService,
+  INITIAL_COMMIT_MESSAGE,
+  isValidBranchName,
+  parseRemoteHead,
+} from './git.service';
 import {
   commitFile,
   createOrigin,
   git,
   gitSandbox,
 } from './testing/git-fixtures';
+
+/** `git credential fill` for a URL in a clone; returns its output. */
+async function runCredentialFill(
+  cwd: string,
+  protocol: string,
+  host: string,
+): Promise<string> {
+  const { execFile } = await import('node:child_process');
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      'git',
+      ['credential', 'fill'],
+      { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } },
+      (error, stdout, stderr) =>
+        error ? reject(new Error(stderr || error.message)) : resolve(stdout),
+    );
+    child.stdin?.end(`protocol=${protocol}\nhost=${host}\n\n`);
+  });
+}
 
 /** Every file, link and directory below `root` with a hash of its content. */
 async function treeSnapshot(root: string): Promise<Record<string, string>> {
@@ -172,10 +197,11 @@ describe('GitService', () => {
       expect(await service.isEmpty(mirror)).toBe(true);
     });
 
-    it('creates the mirror of a local project without remote', async () => {
+    it('creates the mirror of a local project with an empty first commit', async () => {
       const project = join(sandbox.dir, 'workspace', 'repos', 'local', 'app');
+      const identity = { name: 'Ada', email: 'ada@example.com' };
 
-      expect(await service.updateMirror(project, null)).toEqual({
+      expect(await service.updateMirror(project, null, { identity })).toEqual({
         defaultBranch: 'main',
         created: true,
       });
@@ -183,8 +209,35 @@ describe('GitService', () => {
         defaultBranch: 'main',
         created: false,
       });
-      expect(await service.isEmpty(project)).toBe(true);
       await expect(git(project, 'remote')).resolves.toBe('');
+      expect(
+        await git(project, 'log', '--format=%an <%ae>|%cn <%ce>|%s', 'main'),
+      ).toBe(
+        `Ada <ada@example.com>|Ada <ada@example.com>|${INITIAL_COMMIT_MESSAGE}`,
+      );
+      expect(await git(project, 'ls-tree', 'main')).toBe('');
+    });
+
+    it('refuses to create a local project without commit identity', async () => {
+      const project = join(sandbox.dir, 'workspace', 'repos', 'local', 'x');
+      await expect(service.updateMirror(project, null)).rejects.toThrow(
+        'author name and email',
+      );
+      expect(existsSync(project)).toBe(false);
+    });
+
+    it('passes credentials through the environment only', async () => {
+      // A header for github.com does not disturb other remotes, and nothing
+      // of it ends up in the mirror's configuration.
+      await service.updateMirror(mirror, origin, {
+        auth: async () => githubTokenAuth('ghs_secret'),
+      });
+      await service.updateMirror(mirror, origin, {
+        auth: async () => githubTokenAuth('ghs_secret'),
+      });
+      const config = await readFile(join(mirror, 'config'), 'utf8');
+      expect(config).not.toContain('ghs_secret');
+      expect(config).not.toContain('extraHeader');
     });
   });
 
@@ -412,6 +465,84 @@ describe('GitService', () => {
     });
   });
 
+  describe('session clone settings and pushes', () => {
+    beforeEach(() => service.updateMirror(mirror, origin));
+
+    it('commits as the configured identity and refuses without one', async () => {
+      const path = await addSession('who');
+      await service.configureClone(path, {
+        identity: { name: 'Ada', email: 'ada@example.com' },
+        credentialHelper: null,
+      });
+      await commitFile(path, 'a.txt', 'a');
+      expect(await git(path, 'log', '-1', '--format=%an <%ae>')).toBe(
+        'Ada <ada@example.com>',
+      );
+
+      // Without identity git must not fall back to a global or guessed one.
+      await service.setIdentity(path, null);
+      await expect(commitFile(path, 'b.txt', 'b')).rejects.toThrow();
+    });
+
+    it('replaces all credential helpers with the given one', async () => {
+      const path = await addSession('helper');
+      const marker = join(sandbox.dir, 'global-helper-called');
+      await git(
+        sandbox.dir,
+        'config',
+        '--global',
+        '--add',
+        'credential.https://example.com.helper',
+        `!touch ${marker}; echo password=global`,
+      );
+      await service.configureClone(path, {
+        identity: null,
+        credentialHelper:
+          '!f() { echo username=u; echo password=from-clone; }; f',
+      });
+      const output = await runCredentialFill(path, 'https', 'example.com');
+      expect(output).toContain('password=from-clone');
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it('pushes the session branch and sets it as upstream', async () => {
+      const bare = join(sandbox.dir, 'bare.git');
+      await git(sandbox.dir, 'clone', '--quiet', '--bare', '--', origin, bare);
+      const path = await addSession('push');
+      await git(path, 'remote', 'set-url', 'origin', bare);
+      const commit = await commitFile(path, 'work.txt', 'w');
+
+      expect(await service.pushBranch(path, 'claude/push', null)).toBe(commit);
+      expect(await git(bare, 'rev-parse', 'refs/heads/claude/push')).toBe(
+        commit,
+      );
+      expect(await service.remoteBranchCommit(path, 'claude/push')).toBe(
+        commit,
+      );
+      expect(await git(path, 'rev-parse', '--abbrev-ref', '@{upstream}')).toBe(
+        'origin/claude/push',
+      );
+    });
+
+    it('refuses to push a branch without commits', async () => {
+      const path = await addSession('none');
+      await expect(
+        service.pushBranch(path, 'claude/other', null),
+      ).rejects.toThrow('has no commits');
+    });
+
+    it('tells whether commits change workflow files', async () => {
+      const path = await addSession('wf');
+      const base = await git(path, 'rev-parse', 'HEAD');
+      await commitFile(path, 'a.txt', 'a');
+      expect(await service.changesWorkflows(path, 'HEAD', base)).toBe(false);
+      await mkdir(join(path, '.github', 'workflows'), { recursive: true });
+      await commitFile(path, '.github/workflows/ci.yml', 'on: push');
+      expect(await service.changesWorkflows(path, 'HEAD', base)).toBe(true);
+      expect(await service.changesWorkflows(path, 'HEAD', null)).toBe(true);
+    });
+  });
+
   describe('local projects', () => {
     let project: string;
     const addProjectSession = async (slug: string) => {
@@ -428,7 +559,55 @@ describe('GitService', () => {
 
     beforeEach(async () => {
       project = join(sandbox.dir, 'workspace', 'repos', 'local', 'app');
-      await service.updateMirror(project, null);
+      await service.updateMirror(project, null, {
+        identity: { name: 'Test', email: 'test@example.com' },
+      });
+    });
+
+    it('gives parallel first sessions a shared base commit', async () => {
+      const first = await addProjectSession('first');
+      const second = await addProjectSession('second');
+      const base = await git(project, 'rev-parse', 'main');
+      expect(await git(first, 'rev-parse', 'HEAD')).toBe(base);
+      expect(await git(second, 'rev-parse', 'HEAD')).toBe(base);
+      await commitFile(first, 'a.txt', 'a');
+      await commitFile(second, 'b.txt', 'b');
+      expect(await git(first, 'merge-base', 'HEAD', 'origin/main')).toBe(base);
+    });
+
+    it('attaches a remote and pushes all branches there', async () => {
+      const first = await addProjectSession('first');
+      await commitFile(first, 'app.txt', 'v1');
+      await service.fastForwardMirror({
+        mirrorPath: project,
+        clonePath: first,
+        sourceBranch: 'claude/first',
+        targetBranch: 'main',
+      });
+      const remote = join(sandbox.dir, 'github', 'app.git');
+      await mkdir(remote, { recursive: true });
+      await git(remote, 'init', '--quiet', '--bare');
+
+      await service.attachRemote(project, remote, null);
+
+      expect(await git(remote, 'rev-parse', 'main')).toBe(
+        await git(project, 'rev-parse', 'main'),
+      );
+      await expect(service.attachRemote(project, remote, null)).rejects.toThrow(
+        'has a remote already',
+      );
+      // From now on it is fetched like any repository.
+      expect(await service.updateMirror(project, remote)).toEqual({
+        defaultBranch: 'main',
+        created: false,
+      });
+    });
+
+    it('stays a local project when the first push fails', async () => {
+      await expect(
+        service.attachRemote(project, join(sandbox.dir, 'missing.git'), null),
+      ).rejects.toThrow('git push failed');
+      expect(await service.hasRemote(project)).toBe(false);
     });
 
     it('shows a session’s work to later sessions only after it was integrated', async () => {

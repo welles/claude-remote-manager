@@ -26,6 +26,7 @@ import {
   parseCloneUrl,
 } from '../git/clone-url';
 import { GitService } from '../git/git.service';
+import { SettingsService } from '../settings/settings.service';
 import {
   RepositoryRepository,
   type CloneLink,
@@ -95,6 +96,7 @@ export class RepositoriesService implements OnModuleInit {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly repositories: RepositoryRepository,
     private readonly git: GitService,
+    private readonly settings: SettingsService,
   ) {}
 
   /** Creates the workspace directories and checks they share a filesystem. */
@@ -205,13 +207,15 @@ export class RepositoriesService implements OnModuleInit {
 
   /**
    * Registers a local project `local/<name>` without remote. Its mirror is
-   * created on first use.
+   * created on first use, with an empty initial commit on `main` by the
+   * configured commit identity (required).
    */
   createProject(
     name: string,
     setupScript: string | null = null,
   ): RepositoryRecord {
     const trimmed = name.trim();
+    this.settings.requireGitIdentity();
     if (!NAME_PATTERN.test(trimmed)) {
       throw new BadRequestException(
         'The project name may contain letters, digits, ".", "_" and "-" (at most 100 characters)',
@@ -271,6 +275,7 @@ export class RepositoriesService implements OnModuleInit {
       const result = await this.git.updateMirror(
         record.localPath,
         record.cloneUrl,
+        { identity: this.settings.gitIdentity() },
       );
       const now = new Date();
       return this.repositories.update(id, {

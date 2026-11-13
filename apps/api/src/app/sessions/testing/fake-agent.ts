@@ -182,11 +182,11 @@ export const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 /** Polls until the condition holds (for work that runs real processes). */
 export async function waitFor(
-  condition: () => boolean,
+  condition: () => boolean | Promise<boolean>,
   timeoutMs = 10_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!condition()) {
+  while (!(await condition())) {
     if (Date.now() > deadline) {
       throw new Error('Condition not met in time');
     }

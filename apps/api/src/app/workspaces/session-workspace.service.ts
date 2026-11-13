@@ -6,7 +6,10 @@ import {
   Inject,
   Injectable,
   Logger,
+  type OnModuleDestroy,
+  type OnModuleInit,
 } from '@nestjs/common';
+import type { Subscription } from 'rxjs';
 import type {
   CreateSessionRequest,
   SessionEventInput,
@@ -29,6 +32,7 @@ import {
   type SessionDirectoryRecord,
   type SessionRecord,
 } from '../sessions/session.repository';
+import { SettingsService } from '../settings/settings.service';
 import { SetupScriptRunner } from './setup-script-runner';
 
 /** Repositories a session may have. */
@@ -98,8 +102,9 @@ const isClone = (directory: SessionDirectoryRecord) =>
  * session gets a clear error.
  */
 @Injectable()
-export class SessionWorkspaceService {
+export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SessionWorkspaceService.name);
+  private subscription: Subscription | null = null;
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -107,7 +112,48 @@ export class SessionWorkspaceService {
     private readonly repositories: RepositoriesService,
     private readonly git: GitService,
     private readonly setup: SetupScriptRunner,
+    private readonly settings: SettingsService,
   ) {}
+
+  /** A changed commit identity applies to all existing session clones. */
+  onModuleInit(): void {
+    this.subscription = this.settings.changes$.subscribe(
+      ({ before, after }) => {
+        if (
+          before.gitAuthorName !== after.gitAuthorName ||
+          before.gitAuthorEmail !== after.gitAuthorEmail
+        ) {
+          void this.applyIdentity();
+        }
+      },
+    );
+  }
+
+  onModuleDestroy(): void {
+    this.subscription?.unsubscribe();
+  }
+
+  /**
+   * Writes the configured commit identity into every session clone that
+   * exists. Returns the number of clones updated.
+   */
+  async applyIdentity(): Promise<number> {
+    const identity = this.settings.gitIdentity();
+    let updated = 0;
+    for (const path of this.sessions.readyClonePaths()) {
+      try {
+        if (await exists(path)) {
+          await this.git.setIdentity(path, identity);
+          updated++;
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Could not set the commit identity in ${path}: ${errorText(error)}`,
+        );
+      }
+    }
+    return updated;
+  }
 
   /**
    * Validates the workspace part of a session request and picks a slug
@@ -138,6 +184,11 @@ export class SessionWorkspaceService {
       throw new BadRequestException(
         'Choose a main repository, a new project or a scratch directory',
       );
+    }
+    if (!scratch) {
+      // Commits in session clones are made as the user; never start
+      // without an identity.
+      this.settings.requireGitIdentity();
     }
     const repositories = selections.map(({ repositoryId, baseBranch }) => {
       let record: RepositoryRecord;
@@ -446,6 +497,10 @@ export class SessionWorkspaceService {
         remoteUrl: repository.cloneUrl,
         branch,
         baseCommit,
+      });
+      await this.git.configureClone(directory.path, {
+        identity: this.settings.gitIdentity(),
+        credentialHelper: null,
       });
       this.sessions.updateDirectory(session.id, directory.position, {
         state: 'ready',

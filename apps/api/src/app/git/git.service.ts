@@ -7,6 +7,11 @@ import {
   retryOnLockContention,
   runGit,
 } from './git-runner';
+import {
+  identityEnvironment,
+  type GitAuth,
+  type GitIdentity,
+} from './git-auth';
 import { KeyedMutex } from './keyed-mutex';
 
 export interface MirrorState {
@@ -18,6 +23,34 @@ export interface MirrorState {
   /** Whether this call created the mirror. */
   created: boolean;
 }
+
+export interface MirrorUpdateOptions {
+  /**
+   * Credentials for the network commands, obtained right before they run
+   * (e.g. a fresh installation token); `null` uses git's own (SSH key,
+   * credential helper of the API's environment).
+   */
+  auth?: () => Promise<GitAuth | null>;
+  /**
+   * Author of the initial empty commit on `main` of a new local project.
+   * Required when the mirror of a local project is created.
+   */
+  identity?: GitIdentity | null;
+}
+
+/** Session clone settings, see {@link GitService.configureClone}. */
+export interface CloneConfiguration {
+  /** Commit identity; `null` leaves it unset, so git refuses to commit. */
+  identity: GitIdentity | null;
+  /**
+   * Credential helper command for `origin` (`!<command>`); `null` keeps
+   * git's defaults.
+   */
+  credentialHelper: string | null;
+}
+
+/** Commit message of the first commit of a local project. */
+export const INITIAL_COMMIT_MESSAGE = 'Initial commit';
 
 export interface CreateSessionCloneOptions {
   mirrorPath: string;
@@ -103,6 +136,7 @@ export class GitService {
   updateMirror(
     mirrorPath: string,
     remoteUrl: string | null,
+    options: MirrorUpdateOptions = {},
   ): Promise<MirrorState> {
     let update = this.updates.get(mirrorPath);
     if (!update) {
@@ -111,25 +145,27 @@ export class GitService {
           const created = !(await this.isBareRepository(mirrorPath));
           if (remoteUrl === null) {
             if (created) {
-              await this.initLocalMirror(mirrorPath);
+              await this.initLocalMirror(mirrorPath, options.identity ?? null);
             }
             return {
               defaultBranch: await this.headBranch(mirrorPath),
               created,
             };
           }
+          const env = (await options.auth?.())?.env;
           if (created) {
-            await this.cloneMirror(mirrorPath, remoteUrl);
+            await this.cloneMirror(mirrorPath, remoteUrl, env);
           } else {
             await this.checkOrigin(mirrorPath, remoteUrl);
             await retryOnLockContention(() =>
               this.git(mirrorPath, ['fetch', ...FETCH_OPTIONS, 'origin'], {
                 timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+                env,
               }),
             );
           }
           return {
-            defaultBranch: await this.followRemoteHead(mirrorPath),
+            defaultBranch: await this.followRemoteHead(mirrorPath, env),
             created,
           };
         })
@@ -314,13 +350,195 @@ export class GitService {
     }
   }
 
+  /**
+   * Settings of a session clone: the commit identity (with
+   * `user.useConfigOnly`, so git never falls back to a guessed or the
+   * machine's global identity) and the credential helper for `origin`.
+   * The helper list is reset first, so no other helper of the user's or
+   * system configuration is asked for (or stores) credentials.
+   */
+  async configureClone(
+    path: string,
+    configuration: CloneConfiguration,
+  ): Promise<void> {
+    const inClone = (args: string[]) => runGit(args, { cwd: path });
+    await this.setIdentity(path, configuration.identity);
+    if (configuration.credentialHelper !== null) {
+      await inClone(['config', '--unset-all', 'credential.helper']).catch(
+        () => undefined,
+      );
+      await inClone(['config', '--add', '--', 'credential.helper', '']);
+      await inClone([
+        'config',
+        '--add',
+        '--',
+        'credential.helper',
+        configuration.credentialHelper,
+      ]);
+      await inClone(['config', '--', 'credential.useHttpPath', 'true']);
+    }
+  }
+
+  /**
+   * Sets the commit identity of a clone. With `null`, name and email are
+   * set empty, which hides any global identity: git then refuses to commit
+   * ("empty ident name not allowed") instead of using someone else's.
+   */
+  async setIdentity(path: string, identity: GitIdentity | null): Promise<void> {
+    const inClone = (args: string[]) => runGit(args, { cwd: path });
+    await inClone(['config', '--', 'user.useConfigOnly', 'true']);
+    await inClone(['config', '--', 'user.name', identity?.name ?? '']);
+    await inClone(['config', '--', 'user.email', identity?.email ?? '']);
+  }
+
+  /** Points `origin` of a session clone to another URL. */
+  async setOrigin(path: string, url: string): Promise<void> {
+    await runGit(['config', '--', 'remote.origin.url', url], { cwd: path });
+  }
+
+  /** Commit of a local branch of a clone; `null` if unborn or missing. */
+  async localBranchCommit(
+    path: string,
+    branch: string,
+  ): Promise<string | null> {
+    return this.verify(path, `refs/heads/${branch}`);
+  }
+
+  /** Commit of `origin/<branch>` as the clone last saw it. */
+  async remoteBranchCommit(
+    path: string,
+    branch: string,
+  ): Promise<string | null> {
+    return this.verify(path, `refs/remotes/origin/${branch}`);
+  }
+
+  /**
+   * Whether the commits between `base` (or the root) and `head` change
+   * files under `.github/workflows` (pushing them needs the `workflows`
+   * permission on GitHub).
+   */
+  async changesWorkflows(
+    path: string,
+    head: string,
+    base: string | null,
+  ): Promise<boolean> {
+    const range = base ? [`${base}..${head}`] : [head];
+    const output = await runGit(
+      ['log', '--format=', '--name-only', ...range, '--', '.github/workflows'],
+      { cwd: path },
+    );
+    return output.trim().length > 0;
+  }
+
+  /**
+   * Pushes the session branch of a clone to `origin` (no force) and sets it
+   * as upstream, so a later `git push` in the clone needs no arguments.
+   * Returns the pushed commit.
+   */
+  async pushBranch(
+    path: string,
+    branch: string,
+    auth: GitAuth | null,
+  ): Promise<string> {
+    if (!isValidBranchName(branch)) {
+      throw new Error(`"${branch}" is not a valid branch name`);
+    }
+    const commit = await this.localBranchCommit(path, branch);
+    if (!commit) {
+      throw new Error(`The branch ${branch} has no commits yet`);
+    }
+    await runGit(
+      [
+        'push',
+        '--quiet',
+        '--set-upstream',
+        'origin',
+        `refs/heads/${branch}:refs/heads/${branch}`,
+      ],
+      { cwd: path, timeoutMs: GIT_NETWORK_TIMEOUT_MS, env: auth?.env },
+    );
+    return commit;
+  }
+
+  /**
+   * Turns a local project into a repository with remote: sets `origin` of
+   * the mirror to `url` and pushes all its branches and tags there (no
+   * force). Afterwards the mirror is fetched like any other.
+   */
+  async attachRemote(
+    mirrorPath: string,
+    url: string,
+    auth: GitAuth | null,
+  ): Promise<void> {
+    await this.locks.run(mirrorPath, async () => {
+      if (await this.hasRemote(mirrorPath)) {
+        throw new Error('The project has a remote already');
+      }
+      await this.git(mirrorPath, ['config', '--', 'remote.origin.url', url]);
+      await this.git(mirrorPath, [
+        'config',
+        '--',
+        'remote.origin.fetch',
+        MIRROR_FETCH_REFSPEC,
+      ]);
+      try {
+        await this.git(
+          mirrorPath,
+          [
+            'push',
+            '--quiet',
+            'origin',
+            'refs/heads/*:refs/heads/*',
+            'refs/tags/*:refs/tags/*',
+          ],
+          { timeoutMs: GIT_NETWORK_TIMEOUT_MS, env: auth?.env },
+        );
+      } catch (error) {
+        // Back to a local project, so the attempt can be repeated.
+        await this.git(mirrorPath, [
+          'config',
+          '--remove-section',
+          'remote.origin',
+        ]).catch(() => undefined);
+        throw error;
+      }
+    });
+  }
+
+  /** Whether the mirror has a remote (`false` for a local project). */
+  async hasRemote(mirrorPath: string): Promise<boolean> {
+    try {
+      await this.git(mirrorPath, ['config', '--get', 'remote.origin.url']);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // -------------------------------------------------------------------------
+
+  private async verify(path: string, ref: string): Promise<string | null> {
+    try {
+      return (
+        (
+          await runGit(
+            ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`],
+            {
+              cwd: path,
+            },
+          )
+        ).trim() || null
+      );
+    } catch {
+      return null;
+    }
+  }
 
   /** git on a mirror, addressed with `--git-dir` (no discovery). */
   private git(
     mirrorPath: string,
     args: string[],
-    options: { timeoutMs?: number } = {},
+    options: { timeoutMs?: number; env?: Record<string, string> } = {},
   ): Promise<string> {
     return runGit([`--git-dir=${mirrorPath}`, ...args], options);
   }
@@ -337,22 +555,51 @@ export class GitService {
     await config('receive.denyDeletes', 'true');
   }
 
-  private async initLocalMirror(path: string): Promise<void> {
+  /**
+   * A new local project: an empty bare repository whose `main` starts with
+   * an empty commit, so every session has a real base commit and parallel
+   * first sessions share history.
+   */
+  private async initLocalMirror(
+    path: string,
+    identity: GitIdentity | null,
+  ): Promise<void> {
     if (await exists(path)) {
       throw new Error(
         `${path} exists but is not a bare repository; move it away first`,
       );
     }
+    if (!identity) {
+      throw new Error(
+        'The git author name and email are not set; set them in the settings first',
+      );
+    }
     await mkdir(dirname(path), { recursive: true });
-    await runGit([
-      'init',
-      '--quiet',
-      '--bare',
-      '--initial-branch=main',
-      '--',
-      path,
-    ]);
-    await this.configureMirror(path);
+    try {
+      await runGit([
+        'init',
+        '--quiet',
+        '--bare',
+        '--initial-branch=main',
+        '--',
+        path,
+      ]);
+      await this.configureMirror(path);
+      const tree = (
+        await this.git(path, ['hash-object', '-t', 'tree', '-w', '/dev/null'])
+      ).trim();
+      const commit = (
+        await this.git(
+          path,
+          ['commit-tree', tree, '-m', INITIAL_COMMIT_MESSAGE],
+          { env: identityEnvironment(identity) },
+        )
+      ).trim();
+      await this.git(path, ['update-ref', 'refs/heads/main', commit, '']);
+    } catch (error) {
+      await rm(path, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   /**
@@ -360,7 +607,11 @@ export class GitService {
    * so an interrupted clone never looks like a finished one. Leftovers of
    * earlier interrupted clones of the same repository are removed.
    */
-  private async cloneMirror(path: string, url: string): Promise<void> {
+  private async cloneMirror(
+    path: string,
+    url: string,
+    env?: Record<string, string>,
+  ): Promise<void> {
     if (await exists(path)) {
       throw new Error(
         `${path} exists but is not a bare repository; move it away first`,
@@ -384,20 +635,12 @@ export class GitService {
       await config('remote.origin.fetch', MIRROR_FETCH_REFSPEC);
       await this.git(temporary, ['fetch', ...FETCH_OPTIONS, 'origin'], {
         timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+        env,
       });
       await rename(temporary, path);
     } catch (error) {
       await rm(temporary, { recursive: true, force: true });
       throw error;
-    }
-  }
-
-  private async hasRemote(mirrorPath: string): Promise<boolean> {
-    try {
-      await this.git(mirrorPath, ['config', '--get', 'remote.origin.url']);
-      return true;
-    } catch {
-      return false;
     }
   }
 
@@ -423,10 +666,14 @@ export class GitService {
    * changed), so session clones get `origin/HEAD`. Returns the branch, or
    * `null` if the remote has none (empty repository).
    */
-  private async followRemoteHead(mirrorPath: string): Promise<string | null> {
+  private async followRemoteHead(
+    mirrorPath: string,
+    env?: Record<string, string>,
+  ): Promise<string | null> {
     const branch = parseRemoteHead(
       await this.git(mirrorPath, ['ls-remote', '--symref', 'origin', 'HEAD'], {
         timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+        env,
       }),
     );
     if (branch && isValidBranchName(branch)) {

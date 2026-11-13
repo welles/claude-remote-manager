@@ -18,6 +18,7 @@ import {
 } from './security/request-guard.middleware';
 import { SecurityModule } from './security/security.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { SettingsModule } from './settings/settings.module';
 
 /**
  * Directory with the built web app. In the image it sits next to the API
@@ -30,6 +31,7 @@ const webRoot = resolve(process.env.WEB_ROOT || join(__dirname, 'public'));
     ConfigModule,
     DatabaseModule,
     SecurityModule,
+    SettingsModule,
     GitHubModule,
     LimitsModule,
     RepositoriesModule,

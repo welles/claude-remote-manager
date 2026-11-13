@@ -131,9 +131,13 @@ describe('session preparation', () => {
       kind: 'clone',
       repository: { fullName: 'local/new-app', local: true },
       baseBranch: 'main',
-      baseCommit: null,
+      baseCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
     });
     const mirror = join(harness.config.reposDir, 'local', 'new-app');
+    expect(await head(project.path)).toBe(project.baseCommit);
+    expect(
+      await git(project.path, 'log', '--format=%an <%ae>|%s', 'HEAD'),
+    ).toBe('Test Author <author@example.com>|Initial commit');
     expect(await git(project.path, 'remote', 'get-url', 'origin')).toBe(mirror);
     expect(await branchOf(project.path)).toBe(`claude/${first.slug}`);
     expect(harness.runner.last.options.cwd).toBe(project.path);
@@ -157,6 +161,46 @@ describe('session preparation', () => {
     expect(listed.clones.map((clone) => clone.sessionId).sort()).toEqual(
       [first.id, second.id].sort(),
     );
+  });
+
+  it('applies the commit identity to clones, also when it changes', async () => {
+    const repository = await harness.addRepository('acme', 'app');
+    const session = await create({
+      repositories: [{ repositoryId: repository.id }],
+    });
+    await harness.prepared(session.id);
+    const path = harness.service.get(session.id).cwd;
+    await commitFile(path, 'a.txt', 'a');
+    expect(await git(path, 'log', '-1', '--format=%an <%ae>')).toBe(
+      'Test Author <author@example.com>',
+    );
+
+    harness.settings.update({
+      gitAuthorName: 'Grace Hopper',
+      gitAuthorEmail: 'grace@example.com',
+    });
+    await waitFor(
+      async () => (await git(path, 'config', 'user.name')) === 'Grace Hopper',
+    );
+    await commitFile(path, 'b.txt', 'b');
+    expect(await git(path, 'log', '-1', '--format=%an <%ae>')).toBe(
+      'Grace Hopper <grace@example.com>',
+    );
+  });
+
+  it('starts no session with repositories without a commit identity', async () => {
+    const repository = await harness.addRepository('acme', 'app');
+    harness.settings.update({ gitAuthorName: null, gitAuthorEmail: null });
+    await expect(
+      create({ repositories: [{ repositoryId: repository.id }] }),
+    ).rejects.toThrow('Settings page');
+    await expect(create({ newProject: { name: 'p' } })).rejects.toThrow(
+      ConflictException,
+    );
+    // Scratch sessions have no git.
+    await expect(create({ scratch: true })).resolves.toMatchObject({
+      status: 'preparing',
+    });
   });
 
   it('gives a scratch session an empty directory of its own', async () => {

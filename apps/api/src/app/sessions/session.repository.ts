@@ -201,6 +201,21 @@ export class SessionRepository {
     return this.require(sessionId);
   }
 
+  /** Paths of all session clones that exist (state `ready`). */
+  readyClonePaths(): string[] {
+    return this.db
+      .select({ path: sessionDirectories.path })
+      .from(sessionDirectories)
+      .where(
+        and(
+          eq(sessionDirectories.kind, 'clone'),
+          eq(sessionDirectories.state, 'ready'),
+        ),
+      )
+      .all()
+      .map((row) => row.path);
+  }
+
   /**
    * Sets sessions that are still marked running to waiting and returns their
    * IDs. Used on startup: their turns ended with the previous server process.

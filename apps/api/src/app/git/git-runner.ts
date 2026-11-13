@@ -19,6 +19,12 @@ export interface GitRunOptions {
   cwd?: string;
   /** Kill git after this many ms (default: 60 s). */
   timeoutMs?: number;
+  /**
+   * Variables added for this command, e.g. the credentials of a
+   * {@link GitAuth} (never put credentials into arguments: those are
+   * visible to every process on the machine).
+   */
+  env?: Record<string, string>;
 }
 
 /** Network operations (clone, fetch) may take long for big repositories. */
@@ -89,7 +95,7 @@ function lastLines(text: string, count = 3): string {
  */
 export function runGit(
   args: string[],
-  { cwd, timeoutMs = DEFAULT_TIMEOUT_MS }: GitRunOptions = {},
+  { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, env }: GitRunOptions = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -97,7 +103,7 @@ export function runGit(
       [...GLOBAL_OPTIONS, ...args],
       {
         cwd,
-        env: gitEnvironment(),
+        env: { ...gitEnvironment(), ...env },
         timeout: timeoutMs,
         killSignal: 'SIGKILL',
         maxBuffer: MAX_BUFFER,

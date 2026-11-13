@@ -17,6 +17,8 @@ import { LimitsService } from '../limits/limits.service';
 import { RepositoriesService } from '../repositories/repositories.service';
 import { RepositoryRepository } from '../repositories/repository.repository';
 import { SessionWorkspaceService } from '../workspaces/session-workspace.service';
+import { SettingsService } from '../settings/settings.service';
+import { withTestIdentity } from '../workspaces/testing/workspace-harness';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
@@ -64,10 +66,12 @@ describe('SessionsService', () => {
 
   const createService = async () => {
     const sessions = new SessionRepository(db);
+    const settings = withTestIdentity(new SettingsService(db));
     const repositories = new RepositoriesService(
       config,
       new RepositoryRepository(db),
       git,
+      settings,
     );
     const created = new SessionsService(
       config,
@@ -83,6 +87,7 @@ describe('SessionsService', () => {
         repositories,
         git,
         new SetupScriptRunner(),
+        settings,
       ),
     );
     await created.onModuleInit();
