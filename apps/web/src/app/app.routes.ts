@@ -13,6 +13,11 @@ export const appRoutes: Route[] = [
       import('./sessions/session-view').then((m) => m.SessionView),
   },
   {
+    path: 'sessions/:id/changes',
+    loadComponent: () =>
+      import('./diffs/session-changes-page').then((m) => m.SessionChangesPage),
+  },
+  {
     path: 'repositories',
     loadComponent: () =>
       import('./repositories/repository-list').then((m) => m.RepositoryList),

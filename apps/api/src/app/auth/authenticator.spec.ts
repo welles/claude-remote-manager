@@ -125,6 +125,7 @@ describe('authentication', () => {
         .status,
     ).toBe(401);
     expect((await get('/api/models')).status).toBe(401);
+    expect((await get('/api/sessions/x/diff')).status).toBe(401);
   });
 
   it('refuses session processes, whatever token they bring', async () => {
@@ -153,6 +154,9 @@ describe('authentication', () => {
       ['DELETE', '/api/sessions/x/queued-messages/y'],
       ['GET', '/api/models'],
       ['GET', '/api/limits'],
+      // What the session changed.
+      ['GET', '/api/sessions/x/diff'],
+      ['GET', '/api/sessions/x/diff/file?repositoryId=r&path=a'],
     ] as const) {
       const response =
         method === 'GET' || method === 'DELETE'

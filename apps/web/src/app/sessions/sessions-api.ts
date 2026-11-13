@@ -5,6 +5,8 @@ import type {
   CreatePullRequestRequest,
   CreateSessionRequest,
   PullRequestDto,
+  SessionDiffFile,
+  SessionDiffResponse,
   SessionDto,
   SessionListResponse,
 } from '@claude-remote-manager/shared-types';
@@ -44,6 +46,26 @@ export class SessionsApi {
     return this.http.post<PullRequestDto>(
       `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/pull-requests`,
       request,
+    );
+  }
+
+  /** What the session changed, per repository and file. */
+  diff(sessionId: string): Observable<SessionDiffResponse> {
+    return this.http.get<SessionDiffResponse>(`${sessionPath(sessionId)}/diff`);
+  }
+
+  /** One file of the session's diff, with the larger single-file limit. */
+  fileDiff(
+    sessionId: string,
+    repositoryId: string,
+    path: string,
+    oldPath: string | null,
+  ): Observable<SessionDiffFile> {
+    return this.http.get<SessionDiffFile>(
+      `${sessionPath(sessionId)}/diff/file`,
+      {
+        params: { repositoryId, path, ...(oldPath ? { oldPath } : {}) },
+      },
     );
   }
 

@@ -21,6 +21,8 @@ import { LimitsService } from '../limits/limits.service';
 import { RepositoriesModule } from '../repositories/repositories.module';
 import { SessionWorkspaceService } from '../workspaces/session-workspace.service';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
+import { SessionDiffController } from '../diffs/session-diff.controller';
+import { SessionDiffService } from '../diffs/session-diff.service';
 import { SessionFileAccess } from '../files/session-file-access';
 import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
@@ -37,6 +39,7 @@ import { ModelsService } from './models.service';
   controllers: [
     SessionsController,
     SessionGitController,
+    SessionDiffController,
     GitCredentialsController,
     ModelsController,
   ],
@@ -56,6 +59,7 @@ import { ModelsService } from './models.service';
     SessionWorkspaceService,
     SetupScriptRunner,
     SessionFileAccess,
+    SessionDiffService,
     { provide: AgentRunner, useClass: SdkAgentRunner },
     { provide: TranscriptReader, useClass: SdkTranscriptReader },
   ],

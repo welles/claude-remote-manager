@@ -139,6 +139,13 @@ export class SessionView implements OnInit {
       null
     );
   });
+  /** The session has clones, so the changes page has something to show. */
+  protected readonly hasRepositories = computed(
+    () =>
+      this.session()?.directories.some(
+        (directory) => directory.kind === 'clone',
+      ) ?? false,
+  );
   protected readonly preparing = computed(
     () => this.session()?.status === 'preparing',
   );

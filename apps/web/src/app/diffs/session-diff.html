@@ -1,0 +1,126 @@
+<div class="toolbar">
+  <mat-button-toggle-group
+    [value]="layout()"
+    (change)="setLayout($event.value)"
+    aria-label="Diff layout"
+    hideSingleSelectionIndicator
+  >
+    <mat-button-toggle value="unified" data-testid="layout-unified"
+      >Unified</mat-button-toggle
+    >
+    <mat-button-toggle value="split" data-testid="layout-split"
+      >Side by side</mat-button-toggle
+    >
+  </mat-button-toggle-group>
+  <button
+    matButton
+    (click)="refresh()"
+    [disabled]="loading()"
+    data-testid="refresh-diff"
+  >
+    Refresh
+  </button>
+</div>
+@if (loading()) {
+<mat-progress-bar mode="indeterminate" />
+} @if (error(); as message) {
+<p class="error" data-testid="diff-error">{{ message }}</p>
+} @if (diff(); as d) { @for (repository of d.repositories; track
+repository.repositoryId; let r = $index) {
+<section class="repository" data-testid="repository-diff">
+  <header>
+    <h2>{{ repository.repository }}</h2>
+    <p class="meta">
+      @if (repository.branch) {
+      <code>{{ repository.branch }}</code> } @if (repository.baseCommit) {
+      against <code>{{ repository.baseBranch ?? 'base' }}</code> at
+      <code>{{ repository.baseCommit.slice(0, 12) }}</code>
+      } @if (repository.state === 'ok') { ·
+      <span data-testid="repository-summary"
+        >{{ repository.fileCount }} {{ repository.fileCount === 1 ? 'file' :
+        'files' }} changed,
+        <span class="added">+{{ repository.additions }}</span>
+        <span class="removed">−{{ repository.deletions }}</span></span
+      >
+      }
+    </p>
+  </header>
+  @if (repository.state !== 'ok') {
+  <p class="error">{{ repository.message }}</p>
+  } @else if (repository.files.length === 0) {
+  <p class="empty">No changes.</p>
+  } @else {
+  <ul class="files" data-testid="file-list">
+    @for (file of repository.files; track $index; let f =
+    $index) {
+    <li>
+      <span
+        class="letter letter-{{ file.status }}"
+        [title]="file.status.replace('_', ' ')"
+        >{{ letters[file.status] }}</span
+      >
+      <a
+        class="file-link"
+        [href]="'#' + anchor(r, f)"
+        (click)="jump($event, anchor(r, f))"
+        >@if (file.oldPath) {<span class="old-path">{{ file.oldPath }} → </span
+        >}{{ file.path }}</a
+      >
+      <span class="counts">
+        @if (file.binary) { binary } @else {
+        <span class="added">+{{ file.additions }}</span>
+        <span class="removed">−{{ file.deletions }}</span>
+        }
+      </span>
+    </li>
+    }
+  </ul>
+  @if (repository.fileCount > repository.files.length) {
+  <p class="limit" data-testid="files-limited">
+    Showing {{ repository.files.length }} of {{ repository.fileCount }} changed
+    files.
+  </p>
+  } @for (file of repository.files; track $index; let f =
+  $index) { @let shownFile = shown(repository, file);
+  <details class="file" open [id]="anchor(r, f)" data-testid="file-diff">
+    <summary>
+      <span class="letter letter-{{ file.status }}"
+        >{{ letters[file.status] }}</span
+      >
+      <code class="path"
+        >@if (file.oldPath) {<span class="old-path">{{ file.oldPath }} → </span
+        >}{{ file.path }}</code
+      >
+      @if (!file.binary) {
+      <span class="counts"
+        ><span class="added">+{{ file.additions }}</span>
+        <span class="removed">−{{ file.deletions }}</span></span
+      >
+      }
+    </summary>
+    @if (shownFile.content === 'included') {
+    <app-diff-view [diff]="shownFile" [layout]="layout()" />
+    } @else {
+    <p class="limit" data-testid="file-left-out">
+      {{ shownFile.content === 'too_large' ? 'This file has too many changed
+      lines to show here.' : 'Left out: the diff reached its size limit.' }}
+      @let state = fileState().get(fileKey(repository, file)); @if (state ===
+      undefined) {
+      <button
+        matButton
+        (click)="load(repository, file)"
+        data-testid="load-file"
+      >
+        Show this file
+      </button>
+      } @else if (state === null) { Loading… } @else {
+      <span class="error">{{ state }}</span>
+      }
+    </p>
+    }
+  </details>
+  } }
+</section>
+} @empty {
+<p class="empty">This session has no repositories.</p>
+} }

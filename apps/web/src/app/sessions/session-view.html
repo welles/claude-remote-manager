@@ -14,7 +14,15 @@
       formatCost(s.usage.costUsd) }}
     </span>
   </div>
-  @if (s.status !== 'finished') {
+  @if (hasRepositories()) {
+  <a
+    matButton
+    class="changes"
+    [routerLink]="['/sessions', s.id, 'changes']"
+    data-testid="changes-link"
+    >Changes</a
+  >
+  } @if (s.status !== 'finished') {
   <button
     matButton
     class="end"
