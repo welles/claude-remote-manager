@@ -8,7 +8,7 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
-import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
 import {
   NOTIFICATION_CHANNELS,
   NOTIFICATION_EVENT_INFO,
@@ -52,7 +52,7 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
     AppDatePipe,
     MatButtonModule,
     MatCheckboxModule,
-    MatProgressSpinnerModule,
+    MatProgressBarModule,
   ],
   templateUrl: './notification-settings.html',
   styleUrl: './notification-settings.scss',

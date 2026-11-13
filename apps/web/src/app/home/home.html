@@ -2,7 +2,7 @@
 <mat-card appearance="outlined">
   <mat-card-content>
     @if (health.isLoading()) {
-    <mat-progress-spinner mode="indeterminate" diameter="32" />
+    <mat-progress-bar mode="indeterminate" />
     } @else if (health.error()) {
     <p class="error">The server is not reachable.</p>
     } @else if (health.value(); as value) {

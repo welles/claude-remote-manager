@@ -1,75 +1,83 @@
-<app-page-bar heading="Repositories" />
-<p class="muted">
-  Leftover clones and scratch directories without a session can be reviewed and
-  removed under
-  <a routerLink="/workspace" data-testid="workspace-link">Workspace cleanup</a>.
-</p>
+<app-page-bar heading="Repositories">
+  <a
+    class="app-icon-btn"
+    routerLink="/workspace"
+    title="Workspace cleanup: leftover clones and scratch directories"
+    data-testid="workspace-link"
+    ><app-icon name="clean" /><span class="visually-hidden"
+      >Workspace cleanup</span
+    ></a
+  >
+</app-page-bar>
 
-<app-github-repository-picker
-  label="Add from GitHub"
-  (picked)="pickedFromGitHub($event)"
-/>
+<section class="add-card app-compact" aria-labelledby="add-title">
+  <h2 class="app-section-label" id="add-title">Add a repository</h2>
+  <app-github-repository-picker
+    label="Add from GitHub"
+    (picked)="pickedFromGitHub($event)"
+  />
 
-<form class="add" (ngSubmit)="add()">
-  <mat-form-field
-    appearance="outline"
-    class="clone-url"
-    subscriptSizing="dynamic"
-  >
-    <mat-label>Clone URL</mat-label>
-    <input
-      matInput
-      name="cloneUrl"
-      [(ngModel)]="cloneUrl"
-      placeholder="https://github.com/owner/repo.git"
-      autocomplete="off"
-      autocapitalize="off"
-      spellcheck="false"
-      data-testid="clone-url"
-    />
-    <mat-hint>https, ssh, git&#64;host:owner/repo or a local path</mat-hint>
-  </mat-form-field>
-  <button
-    matButton="filled"
-    type="submit"
-    [disabled]="!cloneUrl.trim() || adding()"
-    data-testid="add"
-  >
-    Add
-  </button>
-</form>
-<form class="add" (ngSubmit)="addProject()">
-  <mat-form-field
-    appearance="outline"
-    class="clone-url"
-    subscriptSizing="dynamic"
-  >
-    <mat-label>New local project</mat-label>
-    <input
-      matInput
-      name="projectName"
-      [(ngModel)]="projectName"
-      placeholder="my-tool"
-      autocomplete="off"
-      autocapitalize="off"
-      spellcheck="false"
-      data-testid="project-name"
-    />
-    <mat-hint>A repository without remote; sessions clone it</mat-hint>
-  </mat-form-field>
-  <button
-    matButton="outlined"
-    type="submit"
-    [disabled]="!projectName.trim() || adding()"
-    data-testid="add-project"
-  >
-    Create
-  </button>
-</form>
+  <form class="add" (ngSubmit)="add()">
+    <mat-form-field
+      appearance="outline"
+      class="clone-url"
+      subscriptSizing="dynamic"
+    >
+      <mat-label>Clone URL</mat-label>
+      <input
+        matInput
+        name="cloneUrl"
+        [(ngModel)]="cloneUrl"
+        placeholder="https://github.com/owner/repo.git"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        data-testid="clone-url"
+      />
+      <mat-hint>https, ssh, git&#64;host:owner/repo or a local path</mat-hint>
+    </mat-form-field>
+    <button
+      matButton="outlined"
+      type="submit"
+      [disabled]="!cloneUrl.trim() || adding()"
+      data-testid="add"
+    >
+      Add
+    </button>
+  </form>
+  <form class="add" (ngSubmit)="addProject()">
+    <mat-form-field
+      appearance="outline"
+      class="clone-url"
+      subscriptSizing="dynamic"
+    >
+      <mat-label>New local project</mat-label>
+      <input
+        matInput
+        name="projectName"
+        [(ngModel)]="projectName"
+        placeholder="my-tool"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        data-testid="project-name"
+      />
+      <mat-hint>A repository without remote; sessions clone it</mat-hint>
+    </mat-form-field>
+    <button
+      matButton="outlined"
+      type="submit"
+      [disabled]="!projectName.trim() || adding()"
+      data-testid="add-project"
+    >
+      Create
+    </button>
+  </form>
+</section>
 @if (addError(); as error) {
 <p class="error" data-testid="add-error">{{ error }}</p>
 } @if (loading()) {
-<mat-progress-spinner mode="indeterminate" diameter="32" />
+<mat-progress-bar mode="indeterminate" />
 } @else if (loadError(); as error) {
 <p class="error">{{ error }}</p>
 } @else if (repositories().length === 0) {
@@ -84,19 +92,20 @@
       <div class="repository-head">
         <h2 class="name">{{ repository.fullName }}</h2>
         <button
-          matButton
           type="button"
+          class="app-icon-btn"
           (click)="fetch(repository)"
           [disabled]="repository.activity !== null"
+          title="Fetch from the remote"
           data-testid="fetch"
         >
-          Fetch
+          <app-icon name="refresh" /><span class="visually-hidden">Fetch</span>
         </button>
       </div>
       <div class="facts">
         @if (repository.activity) {
         <span class="activity" data-testid="activity">
-          <mat-progress-spinner mode="indeterminate" diameter="14" />
+          <span class="app-pulse"></span>
           {{ repository.activity === 'cloning' ? 'Cloning…' : 'Fetching…' }}
         </span>
         } @if (repository.defaultBranch) {
@@ -106,13 +115,13 @@
         } @else if (!repository.activity) {
         <span>Not cloned</span>
         } @if (repository.fetchedAt) {
-        <span>Fetched {{ repository.fetchedAt | appDate }}</span>
+        <span>Fetched {{ repository.fetchedAt | appDate: 'relative' }}</span>
         }
       </div>
       <div class="paths">
         @if (repository.github; as github) {
         <a
-          class="tag tag-github"
+          class="app-tag tag-github"
           [href]="github.htmlUrl"
           target="_blank"
           rel="noopener"
@@ -122,7 +131,7 @@
         } @if (repository.cloneUrl) {
         <code>{{ repository.cloneUrl }}</code>
         } @else {
-        <span class="tag tag-local">Local project</span> no remote ·
+        <span class="app-tag">Local project</span> no remote ·
         <code>{{ repository.localPath }}</code>
         <button
           matButton
@@ -264,12 +273,13 @@
           <span class="muted">none</span>
           }
           <button
-            matButton
             type="button"
+            class="app-icon-btn"
             (click)="editSetup(repository)"
+            title="Edit the setup script"
             data-testid="setup-edit"
           >
-            Edit
+            <app-icon name="edit" /><span class="visually-hidden">Edit</span>
           </button>
         </div>
         }
@@ -293,15 +303,15 @@
                 >{{ cloneLabel(clone) }}</a
               >
               } @else { {{ cloneLabel(clone) }} } @if (clone.orphaned) {
-              <span class="tag tag-warning">Orphaned</span>
+              <span class="app-tag tag-warning">Orphaned</span>
               } @if (clone.missing) {
-              <span class="tag tag-error">Missing</span>
+              <span class="app-tag tag-error">Missing</span>
               }
             </span>
             @if (clone.branch) {
             <code class="branch">{{ clone.branch }}</code>
             }
-            <code class="path">{{ clone.path }}</code>
+            <code class="path" [title]="clone.path">{{ clone.path }}</code>
           </li>
           }
         </ul>
@@ -313,7 +323,7 @@
 </div>
 } @if (strayDirectories().length > 0) {
 <section class="stray">
-  <h2 class="heading">Other clone directories</h2>
+  <h2 class="app-section-label">Other clone directories</h2>
   <p class="muted">
     Session clones of repositories that are not registered and scratch
     directories. No session uses them; see what they hold and remove them under

@@ -1,6 +1,6 @@
 import { Component, inject, input, signal, type OnInit } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
+import { AppIcon } from '../ui/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import type {
   RepositoryDiff,
@@ -35,12 +35,7 @@ const fileKey = (repository: RepositoryDiff, file: SessionDiffFile) =>
  */
 @Component({
   selector: 'app-session-diff',
-  imports: [
-    DiffView,
-    MatButtonModule,
-    MatButtonToggleModule,
-    MatProgressBarModule,
-  ],
+  imports: [DiffView, MatButtonModule, AppIcon, MatProgressBarModule],
   templateUrl: './session-diff.html',
   styleUrl: './session-diff.scss',
 })

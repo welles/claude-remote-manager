@@ -13,7 +13,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatSelectModule } from '@angular/material/select';
 import { RouterLink } from '@angular/router';
@@ -27,6 +27,7 @@ import type {
 import { GitHubApi } from '../github/github-api';
 import { GitHubRepositoryPicker } from '../github/github-repository-picker';
 import { RepositoriesApi, errorMessage } from './repositories-api';
+import { AppIcon } from '../ui/icon';
 import { AppPageBar } from '../ui/page-bar';
 
 /** How often the page reloads while a clone or fetch runs. */
@@ -45,6 +46,7 @@ export const cloneSlug = (path: string) =>
   selector: 'app-repository-list',
   host: { class: 'app-page' },
   imports: [
+    AppIcon,
     AppPageBar,
     AppDatePipe,
     FormsModule,
@@ -55,7 +57,7 @@ export const cloneSlug = (path: string) =>
     MatSelectModule,
     MatFormFieldModule,
     MatInputModule,
-    MatProgressSpinnerModule,
+    MatProgressBarModule,
     RouterLink,
     TextFieldModule,
   ],

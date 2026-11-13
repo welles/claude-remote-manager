@@ -152,6 +152,12 @@
     }
   }
 
+  .app-chip-group {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
   // A small text centred on a hairline (turn footers).
   .app-divider {
     display: flex;

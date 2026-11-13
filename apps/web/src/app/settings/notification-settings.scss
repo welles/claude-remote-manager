@@ -5,7 +5,10 @@
 }
 
 .subheading {
-  font: var(--mat-sys-title-small);
+  font: var(--mat-sys-label-small);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mat-sys-on-surface-variant);
   margin: 12px 0 4px;
 }
 

@@ -4,7 +4,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
 import type { GitHubStatusDto } from '@claude-remote-manager/shared-types';
 import { GitHubApi } from '../github/github-api';
 import { errorMessage } from '../repositories/repositories-api';
@@ -30,7 +30,7 @@ import { AppPageBar } from '../ui/page-bar';
     MatCardModule,
     MatFormFieldModule,
     MatInputModule,
-    MatProgressSpinnerModule,
+    MatProgressBarModule,
     NotificationSettings,
   ],
   templateUrl: './settings-page.html',

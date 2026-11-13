@@ -162,9 +162,7 @@ describe('SessionDiff', () => {
       element.querySelector('[data-testid="diff-unified"]'),
     ).not.toBeNull();
     (
-      element.querySelector(
-        '[data-testid="layout-split"] button',
-      ) as HTMLButtonElement
+      element.querySelector('[data-testid="layout-split"]') as HTMLButtonElement
     ).click();
     await fixture.whenStable();
     expect(element.querySelector('[data-testid="diff-split"]')).not.toBeNull();

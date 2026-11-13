@@ -44,7 +44,7 @@
       (click)="picker.click()"
       data-testid="new-attach-image"
     >
-      Attach images
+      <app-icon name="attach" />Attach images
     </button>
     <input
       #picker
@@ -57,22 +57,42 @@
   </div>
 
   <div class="workspace">
-    <mat-button-toggle-group
-      [value]="mode()"
-      (change)="setMode($event.value)"
+    <div
+      class="app-chip-group"
+      role="group"
       aria-label="Where the session works"
-      hideSingleSelectionIndicator
     >
-      <mat-button-toggle value="repository" data-testid="mode-repository"
-        >Repository</mat-button-toggle
+      <button
+        type="button"
+        class="app-chip"
+        [class.on]="mode() === 'repository'"
+        [attr.aria-pressed]="mode() === 'repository'"
+        (click)="setMode('repository')"
+        data-testid="mode-repository"
       >
-      <mat-button-toggle value="project" data-testid="mode-project"
-        >New project</mat-button-toggle
+        Repository
+      </button>
+      <button
+        type="button"
+        class="app-chip"
+        [class.on]="mode() === 'project'"
+        [attr.aria-pressed]="mode() === 'project'"
+        (click)="setMode('project')"
+        data-testid="mode-project"
       >
-      <mat-button-toggle value="scratch" data-testid="mode-scratch"
-        >No repository</mat-button-toggle
+        New project
+      </button>
+      <button
+        type="button"
+        class="app-chip"
+        [class.on]="mode() === 'scratch'"
+        [attr.aria-pressed]="mode() === 'scratch'"
+        (click)="setMode('scratch')"
+        data-testid="mode-scratch"
       >
-    </mat-button-toggle-group>
+        No repository
+      </button>
+    </div>
 
     @if (mode() === 'project') {
     <mat-form-field appearance="outline" class="full" subscriptSizing="dynamic">
@@ -154,12 +174,13 @@
         </mat-form-field>
         @if (mode() === 'project' || index > 0) {
         <button
-          matButton
           type="button"
+          class="app-icon-btn"
           (click)="removeRepository(index)"
+          title="Remove this repository"
           data-testid="remove-repository"
         >
-          Remove
+          <app-icon name="close" /><span class="visually-hidden">Remove</span>
         </button>
         }
       </div>
@@ -178,7 +199,7 @@
       (click)="addRepository()"
       data-testid="add-repository"
     >
-      + Add a repository
+      <app-icon name="plus" />Add repository
     </button>
     }
   </div>

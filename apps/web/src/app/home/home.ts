@@ -3,7 +3,7 @@ import { httpResource } from '@angular/common/http';
 import { Component } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
-import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
 import type { HealthResponse } from '@claude-remote-manager/shared-types';
 import { AppPageBar } from '../ui/page-bar';
 
@@ -15,7 +15,7 @@ import { AppPageBar } from '../ui/page-bar';
     AppDatePipe,
     MatButtonModule,
     MatCardModule,
-    MatProgressSpinnerModule,
+    MatProgressBarModule,
   ],
   templateUrl: './home.html',
   styleUrl: './home.scss',

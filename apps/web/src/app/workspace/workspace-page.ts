@@ -12,6 +12,7 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { LossDetails } from '../sessions/loss-details';
+import { AppIcon } from '../ui/icon';
 import { AppPageBar } from '../ui/page-bar';
 
 const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
@@ -29,6 +30,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
   selector: 'app-workspace-page',
   host: { class: 'app-page' },
   imports: [
+    AppIcon,
     AppPageBar,
     FormsModule,
     LossDetails,
@@ -52,7 +54,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
       <p class="error" role="alert">{{ text }}</p>
     }
     @if (data(); as data) {
-      <h2>Directories without session</h2>
+      <h2 class="app-section-label">Directories without session</h2>
       @for (orphan of data.orphans; track orphan.path) {
         <section class="entry" data-testid="orphan">
           <div class="head">
@@ -112,9 +114,11 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
           }
         </section>
       } @empty {
-        <p class="muted" data-testid="no-orphans">None.</p>
+        <p class="empty" data-testid="no-orphans">
+          <app-icon name="check" />None: every directory belongs to a session.
+        </p>
       }
-      <h2>Directories that are gone</h2>
+      <h2 class="app-section-label">Directories that are gone</h2>
       @for (entry of data.missing; track entry.sessionId + entry.position) {
         <section class="entry" data-testid="missing">
           <div class="head">
@@ -139,7 +143,9 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
           </button>
         </section>
       } @empty {
-        <p class="muted" data-testid="no-missing">None.</p>
+        <p class="empty" data-testid="no-missing">
+          <app-icon name="check" />None: every session has its directories.
+        </p>
       }
     }
   `,
@@ -147,9 +153,16 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
     :host {
       gap: var(--app-space-2);
     }
-    h2 {
-      font: var(--mat-sys-title-medium);
-      margin: 16px 0 0;
+    .empty {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      padding: 12px;
+      border: 1px dashed var(--mat-sys-outline-variant);
+      border-radius: var(--mat-sys-corner-medium);
+      color: var(--mat-sys-on-surface-variant);
+      --app-icon-size: 18px;
     }
     .entry {
       display: flex;
@@ -159,6 +172,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
       padding: 12px;
       border: 1px solid var(--mat-sys-outline-variant);
       border-radius: var(--mat-sys-corner-medium);
+      background: var(--mat-sys-surface-container-low);
     }
     .head {
       display: flex;

@@ -22,7 +22,7 @@ import { SessionDiff } from './session-diff';
   `,
   styles: `
     :host {
-      --app-page-max: 1200px;
+      --app-page-max: 1320px;
     }
   `,
 })

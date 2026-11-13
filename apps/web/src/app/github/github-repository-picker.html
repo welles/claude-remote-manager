@@ -9,6 +9,7 @@
     [matAutocomplete]="auto"
     [disabled]="registering()"
     placeholder="owner/name"
+    title="Repositories of all accounts the GitHub App is installed on"
     autocomplete="off"
     autocapitalize="off"
     spellcheck="false"
@@ -38,9 +39,5 @@
   </mat-autocomplete>
   @if (message(); as text) {
   <mat-hint class="message" data-testid="github-message">{{ text }}</mat-hint>
-  } @else {
-  <mat-hint
-    >Repositories of all accounts the GitHub App is installed on</mat-hint
-  >
   }
 </mat-form-field>

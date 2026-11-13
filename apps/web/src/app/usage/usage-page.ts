@@ -8,7 +8,6 @@ import {
   signal,
   type OnInit,
 } from '@angular/core';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { RouterLink } from '@angular/router';
 import type {
@@ -51,12 +50,7 @@ function browserTimeZone(): string {
 @Component({
   selector: 'app-usage-page',
   host: { class: 'app-page' },
-  imports: [
-    AppPageBar,
-    MatButtonToggleModule,
-    MatProgressBarModule,
-    RouterLink,
-  ],
+  imports: [AppPageBar, MatProgressBarModule, RouterLink],
   templateUrl: './usage-page.html',
   styleUrl: './usage-page.scss',
 })

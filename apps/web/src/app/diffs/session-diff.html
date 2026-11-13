@@ -1,24 +1,35 @@
 <div class="toolbar">
-  <mat-button-toggle-group
-    [value]="layout()"
-    (change)="setLayout($event.value)"
-    aria-label="Diff layout"
-    hideSingleSelectionIndicator
-  >
-    <mat-button-toggle value="unified" data-testid="layout-unified"
-      >Unified</mat-button-toggle
+  <div class="app-chip-group" role="group" aria-label="Diff layout">
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="layout() === 'unified'"
+      [attr.aria-pressed]="layout() === 'unified'"
+      (click)="setLayout('unified')"
+      data-testid="layout-unified"
     >
-    <mat-button-toggle value="split" data-testid="layout-split"
-      >Side by side</mat-button-toggle
+      Unified
+    </button>
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="layout() === 'split'"
+      [attr.aria-pressed]="layout() === 'split'"
+      (click)="setLayout('split')"
+      data-testid="layout-split"
     >
-  </mat-button-toggle-group>
+      Side by side
+    </button>
+  </div>
   <button
-    matButton
+    type="button"
+    class="app-icon-btn"
     (click)="refresh()"
     [disabled]="loading()"
+    title="Refresh"
     data-testid="refresh-diff"
   >
-    Refresh
+    <app-icon name="refresh" /><span class="visually-hidden">Refresh</span>
   </button>
 </div>
 @if (loading()) {

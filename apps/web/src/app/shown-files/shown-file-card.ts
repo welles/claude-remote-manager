@@ -45,7 +45,7 @@ const KIND_LABELS: Record<ShownFileDto['kind'], string> = {
           }
         </div>
         <button
-          matButton="tonal"
+          matButton="outlined"
           (click)="open.emit(f)"
           data-testid="open-file"
         >
@@ -79,8 +79,9 @@ const KIND_LABELS: Record<ShownFileDto['kind'], string> = {
       justify-content: space-between;
       gap: 12px;
       padding: 8px 12px;
+      border: 1px solid var(--mat-sys-outline-variant);
       border-radius: var(--mat-sys-corner-small);
-      background: var(--mat-sys-surface-container);
+      background: var(--mat-sys-surface-container-low);
     }
     .text {
       display: flex;

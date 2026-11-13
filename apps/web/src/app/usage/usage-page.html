@@ -1,55 +1,97 @@
 <app-page-bar heading="Usage" />
 <p class="note" data-testid="cost-note">
-  Costs are theoretical: what these requests would have cost at Anthropic's API
-  prices, as the Agent SDK estimates them. The subscription costs the same
-  however much it is used. Days, weeks (Monday to Sunday) and months follow your
-  time zone, {{ timeZone }}.
+  Costs are theoretical API prices (the Agent SDK's estimate); the subscription
+  costs the same however much it is used. Days, weeks (Monday to Sunday) and
+  months in {{ timeZone }}.
 </p>
 
 <div class="controls">
-  <mat-button-toggle-group
-    [value]="granularity()"
-    (change)="setGranularity($event.value)"
-    aria-label="Period"
-    hideSingleSelectionIndicator
-  >
-    <mat-button-toggle value="day" data-testid="by-day">Days</mat-button-toggle>
-    <mat-button-toggle value="week" data-testid="by-week"
-      >Weeks</mat-button-toggle
+  <div class="app-chip-group" role="group" aria-label="Period">
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="granularity() === 'day'"
+      [attr.aria-pressed]="granularity() === 'day'"
+      (click)="setGranularity('day')"
+      data-testid="by-day"
     >
-    <mat-button-toggle value="month" data-testid="by-month"
-      >Months</mat-button-toggle
+      Days
+    </button>
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="granularity() === 'week'"
+      [attr.aria-pressed]="granularity() === 'week'"
+      (click)="setGranularity('week')"
+      data-testid="by-week"
     >
-  </mat-button-toggle-group>
-  <mat-button-toggle-group
-    [value]="groupBy()"
-    (change)="setGroupBy($event.value)"
-    aria-label="Split by"
-    hideSingleSelectionIndicator
-  >
-    <mat-button-toggle value="session" data-testid="group-session"
-      >Session</mat-button-toggle
+      Weeks
+    </button>
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="granularity() === 'month'"
+      [attr.aria-pressed]="granularity() === 'month'"
+      (click)="setGranularity('month')"
+      data-testid="by-month"
     >
-    <mat-button-toggle value="repository" data-testid="group-repository"
-      >Repository</mat-button-toggle
+      Months
+    </button>
+  </div>
+  <div class="app-chip-group" role="group" aria-label="Split by">
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="groupBy() === 'session'"
+      [attr.aria-pressed]="groupBy() === 'session'"
+      (click)="setGroupBy('session')"
+      data-testid="group-session"
     >
-    <mat-button-toggle value="model" data-testid="group-model"
-      >Model</mat-button-toggle
+      Session
+    </button>
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="groupBy() === 'repository'"
+      [attr.aria-pressed]="groupBy() === 'repository'"
+      (click)="setGroupBy('repository')"
+      data-testid="group-repository"
     >
-  </mat-button-toggle-group>
-  <mat-button-toggle-group
-    [value]="measure()"
-    (change)="measure.set($event.value)"
-    aria-label="Measure"
-    hideSingleSelectionIndicator
-  >
-    <mat-button-toggle value="cost" data-testid="measure-cost"
-      >Cost</mat-button-toggle
+      Repository
+    </button>
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="groupBy() === 'model'"
+      [attr.aria-pressed]="groupBy() === 'model'"
+      (click)="setGroupBy('model')"
+      data-testid="group-model"
     >
-    <mat-button-toggle value="tokens" data-testid="measure-tokens"
-      >Tokens</mat-button-toggle
+      Model
+    </button>
+  </div>
+  <div class="app-chip-group" role="group" aria-label="Measure">
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="measure() === 'cost'"
+      [attr.aria-pressed]="measure() === 'cost'"
+      (click)="measure.set('cost')"
+      data-testid="measure-cost"
     >
-  </mat-button-toggle-group>
+      Cost
+    </button>
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="measure() === 'tokens'"
+      [attr.aria-pressed]="measure() === 'tokens'"
+      (click)="measure.set('tokens')"
+      data-testid="measure-tokens"
+    >
+      Tokens
+    </button>
+  </div>
 </div>
 
 @if (loading()) {

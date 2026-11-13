@@ -14,7 +14,6 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
@@ -30,6 +29,7 @@ import {
   type SessionPermissionMode,
 } from '@claude-remote-manager/shared-types';
 import { GitHubRepositoryPicker } from '../github/github-repository-picker';
+import { AppIcon } from '../ui/icon';
 import { ReferenceAutocomplete } from '../github-references/reference-autocomplete';
 import { ReferenceChips } from '../github-references/reference-chips';
 import { ReferenceSuggestions } from '../github-references/reference-suggestions';
@@ -92,7 +92,7 @@ export interface SessionPrefill {
     FormsModule,
     GitHubRepositoryPicker,
     MatButtonModule,
-    MatButtonToggleModule,
+    AppIcon,
     MatFormFieldModule,
     MatInputModule,
     MatSelectModule,

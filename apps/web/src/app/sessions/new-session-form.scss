@@ -86,3 +86,10 @@ mat-button-toggle-group {
 .prompt {
   position: relative;
 }
+
+.images button app-icon,
+.add-repository app-icon {
+  --app-icon-size: 18px;
+
+  margin-right: 6px;
+}

@@ -114,9 +114,7 @@ describe('UsagePage and WorkspacePage', () => {
     expect(text('usage-legend')).toBe('opus $2.00 claude-haiku $0.75');
     expect(text('usage-table')).toContain('claude-haiku 100 0 0 0 $0.75');
 
-    (
-      element.querySelector('[data-testid="by-month"] button') as HTMLElement
-    ).click();
+    (element.querySelector('[data-testid="by-month"]') as HTMLElement).click();
     const monthly = http.expectOne((req) => req.url === '/api/usage');
     expect(monthly.request.params.get('granularity')).toBe('month');
     monthly.flush(statistics([]));
