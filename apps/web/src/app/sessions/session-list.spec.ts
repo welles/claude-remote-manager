@@ -173,7 +173,12 @@ describe('SessionList', () => {
     http.expectOne('/api/sessions').flush({
       sessions: [
         sessionDto({ id: 's1', title: 'Idle', waitingFor: 'message' }),
-        sessionDto({ id: 's2', title: 'Ask', waitingFor: 'permission' }),
+        sessionDto({
+          id: 's2',
+          title: 'Ask',
+          waitingFor: 'permission',
+          pendingRequests: { kind: 'question', count: 1, questions: 2 },
+        }),
         sessionDto({
           id: 's3',
           title: 'Busy',
@@ -193,5 +198,7 @@ describe('SessionList', () => {
       ...element.querySelectorAll('[data-testid="session"] .title'),
     ].map((title) => title.textContent?.trim());
     expect(titles).toEqual(['Ask', 'Busy', 'Idle']);
+    // What the session needs, not only that it needs the user.
+    expect(rows(fixture)[0]).toContain('2 questions');
   });
 });

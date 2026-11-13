@@ -19,6 +19,7 @@ import type {
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   SESSION_PERMISSION_MODES,
+  summarizePendingRequests,
   type AttachmentDto,
   type ContextUsage,
   type CreateSessionRequest,
@@ -27,6 +28,7 @@ import {
   type MessageContextResponse,
   type MessageReference,
   type MessageReferenceRequest,
+  type PendingRequestSummary,
   type PermissionRequestEvent,
   type PermissionResponseResult,
   type PullRequestCall,
@@ -265,6 +267,8 @@ interface LiveSession {
   contextResults: number;
   /** Status and `waitingFor` last published (`status/waitingFor`). */
   publishedStatus: string;
+  /** The pending requests' summary last published (JSON). */
+  publishedPending: string;
   /** Why the current process is being closed on purpose. */
   closing: 'idle' | 'shutdown' | 'end' | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
@@ -1136,6 +1140,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       order: Promise.resolve(),
       contextResults: 0,
       publishedStatus: '',
+      publishedPending: 'null',
       closing: null,
       idleTimer: null,
       consuming: null,
@@ -2039,6 +2044,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * request is `waiting` for `permission` (the stored status stays
    * `running`: the turn and its process go on).
    */
+  /** What the pending approval requests ask for, while there are any. */
+  private pendingSummary(record: SessionRecord): PendingRequestSummary | null {
+    return record.status === 'running'
+      ? summarizePendingRequests(this.approver.pendingRequests(record.id))
+      : null;
+  }
+
   private effectiveStatus(record: SessionRecord): {
     status: SessionStatus;
     waitingFor: SessionWaitingFor | null;
@@ -2063,10 +2075,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const record = this.requireRecord(live.id);
     const effective = this.effectiveStatus(record);
     const key = statusKey(effective);
+    const pending = JSON.stringify(this.pendingSummary(record));
     if (key === live.publishedStatus) {
+      if (pending !== live.publishedPending) {
+        // Another request came or one was answered: same status, but the
+        // session list says what it waits for.
+        live.publishedPending = pending;
+        this.updates.next(this.toDto(record));
+      }
       return false;
     }
     live.publishedStatus = key;
+    live.publishedPending = pending;
     this.append(live, { type: 'session.status', ...effective });
     this.updates.next(this.toDto(record));
     return true;
@@ -2348,6 +2368,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       model: record.model,
       permissionMode: record.permissionMode,
       ...this.effectiveStatus(record),
+      pendingRequests: this.pendingSummary(record),
       slug: record.slug,
       pendingMessage: record.pendingMessage?.text ?? null,
       directories: record.directories.map(

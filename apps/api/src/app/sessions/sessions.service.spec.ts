@@ -674,6 +674,46 @@ describe('SessionsService', () => {
       );
     });
 
+    it('says what the pending requests ask for, updated live', async () => {
+      const session = await startSession();
+      void ask('Bash', { command: 'npm test' });
+      await pending(session.id);
+      expect(service.get(session.id).pendingRequests).toEqual({
+        kind: 'command',
+        count: 1,
+        questions: 0,
+      });
+      expect(updates.at(-1)?.pendingRequests).toMatchObject({ count: 1 });
+
+      // A second request: same status, but the list learns about it.
+      void runner.last.options.canUseTool(
+        'Edit',
+        { file_path: 'README.md', old_string: 'a', new_string: 'b' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'tool-2',
+          requestId: 'r2',
+        },
+      );
+      await waitFor(() => service.pendingPermissions(session.id).length === 2);
+      expect(updates.at(-1)?.pendingRequests).toEqual({
+        kind: 'command',
+        count: 2,
+        questions: 0,
+      });
+
+      const [first] = service.pendingPermissions(session.id);
+      await service.respondToPermission(session.id, first.requestId, {
+        decision: 'allow',
+      });
+      expect(service.get(session.id).pendingRequests).toEqual({
+        kind: 'edit',
+        count: 1,
+        questions: 0,
+      });
+      expect(updates.at(-1)?.pendingRequests).toMatchObject({ kind: 'edit' });
+    });
+
     it('passes a denial with message on, and stops the turn without one', async () => {
       const session = await startSession();
       const first = ask('Bash', { command: 'curl x' });

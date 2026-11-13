@@ -1,5 +1,6 @@
 import {
   needsUser,
+  pendingRequestLabel,
   type SessionDto,
   type SessionStatus,
   type UsageTotals,
@@ -28,6 +29,23 @@ export function statusLabel(
     }
   }
   return STATUS_LABELS[session.status];
+}
+
+/**
+ * What a session needs, as specific as known: `Approve command`,
+ * `2 questions`, `Plan ready`, `Setup failed`; else the status label.
+ */
+export function needLabel(
+  session: Pick<SessionDto, 'status' | 'waitingFor' | 'pendingRequests'>,
+): string {
+  if (
+    session.status === 'waiting' &&
+    session.waitingFor === 'permission' &&
+    session.pendingRequests
+  ) {
+    return pendingRequestLabel(session.pendingRequests);
+  }
+  return statusLabel(session);
 }
 
 /**

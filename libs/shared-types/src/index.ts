@@ -7,6 +7,7 @@ export * from './lib/github-references';
 export * from './lib/health';
 export * from './lib/limits';
 export * from './lib/notifications';
+export * from './lib/pending-requests';
 export * from './lib/permissions';
 export * from './lib/pr-automation';
 export * from './lib/previews';

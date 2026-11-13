@@ -1,4 +1,5 @@
 import type { MessageReferenceRequest } from './github-references';
+import type { PendingRequestSummary } from './pending-requests';
 import type { PullRequestAutomationDto } from './pr-automation';
 import type { PreviewDto } from './previews';
 /**
@@ -225,6 +226,12 @@ export interface SessionDto {
   status: SessionStatus;
   /** Set exactly when `status` is `waiting`. */
   waitingFor: SessionWaitingFor | null;
+  /**
+   * With `waitingFor: 'permission'`: what the pending approval requests
+   * ask for (kind and count, no details), for the session list; `null`
+   * otherwise. Absent from older servers.
+   */
+  pendingRequests?: PendingRequestSummary | null;
   /**
    * Readable unique name, used for the session's directories and branches;
    * `null` for sessions created before session clones existed.

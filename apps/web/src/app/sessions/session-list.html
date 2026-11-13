@@ -103,7 +103,7 @@
     <span class="meta">
       @if (tagged(kind)) {
       <span class="status {{ kindClass[kind] }}" data-testid="session-status"
-        >{{ statusLabel(session) }}</span
+        >{{ needLabel(session) }}</span
       >
       } @else {
       <span class="state" data-testid="session-status"

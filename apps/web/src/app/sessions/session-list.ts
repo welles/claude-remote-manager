@@ -26,7 +26,13 @@ import {
   statusKind,
   type StatusKind,
 } from '../ui/status-badge';
-import { formatCost, formatTokens, statusLabel, totalTokens } from './format';
+import {
+  formatCost,
+  formatTokens,
+  needLabel,
+  statusLabel,
+  totalTokens,
+} from './format';
 import { ModelsStore, modelLabel } from './models-store';
 import { loadSessionList, saveSessionList } from './session-list-cache';
 import { SessionSearch } from './session-search';
@@ -78,6 +84,7 @@ export class SessionList implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly statusLabel = statusLabel;
+  protected readonly needLabel = needLabel;
   protected readonly statusKind = statusKind;
   protected readonly kindClass = STATUS_KIND_CLASS;
   protected readonly formatCost = formatCost;
