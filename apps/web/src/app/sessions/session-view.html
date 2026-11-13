@@ -103,7 +103,7 @@
   } @for (item of items(); track item.key) { @switch (item.kind) { @case
   ('user') {
   <!-- prettier-ignore -->
-  <div class="user-message">@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" /></div>
+  <div class="user-message" [class.app-message]="item.origin === 'app'" [attr.data-origin]="item.origin">@if (item.origin === 'app') {<span class="message-origin" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" /></div>
   @if (item.contextLength) {
   <app-message-context
     [sessionId]="sessionId()"

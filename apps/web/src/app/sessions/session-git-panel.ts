@@ -12,6 +12,8 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
+import { DiscardCloneDialog } from './discard-clone-dialog';
+import { PullRequestAutomation } from './pull-request-automation';
 import { SessionsApi } from './sessions-api';
 
 /** A clone of the session that can be pushed. */
@@ -42,11 +44,13 @@ export const PULL_REQUEST_STATE_LABELS: Record<
   selector: 'app-session-git-panel',
   imports: [
     DatePipe,
+    DiscardCloneDialog,
     FormsModule,
     MatButtonModule,
     MatCheckboxModule,
     MatFormFieldModule,
     MatInputModule,
+    PullRequestAutomation,
     TextFieldModule,
   ],
   templateUrl: './session-git-panel.html',
@@ -73,6 +77,30 @@ export class SessionGitPanel {
               pullRequests: session.pullRequests.filter(
                 (pull) => pull.repositoryId === directory.repository?.id,
               ),
+            },
+          ]
+        : [],
+    );
+  });
+
+  /**
+   * Clones autoclose kept because they hold work that is not on GitHub
+   * (the session ended; the others were removed).
+   */
+  protected readonly keptClones = computed(() => {
+    const session = this.session();
+    if (!session.autoclosedAt || session.status !== 'finished') {
+      return [];
+    }
+    return session.directories.flatMap((directory) =>
+      directory.kind === 'clone' &&
+      directory.state === 'ready' &&
+      directory.repository
+        ? [
+            {
+              repositoryId: directory.repository.id,
+              name: directory.repository.fullName,
+              path: directory.path,
             },
           ]
         : [],

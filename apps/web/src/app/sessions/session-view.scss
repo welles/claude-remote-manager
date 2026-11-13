@@ -51,6 +51,22 @@
   overflow-wrap: anywhere;
 }
 
+.app-message {
+  align-self: stretch;
+  max-width: none;
+  background: var(--mat-sys-surface-container-high);
+  color: var(--mat-sys-on-surface);
+  border-left: 4px solid var(--mat-sys-tertiary);
+}
+
+.message-origin {
+  display: block;
+  margin-bottom: 4px;
+  font: var(--mat-sys-label-medium);
+  color: var(--mat-sys-tertiary);
+  white-space: normal;
+}
+
 .assistant-text {
   overflow-wrap: anywhere;
 

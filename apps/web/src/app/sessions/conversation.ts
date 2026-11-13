@@ -33,6 +33,8 @@ export type ConversationItem =
       references: MessageReference[];
       /** Length of the GitHub context Claude got with it, if any. */
       contextLength: number | null;
+      /** `app`: composed by the app (PR automation), not typed by the user. */
+      origin: 'user' | 'app';
     }
   | {
       kind: 'assistant';
@@ -201,6 +203,7 @@ export function applyEvent(
           attachments: event.attachments ?? [],
           references: event.references ?? [],
           contextLength: event.contextLength ?? null,
+          origin: event.origin ?? 'user',
         },
       ];
     case 'assistant.delta': {

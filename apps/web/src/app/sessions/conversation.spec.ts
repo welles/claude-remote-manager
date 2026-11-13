@@ -62,6 +62,7 @@ describe('conversation', () => {
         attachments: [],
         references: [],
         contextLength: null,
+        origin: 'user',
       },
       {
         kind: 'assistant',

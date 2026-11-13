@@ -28,6 +28,16 @@ const pull = (overrides: Partial<PullRequestDto> = {}): PullRequestDto => ({
   closedAt: null,
   mergedAt: null,
   syncedAt: '2026-01-01T10:00:00.000Z',
+  automation: {
+    autofix: false,
+    autoclose: false,
+    attempts: 0,
+    maxAttempts: 3,
+    gaveUp: false,
+    running: false,
+    lastRunAt: null,
+    lastTrigger: null,
+  },
   ...overrides,
 });
 
@@ -110,10 +120,150 @@ describe('SessionGitPanel', () => {
     expect(all('git-clone')).toHaveLength(1);
     expect(all('push')).toEqual(['Push']);
     expect(all('create-pr')).toEqual(['Create PR']);
-    expect(all('pull-request')).toEqual([
-      'Open #7 Fix login by Claude',
-      'Merged #3 Old',
-    ]);
+    const pulls = all('pull-request');
+    expect(pulls[0]).toMatch(/^Open #7 Fix login by Claude Autofix Autoclose/);
+    expect(pulls[1]).toBe('Merged #3 Old');
+    // The automation is offered for open pull requests only.
+    expect(all('pr-automation')).toHaveLength(1);
+  });
+
+  describe('PR automation', () => {
+    const automation = (
+      overrides: Partial<PullRequestDto['automation']> = {},
+    ): PullRequestDto['automation'] => ({
+      ...pull().automation,
+      ...overrides,
+    });
+
+    it('switches autofix and autoclose and shows the attempts', async () => {
+      const { fixture, element, all, click } = await render(
+        githubSession({
+          pullRequests: [pull({ automation: automation({ attempts: 1 }) })],
+        }),
+      );
+      expect(all('autofix-attempts')).toEqual(['Attempts 1 / 3']);
+      (
+        element.querySelector(
+          '[data-testid="autofix-toggle"] button',
+        ) as HTMLElement
+      ).click();
+      const toggle = http.expectOne({
+        method: 'PATCH',
+        url: '/api/sessions/s1/pull-requests/1/automation',
+      });
+      expect(toggle.request.body).toEqual({ autofix: true });
+      toggle.flush(githubSession());
+      fixture.detectChanges();
+      await click('autofix-limit-up');
+      const limit = http.expectOne(
+        '/api/sessions/s1/pull-requests/1/automation',
+      );
+      expect(limit.request.body).toEqual({ maxAttempts: 4 });
+      limit.flush(githubSession());
+      fixture.detectChanges();
+      await click('autofix-reset');
+      const reset = http.expectOne(
+        '/api/sessions/s1/pull-requests/1/automation',
+      );
+      expect(reset.request.body).toEqual({ resetAttempts: true });
+      reset.flush(githubSession());
+    });
+
+    it('shows a running run with what triggered it, and stops it', async () => {
+      const { all, click } = await render(
+        githubSession({
+          pullRequests: [
+            pull({
+              automation: automation({
+                autofix: true,
+                attempts: 1,
+                running: true,
+                lastTrigger: 'ci',
+                lastRunAt: '2026-01-01T10:00:00.000Z',
+              }),
+            }),
+          ],
+        }),
+      );
+      expect(all('autofix-running')[0]).toContain(
+        'Autofix run going on for failed checks',
+      );
+      await click('autofix-stop');
+      http
+        .expectOne({ method: 'POST', url: '/api/sessions/s1/autofix/stop' })
+        .flush(githubSession());
+    });
+
+    it('says when the attempt limit was reached', async () => {
+      const { all } = await render(
+        githubSession({
+          pullRequests: [
+            pull({
+              automation: automation({
+                autofix: true,
+                attempts: 3,
+                gaveUp: true,
+              }),
+            }),
+          ],
+        }),
+      );
+      expect(all('autofix-gave-up')[0]).toContain('Limit reached');
+    });
+
+    it('offers to delete clones autoclose kept', async () => {
+      const { all } = await render(
+        githubSession({
+          status: 'finished',
+          autoclosedAt: '2026-01-01T11:00:00.000Z',
+          pullRequests: [pull({ state: 'merged' })],
+        }),
+      );
+      expect(all('kept-clones')[0]).toContain(
+        'Autoclose kept the clone of acme/app',
+      );
+      expect(all('discard-clone')).toHaveLength(2);
+    });
+
+    it('shows what deleting a kept clone would lose before deleting it', async () => {
+      const { fixture, all, click } = await render(
+        githubSession({
+          status: 'finished',
+          autoclosedAt: '2026-01-01T11:00:00.000Z',
+          pullRequests: [pull({ state: 'merged' })],
+        }),
+      );
+      await click('discard-clone');
+      http.expectOne('/api/sessions/s1/repositories/r1/clone-loss').flush({
+        repositoryId: 'r1',
+        repository: 'acme/app',
+        path: '/workspace/sessions/x/acme/app',
+        uncommittedFiles: ['notes.txt'],
+        uncommittedCount: 1,
+        unpushedCommits: [
+          { branch: 'claude/x', sha: 'abcdef1234567', subject: 'Local work' },
+        ],
+        unpushedCount: 1,
+        stashes: 2,
+        clean: false,
+      });
+      fixture.detectChanges();
+      const dialog = all('discard-clone-dialog')[0];
+      expect(dialog).toContain('Delete the clone of acme/app?');
+      expect(dialog).toContain('cannot be undone');
+      expect(all('loss-files')).toEqual(['notes.txt']);
+      expect(all('loss-commits')).toEqual(['abcdef1 Local work (claude/x)']);
+      expect(all('loss-stashes')).toEqual(['2 stash entries']);
+      await click('discard-clone-confirm');
+      const discard = http.expectOne({
+        method: 'POST',
+        url: '/api/sessions/s1/repositories/r1/discard-clone',
+      });
+      expect(discard.request.body).toEqual({ confirm: true });
+      discard.flush(githubSession());
+      fixture.detectChanges();
+      expect(all('discard-clone-confirm')).toEqual([]);
+    });
   });
 
   it('pushes by button and shows the outcome', async () => {

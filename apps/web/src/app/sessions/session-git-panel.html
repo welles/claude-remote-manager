@@ -1,4 +1,22 @@
-@if (clones().length > 0) {
+@if (keptClones().length > 0) {
+<section class="kept" data-testid="kept-clones">
+  @for (clone of keptClones(); track clone.repositoryId) {
+  <p>
+    Autoclose kept the clone of <strong>{{ clone.name }}</strong>: it has work
+    that is not on GitHub.
+    <button
+      matButton
+      type="button"
+      (click)="discardDialog.open(clone)"
+      data-testid="discard-clone"
+    >
+      Delete clone…
+    </button>
+  </p>
+  }
+  <app-discard-clone-dialog #discardDialog [sessionId]="session().id" />
+</section>
+} @if (clones().length > 0) {
 <section class="git" data-testid="git-panel">
   @for (clone of clones(); track clone.repositoryId) {
   <div class="clone" data-testid="git-clone">
@@ -104,6 +122,13 @@
         <span class="by"
           >{{ pull.createdBy === 'claude' ? 'by Claude' : '' }}</span
         >
+        @if (pull.state === 'open') {
+        <app-pull-request-automation
+          class="pull-automation"
+          [sessionId]="session().id"
+          [pull]="pull"
+        />
+        }
       </li>
       }
     </ul>

@@ -50,6 +50,7 @@ export const sessionDto = (
   },
   context: null,
   pullRequests: [],
+  autoclosedAt: null,
   ...overrides,
 });
 

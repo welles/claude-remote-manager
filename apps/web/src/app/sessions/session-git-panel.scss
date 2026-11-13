@@ -88,3 +88,19 @@
   background: var(--mat-sys-tertiary-container);
   color: var(--mat-sys-on-tertiary-container);
 }
+
+.pull-automation {
+  flex-basis: 100%;
+}
+
+.kept {
+  margin-top: 8px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  background: var(--mat-sys-error-container);
+  color: var(--mat-sys-on-error-container);
+}
+
+.kept p {
+  margin: 4px 0;
+}

@@ -593,6 +593,35 @@ describe('SessionView', () => {
     expect(image.alt).toBe('shot.png');
   });
 
+  it('marks messages the app sent (PR automation) as such', async () => {
+    const { harness, socket, element } = await open();
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto(),
+      events: [
+        event({ type: 'user.message', id: 'u1', text: 'Mine' }),
+        event({
+          type: 'user.message',
+          id: 'u2',
+          text: 'Autofix, attempt 1 of 3',
+          origin: 'app',
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const messages = [...element.querySelectorAll('.user-message')];
+    expect(messages[0].classList.contains('app-message')).toBe(false);
+    expect(messages[0].textContent).toBe('Mine');
+    expect(messages[1].classList.contains('app-message')).toBe(true);
+    expect(
+      messages[1].querySelector('[data-testid="app-message-label"]')
+        ?.textContent,
+    ).toBe('Sent by the app · PR automation');
+  });
+
   it('shows references of messages as chips and what Claude got', async () => {
     const { harness, socket, element } = await open();
     const http = TestBed.inject(HttpTestingController);

@@ -2,6 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 import type {
+  CloneLossReport,
   CreatePullRequestRequest,
   CreateSessionRequest,
   FileMentionsResponse,
@@ -10,6 +11,7 @@ import type {
   SessionDiffResponse,
   SessionDto,
   SessionListResponse,
+  UpdatePullRequestAutomationRequest,
 } from '@claude-remote-manager/shared-types';
 
 const sessionPath = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
@@ -82,6 +84,47 @@ export class SessionsApi {
     return this.http.post<SessionDto>(
       `${sessionPath(sessionId)}/pull-requests/refresh`,
       {},
+    );
+  }
+
+  /** Autofix and autoclose of a pull request, its limit, a reset. */
+  updateAutomation(
+    sessionId: string,
+    pullRequestId: number,
+    request: UpdatePullRequestAutomationRequest,
+  ): Observable<SessionDto> {
+    return this.http.patch<SessionDto>(
+      `${sessionPath(sessionId)}/pull-requests/${pullRequestId}/automation`,
+      request,
+    );
+  }
+
+  /** Stops the running autofix run (and turns autofix off for its PR). */
+  stopAutofix(sessionId: string): Observable<SessionDto> {
+    return this.http.post<SessionDto>(
+      `${sessionPath(sessionId)}/autofix/stop`,
+      {},
+    );
+  }
+
+  /** What deleting a clone of the session would lose. */
+  cloneLoss(
+    sessionId: string,
+    repositoryId: string,
+  ): Observable<CloneLossReport> {
+    return this.http.get<CloneLossReport>(
+      `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/clone-loss`,
+    );
+  }
+
+  /** Deletes a kept clone of an ended session (confirmed by the user). */
+  discardClone(
+    sessionId: string,
+    repositoryId: string,
+  ): Observable<SessionDto> {
+    return this.http.post<SessionDto>(
+      `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/discard-clone`,
+      { confirm: true },
     );
   }
 }
