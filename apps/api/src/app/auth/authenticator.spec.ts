@@ -193,6 +193,20 @@ describe('authentication', () => {
       ['GET', '/api/sessions/x/repositories/y/clone-loss'],
       ['POST', '/api/sessions/x/repositories/y/discard-clone'],
       ['POST', '/api/github/webhook'],
+      // Managing sessions: cleanup, archive, delete, search, statistics,
+      // leftovers in the workspace.
+      ['GET', '/api/sessions?archived=only'],
+      ['GET', '/api/sessions/x/cleanup'],
+      ['POST', '/api/sessions/x/cleanup'],
+      ['POST', '/api/sessions/x/archive'],
+      ['POST', '/api/sessions/x/unarchive'],
+      ['GET', '/api/sessions/x/deletion'],
+      ['POST', '/api/sessions/x/delete'],
+      ['GET', '/api/search?q=a'],
+      ['GET', '/api/usage?granularity=week'],
+      ['GET', '/api/workspace/orphans'],
+      ['POST', '/api/workspace/orphans/remove'],
+      ['POST', '/api/workspace/missing/forget'],
     ] as const) {
       const response =
         method === 'GET' || method === 'DELETE'
