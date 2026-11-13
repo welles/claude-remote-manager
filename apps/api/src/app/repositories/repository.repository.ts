@@ -18,12 +18,24 @@ export interface NewRepository {
   cloneUrl: string | null;
   localPath: string;
   setupScript: string | null;
+  githubRepositoryId?: number | null;
+  githubInstallationId?: number | null;
+  defaultBranch?: string | null;
 }
 
 export type RepositoryPatch = Partial<
   Pick<
     RepositoryRecord,
-    'defaultBranch' | 'setupScript' | 'clonedAt' | 'fetchedAt' | 'lastError'
+    | 'defaultBranch'
+    | 'setupScript'
+    | 'clonedAt'
+    | 'fetchedAt'
+    | 'lastError'
+    | 'owner'
+    | 'name'
+    | 'cloneUrl'
+    | 'githubRepositoryId'
+    | 'githubInstallationId'
   >
 >;
 
@@ -70,6 +82,14 @@ export class RepositoryRepository {
       .from(repositories)
       .orderBy(asc(repositories.owner), asc(repositories.name))
       .all();
+  }
+
+  findByGitHubId(githubRepositoryId: number): RepositoryRecord | undefined {
+    return this.db
+      .select()
+      .from(repositories)
+      .where(eq(repositories.githubRepositoryId, githubRepositoryId))
+      .get();
   }
 
   /** Repository with this owner and name, ignoring case as GitHub does. */

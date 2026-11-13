@@ -24,6 +24,8 @@ import {
 } from '../../sessions/testing/fake-agent';
 import { UsageRepository } from '../../sessions/usage.repository';
 import { SessionWorkspaceService } from '../session-workspace.service';
+import { FakeGitHub } from '../../github/testing/fake-github';
+import { RepositoryCredentials } from '../../repositories/repository-credentials';
 import { SettingsService } from '../../settings/settings.service';
 import { SetupScriptRunner } from '../setup-script-runner';
 
@@ -56,6 +58,11 @@ export class WorkspaceHarness {
   readonly sessions = new SessionRepository(this.db);
   readonly repositoryRecords = new RepositoryRepository(this.db);
   readonly settings = withTestIdentity(new SettingsService(this.db));
+  readonly github = new FakeGitHub();
+  readonly credentials = new RepositoryCredentials(
+    this.github.service,
+    this.repositoryRecords,
+  );
   readonly events: SessionEventEnvelope[] = [];
   readonly config: AppConfig = testAppConfig(this.dir);
   repositories!: RepositoriesService;
@@ -69,6 +76,8 @@ export class WorkspaceHarness {
       this.repositoryRecords,
       this.git,
       this.settings,
+      this.credentials,
+      this.github.service,
     );
     this.workspaces = new SessionWorkspaceService(
       this.config,

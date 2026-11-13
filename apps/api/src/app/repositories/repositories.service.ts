@@ -12,6 +12,8 @@ import {
 } from '@nestjs/common';
 import type {
   CreateRepositoryRequest,
+  GitHubRepositoryDto,
+  GitHubRepositoryListResponse,
   RepositoryBranchesResponse,
   RepositoryDto,
   RepositoryListResponse,
@@ -26,7 +28,16 @@ import {
   parseCloneUrl,
 } from '../git/clone-url';
 import { GitService } from '../git/git.service';
+import {
+  GitHubService,
+  githubCloneUrl,
+  githubFullName,
+} from '../github/github.service';
 import { SettingsService } from '../settings/settings.service';
+import {
+  isGitHubRepository,
+  RepositoryCredentials,
+} from './repository-credentials';
 import {
   RepositoryRepository,
   type CloneLink,
@@ -97,6 +108,8 @@ export class RepositoriesService implements OnModuleInit {
     private readonly repositories: RepositoryRepository,
     private readonly git: GitService,
     private readonly settings: SettingsService,
+    private readonly credentials: RepositoryCredentials,
+    private readonly github: GitHubService,
   ) {}
 
   /** Creates the workspace directories and checks they share a filesystem. */
@@ -175,6 +188,9 @@ export class RepositoriesService implements OnModuleInit {
   async register(request: CreateRepositoryRequest): Promise<RepositoryDto> {
     const body = requireObject(request);
     const setupScript = parseSetupScript(body);
+    if ('githubRepositoryId' in body) {
+      return this.registerFromGitHub(body['githubRepositoryId'], setupScript);
+    }
     if ('projectName' in body) {
       const record = this.createProject(
         requireString(body, 'projectName'),
@@ -203,6 +219,126 @@ export class RepositoriesService implements OnModuleInit {
     });
     this.updateInBackground(record.id);
     return this.get(record.id);
+  }
+
+  /**
+   * Registers a repository one of the GitHub App's installations can
+   * access, and starts cloning its mirror with an installation token.
+   * Idempotent: a repository registered before is returned as it is, and
+   * one registered by its https URL is linked to GitHub.
+   */
+  async registerFromGitHub(
+    value: unknown,
+    setupScript: string | null = null,
+  ): Promise<RepositoryDto> {
+    if (
+      typeof value !== 'number' ||
+      !Number.isSafeInteger(value) ||
+      value <= 0
+    ) {
+      throw new BadRequestException(
+        'githubRepositoryId must be a positive integer',
+      );
+    }
+    this.github.requireConfigured();
+    const registered = this.repositories.findByGitHubId(value);
+    if (registered) {
+      return this.get(registered.id);
+    }
+    const found = await this.github.findRepository(value);
+    if (!found) {
+      throw new NotFoundException(
+        `GitHub repository ${value} is not accessible to the app's installations`,
+      );
+    }
+    for (const [label, part] of [
+      ['owner', found.owner],
+      ['name', found.name],
+    ]) {
+      if (!NAME_PATTERN.test(part)) {
+        throw new BadRequestException(
+          `The repository ${label} "${part}" is not supported`,
+        );
+      }
+    }
+    const existing = this.repositories.findByName(found.owner, found.name);
+    if (existing) {
+      if (
+        githubFullName(existing.cloneUrl)?.toLowerCase() !==
+        found.fullName.toLowerCase()
+      ) {
+        throw new ConflictException(
+          `${existing.owner}/${existing.name} is already registered with ${existing.cloneUrl ?? 'no remote'}`,
+        );
+      }
+      this.repositories.update(existing.id, {
+        githubRepositoryId: found.id,
+        githubInstallationId: found.installationId,
+      });
+      this.updateInBackground(existing.id);
+      return this.get(existing.id);
+    }
+    const record = this.repositories.create({
+      id: randomUUID(),
+      owner: found.owner,
+      name: found.name,
+      cloneUrl: githubCloneUrl(found.owner, found.name),
+      localPath: join(this.config.reposDir, found.owner, found.name),
+      setupScript,
+      githubRepositoryId: found.id,
+      githubInstallationId: found.installationId,
+      defaultBranch: found.defaultBranch,
+    });
+    this.updateInBackground(record.id);
+    return this.get(record.id);
+  }
+
+  /**
+   * Repositories of all installations, filtered by `query` (owner, name or
+   * description) and paginated, each with the ID of its registration here.
+   */
+  async githubRepositories(options: {
+    query?: string;
+    page?: number;
+    perPage?: number;
+    refresh?: boolean;
+  }): Promise<GitHubRepositoryListResponse> {
+    const listing = await this.github.listing(options.refresh ?? false);
+    const page = Math.max(1, options.page ?? 1);
+    const perPage = Math.min(100, Math.max(1, options.perPage ?? 30));
+    const words = (options.query ?? '')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    const matches = listing.repositories.filter((repository) => {
+      const text =
+        `${repository.fullName} ${repository.description ?? ''}`.toLowerCase();
+      return words.every((word) => text.includes(word));
+    });
+    const records = this.repositories.list();
+    const registered = (id: number, fullName: string) =>
+      records.find(
+        (record) =>
+          record.githubRepositoryId === id ||
+          githubFullName(record.cloneUrl)?.toLowerCase() ===
+            fullName.toLowerCase(),
+      )?.id ?? null;
+    return {
+      repositories: matches.slice((page - 1) * perPage, page * perPage).map(
+        (repository): GitHubRepositoryDto => ({
+          ...repository,
+          registeredRepositoryId: registered(
+            repository.id,
+            repository.fullName,
+          ),
+        }),
+      ),
+      total: matches.length,
+      page,
+      perPage,
+      fetchedAt: listing.fetchedAt.toISOString(),
+      errors: [...listing.errors.values()],
+    };
   }
 
   /**
@@ -275,7 +411,12 @@ export class RepositoriesService implements OnModuleInit {
       const result = await this.git.updateMirror(
         record.localPath,
         record.cloneUrl,
-        { identity: this.settings.gitIdentity() },
+        {
+          identity: this.settings.gitIdentity(),
+          // Minted right before git runs, from the current record (the
+          // installation may have changed).
+          auth: () => this.credentials.readAuth(this.repositories.require(id)),
+        },
       );
       const now = new Date();
       return this.repositories.update(id, {
@@ -357,6 +498,13 @@ export class RepositoriesService implements OnModuleInit {
       fullName: `${record.owner}/${record.name}`,
       cloneUrl: record.cloneUrl,
       local: record.cloneUrl === null,
+      github: isGitHubRepository(record)
+        ? {
+            repositoryId: record.githubRepositoryId,
+            installationId: record.githubInstallationId,
+            htmlUrl: `https://github.com/${record.owner}/${record.name}`,
+          }
+        : null,
       defaultBranch: record.defaultBranch,
       localPath: record.localPath,
       setupScript: record.setupScript,

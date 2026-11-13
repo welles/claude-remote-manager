@@ -17,6 +17,8 @@ import { LimitsService } from '../limits/limits.service';
 import { RepositoriesService } from '../repositories/repositories.service';
 import { RepositoryRepository } from '../repositories/repository.repository';
 import { SessionWorkspaceService } from '../workspaces/session-workspace.service';
+import { FakeGitHub } from '../github/testing/fake-github';
+import { RepositoryCredentials } from '../repositories/repository-credentials';
 import { SettingsService } from '../settings/settings.service';
 import { withTestIdentity } from '../workspaces/testing/workspace-harness';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
@@ -67,11 +69,15 @@ describe('SessionsService', () => {
   const createService = async () => {
     const sessions = new SessionRepository(db);
     const settings = withTestIdentity(new SettingsService(db));
+    const github = new FakeGitHub();
+    const records = new RepositoryRepository(db);
     const repositories = new RepositoriesService(
       config,
-      new RepositoryRepository(db),
+      records,
       git,
       settings,
+      new RepositoryCredentials(github.service, records),
+      github.service,
     );
     const created = new SessionsService(
       config,

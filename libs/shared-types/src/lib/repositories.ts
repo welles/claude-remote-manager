@@ -37,6 +37,16 @@ export interface RepositoryDto {
   cloneUrl: string | null;
   /** Local project: no remote, the mirror is the main repository. */
   local: boolean;
+  /**
+   * Registered from GitHub: fetched, cloned and pushed with the GitHub
+   * App's installation tokens. `null` for repositories registered by clone
+   * URL (they use the server's own git credentials) and local projects.
+   */
+  github: {
+    repositoryId: number;
+    installationId: number;
+    htmlUrl: string;
+  } | null;
   /** Default branch; `null` until cloned or if the remote is empty. */
   defaultBranch: string | null;
   /** Path of the mirror (bare repository). */
@@ -68,10 +78,18 @@ export interface RepositoryListResponse {
 }
 
 /**
- * Body of `POST /api/repositories`: either a clone URL (cloned in the
- * background) or the name of a new local project.
+ * Body of `POST /api/repositories`: a GitHub repository, a clone URL (both
+ * cloned in the background) or the name of a new local project.
  */
 export type CreateRepositoryRequest =
+  | {
+      /**
+       * A repository from `GET /api/github/repositories`. Registering is
+       * idempotent: an already registered repository is returned.
+       */
+      githubRepositoryId: number;
+      setupScript?: string | null;
+    }
   | {
       /**
        * `https://host/owner/name(.git)`, `ssh://…`, `git@host:owner/name.git`

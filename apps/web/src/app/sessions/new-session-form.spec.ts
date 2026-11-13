@@ -25,6 +25,7 @@ const repository = (
     fullName,
     cloneUrl: `https://github.com/${fullName}.git`,
     local: false,
+    github: null,
     defaultBranch,
     localPath: `/repos/${fullName}`,
     setupScript: null,

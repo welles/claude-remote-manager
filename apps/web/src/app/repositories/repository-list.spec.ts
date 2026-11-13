@@ -16,6 +16,7 @@ const repository = (overrides: Partial<RepositoryDto> = {}): RepositoryDto => ({
   fullName: 'acme/app',
   cloneUrl: 'https://github.com/acme/app.git',
   local: false,
+  github: null,
   defaultBranch: 'main',
   localPath: '/data/repos/acme/app',
   setupScript: 'npm ci',
