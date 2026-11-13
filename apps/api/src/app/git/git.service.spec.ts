@@ -24,6 +24,18 @@ import {
   git,
   gitSandbox,
 } from './testing/git-fixtures';
+import { ProcessLauncher, type ProcessRole } from '../common/process-isolation';
+
+/** Waits until a condition holds (polling). */
+async function waitFor(condition: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 500; attempt++) {
+    if (await condition()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error('Timed out waiting');
+}
 
 /** `git credential fill` for a URL in a clone; returns its output. */
 async function runCredentialFill(
@@ -159,6 +171,56 @@ describe('GitService', () => {
       expect(service.isUpdating(mirror)).toBe(true);
       await first;
       expect(service.isUpdating(mirror)).toBe(false);
+    });
+
+    it('never answers a caller with a fetch that started before its call', async () => {
+      await service.updateMirror(mirror, origin);
+      // git as usual, except that each fetch, once done, notes itself and
+      // waits until the test releases it.
+      const fetches = join(sandbox.dir, 'fetches');
+      const release = join(sandbox.dir, 'release');
+      class HoldingLauncher extends ProcessLauncher {
+        override command(
+          role: ProcessRole,
+          command: string,
+          args: readonly string[],
+        ) {
+          if (command !== 'git' || !args.includes('fetch')) {
+            return super.command(role, command, args);
+          }
+          return {
+            command: 'sh',
+            args: [
+              '-c',
+              `git "$@" || exit $?; echo fetched >> '${fetches}'; ` +
+                `while [ ! -e '${release}' ]; do sleep 0.02; done`,
+              'sh',
+              ...args,
+            ],
+          };
+        }
+      }
+      const held = new GitService(new HoldingLauncher({ mode: 'single-user' }));
+      const fetchCount = async () =>
+        existsSync(fetches)
+          ? (await readFile(fetches, 'utf8')).split('\n').filter(Boolean).length
+          : 0;
+
+      const first = held.updateMirror(mirror, origin);
+      // The first fetch has run and is held open.
+      await waitFor(async () => (await fetchCount()) === 1);
+      const next = await commitFile(origin, 'later.txt', 'later');
+      // Callers after the remote changed: one follow-up update, shared.
+      const second = held.updateMirror(mirror, origin);
+      const third = held.updateMirror(mirror, origin);
+      expect(second).not.toBe(first);
+      expect(third).toBe(second);
+      await writeFile(release, '');
+      await Promise.all([first, second, third]);
+
+      expect(await fetchCount()).toBe(2);
+      expect(await held.branchCommit(mirror, 'main')).toBe(next);
+      expect(held.isUpdating(mirror)).toBe(false);
     });
 
     it('leaves nothing behind when cloning fails and cleans up interrupted clones', async () => {

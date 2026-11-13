@@ -128,7 +128,14 @@ export function parseRemoteHead(output: string): string | null {
 @Injectable()
 export class GitService {
   private readonly locks = new KeyedMutex();
-  private readonly updates = new Map<string, Promise<MirrorState>>();
+  /**
+   * The newest update per mirror: running, or queued behind the mirror's
+   * lock (`started` false) for callers to join.
+   */
+  private readonly updates = new Map<
+    string,
+    { promise: Promise<MirrorState>; started: boolean }
+  >();
 
   constructor(
     @Optional()
@@ -144,49 +151,69 @@ export class GitService {
   /**
    * Creates the mirror if it does not exist yet (clone from `remoteUrl`, or
    * an empty repository on `main` for a local project), otherwise fetches
-   * (nothing to do for a local project). Joins an update of the same
-   * mirror that has not finished yet.
+   * (nothing to do for a local project). The result is at least as new as
+   * the call: it joins an update of the same mirror that has not started
+   * yet; if one is already running (its fetch may predate the call), it
+   * queues one follow-up update, which later callers join, so a burst of
+   * calls costs at most one more fetch.
    */
   updateMirror(
     mirrorPath: string,
     remoteUrl: string | null,
     options: MirrorUpdateOptions = {},
   ): Promise<MirrorState> {
-    let update = this.updates.get(mirrorPath);
-    if (!update) {
-      update = this.locks
-        .run(mirrorPath, async () => {
-          const created = !(await this.isBareRepository(mirrorPath));
-          if (remoteUrl === null) {
-            if (created) {
-              await this.initLocalMirror(mirrorPath, options.identity ?? null);
-            }
-            return {
-              defaultBranch: await this.headBranch(mirrorPath),
-              created,
-            };
-          }
-          const env = (await options.auth?.())?.env;
-          if (created) {
-            await this.cloneMirror(mirrorPath, remoteUrl, env);
-          } else {
-            await this.checkOrigin(mirrorPath, remoteUrl);
-            await retryOnLockContention(() =>
-              this.git(mirrorPath, ['fetch', ...FETCH_OPTIONS, 'origin'], {
-                timeoutMs: GIT_NETWORK_TIMEOUT_MS,
-                env,
-              }),
-            );
-          }
-          return {
-            defaultBranch: await this.followRemoteHead(mirrorPath, env),
-            created,
-          };
-        })
-        .finally(() => this.updates.delete(mirrorPath));
-      this.updates.set(mirrorPath, update);
+    const pending = this.updates.get(mirrorPath);
+    if (pending && !pending.started) {
+      return pending.promise;
     }
-    return update;
+    const entry = { started: false } as {
+      promise: Promise<MirrorState>;
+      started: boolean;
+    };
+    entry.promise = this.locks
+      .run(mirrorPath, () => {
+        // From here on, a new caller may be too late for this fetch.
+        entry.started = true;
+        return this.fetchMirror(mirrorPath, remoteUrl, options);
+      })
+      .finally(() => {
+        if (this.updates.get(mirrorPath) === entry) {
+          this.updates.delete(mirrorPath);
+        }
+      });
+    this.updates.set(mirrorPath, entry);
+    return entry.promise;
+  }
+
+  /** The update itself; call with the mirror locked. */
+  private async fetchMirror(
+    mirrorPath: string,
+    remoteUrl: string | null,
+    options: MirrorUpdateOptions,
+  ): Promise<MirrorState> {
+    const created = !(await this.isBareRepository(mirrorPath));
+    if (remoteUrl === null) {
+      if (created) {
+        await this.initLocalMirror(mirrorPath, options.identity ?? null);
+      }
+      return { defaultBranch: await this.headBranch(mirrorPath), created };
+    }
+    const env = (await options.auth?.())?.env;
+    if (created) {
+      await this.cloneMirror(mirrorPath, remoteUrl, env);
+    } else {
+      await this.checkOrigin(mirrorPath, remoteUrl);
+      await retryOnLockContention(() =>
+        this.git(mirrorPath, ['fetch', ...FETCH_OPTIONS, 'origin'], {
+          timeoutMs: GIT_NETWORK_TIMEOUT_MS,
+          env,
+        }),
+      );
+    }
+    return {
+      defaultBranch: await this.followRemoteHead(mirrorPath, env),
+      created,
+    };
   }
 
   /** Branches of the mirror, sorted. */
