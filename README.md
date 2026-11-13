@@ -18,8 +18,10 @@ content as untrusted context), and Claude shows files to the user with `show_fil
 branches are pushed and pull requests created by button, or by Claude after the user's
 approval; usage is recorded per request. Sessions notify the user over Web Push and ntfy
 (approvals with Allow and Deny right in the notification), and the web app is an installable
-PWA with an offline shell, badge, shortcuts and a share target. The cleanup of sessions
-follows.
+PWA with an offline shell, badge, shortcuts and a share target. Per open pull request,
+autofix continues the session when CI fails or reviewers with write access comment, and
+autoclose ends the session and removes its clones when the pull request is merged or closed
+(see [PR automation](#pr-automation)). The cleanup of sessions follows.
 
 ## Workspace layout
 
@@ -86,40 +88,43 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 
 ### Environment variables of the API
 
-| Variable                            | Default (development)                                                                            | Purpose                                                                               |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                                               |
-| `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                                        |
-| `FILES_DIR`                         | `$DB_DIR/files`                                                                                  | The API's own files: attached images, snapshots of shown files (not for sessions)     |
-| `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem                                   |
-| `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                             |
-| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them                            |
-| `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                         |
-| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts                                     |
-| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                                              |
-| `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                                        |
-| `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret                           |
-| `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                                           |
-| `AUTH_MODE`                         | none, required                                                                                   | `cloudflare-access` or `none`, see [Authentication](#authentication)                  |
-| `CF_ACCESS_TEAM_DOMAIN`             | none                                                                                             | Team domain (`<team>.cloudflareaccess.com`) for `cloudflare-access`                   |
-| `CF_ACCESS_AUD`                     | none                                                                                             | Application Audience (AUD) tag(s), comma-separated                                    |
-| `CF_ACCESS_ALLOWED_EMAILS`          | none (everyone Access lets in)                                                                   | Optional comma-separated email allowlist                                              |
-| `PROCESS_ISOLATION`                 | none, required (image: `separate-users`)                                                         | `separate-users` or `single-user`, see [Users](#users-and-what-sessions-can-reach)    |
-| `SESSION_USER`                      | `claude`                                                                                         | OS user of session processes with `separate-users`                                    |
-| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API                       |
-| `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                                       |
-| `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                                      |
-| `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                                      |
-| `PUBLIC_URL`                        | none                                                                                             | Public URL of the app, e.g. `https://crm.example.com`: ntfy links open sessions there |
-| `SESSION_STALL_MINUTES`             | `15`                                                                                             | A running turn without any event this long "hangs" (notification); `0` never          |
-| `NTFY_URL`                          | none (ntfy off)                                                                                  | ntfy server, e.g. `https://ntfy.example.com`                                          |
-| `NTFY_TOPIC`                        | none                                                                                             | ntfy topic (letters, digits, `_`, `-`)                                                |
-| `NTFY_TOKEN_FILE`                   | none                                                                                             | File with the ntfy access token (required with `NTFY_URL`), e.g. a Docker secret      |
-| `CRM_SECRET_NTFY_TOKEN`             | none                                                                                             | The ntfy access token itself, instead of the file                                     |
-| `VAPID_PRIVATE_KEY_FILE`            | none (keys generated into `DB_DIR`)                                                              | File with the VAPID private key (base64url), to use own keys                          |
-| `CRM_SECRET_VAPID_PRIVATE_KEY`      | none                                                                                             | The VAPID private key itself, instead of the file                                     |
-| `VAPID_PUBLIC_KEY`                  | derived from the private key                                                                     | Optional; checked against the private key                                             |
-| `VAPID_SUBJECT`                     | `PUBLIC_URL` if https, else a placeholder `mailto:`                                              | Contact for the push services (`mailto:` or `https:`)                                 |
+| Variable                            | Default (development)                                                                            | Purpose                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                                                  |
+| `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                                           |
+| `FILES_DIR`                         | `$DB_DIR/files`                                                                                  | The API's own files: attached images, snapshots of shown files (not for sessions)        |
+| `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem                                      |
+| `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                                |
+| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them                               |
+| `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                            |
+| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts                                        |
+| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                                                 |
+| `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                                           |
+| `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret                              |
+| `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                                              |
+| `AUTH_MODE`                         | none, required                                                                                   | `cloudflare-access` or `none`, see [Authentication](#authentication)                     |
+| `CF_ACCESS_TEAM_DOMAIN`             | none                                                                                             | Team domain (`<team>.cloudflareaccess.com`) for `cloudflare-access`                      |
+| `CF_ACCESS_AUD`                     | none                                                                                             | Application Audience (AUD) tag(s), comma-separated                                       |
+| `CF_ACCESS_ALLOWED_EMAILS`          | none (everyone Access lets in)                                                                   | Optional comma-separated email allowlist                                                 |
+| `PROCESS_ISOLATION`                 | none, required (image: `separate-users`)                                                         | `separate-users` or `single-user`, see [Users](#users-and-what-sessions-can-reach)       |
+| `SESSION_USER`                      | `claude`                                                                                         | OS user of session processes with `separate-users`                                       |
+| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API                          |
+| `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                                          |
+| `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                                         |
+| `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                                         |
+| `PUBLIC_URL`                        | none                                                                                             | Public URL of the app, e.g. `https://crm.example.com`: ntfy links open sessions there    |
+| `SESSION_STALL_MINUTES`             | `15`                                                                                             | A running turn without any event this long "hangs" (notification); `0` never             |
+| `NTFY_URL`                          | none (ntfy off)                                                                                  | ntfy server, e.g. `https://ntfy.example.com`                                             |
+| `NTFY_TOPIC`                        | none                                                                                             | ntfy topic (letters, digits, `_`, `-`)                                                   |
+| `NTFY_TOKEN_FILE`                   | none                                                                                             | File with the ntfy access token (required with `NTFY_URL`), e.g. a Docker secret         |
+| `CRM_SECRET_NTFY_TOKEN`             | none                                                                                             | The ntfy access token itself, instead of the file                                        |
+| `VAPID_PRIVATE_KEY_FILE`            | none (keys generated into `DB_DIR`)                                                              | File with the VAPID private key (base64url), to use own keys                             |
+| `CRM_SECRET_VAPID_PRIVATE_KEY`      | none                                                                                             | The VAPID private key itself, instead of the file                                        |
+| `VAPID_PUBLIC_KEY`                  | derived from the private key                                                                     | Optional; checked against the private key                                                |
+| `VAPID_SUBJECT`                     | `PUBLIC_URL` if https, else a placeholder `mailto:`                                              | Contact for the push services (`mailto:` or `https:`)                                    |
+| `GITHUB_WEBHOOK_SECRET_FILE`        | none (webhook refuses everything)                                                                | File with the GitHub App's webhook secret (at least 16 characters), e.g. a Docker secret |
+| `CRM_SECRET_GITHUB_WEBHOOK_SECRET`  | none                                                                                             | The webhook secret itself, instead of the file                                           |
+| `PR_POLL_INTERVAL_SECONDS`          | `120` without webhook secret, `900` with one                                                     | How often open pull requests with automation are read from GitHub; `0` off, else >= 30   |
 
 Secrets of the app are never passed to the processes it starts (Claude Code, setup scripts,
 its own git commands): every variable named `CRM_SECRET_*` is removed, plus a registry of fixed
@@ -154,7 +159,8 @@ user's approval.
 
 Exempt, each with its own protection (`AUTH_EXEMPT_ROUTES` in
 `apps/api/src/app/auth/authenticator.ts`): `GET /api/health` (no data) and
-`POST /api/git/credentials` (session process token); later the GitHub webhook (signature).
+`POST /api/git/credentials` (session process token) and `POST /api/github/webhook`
+(signature, see [PR automation](#pr-automation); session processes are refused there too).
 The notification routes (settings, devices, tests, the approval buttons) are not exempt.
 
 **Session processes cannot call the API.** With `PROCESS_ISOLATION=separate-users`, connections
@@ -187,8 +193,9 @@ WebSocket upgrade passes a guard (`apps/api/src/app/security`):
   (`RAW_BODY_ROUTES`): forms cannot send these types, and a foreign page's `fetch` with them
   needs a CORS preflight, which the API never answers.
 
-Routes that need another protection (e.g. a signed webhook) are exempted in
-`REQUEST_GUARD_EXEMPT_ROUTES`. The PWA's share target is not one of them: the operating
+Routes that need another protection are exempted in `REQUEST_GUARD_EXEMPT_ROUTES`: only
+`POST /api/github/webhook`, which GitHub calls (no browser headers) and which accepts nothing
+but a raw JSON body with a valid signature. The PWA's share target is not one of them: the operating
 system's form post (`POST /share-target`, multipart) is taken by the service worker and never
 reaches the API (see [Web app (PWA)](#web-app-pwa)); without a service worker the post
 finds no route (404).
@@ -323,7 +330,11 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `GET /api/sessions/:id/messages/:messageId/context`, `GET /api/notifications`, `PUT /api/notifications/preferences`,
 `POST /api/notifications/push-subscriptions`, `POST /api/notifications/push-subscriptions/remove`,
 `DELETE /api/notifications/push-subscriptions/:id`, `POST /api/notifications/test`,
-`POST /api/notifications/approval-actions`. WebSocket: `/api/ws` with the versioned protocol in
+`POST /api/notifications/approval-actions`,
+`PATCH /api/sessions/:id/pull-requests/:pullRequestId/automation`,
+`POST /api/sessions/:id/autofix/stop`, `GET /api/sessions/:id/repositories/:repositoryId/clone-loss`,
+`POST /api/sessions/:id/repositories/:repositoryId/discard-clone`, `POST /api/github/webhook`
+(GitHub only). WebSocket: `/api/ws` with the versioned protocol in
 `libs/shared-types/src/lib/session-events.ts`.
 
 ### Diffs
@@ -592,8 +603,10 @@ derived from its tag; withdrawing it deletes it in the ntfy apps
 
 **For the PR automation**: `NotificationsService` (exported by `NotificationsModule`) has
 `notifyAutofixGaveUp(sessionId, pullRequest, attempts, reason)` and
-`notifyPullRequestClosed(sessionId, pullRequest)` (merged or closed by `pullRequest.state`);
-preferences, presence and channels apply as for the other events.
+`notifyPullRequestClosed(sessionId, pullRequest, note)` (merged or closed by
+`pullRequest.state`; `note` says what autoclose did, e.g. that a clone was kept); preferences,
+presence and channels apply as for the other events. The PR automation sends each once per
+pull request.
 
 ## Web app (PWA)
 
@@ -695,8 +708,15 @@ its branches and tags, and points the existing session clones' `origin` there (s
 - `pull_requests`: per session clone (session and repository) the pull requests created by
   button or by Claude: number, URL, title, state (`open`, `closed`, `merged`), draft, head and
   base branch, creator (`user`/`claude`), opened/closed/merged times and when the state was
-  last read from GitHub (open ones at most once a minute when the session is opened). The
-  PR automation builds on this table.
+  last read from GitHub (open ones at most once a minute when the session is opened), the
+  head commit, and the PR automation per pull request: `autofix`, `autoclose`, attempts and
+  limit, when the limit stopped a run, the head commit whose failed checks were handled, the
+  time after which reviews are new, the last run and what triggered it, whether a run is
+  going on, when the merge or close was handled.
+- `sessions.autoclosed_at`: when autoclose ended the session; clones still `ready`
+  afterwards were kept because they hold work that is not on GitHub.
+- `webhook_deliveries`: IDs of processed webhook deliveries (a week), so redeliveries do
+  nothing.
 - `app_settings`: settings edited in the UI (key, JSON value): the commit identity, and under
   `notifications` which events go to which channel.
 - `message_contexts`: per user message with GitHub references or untrusted context: the
@@ -735,8 +755,8 @@ its branches and tags, and points the existing session clones' `origin` there (s
 from `sessions/<slug>/<owner>/<repo>` on disk. Clones without a session are marked orphaned,
 clones a session expects but that are gone are marked missing; clones of unregistered
 repositories and unused scratch directories are listed as stray. Removing a session clone
-(`GitService.removeSessionClone`) and fast-forwarding a local project exist for the cleanup
-step; there is no UI for them yet.
+(`GitService.removeSessionClone`) is used by autoclose (see [PR automation](#pr-automation));
+fast-forwarding a local project exists for the cleanup step, without UI yet.
 
 Repositories registered from GitHub are cloned and fetched with installation tokens (see
 [GitHub](#github)). Repositories registered by clone URL use whatever git credentials the
@@ -797,8 +817,9 @@ Permissions the app needs (repository permissions):
 | Administration | read/write | creating repositories for local projects (organizations)                |
 | Issues         | read       | `#` references: issues, comments, search                                |
 
-Checks, Commit statuses and Actions (read) are for the PR automation; the webhook is not used
-yet. Install the app on your account and
+Checks, Commit statuses and Actions (read) are for the PR automation (check runs and
+statuses of a pull request's head commit, logs of failed GitHub Actions jobs). Install the app
+on your account and
 on organizations and choose the repositories there; the Settings page lists the
 installations with their repository counts and links to install the app on further accounts.
 
@@ -820,17 +841,18 @@ operation, reused for at most ten minutes, and given to git only through the env
 one command (`GIT_CONFIG_*`), never through arguments, git config, remote URLs, the database
 or logs:
 
-| Operation                              | Token                                                                |
-| -------------------------------------- | -------------------------------------------------------------------- |
-| listing an installation's repositories | `metadata: read`, whole installation                                 |
-| clone and fetch of a mirror            | `contents: read`                                                     |
-| push by button                         | `contents: write` (+ `workflows: write` if workflow files changed)   |
-| create / read a pull request           | `pull_requests: write` + `contents: read` / `pull_requests: read`    |
-| credential helper, normally            | `contents: read`                                                     |
-| credential helper, approved push       | `contents: write` (+ `workflows`), fresh, revoked when the push ends |
-| create a repository                    | `administration: write`, fresh, revoked afterwards                   |
-| `#` references: issues, comments       | `issues: read` + `pull_requests: read`                               |
-| `#` references: a pull request's diff  | `issues: read` + `pull_requests: read` + `contents: read`            |
+| Operation                                 | Token                                                                |
+| ----------------------------------------- | -------------------------------------------------------------------- |
+| listing an installation's repositories    | `metadata: read`, whole installation                                 |
+| clone and fetch of a mirror               | `contents: read`                                                     |
+| push by button                            | `contents: write` (+ `workflows: write` if workflow files changed)   |
+| create / read a pull request              | `pull_requests: write` + `contents: read` / `pull_requests: read`    |
+| credential helper, normally               | `contents: read`                                                     |
+| credential helper, approved push          | `contents: write` (+ `workflows`), fresh, revoked when the push ends |
+| create a repository                       | `administration: write`, fresh, revoked afterwards                   |
+| `#` references: issues, comments          | `issues: read` + `pull_requests: read`                               |
+| `#` references: a pull request's diff     | `issues: read` + `pull_requests: read` + `contents: read`            |
+| PR automation: reading state and feedback | `metadata`, `checks`, `statuses`, `pull_requests`, `actions`: read   |
 
 If the installation of a repository changed (app reinstalled), the current one is looked up
 and stored.
@@ -904,6 +926,147 @@ answers `403` ("Rate Limit Exceeded", with
 `x-accepted-github-permissions: administration=write; repository_creation=write`). The form
 therefore offers creating only in organizations; for the personal account, create an empty
 repository on GitHub and attach it.
+
+## PR automation
+
+Per open pull request of a session the session view (git panel) offers two switches, both
+off by default, with the attempt count and limit, "Reset count", what started the last run,
+and "Stop autofix" while a run goes on (`apps/api/src/app/pr-automation`).
+
+- **Autofix**: a failed CI check of the pull request's current head commit, or new review
+  feedback from someone with write access to the repository, continues the session with what
+  failed or what the reviewers wrote. Claude fixes it, commits and pushes the session branch.
+- **Autoclose**: when the pull request is merged or closed and the session has no open pull
+  request left, the session ends, its dev servers stop (`DevServers.stopSession`, the hook for
+  the dev-server step; nothing to stop yet) and its clones are removed, except clones with
+  work that is not on GitHub.
+
+### Where events come from
+
+GitHub's state is the source of truth: webhook deliveries and polling only say _when_ to look.
+A check (`PrAutomationService.check`) reads the pull request through the API with an
+installation token for that repository (`metadata`, `checks`, `statuses`, `pull_requests`,
+`actions`: read), stores state and head commit, and acts. Checks of one pull request run one
+at a time; one asked for meanwhile runs afterwards.
+
+- **Webhook** `POST /api/github/webhook` (the GitHub App's webhook, events `pull_request`,
+  `pull_request_review`, `pull_request_review_comment`, `check_run`, `check_suite`,
+  `status`; `ping` is answered). It is the one route reachable without the Cloudflare Access
+  login, exempt from the Access check and from the request guard, and authenticated only by
+  its signature:
+  - without a secret (`GITHUB_WEBHOOK_SECRET_FILE` or `CRM_SECRET_GITHUB_WEBHOOK_SECRET`,
+    at least 16 characters; a configured but unusable secret stops the start) every delivery
+    is refused (503);
+  - the body is read raw, JSON only (415 otherwise), at most 1 MiB (413), and
+    `X-Hub-Signature-256` (`sha256=` and 64 hex digits) is compared with the HMAC-SHA256 of
+    exactly those bytes with `timingSafeEqual` before anything else is looked at (401 for a
+    missing, malformed or wrong signature);
+  - a delivery ID (`X-GitHub-Delivery`) seen before is not processed again (200), events the
+    automation does not use are acknowledged and ignored (202);
+  - what passed is only a signal: the repository ID and pull request numbers it names select
+    pull requests the app knows (open, with automation, or any open one for
+    `pull_request`), which are checked after 15 s (deliveries arriving together cause one
+    check). Text in the payload is never used. Session processes are refused on this route
+    like on the management API, and the secret never reaches them (`CRM_SECRET_` variables
+    and the file are kept from child processes; the entrypoint checks the file's owner).
+- **Polling**: every open pull request with autofix or autoclose is checked every
+  `PR_POLL_INTERVAL_SECONDS` (default 120 s without webhook secret, 900 s as backstop with
+  one; `0` turns polling off), one after another. A check costs about five requests
+  (pull request, check runs, statuses, reviews, review comments) plus permission lookups
+  (cached ten minutes) and logs of failed jobs; a rate limit pauses the automation until
+  GitHub's reset time. Pull requests without automation are read when their session is
+  opened, as before.
+
+### Autofix
+
+- **What counts**: failed check runs (`failure`, `timed_out`, `startup_failure`) and commit
+  statuses (`failure`, `error`) of the head commit GitHub reports now; failures of older
+  commits are stale and ignored, checks that are queued or running are not failures. Reviews
+  and review comments created after autofix was turned on (or after the last run), by users
+  whose permission on the repository is admin, maintain or write
+  (`GET /repos/{owner}/{repo}/collaborators/{user}/permission`); bots (the app itself,
+  Actions, other apps) and everybody else never start a run. Approvals and empty reviews ask
+  for nothing and are skipped. Conversation comments on the pull request do not count.
+- **Coalescing**: one run handles everything that is current: all failed checks of the head
+  commit (the run waits until the commit's other checks have finished, at most 30 minutes
+  after the first failure) and all new reviews and comments, also when a review comes with
+  ten comments or both arrive together. A head commit's failures start at most one run;
+  feedback is new only once.
+- **Busy sessions**: a run starts only while the session waits for a message (not while a
+  turn runs, an approval, question or plan waits, the first message is held back, or the
+  session is finished or failed). Events meanwhile are not queued: when the session waits for
+  a message again, the pull request is checked again and one run covers what is still
+  current then (stale CI results are dropped on the way). The owner's own messages are never
+  held back by the automation.
+- **The run**: a message composed by the app (`origin: 'app'`, shown in the history as "Sent
+  by the app · PR automation"): fixed text with the attempt, the repository, the pull request
+  number, the head commit and the session branch, nothing written by others. The failed
+  checks (name, conclusion, output title and summary, and for GitHub Actions jobs an excerpt
+  of the job's log: colour codes and timestamps removed, from before the first to after the
+  last `##[error]` line, at most 150 lines / 12,000 characters, read from at most the last
+  256 KiB of the log) and the review feedback (author, state, file and line with the end of
+  the diff hunk, each at most 4,000 characters, the latest 50) go as untrusted context
+  (`SessionsService.sendMessage` with `untrusted`, see [Untrusted content](#github-references-123)),
+  at most 60,000 characters with a note on what was left out.
+- **Attempts** are counted per pull request in the database (so they survive restarts) when a
+  run starts; a run that could not start is not counted. Default limit 3, adjustable from 1 to
+  20 per pull request. At the limit no run starts; the owner is notified once
+  (`notifyAutofixGaveUp`) and the history says so. Only the owner resets the count ("Reset
+  count") or raises the limit; turning autofix off and on does not reset it.
+- **Stop autofix** stops the running turn and turns autofix off for that pull request; the
+  attempt counts.
+- **Several pull requests** (one per repository): switches, counts and runs are per pull
+  request; a session runs one autofix run at a time, the others wait until it is idle again.
+
+### Pushing during autofix
+
+While autofix is on for an open pull request, a `git push` of exactly its session branch
+needs no approval, and the app does that push itself: when Claude runs a command that is
+nothing but `git push` (optionally `cd <clone> &&` before it or `git -C <clone>`) and the
+push analysis says it pushes only the session branch (no force, no delete, no tags or
+`--all`/`--mirror`, remote `origin` or none), the app pushes the session branch of that clone
+(or of every autofix clone with new commits) like the Push button: the commits go into the
+mirror as a bundle and the API pushes `<commit>:refs/heads/<session branch>` without force,
+with a token that never reaches the session. The command is not run; Claude gets the outcome
+as the tool result (shown as an error of that tool call, with a notice "Autofix pushed …").
+So what is pushed does not depend on the command text, aliases, hooks or the clone's git
+configuration. Everything else asks the owner as the permission mode says, and pending
+approvals notify as usual: combined commands (`git commit … && git push`), other branches,
+force, tags, deletions, other repositories, and pushes whose new commits change
+`.github/workflows` (they could reach the repository's secrets). The permission mode is never
+changed by the automation, and bypass modes stay unavailable.
+
+### Merge and close
+
+A merge or close (seen by a check, a webhook-triggered check, or the refresh when the session
+is opened) is handled once per pull request: the owner is notified
+(`notifyPullRequestClosed`, with what autoclose did), and with autoclose on and no open pull
+request left in the session, autoclose ends the session, stops its dev servers and removes
+each clone that has nothing that is not on GitHub: no uncommitted (modified, staged,
+untracked and not ignored) files, no commits on local branches that no remote-tracking branch
+has (the pull request's head on GitHub counts as pushed) and no stash entries. Clones with
+such work are kept: the history and the notification say so, and the session view shows
+"Autoclose kept the clone of …" with "Delete clone…", which opens a confirmation dialog
+listing the files, commits and stash entries that would be lost (read when it opens,
+`GET …/clone-loss`), and deletes only after confirmation
+(`POST …/discard-clone` with `confirm: true`, finished sessions only). A session whose clones
+were removed cannot be resumed.
+
+### Setting it up at deployment
+
+1. Choose a random secret (e.g. `openssl rand -hex 32`), store it as a file readable only by
+   UID 1000 (`GITHUB_WEBHOOK_SECRET_FILE`, Compose secret `github-webhook-secret`).
+2. In the GitHub App's settings: Webhook active, URL
+   `https://<public host>/api/github/webhook`, content type `application/json`, the same
+   secret, SSL verification on. Subscribe to the events Check run, Check suite, Pull request,
+   Pull request review, Pull request review comment and Status.
+3. In Cloudflare Access: a Bypass policy (or a separate application with a Bypass policy) for
+   exactly the path `/api/github/webhook` of the public host, nothing else. Without it GitHub's
+   deliveries end at the Access login; polling still works then, at its slower backstop
+   interval.
+4. Check the delivery log on GitHub ("Recent Deliveries"): `ping` should answer 200.
+
+Without a webhook (no secret) everything works through polling every two minutes.
 
 ## Container
 
