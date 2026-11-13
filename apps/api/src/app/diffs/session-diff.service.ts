@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
 import {
   BadRequestException,
   Inject,
@@ -26,7 +25,7 @@ import {
   type SessionDirectoryRecord,
 } from '../sessions/session.repository';
 import {
-  parseRawNumstat,
+  DiffOutputParser,
   PatchParser,
   type FilePatch,
   type RawChange,
@@ -42,6 +41,8 @@ export const SESSION_DIFF_LIMITS: SessionDiffLimits = {
 /** git's output of one diff is not read beyond this. */
 const MAX_PATCH_BYTES = 64 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 120_000;
+/** Temporary indexes older than this are left over from a stopped server. */
+export const STALE_INDEX_MINUTES = 10;
 
 /**
  * Options of every diff: no external diff tools or text conversions (they
@@ -229,6 +230,17 @@ export class SessionDiffService {
       gitDir,
       `crm-diff-${randomBytes(8).toString('hex')}.index`,
     );
+    // Temporary indexes of diffs cut off by a server stop.
+    await this.asSession('find', [
+      gitDir,
+      '-maxdepth',
+      '1',
+      '-name',
+      'crm-diff-*.index*',
+      '-mmin',
+      `+${STALE_INDEX_MINUTES}`,
+      '-delete',
+    ]);
     const env = {
       GIT_INDEX_FILE: index,
       GIT_OPTIONAL_LOCKS: '0',
@@ -244,29 +256,25 @@ export class SessionDiffService {
       // Untracked, not ignored files as intent-to-add: no content is
       // written to the clone's objects.
       await git(['add', '--all', '--intent-to-add'], env);
-      const changes = parseRawNumstat(
-        await git(
-          [
-            'diff',
-            ...DIFF_OPTIONS,
-            '--raw',
-            '--numstat',
-            '-z',
-            baseCommit,
-            ...pathspec,
-          ],
-          env,
-        ),
-      );
-      const listed = changes.slice(0, this.limits.maxFiles);
-      const patches = await this.patches(
+      // File list and patches from one run: the n-th patch belongs to the
+      // n-th listed file even if the session changes files meanwhile.
+      const { changes, patches } = await this.runDiff(
         cwd,
         env,
-        ['diff', ...DIFF_OPTIONS, '-p', baseCommit, ...pathspec],
-        listed.length,
+        [
+          'diff',
+          ...DIFF_OPTIONS,
+          '--raw',
+          '--numstat',
+          '-p',
+          '-z',
+          baseCommit,
+          ...pathspec,
+        ],
         budget,
         single ? 'truncate' : 'drop',
       );
+      const listed = changes.slice(0, this.limits.maxFiles);
       const totals = changes.reduce(
         (sum, change) => ({
           additions: sum.additions + change.additions,
@@ -276,7 +284,7 @@ export class SessionDiffService {
       );
       return {
         files: listed.map((change, position) =>
-          this.toFile(change, patches[position], budget),
+          diffFile(change, patches[position], budget.perFile),
         ),
         fileCount: changes.length,
         ...totals,
@@ -288,55 +296,26 @@ export class SessionDiffService {
     }
   }
 
-  private toFile(
-    change: RawChange,
-    patch: FilePatch | undefined,
-    budget: Budget,
-  ): SessionDiffFile {
-    const file: SessionDiffFile = {
-      path: change.path,
-      oldPath: change.oldPath,
-      status: change.status,
-      binary: change.binary || patch?.binary === true,
-      additions: change.additions,
-      deletions: change.deletions,
-      hunks: [],
-      truncated: false,
-      approximate: false,
-      content: 'included',
-    };
-    if (file.binary) {
-      return file;
-    }
-    if (!patch) {
-      // Not read (output limit reached before it): load it alone.
-      return { ...file, content: 'omitted' };
-    }
-    if (!patch.dropped) {
-      return { ...file, hunks: patch.hunks, truncated: patch.truncated };
-    }
-    return {
-      ...file,
-      content: patch.lines > budget.perFile ? 'too_large' : 'omitted',
-    };
-  }
-
   /**
-   * Runs `git diff -p` and parses its output line by line, keeping lines
-   * within the budget; stops reading after `files` files or too much
-   * output.
+   * Runs `git diff --raw --numstat -p -z` and parses its output as it
+   * streams: the file list, then the patches, keeping lines within the
+   * budget. Stops reading after the patches of the listed files, or after
+   * too much output.
    */
-  private patches(
+  private runDiff(
     cwd: string,
     env: Record<string, string>,
     args: string[],
-    files: number,
     budget: Budget,
     mode: 'drop' | 'truncate',
-  ): Promise<FilePatch[]> {
-    const parser = new PatchParser(
+  ): Promise<{ changes: RawChange[]; patches: FilePatch[] }> {
+    const patches = new PatchParser(
       (fileIndex, fileLines) => {
-        if (fileLines >= budget.perFile || budget.used >= budget.total) {
+        if (
+          fileIndex >= this.limits.maxFiles ||
+          fileLines >= budget.perFile ||
+          budget.used >= budget.total
+        ) {
           return false;
         }
         budget.used++;
@@ -346,6 +325,7 @@ export class SessionDiffService {
       (kept) => (budget.used -= kept),
       mode,
     );
+    const output = new DiffOutputParser(patches);
     const command = this.launcher.command('session', 'git', [
       '-c',
       'core.hooksPath=/dev/null',
@@ -371,28 +351,27 @@ export class SessionDiffService {
       };
       const timer = setTimeout(stop, DIFF_TIMEOUT_MS);
       child.stdout.on('data', (chunk: Buffer) => {
+        if (stopped) {
+          return;
+        }
         bytes += chunk.length;
-        if (bytes > MAX_PATCH_BYTES) {
+        output.push(chunk);
+        const listed = Math.min(
+          output.changes?.length ?? Infinity,
+          this.limits.maxFiles,
+        );
+        if (patches.patches.length > listed) {
+          // Patches beyond the listed files are not needed.
+          patches.patches.splice(listed);
+          stop();
+        } else if (bytes > MAX_PATCH_BYTES) {
+          // The last patch read may be incomplete.
+          patches.patches.pop();
           stop();
         }
       });
       child.stderr.on('data', (chunk: Buffer) => {
         stderr = (stderr + chunk.toString('utf8')).slice(-2000);
-      });
-      const lines = createInterface({
-        input: child.stdout,
-        crlfDelay: Infinity,
-      });
-      lines.on('line', (line) => {
-        if (stopped) {
-          return;
-        }
-        parser.push(line);
-        if (parser.patches.length > files) {
-          // Files beyond the listed ones are not needed.
-          parser.patches.pop();
-          stop();
-        }
       });
       child.on('error', (error) => {
         clearTimeout(timer);
@@ -400,23 +379,23 @@ export class SessionDiffService {
       });
       child.on('close', (code) => {
         clearTimeout(timer);
-        if (code !== 0 && !stopped) {
-          reject(
-            new Error(
-              stderr.trim().split('\n').at(-1) ||
-                `git diff exited with ${code}`,
-            ),
-          );
+        if (!stopped) {
+          if (code !== 0) {
+            reject(
+              new Error(
+                stderr.trim().split('\n').at(-1) ||
+                  `git diff exited with ${code}`,
+              ),
+            );
+            return;
+          }
+          output.end();
+        }
+        if (output.changes === null) {
+          reject(new Error('Too many changes to list'));
           return;
         }
-        if (stopped) {
-          // The last file read may be incomplete.
-          const last = parser.patches.at(-1);
-          if (last && bytes > MAX_PATCH_BYTES) {
-            parser.patches.pop();
-          }
-        }
-        resolve(parser.patches);
+        resolve({ changes: output.changes, patches: patches.patches });
       });
     });
   }
@@ -439,4 +418,48 @@ export class SessionDiffService {
       child.on('close', (code) => resolve(code === 0));
     });
   }
+}
+
+/**
+ * A file of a session diff from its listed change and its patch. A patch
+ * whose line counts differ from the change's numbers is not used (the file
+ * loads on its own instead), so a wrong pairing can never show one file's
+ * changes under another's name.
+ */
+export function diffFile(
+  change: RawChange,
+  patch: FilePatch | undefined,
+  perFileLines: number,
+): SessionDiffFile {
+  const file: SessionDiffFile = {
+    path: change.path,
+    oldPath: change.oldPath,
+    status: change.status,
+    binary: change.binary || patch?.binary === true,
+    additions: change.additions,
+    deletions: change.deletions,
+    hunks: [],
+    truncated: false,
+    approximate: false,
+    content: 'included',
+  };
+  if (file.binary) {
+    return file;
+  }
+  if (
+    !patch ||
+    patch.additions !== change.additions ||
+    patch.deletions !== change.deletions
+  ) {
+    // Not read (output limit reached before it), or not the patch the
+    // numbers describe (never expected from one run): load it alone.
+    return { ...file, content: 'omitted' };
+  }
+  if (!patch.dropped) {
+    return { ...file, hunks: patch.hunks, truncated: patch.truncated };
+  }
+  return {
+    ...file,
+    content: patch.lines > perFileLines ? 'too_large' : 'omitted',
+  };
 }

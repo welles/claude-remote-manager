@@ -70,6 +70,9 @@ export interface FilePatch {
   hunks: DiffHunk[];
   /** Diff lines of the file (all of them, also when not kept). */
   lines: number;
+  /** Added and removed lines (all of them, also when not kept). */
+  additions: number;
+  deletions: number;
   binary: boolean;
   /** The file's lines were left out (budget; `drop` mode). */
   dropped: boolean;
@@ -111,6 +114,8 @@ export class PatchParser {
       this.current = {
         hunks: [],
         lines: 0,
+        additions: 0,
+        deletions: 0,
         binary: false,
         dropped: false,
         truncated: false,
@@ -153,6 +158,11 @@ export class PatchParser {
       return;
     }
     file.lines++;
+    if (line.startsWith('+')) {
+      file.additions++;
+    } else if (line.startsWith('-')) {
+      file.deletions++;
+    }
     if (file.dropped || file.truncated) {
       return;
     }
@@ -184,5 +194,131 @@ export class PatchParser {
     file.dropped = true;
     this.onDrop(file.hunks.reduce((sum, hunk) => sum + hunk.lines.length, 0));
     file.hunks = [];
+  }
+}
+
+/**
+ * Where the file list ends in the output of
+ * `git diff --raw --numstat -p -z`: the raw records, then as many numstat
+ * records, then an empty record (a NUL) before the patches. Returns the
+ * changes and the offset of the first patch byte, or `null` while the
+ * list is incomplete (`ended`: no more output will come).
+ */
+export function parseDiffHeader(
+  output: Buffer,
+  ended: boolean,
+): { changes: RawChange[]; end: number } | null {
+  let position = 0;
+  const next = (): string | null => {
+    const nul = output.indexOf(0, position);
+    if (nul < 0) {
+      return null;
+    }
+    const token = output.toString('utf8', position, nul);
+    position = nul + 1;
+    return token;
+  };
+  const tokens: string[] = [];
+  // Raw records start with ":"; numstat records with a digit or "-".
+  while (position < output.length && output[position] === 0x3a) {
+    const record = next();
+    if (record === null) {
+      return null;
+    }
+    const letter = (record.split(' ')[4] ?? 'M')[0];
+    const paths = letter === 'R' || letter === 'C' ? 2 : 1;
+    tokens.push(record);
+    for (let i = 0; i < paths; i++) {
+      const path = next();
+      if (path === null) {
+        return null;
+      }
+      tokens.push(path);
+    }
+  }
+  const count = tokens.filter((token) => token.startsWith(':')).length;
+  if (count === 0) {
+    return position >= output.length && !ended
+      ? null
+      : { changes: [], end: position };
+  }
+  for (let i = 0; i < count; i++) {
+    const stat = next();
+    if (stat === null) {
+      return null;
+    }
+    tokens.push(stat);
+    if (stat.split('\t')[2] === '') {
+      for (let k = 0; k < 2; k++) {
+        const path = next();
+        if (path === null) {
+          return null;
+        }
+        tokens.push(path);
+      }
+    }
+  }
+  if (position >= output.length && !ended) {
+    // The separator before the patches may still come.
+    return null;
+  }
+  if (output[position] === 0) {
+    position++;
+  }
+  return { changes: parseRawNumstat(tokens.join('\0')), end: position };
+}
+
+/**
+ * Parses the output of one `git diff --raw --numstat -p -z` run as it
+ * streams: the file list first, then the patches, so file and patch come
+ * from the same run and cannot be paired wrongly when the working tree
+ * changes meanwhile (the n-th patch is the n-th listed file).
+ */
+export class DiffOutputParser {
+  changes: RawChange[] | null = null;
+  private head = Buffer.alloc(0);
+  private rest = Buffer.alloc(0);
+
+  constructor(private readonly patches: PatchParser) {}
+
+  push(chunk: Buffer): void {
+    if (this.changes === null) {
+      this.head = Buffer.concat([this.head, chunk]);
+      const header = parseDiffHeader(this.head, false);
+      if (!header) {
+        return;
+      }
+      this.changes = header.changes;
+      chunk = this.head.subarray(header.end);
+      this.head = Buffer.alloc(0);
+    }
+    this.lines(chunk);
+  }
+
+  end(): void {
+    if (this.changes === null) {
+      const header = parseDiffHeader(this.head, true);
+      this.changes = header?.changes ?? [];
+      if (header) {
+        this.lines(this.head.subarray(header.end));
+      }
+    }
+    if (this.rest.length > 0) {
+      this.patches.push(this.rest.toString('utf8'));
+      this.rest = Buffer.alloc(0);
+    }
+  }
+
+  private lines(chunk: Buffer): void {
+    let data = this.rest.length > 0 ? Buffer.concat([this.rest, chunk]) : chunk;
+    let newline = data.indexOf(0x0a);
+    while (newline >= 0) {
+      const end =
+        newline > 0 && data[newline - 1] === 0x0d ? newline - 1 : newline;
+      this.patches.push(data.toString('utf8', 0, end));
+      data = data.subarray(newline + 1);
+      newline = data.indexOf(0x0a);
+    }
+    this.rest = Buffer.from(data);
   }
 }

@@ -1,5 +1,12 @@
 import { existsSync, readdirSync } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SessionDiffFile } from '@claude-remote-manager/shared-types';
 import { openDatabase, type AppDatabase } from '../db/database';
@@ -11,8 +18,14 @@ import {
 } from '../git/testing/git-fixtures';
 import { RepositoryRepository } from '../repositories/repository.repository';
 import { SessionRepository } from '../sessions/session.repository';
-import { parseRawNumstat, PatchParser } from './git-diff-parser';
 import {
+  DiffOutputParser,
+  parseRawNumstat,
+  PatchParser,
+  type FilePatch,
+} from './git-diff-parser';
+import {
+  diffFile,
   SESSION_DIFF_LIMITS,
   SessionDiffService,
 } from './session-diff.service';
@@ -316,6 +329,19 @@ describe('SessionDiffService', () => {
     expect(SESSION_DIFF_LIMITS.maxFiles).toBeGreaterThan(100);
   });
 
+  it('removes temporary indexes left over by a stopped server', async () => {
+    const stale = join(app, '.git', 'crm-diff-0123456789abcdef.index');
+    const fresh = join(app, '.git', 'crm-diff-fedcba9876543210.index');
+    await writeFile(stale, 'x');
+    await writeFile(fresh, 'x');
+    const hourAgo = new Date(Date.now() - 60 * 60_000);
+    await utimes(stale, hourAgo, hourAgo);
+    await service.sessionDiff('s1');
+    expect(existsSync(stale)).toBe(false);
+    // Possibly a diff that is running right now.
+    expect(existsSync(fresh)).toBe(true);
+  });
+
   it('reports clones it cannot diff', async () => {
     sessions.updateDirectory('s1', 1, { state: 'removed' });
     await rm(join(app, '.git'), { recursive: true });
@@ -418,13 +444,126 @@ describe('git diff parsing', () => {
           },
         ],
         lines: 2,
+        additions: 1,
+        deletions: 1,
         binary: false,
         dropped: false,
         truncated: false,
       },
-      { hunks: [], lines: 3, binary: false, dropped: true, truncated: false },
-      { hunks: [], lines: 0, binary: true, dropped: false, truncated: false },
-      { hunks: [], lines: 1, binary: false, dropped: true, truncated: false },
+      {
+        hunks: [],
+        lines: 3,
+        additions: 3,
+        deletions: 0,
+        binary: false,
+        dropped: true,
+        truncated: false,
+      },
+      {
+        hunks: [],
+        lines: 0,
+        additions: 0,
+        deletions: 0,
+        binary: true,
+        dropped: false,
+        truncated: false,
+      },
+      {
+        hunks: [],
+        lines: 1,
+        additions: 1,
+        deletions: 0,
+        binary: false,
+        dropped: true,
+        truncated: false,
+      },
     ]);
+  });
+});
+
+describe('pairing files and patches', () => {
+  const patchParser = () => new PatchParser(() => true, undefined, 'truncate');
+
+  it('takes files and patches from one output, also for odd names', () => {
+    const header = [
+      ':100644 100644 aaa bbb M',
+      'a\nb.txt',
+      ':000000 100644 000 ccc A',
+      'c.txt',
+      '1\t1\ta\nb.txt',
+      '1\t0\tc.txt',
+      '',
+    ].join('\0');
+    const patch = [
+      'diff --git "a/a\\nb.txt" "b/a\\nb.txt"',
+      '--- "a/a\\nb.txt"',
+      '+++ "b/a\\nb.txt"',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+      'diff --git a/c.txt b/c.txt',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/c.txt',
+      '@@ -0,0 +1 @@',
+      '+c',
+      '',
+    ].join('\n');
+    const bytes = Buffer.from(`${header}\0${patch}`);
+    // Delivered in arbitrary pieces, as a pipe does.
+    const patches = patchParser();
+    const output = new DiffOutputParser(patches);
+    for (let i = 0; i < bytes.length; i += 3) {
+      output.push(bytes.subarray(i, i + 3));
+    }
+    output.end();
+    expect(output.changes?.map((change) => change.path)).toEqual([
+      'a\nb.txt',
+      'c.txt',
+    ]);
+    expect(patches.patches.map((entry) => entry.hunks[0].lines)).toEqual([
+      ['-old', '+new'],
+      ['+c'],
+    ]);
+    expect(
+      output.changes?.map(
+        (change, i) => diffFile(change, patches.patches[i], 100).content,
+      ),
+    ).toEqual(['included', 'included']);
+
+    const empty = new DiffOutputParser(patchParser());
+    empty.end();
+    expect(empty.changes).toEqual([]);
+  });
+
+  it('never shows a patch under the wrong file', () => {
+    // As if the working tree changed between listing and patch: the patch
+    // read for a.txt is that of another file.
+    const [change] = parseRawNumstat(
+      [':100644 100644 a b M', 'a.txt', '2\t0\ta.txt', ''].join('\0'),
+    );
+    const other: FilePatch = {
+      hunks: [
+        {
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          lines: ['-x', '+y'],
+        },
+      ],
+      lines: 2,
+      additions: 1,
+      deletions: 1,
+      binary: false,
+      dropped: false,
+      truncated: false,
+    };
+    expect(diffFile(change, other, 100)).toMatchObject({
+      path: 'a.txt',
+      content: 'omitted',
+      hunks: [],
+    });
+    expect(diffFile(change, undefined, 100).content).toBe('omitted');
   });
 });
