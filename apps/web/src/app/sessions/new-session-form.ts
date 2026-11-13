@@ -14,26 +14,28 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { RouterLink } from '@angular/router';
-import type {
-  CreateSessionRequest,
-  RepositoryBranchesResponse,
-  RepositoryDto,
-  SessionDto,
+import {
+  PERMISSION_MODE_INFO,
+  SESSION_PERMISSION_MODES,
+  type CreateSessionRequest,
+  type RepositoryBranchesResponse,
+  type RepositoryDto,
+  type SessionDto,
+  type SessionPermissionMode,
 } from '@claude-remote-manager/shared-types';
 import { GitHubRepositoryPicker } from '../github/github-repository-picker';
 import {
   RepositoriesApi,
   errorMessage,
 } from '../repositories/repositories-api';
+import { ModelsStore } from './models-store';
 import { SessionsApi } from './sessions-api';
 
-/** Models offered for new sessions; the empty value uses Claude Code's default. */
-export const MODEL_OPTIONS = [
-  { value: '', label: 'Default' },
-  { value: 'opus', label: 'Opus' },
-  { value: 'sonnet', label: 'Sonnet' },
-  { value: 'haiku', label: 'Haiku' },
-];
+/** Permission modes offered for new sessions, in this order. */
+export const PERMISSION_MODE_OPTIONS = SESSION_PERMISSION_MODES.map((mode) => ({
+  value: mode,
+  ...PERMISSION_MODE_INFO[mode],
+}));
 
 /** Same rule as the API: letters, digits, `.`, `_`, `-`. */
 export const PROJECT_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/;
@@ -79,11 +81,20 @@ const emptyChoice = (): RepositoryChoice => ({
 export class NewSessionForm implements OnInit {
   private readonly sessionsApi = inject(SessionsApi);
   private readonly repositoriesApi = inject(RepositoriesApi);
+  private readonly modelsStore = inject(ModelsStore);
 
   /** The session was created. */
   readonly created = output<SessionDto>();
 
-  protected readonly modelOptions = MODEL_OPTIONS;
+  /** Models from Claude Code; `''` stands for its default. */
+  protected readonly modelOptions = computed(() =>
+    this.modelsStore.models().map((option) => ({
+      ...option,
+      value: option.value ?? '',
+    })),
+  );
+  protected readonly modeOptions = PERMISSION_MODE_OPTIONS;
+  protected readonly modeInfo = PERMISSION_MODE_INFO;
   protected readonly repositories = signal<RepositoryDto[]>([]);
   protected readonly repositoriesLoaded = signal(false);
   protected readonly branches = signal(
@@ -92,6 +103,7 @@ export class NewSessionForm implements OnInit {
 
   protected prompt = '';
   protected model = '';
+  protected permissionMode: SessionPermissionMode = 'default';
   protected projectName = '';
   protected readonly mode = signal<SessionMode>('repository');
   protected readonly choices = signal<RepositoryChoice[]>([emptyChoice()]);
@@ -103,6 +115,7 @@ export class NewSessionForm implements OnInit {
   );
 
   ngOnInit(): void {
+    this.modelsStore.load();
     this.repositoriesApi.list().subscribe({
       next: ({ repositories }) => {
         this.repositories.set(repositories);
@@ -216,6 +229,9 @@ export class NewSessionForm implements OnInit {
     const request: CreateSessionRequest = {
       prompt: this.prompt.trim(),
       ...(this.model ? { model: this.model } : {}),
+      ...(this.permissionMode !== 'default'
+        ? { permissionMode: this.permissionMode }
+        : {}),
       ...(repositories.length > 0 ? { repositories } : {}),
       ...(this.mode() === 'project'
         ? { newProject: { name: this.projectName.trim() } }

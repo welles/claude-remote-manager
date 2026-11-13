@@ -1,0 +1,45 @@
+:host {
+  display: block;
+}
+
+.todos {
+  margin-top: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--mat-sys-surface-container);
+  font: var(--mat-sys-body-medium);
+
+  summary {
+    cursor: pointer;
+    font-weight: 500;
+  }
+
+  ul {
+    list-style: none;
+    margin: 4px 0;
+    padding: 0;
+  }
+}
+
+.todo {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.todo-mark {
+  flex: none;
+  width: 1em;
+  text-align: center;
+}
+
+.todo-in_progress {
+  font-weight: 600;
+  color: var(--mat-sys-primary);
+}
+
+.todo-completed .todo-text {
+  color: var(--mat-sys-on-surface-variant);
+  text-decoration: line-through;
+}

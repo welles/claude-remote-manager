@@ -6,10 +6,16 @@ import {
   applyDraft,
   applyEvent,
   buildConversation,
+  pendingRequests,
   progressText,
+  resolutionText,
   toolSummary,
   type ConversationItem,
 } from './conversation';
+import {
+  permissionRequest,
+  permissionResolved,
+} from './testing/permission-events';
 
 let seq = 0;
 const event = (input: SessionEventInput): SessionEvent =>
@@ -340,5 +346,159 @@ describe('toolSummary', () => {
         outputTail: null,
       },
     ]);
+  });
+});
+
+describe('approval requests, queue and settings in the conversation', () => {
+  it('attaches requests to their tool call, also when they come first', () => {
+    const request = permissionRequest();
+    let items = buildConversation([request]);
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: 'tool',
+        key: 'tool:t1',
+        name: 'Bash',
+        permission: { request, resolved: null },
+      }),
+    ]);
+    expect(pendingRequests(items)).toEqual([request]);
+    items = applyEvent(
+      items,
+      event({
+        type: 'tool.call',
+        messageId: 'm1',
+        toolUseId: 't1',
+        name: 'Bash',
+        input: { command: 'rm -r build' },
+        parentToolUseId: null,
+      }),
+    );
+    expect(items).toHaveLength(1);
+    const resolved = permissionResolved({ decision: 'deny', message: 'No' });
+    items = applyEvent(items, resolved);
+    const tool = items[0];
+    expect(tool.kind === 'tool' && tool.permission).toEqual({
+      request,
+      resolved,
+    });
+    expect(pendingRequests(items)).toEqual([]);
+  });
+
+  it('describes how requests were decided', () => {
+    const tool = permissionRequest();
+    const text = (
+      request: typeof tool,
+      resolved: Parameters<typeof permissionResolved>[0] | null,
+    ) =>
+      resolutionText({
+        request,
+        resolved: resolved ? permissionResolved(resolved) : null,
+      });
+    expect(text(tool, null)).toBe('Waiting for your approval');
+    expect(text(tool, {})).toBe('Allowed once');
+    expect(text(tool, { scope: 'session' })).toBe('Allowed for this session');
+    expect(text(tool, { decision: 'deny', message: 'Not now' })).toBe(
+      'Denied: Not now',
+    );
+    expect(text(tool, { decision: 'deny', cause: 'interrupted' })).toBe(
+      'Cancelled: the turn was stopped',
+    );
+    const plan = permissionRequest({ kind: 'plan', toolName: 'ExitPlanMode' });
+    expect(text(plan, { mode: 'acceptEdits' })).toBe(
+      'Plan approved, continuing in mode Accept edits',
+    );
+    expect(text(plan, { decision: 'deny', message: 'More tests' })).toBe(
+      'Kept planning: More tests',
+    );
+    const question = permissionRequest({ kind: 'question' });
+    expect(text(question, null)).toBe('Waiting for your answer');
+    expect(text(question, { answers: { a: 'b' } })).toBe('Answered');
+  });
+
+  it('shows queued messages until they are sent, removed or withdrawn', () => {
+    let items = buildConversation([
+      event({ type: 'message.queued', id: 'q1', text: 'Also this' }),
+      event({ type: 'message.queued', id: 'q2', text: 'And that' }),
+      event({ type: 'message.queued', id: 'q3', text: 'Never mind' }),
+    ]);
+    expect(items.map((item) => item.kind)).toEqual([
+      'queued',
+      'queued',
+      'queued',
+    ]);
+    items = [
+      event({
+        type: 'message.dequeued',
+        id: 'q1',
+        outcome: 'sent',
+        reason: null,
+      }),
+      event({ type: 'user.message', id: 'q1', text: 'Also this' }),
+      event({
+        type: 'message.dequeued',
+        id: 'q2',
+        outcome: 'withdrawn',
+        reason: 'The turn was stopped.',
+      }),
+      event({
+        type: 'message.dequeued',
+        id: 'q3',
+        outcome: 'removed',
+        reason: null,
+      }),
+    ].reduce(applyEvent, items);
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: 'queued',
+        id: 'q2',
+        state: 'withdrawn',
+        reason: 'The turn was stopped.',
+      }),
+      expect.objectContaining({ kind: 'user', text: 'Also this' }),
+    ]);
+  });
+
+  it('notes model and mode changes', () => {
+    const items = buildConversation([
+      event({ type: 'settings.changed', model: 'sonnet', cause: 'user' }),
+      event({
+        type: 'settings.changed',
+        permissionMode: 'acceptEdits',
+        cause: 'plan',
+      }),
+      event({ type: 'settings.changed', model: null, cause: 'user' }),
+      event({
+        type: 'settings.changed',
+        permissionMode: 'plan',
+        cause: 'claude',
+      }),
+    ]);
+    expect(
+      items.map((item) => (item.kind === 'settings' ? item.text : '')),
+    ).toEqual([
+      'Model: sonnet',
+      'Mode: Accept edits (plan approved)',
+      'Model: default',
+      'Mode: Plan (changed by Claude)',
+    ]);
+  });
+});
+
+describe('tool summaries', () => {
+  it('summarizes questions, plans and tasks readably', () => {
+    expect(
+      toolSummary('AskUserQuestion', {
+        questions: [{ question: 'Which?' }, { question: 'When?' }],
+      }),
+    ).toBe('Which? · When?');
+    expect(toolSummary('ExitPlanMode', { plan: '# Long' })).toBe(
+      'Plan for approval',
+    );
+    expect(
+      toolSummary('TaskCreate', { subject: 'Write tests', description: 'x' }),
+    ).toBe('Write tests');
+    expect(
+      toolSummary('TaskUpdate', { taskId: '2', status: 'completed' }),
+    ).toBe('#2 → completed');
   });
 });

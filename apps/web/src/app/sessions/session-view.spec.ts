@@ -1,3 +1,8 @@
+import { provideHttpClient } from '@angular/common/http';
+import {
+  HttpTestingController,
+  provideHttpClientTesting,
+} from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import type {
@@ -8,6 +13,7 @@ import { words } from '../testing/text';
 import { WEBSOCKET_FACTORY } from './session-socket';
 import { SessionView } from './session-view';
 import { FakeWebSocket, fakeWebSocketFactory } from './testing/fake-websocket';
+import { permissionRequest } from './testing/permission-events';
 import { sessionDto } from './testing/session-dto';
 
 const LOG = 'log-1';
@@ -23,6 +29,8 @@ describe('SessionView', () => {
     await TestBed.configureTestingModule({
       providers: [
         provideRouter([{ path: 'sessions/:id', component: SessionView }]),
+        provideHttpClient(),
+        provideHttpClientTesting(),
         { provide: WEBSOCKET_FACTORY, useValue: fakeWebSocketFactory },
       ],
     }).compileComponents();
@@ -420,4 +428,195 @@ describe('SessionView', () => {
     await harness.fixture.whenStable();
     expect(element.querySelector('[data-testid="held-back"]')).toBeNull();
   });
+
+  const history = (
+    socket: FakeWebSocket,
+    session = sessionDto(),
+    events: SessionEvent[] = [],
+  ) =>
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session,
+      events,
+    });
+  const live = (socket: FakeWebSocket, input: SessionEvent) =>
+    socket.receive({ type: 'session.event', sessionId: 's1', event: input });
+
+  it('shows a pending approval as a card and sends the answer', async () => {
+    const { harness, socket, element, text } = await open();
+    TestBed.inject(HttpTestingController)
+      .expectOne('/api/models')
+      .flush({
+        models: [
+          {
+            value: 'haiku',
+            label: 'Haiku 5',
+            description: '',
+            resolvedModel: 'claude-haiku-5',
+          },
+        ],
+        source: 'claude-code',
+        updatedAt: null,
+      });
+    const request = permissionRequest();
+    history(
+      socket,
+      sessionDto({ status: 'waiting', waitingFor: 'permission' }),
+      [request],
+    );
+    await harness.fixture.whenStable();
+    expect(text('status')).toBe('Needs you');
+    expect(text('resolved-model')).toBe('claude-haiku-5');
+    expect(text('permission-line')).toBe('Waiting for your approval');
+    // A turn waits: it can be stopped, and messages are queued.
+    expect(text('interrupt')).toBe('Stop');
+    const card = element.querySelector('[data-testid="approvals"]');
+    expect(card?.textContent).toContain('rm -r build');
+
+    (card?.querySelector('[data-testid="allow"]') as HTMLButtonElement).click();
+    await harness.fixture.whenStable();
+    const answer = socket.sent.at(-1) as Record<string, unknown>;
+    expect(answer).toMatchObject({
+      type: 'permission.respond',
+      sessionId: 's1',
+      permissionRequestId: 'p1',
+      decision: 'allow',
+    });
+    // No second answer while the first is on its way.
+    expect(
+      (card?.querySelector('[data-testid="allow"]') as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    socket.receive({
+      type: 'error',
+      requestId: answer['requestId'] as string,
+      message: 'Not connected',
+    });
+    await harness.fixture.whenStable();
+    expect(
+      (
+        element.querySelector(
+          '[data-testid="approvals"] [data-testid="allow"]',
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+
+    // Answered elsewhere: the card goes away for everyone.
+    live(socket, {
+      ...permissionResolvedEvent(),
+      seq: 10,
+    });
+    live(socket, {
+      type: 'session.status',
+      status: 'running',
+      waitingFor: null,
+      seq: 11,
+      at: null,
+    });
+    await harness.fixture.whenStable();
+    expect(element.querySelector('[data-testid="approvals"]')).toBeNull();
+    expect(text('permission-line')).toBe('Allowed for this session');
+    expect(text('status')).toBe('Running');
+  });
+
+  it('shows queued messages, removes them and offers withdrawn ones again', async () => {
+    const { harness, socket, element } = await open();
+    history(socket, sessionDto({ status: 'running', waitingFor: null }), [
+      event({ type: 'message.queued', id: 'q1', text: 'Also this' }),
+      event({ type: 'message.queued', id: 'q2', text: 'Stopped one' }),
+      event({
+        type: 'message.dequeued',
+        id: 'q2',
+        outcome: 'withdrawn',
+        reason: 'The turn was stopped.',
+      }),
+    ]);
+    await harness.fixture.whenStable();
+    expect(
+      element.querySelector('[data-testid="queued"]')?.textContent,
+    ).toContain('Also this');
+    (
+      element.querySelector('[data-testid="unqueue"]') as HTMLButtonElement
+    ).click();
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'message.unqueue',
+      sessionId: 's1',
+      messageId: 'q1',
+    });
+    expect(
+      element.querySelector('[data-testid="withdrawn"]')?.textContent,
+    ).toContain('Not sent: The turn was stopped.');
+    (
+      element.querySelector(
+        '[data-testid="edit-withdrawn"]',
+      ) as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    expect(
+      (
+        element.querySelector(
+          '[data-testid="message-input"]',
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe('Stopped one');
+  });
+
+  it('switches model and mode and shows the task list', async () => {
+    const { harness, socket, element, text } = await open();
+    history(socket, sessionDto({ status: 'waiting' }), [
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId: 't',
+        name: 'TodoWrite',
+        input: {
+          todos: [
+            { content: 'Read', status: 'completed', activeForm: 'Reading' },
+            { content: 'Test', status: 'in_progress', activeForm: 'Testing' },
+          ],
+        },
+        parentToolUseId: null,
+      }),
+    ]);
+    await harness.fixture.whenStable();
+    expect(text('todos')).toContain('Tasks 1/2');
+    expect(text('todos')).toContain('Testing');
+    expect(text('context-unknown')).toContain('known after');
+
+    const view = harness.routeDebugElement?.componentInstance as {
+      configure(change: { model?: string; permissionMode?: string }): void;
+    };
+    view.configure({ model: '' });
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'session.update',
+      sessionId: 's1',
+      model: null,
+    });
+    view.configure({ permissionMode: 'plan' });
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'session.update',
+      permissionMode: 'plan',
+    });
+    expect(socket.sent.at(-1)).not.toHaveProperty('model');
+  });
 });
+
+function permissionResolvedEvent(): SessionEvent {
+  return {
+    type: 'permission.resolved',
+    seq: 0,
+    at: null,
+    requestId: 'p1',
+    toolUseId: 't1',
+    decision: 'allow',
+    scope: 'session',
+    cause: 'user',
+    message: null,
+    answers: null,
+    mode: null,
+    sessionAllow: { rules: ['Bash(rm:*)'], directories: [], mode: null },
+  };
+}

@@ -32,6 +32,9 @@ describe('SessionList', () => {
   const render = async () => {
     const fixture = TestBed.createComponent(SessionList);
     fixture.detectChanges();
+    http
+      .expectOne('/api/models')
+      .flush({ models: [], source: 'fallback', updatedAt: null });
     return fixture;
   };
 

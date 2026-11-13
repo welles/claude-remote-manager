@@ -24,8 +24,10 @@
   >
     <span class="title">{{ session.title || 'Untitled session' }}</span>
     <span class="meta">
-      <span class="status status-{{ session.status }}"
-        >{{ statusLabels[session.status] }}</span
+      <span
+        class="status {{ statusClass(session) }}"
+        data-testid="session-status"
+        >{{ statusLabel(session) }}</span
       >
       <span>{{ session.updatedAt | date: 'short' }}</span>
       @if (workspaceLabel(session); as workspace) {

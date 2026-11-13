@@ -1,0 +1,36 @@
+<details class="directories" data-testid="directories">
+  <summary>{{ summary() }}</summary>
+  <ul>
+    @for (directory of directories(); track directory.path) {
+    <li class="directory" data-testid="directory">
+      <span class="directory-name">
+        <strong>{{ directoryName(directory) }}</strong>
+        <span class="tag"
+          >{{ directory.role === 'main' ? 'working directory' : 'additional'
+          }}</span
+        >
+        @if (directory.repository?.local) {
+        <span class="tag">local project</span>
+        } @if (directory.state !== 'ready') {
+        <span class="tag tag-{{ directory.state }}">{{ directory.state }}</span>
+        } @if (directory.setupStatus !== 'none') {
+        <span class="tag tag-setup-{{ directory.setupStatus }}"
+          >setup {{ directory.setupStatus.replace('_', ' ') }}</span
+        >
+        }
+      </span>
+      @if (directory.branch) {
+      <span class="directory-branch">
+        <code>{{ directory.branch }}</code>
+        @if (directory.baseBranch) { from
+        <code>{{ directory.baseBranch }}</code>
+        } @if (directory.baseCommit) { at
+        <code>{{ directory.baseCommit.slice(0, 12) }}</code>
+        }
+      </span>
+      }
+      <code class="directory-path">{{ directory.path }}</code>
+    </li>
+    }
+  </ul>
+</details>

@@ -147,11 +147,28 @@
       subscriptSizing="dynamic"
     >
       <mat-label>Model</mat-label>
-      <mat-select name="model" [(ngModel)]="model">
-        @for (option of modelOptions; track option.value) {
-        <mat-option [value]="option.value">{{ option.label }}</mat-option>
+      <mat-select name="model" [(ngModel)]="model" data-testid="model">
+        @for (option of modelOptions(); track option.value) {
+        <mat-option [value]="option.value" [title]="option.description"
+          >{{ option.label }}</mat-option
+        >
         }
       </mat-select>
+    </mat-form-field>
+    <mat-form-field appearance="outline" class="mode" subscriptSizing="dynamic">
+      <mat-label>Permissions</mat-label>
+      <mat-select
+        name="permissionMode"
+        [(ngModel)]="permissionMode"
+        data-testid="permission-mode"
+      >
+        @for (option of modeOptions; track option.value) {
+        <mat-option [value]="option.value" [title]="option.description"
+          >{{ option.label }}</mat-option
+        >
+        }
+      </mat-select>
+      <mat-hint>{{ modeInfo[permissionMode].description }}</mat-hint>
     </mat-form-field>
     <button
       matButton="filled"

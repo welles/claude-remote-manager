@@ -67,3 +67,19 @@ body {
   background: var(--mat-sys-error-container);
   color: var(--mat-sys-on-error-container);
 }
+
+/* Waits for an approval, an answer or a plan decision: needs the user. */
+.status-permission {
+  background: var(--mat-sys-tertiary);
+  color: var(--mat-sys-on-tertiary);
+  font-weight: 600;
+}
+
+/* Text for screen readers only. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}

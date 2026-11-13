@@ -3,12 +3,9 @@
   @if (session(); as s) {
   <h1 class="title">{{ s.title || 'Untitled session' }}</h1>
   <div class="facts">
-    <span class="status status-{{ s.status }}" data-testid="status"
-      >{{ statusLabels[s.status] }}</span
+    <span class="status {{ statusClass(s) }}" data-testid="status"
+      >{{ statusLabel(s) }}</span
     >
-    @if (s.model) {
-    <span>{{ s.model }}</span>
-    }
     <span
       data-testid="usage"
       title="Input {{ s.usage.inputTokens }} · Output {{ s.usage.outputTokens }} · Cache write {{ s.usage.cacheCreationInputTokens }} · Cache read {{ s.usage.cacheReadInputTokens }}"
@@ -16,12 +13,6 @@
       {{ formatTokens(totalTokens(s.usage)) }} tokens · {{
       formatCost(s.usage.costUsd) }}
     </span>
-    @if (context(); as c) {
-    <span data-testid="context" title="Context window of {{ c.model }}">
-      Context {{ formatTokens(c.usedTokens) }} / {{ formatTokens(c.maxTokens) }}
-      ({{ c.percentage | number: '1.0-1' }}%)
-    </span>
-    }
   </div>
   @if (s.status !== 'finished') {
   <button
@@ -40,45 +31,55 @@
     formatTokens(s.usage.cacheCreationInputTokens) }} · Cache read {{
     formatTokens(s.usage.cacheReadInputTokens) }}
   </div>
-  @if (s.directories.length > 0) {
-  <details class="directories" data-testid="directories">
-    <summary>{{ workspaceSummary() }}</summary>
-    <ul>
-      @for (directory of s.directories; track directory.path) {
-      <li class="directory" data-testid="directory">
-        <span class="directory-name">
-          <strong>{{ directoryName(directory) }}</strong>
-          <span class="tag"
-            >{{ directory.role === 'main' ? 'working directory' : 'additional'
-            }}</span
-          >
-          @if (directory.repository?.local) {
-          <span class="tag">local project</span>
-          } @if (directory.state !== 'ready') {
-          <span class="tag tag-{{ directory.state }}"
-            >{{ directory.state }}</span
-          >
-          } @if (directory.setupStatus !== 'none') {
-          <span class="tag tag-setup-{{ directory.setupStatus }}"
-            >setup {{ directory.setupStatus.replace('_', ' ') }}</span
-          >
-          }
-        </span>
-        @if (directory.branch) {
-        <span class="directory-branch">
-          <code>{{ directory.branch }}</code>
-          @if (directory.baseBranch) { from
-          <code>{{ directory.baseBranch }}</code>
-          } @if (directory.baseCommit) { at
-          <code>{{ directory.baseCommit.slice(0, 12) }}</code>
-          }
-        </span>
+  <div class="controls">
+    <mat-form-field
+      appearance="outline"
+      subscriptSizing="dynamic"
+      class="control"
+    >
+      <mat-label>Model</mat-label>
+      <mat-select
+        [value]="s.model ?? ''"
+        (selectionChange)="configure({ model: $event.value })"
+        [disabled]="!connected() || s.status === 'preparing'"
+        data-testid="model-select"
+      >
+        @for (option of modelOptions(); track option.value) {
+        <mat-option [value]="option.value ?? ''" [title]="option.description"
+          >{{ option.label }}</mat-option
+        >
         }
-        <code class="directory-path">{{ directory.path }}</code>
-      </li>
+      </mat-select>
+      @if (resolvedModel(); as resolved) {
+      <mat-hint data-testid="resolved-model">{{ resolved }}</mat-hint>
       }
-    </ul>
-  </details>
+    </mat-form-field>
+    <mat-form-field
+      appearance="outline"
+      subscriptSizing="dynamic"
+      class="control"
+    >
+      <mat-label>Permissions</mat-label>
+      <mat-select
+        [value]="s.permissionMode"
+        (selectionChange)="configure({ permissionMode: $event.value })"
+        [disabled]="!connected() || s.status === 'preparing'"
+        data-testid="mode-select"
+      >
+        @for (mode of modes; track mode) {
+        <mat-option [value]="mode" [title]="modeInfo[mode].description"
+          >{{ modeInfo[mode].label }}</mat-option
+        >
+        }
+      </mat-select>
+      <mat-hint>{{ modeInfo[s.permissionMode].description }}</mat-hint>
+    </mat-form-field>
+  </div>
+  <app-context-meter [context]="context()" />
+  @if (s.directories.length > 0) {
+  <app-session-directories [directories]="s.directories" />
+  } @if (todos().length > 0) {
+  <app-todo-panel [todos]="todos()" />
   }
   <app-session-git-panel [session]="s" />
   } @if (incompatible()) {
@@ -112,6 +113,13 @@
     </summary>
     @if (item.denied) {
     <p class="tool-denied">{{ item.denied }}</p>
+    } @if (item.permission?.resolved?.answers; as answers) {
+    <dl class="answers">
+      @for (answer of answers | keyvalue; track answer.key) {
+      <dt>{{ answer.key }}</dt>
+      <dd>{{ answer.value }}</dd>
+      }
+    </dl>
     }
     <pre class="tool-io">{{ inputJson(item.input) }}</pre>
     @if (item.result; as result) {
@@ -121,6 +129,35 @@
     >
     }
   </details>
+  @if (item.permission; as permission) {
+  <p
+    class="permission-line"
+    [class.permission-denied]="permission.resolved?.decision === 'deny'"
+    [class.nested]="item.nested"
+    data-testid="permission-line"
+  >
+    {{ resolutionText(permission) }}
+  </p>
+  @if (permission.request.plan && permission.resolved) {
+  <details class="plan" [class.nested]="item.nested">
+    <summary>Plan</summary>
+    <div
+      class="markdown"
+      [innerHTML]="permission.request.plan | markdown"
+    ></div>
+  </details>
+  } } } @case ('queued') { @if (item.state === 'withdrawn') {
+  <div class="withdrawn" data-testid="withdrawn">
+    <span class="withdrawn-text">{{ item.text }}</span>
+    <span class="withdrawn-reason"
+      >Not sent{{ item.reason ? ': ' + item.reason : '' }}</span
+    >
+    <button matButton (click)="edit(item.text)" data-testid="edit-withdrawn">
+      Edit and send again
+    </button>
+  </div>
+  } } @case ('settings') {
+  <p class="notice" data-testid="settings-changed">{{ item.text }}</p>
   } @case ('notice') {
   <p class="notice notice-{{ item.level }}">{{ item.text }}</p>
   } @case ('error') {
@@ -161,7 +198,7 @@
     '1.1-1' }} s · {{ formatTokens(totalTokens(item.usage)) }} tokens · {{
     formatCost(item.usage.costUsd) }}
   </p>
-  } } } @if (running()) {
+  } } } @if (running() && requests().length === 0) {
   <p class="working">Claude is working…</p>
   } @else if (preparing()) {
   <p class="working">Preparing the session…</p>
@@ -169,7 +206,24 @@
 </section>
 
 <footer class="composer">
-  @if (heldBack()) {
+  @if (requests().length > 0) {
+  <div class="approvals" data-testid="approvals">
+    @for (request of requests().slice(0, 1); track request.requestId) {
+    <app-permission-card
+      [request]="request"
+      [enabled]="connected() && !answering().has(request.requestId)"
+      [position]="requests().length > 1 ? '1 of ' + requests().length : null"
+      (answer)="respond(request, $event)"
+    />
+    }
+  </div>
+  } @if (queued().length > 0) {
+  <app-queued-messages
+    [messages]="queued()"
+    [enabled]="connected()"
+    (remove)="unqueue($event)"
+  />
+  } @if (heldBack()) {
   <div class="held-back" data-testid="held-back">
     <p>
       A setup script failed, so the first message has not been sent to Claude

@@ -43,6 +43,7 @@ const repository = (
 interface FormInternals {
   prompt: string;
   model: string;
+  permissionMode: string;
   projectName: string;
   mode(): 'repository' | 'project' | 'scratch';
   choices(): RepositoryChoice[];
@@ -80,6 +81,24 @@ describe('NewSessionForm', () => {
       created.push(session),
     );
     fixture.detectChanges();
+    http.expectOne('/api/models').flush({
+      models: [
+        {
+          value: null,
+          label: 'Default (recommended)',
+          description: '',
+          resolvedModel: 'claude-x',
+        },
+        {
+          value: 'haiku',
+          label: 'Haiku 5',
+          description: 'Fast',
+          resolvedModel: 'claude-haiku-5',
+        },
+      ],
+      source: 'claude-code',
+      updatedAt: null,
+    });
     http
       .expectOne('/api/repositories')
       .flush({ repositories, strayDirectories: [] });
@@ -129,9 +148,12 @@ describe('NewSessionForm', () => {
       .flush({ defaultBranch: 'trunk', branches: ['release', 'trunk'] });
     form.chooseBaseBranch(1, 'release');
     form.model = 'haiku';
+    form.permissionMode = 'plan';
     fixture.detectChanges();
     await fixture.whenStable();
     expect(element.textContent).toContain('Additional repository');
+    // What the chosen mode means.
+    expect(element.textContent).toContain('presents the plan for approval');
     expect(form.canStart()).toBe(true);
 
     form.create();
@@ -139,6 +161,7 @@ describe('NewSessionForm', () => {
     expect(request.request.body).toEqual({
       prompt: 'Add the export',
       model: 'haiku',
+      permissionMode: 'plan',
       repositories: [
         { repositoryId: 'r1' },
         { repositoryId: 'r2', baseBranch: 'release' },

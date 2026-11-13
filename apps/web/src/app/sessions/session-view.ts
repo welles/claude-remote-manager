@@ -1,5 +1,5 @@
 import { TextFieldModule } from '@angular/cdk/text-field';
-import { DecimalPipe } from '@angular/common';
+import { DecimalPipe, KeyValuePipe } from '@angular/common';
 import {
   Component,
   DestroyRef,
@@ -14,23 +14,43 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSelectModule } from '@angular/material/select';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import type {
-  ContextUsage,
-  LogPosition,
-  ServerMessage,
-  SessionDirectoryDto,
-  SessionDto,
+import {
+  PERMISSION_MODE_INFO,
+  SESSION_PERMISSION_MODES,
+  type ContextUsage,
+  type LogPosition,
+  type PermissionRequestEvent,
+  type PermissionResponse,
+  type ServerMessage,
+  type SessionDto,
+  type SessionPermissionMode,
 } from '@claude-remote-manager/shared-types';
 import {
   applyDraft,
   applyEvent,
   buildConversation,
+  pendingRequests,
   progressText,
+  resolutionText,
   type ConversationItem,
 } from './conversation';
-import { formatCost, formatTokens, STATUS_LABELS, totalTokens } from './format';
+import {
+  formatCost,
+  formatTokens,
+  statusClass,
+  statusLabel,
+  totalTokens,
+} from './format';
 import { MarkdownPipe } from './markdown.pipe';
+import { ModelsStore, modelOptionsWith } from './models-store';
+import { PermissionCard } from './permission-card';
+import { ContextMeter } from './context-meter';
+import { QueuedMessages } from './queued-messages';
+import { SessionDirectories } from './session-directories';
+import { TodoPanel } from './todo-panel';
+import { todoList } from './todos';
 import { SessionGitPanel } from './session-git-panel';
 import { SessionSocket } from './session-socket';
 import { newId } from './sessions-api';
@@ -39,15 +59,22 @@ import { newId } from './sessions-api';
 @Component({
   selector: 'app-session-view',
   imports: [
+    ContextMeter,
     DecimalPipe,
+    KeyValuePipe,
     MarkdownPipe,
     MatButtonModule,
     MatFormFieldModule,
     MatInputModule,
     MatProgressBarModule,
+    MatSelectModule,
+    PermissionCard,
+    QueuedMessages,
     RouterLink,
+    SessionDirectories,
     SessionGitPanel,
     TextFieldModule,
+    TodoPanel,
   ],
   templateUrl: './session-view.html',
   styleUrl: './session-view.scss',
@@ -56,8 +83,13 @@ export class SessionView implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly socket = inject(SessionSocket);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly modelsStore = inject(ModelsStore);
 
-  protected readonly statusLabels = STATUS_LABELS;
+  protected readonly statusLabel = statusLabel;
+  protected readonly statusClass = statusClass;
+  protected readonly resolutionText = resolutionText;
+  protected readonly modes = SESSION_PERMISSION_MODES;
+  protected readonly modeInfo = PERMISSION_MODE_INFO;
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;
@@ -71,9 +103,40 @@ export class SessionView implements OnInit {
   protected readonly context = signal<ContextUsage | null>(null);
   protected readonly error = signal<string | null>(null);
   protected readonly loaded = signal(false);
-  protected readonly running = computed(
-    () => this.session()?.status === 'running',
+  /** A turn is in progress (possibly waiting for an approval). */
+  protected readonly running = computed(() => {
+    const session = this.session();
+    return (
+      session?.status === 'running' || session?.waitingFor === 'permission'
+    );
+  });
+  /** Approval requests waiting for an answer, oldest first. */
+  protected readonly requests = computed(() => pendingRequests(this.items()));
+  /** IDs of requests whose answer is on its way. */
+  protected readonly answering = signal(new Set<string>());
+  /** Messages waiting for the current turn to end. */
+  protected readonly queued = computed(() =>
+    this.items().filter(
+      (item): item is Extract<ConversationItem, { kind: 'queued' }> =>
+        item.kind === 'queued' && item.state === 'queued',
+    ),
   );
+  /** Claude's task list. */
+  protected readonly todos = computed(() => todoList(this.items()));
+  /** Models to choose from, including the session's own. */
+  protected readonly modelOptions = computed(() =>
+    modelOptionsWith(this.modelsStore.models(), this.session()?.model ?? null),
+  );
+  /** Model the session's choice currently resolves to, when known. */
+  protected readonly resolvedModel = computed(() => {
+    const model = this.session()?.model ?? null;
+    return (
+      this.modelOptions().find((option) => option.value === model)
+        ?.resolvedModel ??
+      this.context()?.model ??
+      null
+    );
+  });
   protected readonly preparing = computed(
     () => this.session()?.status === 'preparing',
   );
@@ -82,12 +145,6 @@ export class SessionView implements OnInit {
     const session = this.session();
     return session?.status === 'waiting' && session.pendingMessage !== null;
   });
-  /** Repository names (or project) for the collapsed directory list. */
-  protected readonly workspaceSummary = computed(() =>
-    (this.session()?.directories ?? [])
-      .map((directory) => directoryName(directory))
-      .join(' + '),
-  );
   /**
    * Text in the input box. A signal bound to the textarea's value (not
    * ngModel, whose asynchronous write could leave sent text in the box).
@@ -96,6 +153,8 @@ export class SessionView implements OnInit {
 
   /** Request IDs of frames this view sent, to show their errors. */
   private readonly pending = new Set<string>();
+  /** Frame request ID → approval request ID, for answers on their way. */
+  private readonly answers = new Map<string, string>();
   /** How far this view has seen the session's log, for reconnects. */
   private position: LogPosition | null = null;
   /** Whether the page is scrolled to the end; then new content stays in view. */
@@ -120,6 +179,7 @@ export class SessionView implements OnInit {
   }
 
   ngOnInit(): void {
+    this.modelsStore.load();
     this.socket.messages$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((message) => this.handle(message));
@@ -163,6 +223,71 @@ export class SessionView implements OnInit {
     this.error.set(null);
     this.draft.set('');
     this.stickToBottom = true;
+  }
+
+  /** Answers an approval request. */
+  protected respond(
+    request: PermissionRequestEvent,
+    response: PermissionResponse,
+  ): void {
+    const requestId = newId();
+    if (
+      this.socket.send({
+        type: 'permission.respond',
+        sessionId: this.sessionId(),
+        permissionRequestId: request.requestId,
+        requestId,
+        ...response,
+      })
+    ) {
+      this.pending.add(requestId);
+      this.answers.set(requestId, request.requestId);
+      this.answering.update((ids) => new Set(ids).add(request.requestId));
+      this.error.set(null);
+    } else {
+      this.error.set('Not connected to the server. Try again in a moment.');
+    }
+  }
+
+  /** Removes a queued message before it goes to Claude. */
+  protected unqueue(messageId: string): void {
+    const requestId = newId();
+    if (
+      this.socket.send({
+        type: 'message.unqueue',
+        sessionId: this.sessionId(),
+        messageId,
+        requestId,
+      })
+    ) {
+      this.pending.add(requestId);
+    }
+  }
+
+  /** Puts the text of a message that was not sent back into the input. */
+  protected edit(text: string): void {
+    this.draft.set(this.draft().trim() ? `${this.draft()}\n\n${text}` : text);
+  }
+
+  /** Switches the model (`''`: default) or the permission mode. */
+  protected configure(change: {
+    model?: string;
+    permissionMode?: SessionPermissionMode;
+  }): void {
+    const requestId = newId();
+    const sent = this.socket.send({
+      type: 'session.update',
+      sessionId: this.sessionId(),
+      ...(change.model !== undefined ? { model: change.model || null } : {}),
+      ...(change.permissionMode
+        ? { permissionMode: change.permissionMode }
+        : {}),
+      requestId,
+    });
+    if (sent) {
+      this.pending.add(requestId);
+      this.error.set(null);
+    }
   }
 
   protected interrupt(): void {
@@ -227,13 +352,20 @@ export class SessionView implements OnInit {
     if (item.denied) {
       return 'denied';
     }
+    const permission = item.permission;
+    if (permission && !permission.resolved) {
+      return permission.request.kind === 'question'
+        ? 'question'
+        : 'needs approval';
+    }
+    if (permission?.resolved?.decision === 'deny') {
+      return permission.resolved.cause === 'user' ? 'denied' : 'cancelled';
+    }
     if (!item.result) {
       return this.running() ? 'running' : 'no result';
     }
     return item.result.isError ? 'error' : 'done';
   }
-
-  protected readonly directoryName = directoryName;
 
   protected setupState(
     item: Extract<ConversationItem, { kind: 'setup' }>,
@@ -254,6 +386,19 @@ export class SessionView implements OnInit {
 
   protected inputJson(input: unknown): string {
     return JSON.stringify(input, null, 2);
+  }
+
+  /** An answer frame was acknowledged or refused: the card is usable again. */
+  private answered(frameRequestId: string): void {
+    const requestId = this.answers.get(frameRequestId);
+    if (requestId) {
+      this.answers.delete(frameRequestId);
+      this.answering.update((ids) => {
+        const next = new Set(ids);
+        next.delete(requestId);
+        return next;
+      });
+    }
   }
 
   private handle(message: ServerMessage): void {
@@ -299,7 +444,13 @@ export class SessionView implements OnInit {
             this.context.set(event.context);
           } else if (event.type === 'session.status') {
             this.session.update((session) =>
-              session ? { ...session, status: event.status } : session,
+              session
+                ? {
+                    ...session,
+                    status: event.status,
+                    waitingFor: event.waitingFor ?? null,
+                  }
+                : session,
             );
           }
         }
@@ -310,6 +461,9 @@ export class SessionView implements OnInit {
         }
         return;
       case 'error':
+        if (message.requestId) {
+          this.answered(message.requestId);
+        }
         if (message.requestId && this.pending.has(message.requestId)) {
           this.pending.delete(message.requestId);
           this.error.set(message.message);
@@ -319,6 +473,7 @@ export class SessionView implements OnInit {
         return;
       case 'ack':
         this.pending.delete(message.requestId);
+        this.answered(message.requestId);
         return;
       default:
         return;
@@ -326,13 +481,4 @@ export class SessionView implements OnInit {
   }
 }
 
-/** Name of a session directory: repository, scratch or the directory. */
-export function directoryName(directory: SessionDirectoryDto): string {
-  if (directory.repository) {
-    return directory.repository.fullName;
-  }
-  if (directory.kind === 'scratch') {
-    return 'Scratch directory';
-  }
-  return directory.path.split('/').filter(Boolean).at(-1) ?? directory.path;
-}
+export { directoryName } from './session-directories';

@@ -1,4 +1,5 @@
 import type {
+  SessionDto,
   SessionStatus,
   UsageTotals,
 } from '@claude-remote-manager/shared-types';
@@ -10,6 +11,32 @@ export const STATUS_LABELS: Record<SessionStatus, string> = {
   finished: 'Finished',
   failed: 'Failed',
 };
+
+/** Status label that says what a waiting session waits for. */
+export function statusLabel(
+  session: Pick<SessionDto, 'status' | 'waitingFor'>,
+): string {
+  if (session.status === 'waiting') {
+    switch (session.waitingFor) {
+      case 'permission':
+        return 'Needs you';
+      case 'setup':
+        return 'Setup failed';
+      default:
+        return 'Waiting';
+    }
+  }
+  return STATUS_LABELS[session.status];
+}
+
+/** CSS class of the status badge (`status-permission` stands out). */
+export function statusClass(
+  session: Pick<SessionDto, 'status' | 'waitingFor'>,
+): string {
+  return session.waitingFor === 'permission'
+    ? 'status-permission'
+    : `status-${session.status}`;
+}
 
 /** Compact token count, e.g. `950`, `12.3k`, `1.2M`. */
 export function formatTokens(value: number): string {

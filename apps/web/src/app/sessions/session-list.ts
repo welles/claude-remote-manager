@@ -12,7 +12,13 @@ import { MatCardModule } from '@angular/material/card';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { Router, RouterLink } from '@angular/router';
 import type { SessionDto } from '@claude-remote-manager/shared-types';
-import { formatCost, formatTokens, STATUS_LABELS, totalTokens } from './format';
+import {
+  formatCost,
+  formatTokens,
+  statusClass,
+  statusLabel,
+  totalTokens,
+} from './format';
 import { NewSessionForm } from './new-session-form';
 import { SessionSocket } from './session-socket';
 import { SessionsApi } from './sessions-api';
@@ -36,7 +42,8 @@ export class SessionList implements OnInit {
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
 
-  protected readonly statusLabels = STATUS_LABELS;
+  protected readonly statusLabel = statusLabel;
+  protected readonly statusClass = statusClass;
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;

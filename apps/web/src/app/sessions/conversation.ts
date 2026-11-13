@@ -1,10 +1,20 @@
-import type {
-  AssistantDraft,
-  PrepareProgressEvent,
-  SessionEvent,
-  SetupResultEvent,
-  UsageTotals,
+import {
+  PERMISSION_MODE_INFO,
+  type AssistantDraft,
+  type PermissionRequestEvent,
+  type PermissionResolvedEvent,
+  type PrepareProgressEvent,
+  type SessionEvent,
+  type SettingsChangedEvent,
+  type SetupResultEvent,
+  type UsageTotals,
 } from '@claude-remote-manager/shared-types';
+
+/** An approval request of a tool use and, once decided, its resolution. */
+export interface ToolPermission {
+  request: PermissionRequestEvent;
+  resolved: PermissionResolvedEvent | null;
+}
 
 /** One entry of the rendered conversation. */
 export type ConversationItem =
@@ -24,9 +34,24 @@ export type ConversationItem =
       input: unknown;
       nested: boolean;
       result: { isError: boolean; content: string; truncated: boolean } | null;
-      /** Set when the tool use was denied. */
+      /** Set when the tool use was denied without asking the user. */
       denied: string | null;
+      /** Set when the user was asked (approval, question or plan). */
+      permission: ToolPermission | null;
     }
+  | {
+      /**
+       * A message sent while Claude worked: waiting in the queue, or
+       * withdrawn (not sent) when the turn was stopped or the session ended.
+       */
+      kind: 'queued';
+      key: string;
+      id: string;
+      text: string;
+      state: 'queued' | 'withdrawn';
+      reason: string | null;
+    }
+  | { kind: 'settings'; key: string; text: string }
   | { kind: 'notice'; key: string; level: 'info' | 'warning'; text: string }
   | { kind: 'error'; key: string; text: string }
   | {
@@ -79,15 +104,48 @@ export function toolSummary(name: string, input: unknown): string {
     'prompt',
   ];
   const key = preferred.find((field) => typeof fields[field] === 'string');
-  let summary = key
-    ? String(fields[key])
-    : input === null || input === undefined
-      ? ''
-      : JSON.stringify(input);
+  const special = specialSummary(name, fields);
+  let summary =
+    special !== null
+      ? special
+      : key
+        ? String(fields[key])
+        : input === null || input === undefined
+          ? ''
+          : JSON.stringify(input);
   summary = summary.replace(/\s+/g, ' ').trim();
   return summary.length > MAX_SUMMARY_LENGTH
     ? `${summary.slice(0, MAX_SUMMARY_LENGTH - 1)}…`
     : summary;
+}
+
+/** Summaries of tools whose input has no telling text field. */
+function specialSummary(
+  name: string,
+  fields: Record<string, unknown>,
+): string | null {
+  switch (name) {
+    case 'AskUserQuestion': {
+      const questions = Array.isArray(fields['questions'])
+        ? (fields['questions'] as { question?: unknown }[])
+        : [];
+      return questions.map((item) => String(item.question ?? '')).join(' · ');
+    }
+    case 'ExitPlanMode':
+      return 'Plan for approval';
+    case 'TaskCreate':
+      return typeof fields['subject'] === 'string' ? fields['subject'] : null;
+    case 'TaskUpdate':
+      return `#${String(fields['taskId'] ?? '?')}${
+        typeof fields['status'] === 'string' ? ` → ${fields['status']}` : ''
+      }`;
+    case 'TodoWrite':
+      return Array.isArray(fields['todos'])
+        ? `${fields['todos'].length} tasks`
+        : null;
+    default:
+      return null;
+  }
 }
 
 const replaceAt = <T>(items: T[], index: number, item: T): T[] => [
@@ -159,6 +217,7 @@ export function applyEvent(
         nested: event.parentToolUseId !== null,
         result: existing?.kind === 'tool' ? existing.result : null,
         denied: existing?.kind === 'tool' ? existing.denied : null,
+        permission: existing?.kind === 'tool' ? existing.permission : null,
       };
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
     }
@@ -197,9 +256,87 @@ export function applyEvent(
           nested: false,
           result: null,
           denied: event.message,
+          permission: null,
         },
       ];
     }
+    case 'permission.request': {
+      const key = `tool:${event.toolUseId}`;
+      const index = items.findIndex((item) => item.key === key);
+      const existing = items[index];
+      const permission: ToolPermission = { request: event, resolved: null };
+      if (existing?.kind === 'tool') {
+        return replaceAt(items, index, { ...existing, permission });
+      }
+      // Claude Code may ask before the assistant message is complete.
+      return [
+        ...items,
+        {
+          kind: 'tool',
+          key,
+          name: event.toolName,
+          summary: toolSummary(event.toolName, event.input),
+          input: event.input,
+          nested: event.agentId !== null,
+          result: null,
+          denied: null,
+          permission,
+        },
+      ];
+    }
+    case 'permission.resolved': {
+      const index = items.findIndex(
+        (item) =>
+          item.kind === 'tool' &&
+          item.permission?.request.requestId === event.requestId,
+      );
+      const existing = items[index];
+      if (existing?.kind !== 'tool' || !existing.permission) {
+        return items;
+      }
+      return replaceAt(items, index, {
+        ...existing,
+        permission: { ...existing.permission, resolved: event },
+      });
+    }
+    case 'message.queued':
+      return [
+        ...items.filter((item) => item.key !== `queued:${event.id}`),
+        {
+          kind: 'queued',
+          key: `queued:${event.id}`,
+          id: event.id,
+          text: event.text,
+          state: 'queued',
+          reason: null,
+        },
+      ];
+    case 'message.dequeued': {
+      const index = items.findIndex(
+        (item) => item.key === `queued:${event.id}`,
+      );
+      const existing = items[index];
+      if (existing?.kind !== 'queued') {
+        return items;
+      }
+      if (event.outcome !== 'withdrawn') {
+        return items.filter((_, i) => i !== index);
+      }
+      return replaceAt(items, index, {
+        ...existing,
+        state: 'withdrawn',
+        reason: event.reason,
+      });
+    }
+    case 'settings.changed':
+      return [
+        ...items,
+        {
+          kind: 'settings',
+          key: `settings:${event.seq}`,
+          text: settingsText(event),
+        },
+      ];
     case 'turn.result':
       return [
         ...items,
@@ -294,6 +431,37 @@ export function applyEvent(
   }
 }
 
+/** One line describing a change of model or permission mode. */
+export function settingsText(event: SettingsChangedEvent): string {
+  const parts: string[] = [];
+  if (event.model !== undefined) {
+    parts.push(`Model: ${event.model ?? 'default'}`);
+  }
+  if (event.permissionMode) {
+    parts.push(`Mode: ${PERMISSION_MODE_INFO[event.permissionMode].label}`);
+  }
+  const by =
+    event.cause === 'plan'
+      ? ' (plan approved)'
+      : event.cause === 'claude'
+        ? ' (changed by Claude)'
+        : '';
+  return `${parts.join(' · ')}${by}`;
+}
+
+/** Approval requests that wait for an answer, oldest first. */
+export function pendingRequests(
+  items: ConversationItem[],
+): PermissionRequestEvent[] {
+  const pending: PermissionRequestEvent[] = [];
+  for (const item of items) {
+    if (item.kind === 'tool' && item.permission && !item.permission.resolved) {
+      pending.push(item.permission.request);
+    }
+  }
+  return pending;
+}
+
 /** One line describing a preparation step. */
 export function progressText(
   item: Extract<ConversationItem, { kind: 'progress' }>,
@@ -342,4 +510,47 @@ export function applyDraft(
 
 export function buildConversation(events: SessionEvent[]): ConversationItem[] {
   return events.reduce(applyEvent, [] as ConversationItem[]);
+}
+
+const CANCELLED: Record<string, string> = {
+  interrupted: 'Cancelled: the turn was stopped',
+  ended: 'Cancelled: the session was ended',
+  process_exit: 'Cancelled: Claude Code ended',
+  restart: 'Cancelled: the server stopped',
+};
+
+/** How an approval request was decided, in a few words. */
+export function resolutionText(permission: ToolPermission): string {
+  const { request, resolved } = permission;
+  if (!resolved) {
+    return request.kind === 'question'
+      ? 'Waiting for your answer'
+      : request.kind === 'plan'
+        ? 'Waiting for your approval of the plan'
+        : 'Waiting for your approval';
+  }
+  if (resolved.cause !== 'user') {
+    return CANCELLED[resolved.cause] ?? 'Cancelled';
+  }
+  const said = resolved.message ? `: ${resolved.message}` : '';
+  if (resolved.decision === 'deny') {
+    switch (request.kind) {
+      case 'question':
+        return `Not answered${said}`;
+      case 'plan':
+        return `Kept planning${said}`;
+      default:
+        return `Denied${said}`;
+    }
+  }
+  switch (request.kind) {
+    case 'question':
+      return 'Answered';
+    case 'plan':
+      return `Plan approved, continuing in mode ${PERMISSION_MODE_INFO[resolved.mode ?? 'default'].label}`;
+    default:
+      return resolved.scope === 'session'
+        ? 'Allowed for this session'
+        : 'Allowed once';
+  }
 }
