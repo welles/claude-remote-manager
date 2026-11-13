@@ -8,11 +8,11 @@ import {
   signal,
   type OnInit,
 } from '@angular/core';
-import { MatButtonModule } from '@angular/material/button';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
 import type { ShownFileDto } from '@claude-remote-manager/shared-types';
 import { MarkdownPipe } from '../sessions/markdown.pipe';
+import { AppIcon } from '../ui/icon';
 import { highlight } from './highlight';
 import { formatSize, MAX_RENDERED_TEXT, shownFileUrl } from './shown-files-api';
 
@@ -28,7 +28,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 @Component({
   selector: 'app-file-viewer',
-  imports: [MarkdownPipe, MatButtonModule, MatProgressBarModule],
+  imports: [AppIcon, MarkdownPipe, MatProgressBarModule],
   templateUrl: './file-viewer.html',
   styleUrl: './file-viewer.scss',
   host: {

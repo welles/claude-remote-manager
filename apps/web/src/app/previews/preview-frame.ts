@@ -6,7 +6,7 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { MatButtonModule } from '@angular/material/button';
+import { AppIcon } from '../ui/icon';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
 import {
   PREVIEW_FRAME_SANDBOX,
@@ -30,7 +30,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
  */
 @Component({
   selector: 'app-preview-frame',
-  imports: [MatButtonModule],
+  imports: [AppIcon],
   template: `
     @let p = preview();
     <div
@@ -50,30 +50,41 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
             }
           </p>
         </div>
-        <div class="actions">
-          @if (p.state !== 'stopped') {
-            <button matButton (click)="reload()" data-testid="preview-reload">
-              Reload
-            </button>
-            @if (href(); as link) {
-              <a
-                matButton
-                [href]="link"
-                target="_blank"
-                rel="noopener noreferrer"
-                referrerpolicy="no-referrer"
-                >New tab</a
-              >
-            }
-          }
+        @if (p.state !== 'stopped') {
           <button
-            matButton="filled"
-            (click)="closed.emit()"
-            data-testid="close-preview"
+            type="button"
+            class="app-icon-btn"
+            (click)="reload()"
+            title="Reload"
+            data-testid="preview-reload"
           >
-            Close
+            <app-icon name="refresh" /><span class="visually-hidden"
+              >Reload</span
+            >
           </button>
-        </div>
+          @if (href(); as link) {
+            <a
+              class="app-icon-btn"
+              [href]="link"
+              target="_blank"
+              rel="noopener noreferrer"
+              referrerpolicy="no-referrer"
+              title="Open in a new tab"
+              ><app-icon name="external" /><span class="visually-hidden"
+                >New tab</span
+              ></a
+            >
+          }
+        }
+        <button
+          type="button"
+          class="app-icon-btn"
+          (click)="closed.emit()"
+          title="Close"
+          data-testid="close-preview"
+        >
+          <app-icon name="close" /><span class="visually-hidden">Close</span>
+        </button>
       </header>
       <div class="body">
         @if (p.state === 'stopped') {
@@ -116,41 +127,44 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
       top: 0;
       right: 0;
       bottom: 0;
-      width: min(1200px, 96vw);
+      width: min(1200px, 80vw);
       display: flex;
       flex-direction: column;
       min-height: 0;
+      border-left: 1px solid var(--mat-sys-outline-variant);
       background: var(--mat-sys-surface);
       color: var(--mat-sys-on-surface);
       box-shadow: var(--mat-sys-level3);
     }
-    @media (max-width: 599px) {
+    @media (max-width: 839px) {
       .sheet {
         width: 100vw;
+        border-left: 0;
       }
     }
     .head {
       display: flex;
-      flex-wrap: wrap;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 8px 16px;
+      align-items: center;
+      gap: 2px;
+      min-height: var(--app-bar-height);
+      padding: env(safe-area-inset-top) 4px 0 16px;
       border-bottom: 1px solid var(--mat-sys-outline-variant);
     }
     .title {
+      flex: 1;
       min-width: 0;
-      flex: 1 1 200px;
     }
     h2 {
       margin: 0;
       font: var(--mat-sys-title-medium);
-      overflow-wrap: anywhere;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .meta,
     .hint,
     .note {
-      margin: 2px 0 0;
+      margin: 0;
       font: var(--mat-sys-body-small);
       color: var(--mat-sys-on-surface-variant);
     }
@@ -159,11 +173,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
     }
     .hint {
       padding: 4px 16px;
-    }
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
+      border-top: 1px solid var(--mat-sys-outline-variant);
     }
     .body {
       flex: 1;

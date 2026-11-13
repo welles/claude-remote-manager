@@ -10,64 +10,86 @@
   background: var(--app-scrim);
 }
 
-/* A side sheet; the whole screen on phones. */
+/* A side panel like the session details; the whole screen on phones. */
 .sheet {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(960px, 92vw);
+  width: min(960px, 72vw);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  border-left: 1px solid var(--mat-sys-outline-variant);
   background: var(--mat-sys-surface);
   color: var(--mat-sys-on-surface);
   box-shadow: var(--mat-sys-level3);
 }
 
-@media (max-width: 599px) {
+@media (max-width: 839px) {
   .sheet {
     width: 100vw;
+    border-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sheet {
+    animation: enter var(--app-motion) var(--app-ease);
+  }
+}
+
+@keyframes enter {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
   }
 }
 
 .head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px 16px;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--app-bar-height);
+  padding: env(safe-area-inset-top) 4px 0 16px;
   border-bottom: 1px solid var(--mat-sys-outline-variant);
 }
 
 .title {
+  flex: 1;
   min-width: 0;
-  flex: 1 1 240px;
 }
 
 h2 {
   margin: 0;
   font: var(--mat-sys-title-medium);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .meta,
 .caption,
 .note {
-  margin: 2px 0 0;
+  margin: 0;
   font: var(--mat-sys-body-small);
   color: var(--mat-sys-on-surface-variant);
 }
 
-.path {
-  overflow-wrap: anywhere;
+.meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+.path {
+  font-family: var(--app-font-mono);
+}
+
+.notes {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--mat-sys-outline-variant);
+  background: var(--mat-sys-surface-container-low);
 }
 
 .body {

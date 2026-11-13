@@ -11,28 +11,49 @@
     <div class="title">
       <h2>{{ f.name }}</h2>
       <p class="meta">{{ size() }} · <span class="path">{{ f.path }}</span></p>
-      @if (f.caption) {
-      <p class="caption">{{ f.caption }}</p>
-      } @if (!f.snapshot) {
-      <p class="note" data-testid="live-note">
-        Too large to keep a copy: this is the file as it is now.
-      </p>
-      }
     </div>
-    <div class="actions">
-      <a matButton [href]="downloadUrl()" data-testid="download">Download</a>
-      @if (f.kind !== 'binary') {
-      <a matButton [href]="url()" target="_blank" rel="noopener">New tab</a>
-      }
-      <button
-        matButton="filled"
-        (click)="closed.emit()"
-        data-testid="close-viewer"
-      >
-        Close
-      </button>
-    </div>
+    <a
+      class="app-icon-btn"
+      [href]="downloadUrl()"
+      title="Download"
+      data-testid="download"
+      ><app-icon name="download" /><span class="visually-hidden"
+        >Download</span
+      ></a
+    >
+    @if (f.kind !== 'binary') {
+    <a
+      class="app-icon-btn"
+      [href]="url()"
+      target="_blank"
+      rel="noopener"
+      title="Open in a new tab"
+      ><app-icon name="external" /><span class="visually-hidden"
+        >New tab</span
+      ></a
+    >
+    }
+    <button
+      type="button"
+      class="app-icon-btn"
+      (click)="closed.emit()"
+      title="Close"
+      data-testid="close-viewer"
+    >
+      <app-icon name="close" /><span class="visually-hidden">Close</span>
+    </button>
   </header>
+  @if (f.caption || !f.snapshot) {
+  <div class="notes">
+    @if (f.caption) {
+    <p class="caption">{{ f.caption }}</p>
+    } @if (!f.snapshot) {
+    <p class="note" data-testid="live-note">
+      Too large to keep a copy: this is the file as it is now.
+    </p>
+    }
+  </div>
+  }
   <div class="body" [class.framed]="f.kind === 'html' || f.kind === 'pdf'">
     @if (loading()) {
     <mat-progress-bar mode="indeterminate" />
