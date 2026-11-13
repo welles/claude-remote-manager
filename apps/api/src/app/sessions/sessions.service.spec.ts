@@ -1148,6 +1148,39 @@ describe('SessionsService', () => {
       ).toMatchObject({ id: MSG_2, text: '', attachments: [second] });
     });
 
+    it('sends a message once when it arrives twice at the same time', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      const image = await upload(3);
+      const message = { id: MSG_2, text: 'Look', attachmentIds: [image.id] };
+      // E.g. a retry, or "Edit and send again" pressed twice.
+      await Promise.all([
+        service.send(session.id, message),
+        service.send(session.id, message),
+      ]);
+      await flush();
+      expect(runner.last.sent.filter((sent) => sent.id === MSG_2)).toHaveLength(
+        1,
+      );
+      expect(
+        events.filter(
+          ({ event }) => event.type === 'user.message' && event.id === MSG_2,
+        ),
+      ).toHaveLength(1);
+
+      // While Claude works: queued once.
+      await Promise.all([
+        service.send(session.id, { id: MSG_3, text: 'More' }),
+        service.send(session.id, { id: MSG_3, text: 'More' }),
+      ]);
+      expect(
+        events.filter(
+          ({ event }) => event.type === 'message.queued' && event.id === MSG_3,
+        ),
+      ).toHaveLength(1);
+    });
+
     it('refuses empty messages and foreign uploads', async () => {
       const session = await startSession();
       await expect(

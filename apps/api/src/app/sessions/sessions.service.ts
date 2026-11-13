@@ -189,6 +189,8 @@ interface LiveSession {
    * by the app (not Claude Code's own queue) so that they can be removed.
    */
   queue: QueuedMessage[];
+  /** IDs of messages whose sending has begun (images being loaded). */
+  sending: Set<string>;
   /** Status and `waitingFor` last published (`status/waitingFor`). */
   publishedStatus: string;
   /** Why the current process is being closed on purpose. */
@@ -473,21 +475,31 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live.starting) {
       await live.starting;
     }
-    if (
-      live.queue.some((queued) => queued.id === id) ||
-      live.log.findLast('user.message')?.id === id
-    ) {
+    if (this.isKnownMessage(live, id)) {
       // Sent twice (e.g. a retry after a reconnect).
       return;
     }
-    const attachments = this.attachmentStore(attachmentIds).claim(
-      attachmentIds,
-      sessionId,
-      id,
-    );
-    const agent = await this.agentMessage(sessionId, { id, text });
-    if (live.starting) {
-      await live.starting;
+    // Marked until it is queued or sent: a second request with this ID
+    // that arrives during the awaits below finds it here.
+    live.sending.add(id);
+    let attachments: AttachmentDto[];
+    let agent: AgentUserMessage;
+    try {
+      attachments = this.attachmentStore(attachmentIds).claim(
+        attachmentIds,
+        sessionId,
+        id,
+      );
+      agent = await this.agentMessage(sessionId, { id, text });
+      if (live.starting) {
+        await live.starting;
+      }
+    } finally {
+      live.sending.delete(id);
+    }
+    // No await from here on until it is queued or sent.
+    if (this.isKnownMessage(live, id)) {
+      return;
     }
     if (live.run && this.requireRecord(sessionId).status === 'running') {
       live.queue.push({ id, text, attachments, agent });
@@ -507,6 +519,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.setStatus(live, 'running');
       this.startRun(live, this.requireRecord(sessionId), { id, text });
     }
+  }
+
+  /** A message with this ID is queued, being sent, or in the log. */
+  private isKnownMessage(live: LiveSession, id: string): boolean {
+    return (
+      live.sending.has(id) ||
+      live.queue.some((queued) => queued.id === id) ||
+      live.log.events.some(
+        (event) => event.type === 'user.message' && event.id === id,
+      )
+    );
   }
 
   /**
@@ -800,6 +823,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         contextRequestedAt: 0,
         interruptRequested: null,
         queue: [],
+        sending: new Set(),
         publishedStatus: '',
         closing: null,
         idleTimer: null,
