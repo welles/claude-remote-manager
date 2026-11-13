@@ -56,12 +56,14 @@ describe('parseClientFrame', () => {
         model: null,
         permissionMode: 'plan',
         title: 'x',
+        slug: 'y',
       }),
     ).toEqual({
       type: 'session.update',
       sessionId: SESSION,
       model: null,
       permissionMode: 'plan',
+      title: 'x',
     });
     expect(
       parseClientFrame({

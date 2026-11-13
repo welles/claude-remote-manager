@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import type {
   CreateSessionRequest,
@@ -16,6 +17,7 @@ import type {
   PermissionResponse,
   PermissionResponseResult,
   SessionDto,
+  SessionListFilter,
   SessionListResponse,
   UpdateSessionRequest,
 } from '@claude-remote-manager/shared-types';
@@ -33,9 +35,12 @@ export class SessionsController {
     private readonly git: SessionGitService,
   ) {}
 
+  /** `?archived=only` lists archived sessions, `include` all. */
   @Get()
-  list(): SessionListResponse {
-    return { sessions: this.sessions.list() };
+  list(@Query('archived') archived?: string): SessionListResponse {
+    const filter: SessionListFilter =
+      archived === 'only' || archived === 'include' ? archived : 'exclude';
+    return { sessions: this.sessions.list(filter) };
   }
 
   @Get(':id')

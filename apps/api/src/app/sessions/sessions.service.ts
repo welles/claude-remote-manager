@@ -34,6 +34,7 @@ import {
   type SessionEvent,
   type SessionDirectoryDto,
   type SessionEventInput,
+  type SessionListFilter,
   type SessionPermissionMode,
   type SessionStatus,
   type SessionWaitingFor,
@@ -313,12 +314,33 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly live = new Map<string, LiveSession>();
   private readonly events = new Subject<SessionEventEnvelope>();
   private readonly updates = new Subject<SessionDto>();
+  private readonly deletions = new Subject<string>();
   private shuttingDown = false;
+  /** Called when a session's title changed (the search index). */
+  titleChanged: ((sessionId: string) => void) | null = null;
+  /**
+   * Called when a session's history was built (the search index rebuilds
+   * the session's entries from it); `transcript` is whether the
+   * transcript could be read.
+   */
+  historyLoaded:
+    | ((
+        sessionId: string,
+        events: readonly SessionEventInput[],
+        transcript: boolean,
+      ) => void)
+    | null = null;
+  /** Called for every event added to a session's log (the search index). */
+  eventAppended:
+    | ((sessionId: string, event: SessionEventInput) => void)
+    | null = null;
 
   /** Events of all sessions, as they are added to the session logs. */
   readonly events$ = this.events.asObservable();
   /** Sessions after any change of their metadata, status or usage. */
   readonly updates$ = this.updates.asObservable();
+  /** IDs of sessions deleted for good. */
+  readonly deletions$ = this.deletions.asObservable();
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -445,8 +467,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  list(): SessionDto[] {
-    const records = this.sessions.list();
+  /** Sessions, newest first; without archived ones unless asked. */
+  list(archived: SessionListFilter = 'exclude'): SessionDto[] {
+    const records = this.sessions.list(archived);
     const totals = this.usage.totalsBySession();
     return records.map((record) =>
       this.toDto(record, totals.get(record.id) ?? { ...EMPTY_USAGE }),
@@ -838,6 +861,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<SessionDto> {
     const body = requireObject(request);
     const record = this.requireRecord(sessionId);
+    let title: string | undefined;
+    if ('title' in body) {
+      title = optionalString(body, 'title', {
+        maxLength: MAX_TITLE_LENGTH,
+      })?.trim();
+      if (!title) {
+        throw new BadRequestException('title must not be blank');
+      }
+    }
     let model: string | null | undefined;
     if ('model' in body) {
       model =
@@ -863,8 +895,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (permissionMode && permissionMode !== record.permissionMode) {
       changes.permissionMode = permissionMode;
     }
+    if (title !== undefined && title !== record.title) {
+      // Only the title: slug, branches and directories keep their names.
+      this.updates.next(this.toDto(this.sessions.update(sessionId, { title })));
+      this.titleChanged?.(sessionId);
+    }
     if (Object.keys(changes).length === 0) {
-      return this.toDto(record);
+      return this.get(sessionId);
     }
     const live = this.live.get(sessionId);
     if (live?.starting) {
@@ -992,6 +1029,67 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Why the session's directories cannot be cleaned up, nor the session
+   * archived or deleted, right now: it is being prepared, a turn runs (also
+   * while it waits for an approval) or a process is starting. `null` when
+   * nothing stands in the way.
+   */
+  busyReason(sessionId: string): string | null {
+    const record = this.requireRecord(sessionId);
+    if (record.status === 'preparing') {
+      return 'The session is still being prepared';
+    }
+    if (record.status === 'running') {
+      return 'Claude is working on a turn; stop it first';
+    }
+    if (this.live.get(sessionId)?.starting) {
+      return 'The session is starting; try again in a moment';
+    }
+    return null;
+  }
+
+  /** Sets or clears the archived mark and publishes the session. */
+  setArchived(sessionId: string, archivedAt: Date | null): SessionDto {
+    const updated = this.toDto(this.sessions.update(sessionId, { archivedAt }));
+    this.updates.next(updated);
+    return updated;
+  }
+
+  /**
+   * Forgets a session that is being deleted: its in-memory state goes and
+   * all clients are told. Call after the database rows are gone.
+   */
+  forget(sessionId: string): void {
+    const live = this.live.get(sessionId);
+    if (live) {
+      this.clearIdleTimer(live);
+      live.run?.close();
+      this.live.delete(sessionId);
+    }
+    this.deletions.next(sessionId);
+  }
+
+  /**
+   * The history of a session as the session view shows it, rebuilt from
+   * the transcript and the stored events (for the search index), without
+   * keeping it in memory. `transcript` says whether the transcript could
+   * be read.
+   */
+  async historyEvents(
+    sessionId: string,
+  ): Promise<{ events: SessionEventInput[]; transcript: boolean }> {
+    const record = this.requireRecord(sessionId);
+    const live = this.live.get(sessionId);
+    if (live?.historyLoaded) {
+      await live.historyLoaded;
+      return { events: [...live.log.events], transcript: true };
+    }
+    const scratch = this.newLiveSession(sessionId);
+    const transcript = await this.loadHistory(scratch, record);
+    return { events: [...scratch.log.events], transcript };
+  }
+
   /** Number of sessions held in memory (for tests and diagnostics). */
   get liveCount(): number {
     return this.live.size;
@@ -1002,29 +1100,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private liveSession(id: string): LiveSession {
     let live = this.live.get(id);
     if (!live) {
-      live = {
-        id,
-        run: null,
-        starting: null,
-        preparation: null,
-        mapper: new SdkEventMapper(),
-        tracker: new UsageTracker(),
-        log: new SessionLog(),
-        historyLoaded: null,
-        subscribers: 0,
-        anchor: { uuid: null, userId: null },
-        context: null,
-        contextRequestedAt: 0,
-        interruptRequested: null,
-        queue: [],
-        sending: new Set(),
-        order: Promise.resolve(),
-        contextResults: 0,
-        publishedStatus: '',
-        closing: null,
-        idleTimer: null,
-        consuming: null,
-      };
+      live = this.newLiveSession(id);
       this.live.set(id, live);
       const record = this.sessions.get(id);
       if (record) {
@@ -1032,6 +1108,32 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return live;
+  }
+
+  private newLiveSession(id: string): LiveSession {
+    return {
+      id,
+      run: null,
+      starting: null,
+      preparation: null,
+      mapper: new SdkEventMapper(),
+      tracker: new UsageTracker(),
+      log: new SessionLog(),
+      historyLoaded: null,
+      subscribers: 0,
+      anchor: { uuid: null, userId: null },
+      context: null,
+      contextRequestedAt: 0,
+      interruptRequested: null,
+      queue: [],
+      sending: new Set(),
+      order: Promise.resolve(),
+      contextResults: 0,
+      publishedStatus: '',
+      closing: null,
+      idleTimer: null,
+      consuming: null,
+    };
   }
 
   /**
@@ -1043,6 +1145,21 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     record: SessionRecord,
   ): Promise<void> {
     live.historyLoaded ??= (async () => {
+      const transcript = await this.loadHistory(live, record);
+      this.historyLoaded?.(record.id, live.log.events, transcript);
+    })();
+    return live.historyLoaded;
+  }
+
+  /**
+   * Builds the log of a session from its transcript and stored events.
+   * Returns whether the transcript could be read (or there is none yet).
+   */
+  private async loadHistory(
+    live: LiveSession,
+    record: SessionRecord,
+  ): Promise<boolean> {
+    {
       let entries: ReturnType<typeof transcriptEntries> = [];
       let failed = false;
       if (record.sdkSessionId) {
@@ -1086,15 +1203,16 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       if (failed) {
         // Live-only: the transcript may be readable next time.
-        this.append(
-          live,
-          {
-            type: 'notice',
-            level: 'warning',
-            text: 'The earlier conversation could not be loaded.',
-          },
-          { store: false },
-        );
+        const notice: SessionEventInput = {
+          type: 'notice',
+          level: 'warning',
+          text: 'The earlier conversation could not be loaded.',
+        };
+        if (this.live.get(live.id) === live) {
+          this.append(live, notice, { store: false });
+        } else {
+          live.log.append(notice);
+        }
       }
       const lastUser = entries.findLast((entry) => entry.isUserMessage);
       live.anchor = {
@@ -1102,8 +1220,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         userId: lastUser?.uuid ?? null,
       };
       live.context = live.log.findLast('context.usage')?.context ?? null;
-    })();
-    return live.historyLoaded;
+      return !failed;
+    }
   }
 
   /** Runs a start-up task (preparation, process start) as `starting`. */
@@ -2014,6 +2132,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     { store = true }: { store?: boolean } = {},
   ): void {
     const event = live.log.append(input);
+    this.eventAppended?.(live.id, input);
     if (store && STORED_EVENT_TYPES.has(input.type)) {
       this.storedEvents.add(live.id, input, live.anchor);
     }
@@ -2172,6 +2291,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         'The session is still being prepared; send the message when it is ready',
       );
     }
+    if (record.archivedAt) {
+      throw new ConflictException(
+        'The session is archived; unarchive it to continue',
+      );
+    }
     if (record.directories.some((directory) => directory.state !== 'ready')) {
       throw new ConflictException(
         "The session's directories are not available (not created or removed); start a new session",
@@ -2253,6 +2377,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       pullRequests: record.pullRequests.map(pullRequestDto),
       autoclosedAt: record.autoclosedAt?.toISOString() ?? null,
       previews: this.previews?.forSession(record.id) ?? [],
+      archivedAt: record.archivedAt?.toISOString() ?? null,
     };
   }
 }

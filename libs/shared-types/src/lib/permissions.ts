@@ -191,6 +191,11 @@ export interface ModelListResponse {
  * its Claude Code process right away).
  */
 export interface UpdateSessionRequest {
+  /**
+   * New title (rename; 1-200 characters). Only the title changes: the
+   * slug, the session branches and the directory names stay as they are.
+   */
+  title?: string;
   /** Model name or alias; `null` for Claude Code's default. */
   model?: string | null;
   permissionMode?: SessionPermissionMode;

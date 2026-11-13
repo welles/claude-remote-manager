@@ -37,11 +37,19 @@ describe('openDatabase', () => {
     expect(tables(db)).toEqual([
       'app_settings',
       'attachments',
+      'deleted_sessions',
       'message_contexts',
       'previews',
       'pull_requests',
       'push_subscriptions',
       'repositories',
+      'search_documents',
+      'search_index',
+      'search_index_config',
+      'search_index_data',
+      'search_index_docsize',
+      'search_index_idx',
+      'search_sessions',
       'session_directories',
       'session_events',
       'sessions',
@@ -139,6 +147,57 @@ describe('openDatabase', () => {
     expect(count('usage_records')).toBe(1);
     expect(count('session_events')).toBe(1);
     expect(db.$client.pragma('foreign_key_check')).toEqual([]);
+    db.$client.close();
+  });
+
+  it('keeps usage records when their session is deleted (migration 0011)', () => {
+    const old = openDatabase(dir, migrationsUpTo(10));
+    const run = (sql: string) => old.$client.prepare(sql).run();
+    run(
+      "INSERT INTO sessions (id, title, status, updated_at) VALUES ('a', 'A', 'finished', 1)",
+    );
+    run(
+      "INSERT INTO usage_records (session_id, model, input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, cost_usd) VALUES ('a', 'haiku', 1, 2, 3, 4, 0.5)",
+    );
+    old.$client.close();
+
+    const db = openDatabase(dir);
+    db.$client.prepare("DELETE FROM sessions WHERE id = 'a'").run();
+    expect(
+      db.$client
+        .prepare('SELECT session_id, cost_usd FROM usage_records')
+        .all(),
+    ).toEqual([{ session_id: 'a', cost_usd: 0.5 }]);
+    expect(db.$client.pragma('foreign_key_check')).toEqual([]);
+    db.$client.close();
+  });
+
+  it('keeps the full-text index in step with the search documents', () => {
+    const db = openDatabase(dir);
+    const run = (sql: string) => db.$client.prepare(sql).run();
+    run(
+      "INSERT INTO sessions (id, status, updated_at) VALUES ('a', 'finished', 1)",
+    );
+    run(
+      "INSERT INTO search_documents (session_id, kind, anchor, hash, text, folded) VALUES ('a', 'user', 'm1', 'h', 'Fix the Größe', 'fix the größe')",
+    );
+    const hits = () =>
+      db.$client
+        .prepare(
+          "SELECT d.anchor FROM search_index JOIN search_documents d ON d.id = search_index.rowid WHERE search_index.folded LIKE '%größe%'",
+        )
+        .all();
+    expect(hits()).toEqual([{ anchor: 'm1' }]);
+    // Deleting the session removes its documents and their index entries.
+    run("DELETE FROM sessions WHERE id = 'a'");
+    expect(hits()).toEqual([]);
+    expect(
+      db.$client
+        .prepare(
+          "SELECT count(*) AS n FROM search_index WHERE search_index MATCH 'größe'",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
     db.$client.close();
   });
 });

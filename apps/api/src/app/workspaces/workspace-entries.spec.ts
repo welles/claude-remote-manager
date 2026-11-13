@@ -219,4 +219,33 @@ describe('WorkspaceEntries', () => {
       await entries.inspect(join(sessionsDir, 's1', 'x', 'y'), cloneRule('s1')),
     ).toBeNull();
   });
+
+  it("removes Claude Code's files of one session and nothing else", async () => {
+    const id = '0b1c2d3e-4f50-4a6b-8c7d-8e9fa0b1c2d3';
+    const other = '11111111-2222-4333-8444-555555555555';
+    const config = join(base, 'claude');
+    const project = join(config, 'projects', '-ws-sessions-s1-acme-app');
+    mkdirSync(join(project, id, 'subagents'), { recursive: true });
+    writeFileSync(join(project, `${id}.jsonl`), '{}');
+    writeFileSync(join(project, `${other}.jsonl`), '{}');
+    for (const area of ['file-history', 'session-env', 'tasks']) {
+      mkdirSync(join(config, area, id), { recursive: true });
+      writeFileSync(join(config, area, id, 'x'), 'x');
+      mkdirSync(join(config, area, other), { recursive: true });
+    }
+    // A symlink named like the session is removed as a link only.
+    symlinkSync(outside, join(config, 'projects', id));
+    await entries.removeClaudeSessionData(config, id);
+    expect(existsSync(join(project, `${id}.jsonl`))).toBe(false);
+    expect(existsSync(join(project, id))).toBe(false);
+    expect(existsSync(join(project, `${other}.jsonl`))).toBe(true);
+    for (const area of ['file-history', 'session-env', 'tasks']) {
+      expect(existsSync(join(config, area, id))).toBe(false);
+      expect(existsSync(join(config, area, other))).toBe(true);
+    }
+    outsideIntact();
+    await expect(
+      entries.removeClaudeSessionData(config, '../../outside'),
+    ).rejects.toThrow(UnsafePathError);
+  });
 });

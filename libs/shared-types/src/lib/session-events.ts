@@ -498,6 +498,12 @@ export interface SessionUpdatedMessage {
   session: SessionDto;
 }
 
+/** A session was deleted for good. Sent to all clients. */
+export interface SessionDeletedMessage {
+  type: 'session.deleted';
+  sessionId: string;
+}
+
 /** The account-wide rate limits changed. Sent to all clients. */
 export interface AccountLimitsMessage {
   type: 'account.limits';
@@ -523,6 +529,7 @@ export type ServerMessage =
   | SessionHistoryMessage
   | SessionEventMessage
   | SessionUpdatedMessage
+  | SessionDeletedMessage
   | AccountLimitsMessage
   | ErrorMessage
   | AckMessage;
@@ -612,10 +619,13 @@ export interface UnqueueMessage {
   requestId?: string;
 }
 
-/** Change the model or permission mode (see `UpdateSessionRequest`). */
+/**
+ * Change the title, model or permission mode (see `UpdateSessionRequest`).
+ */
 export interface UpdateSessionMessage {
   type: 'session.update';
   sessionId: string;
+  title?: string;
   model?: string | null;
   permissionMode?: SessionPermissionMode;
   requestId?: string;

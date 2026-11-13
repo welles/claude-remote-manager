@@ -1,5 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, or, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  type SQL,
+} from 'drizzle-orm';
 import type {
   PullRequestCreator,
   PullRequestState,
@@ -11,6 +22,7 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { DATABASE, type AppDatabase } from '../db/database';
 import {
+  deletedSessions,
   pullRequests,
   repositories,
   sessionDirectories,
@@ -111,6 +123,8 @@ export interface SessionRecord {
   updatedAt: Date;
   /** When autoclose ended the session (see `sessions.autoclosed_at`). */
   autoclosedAt: Date | null;
+  /** When the session was archived; `null` while it is not. */
+  archivedAt: Date | null;
 }
 
 export type NewSessionDirectory = Pick<
@@ -146,6 +160,7 @@ export type SessionPatch = Partial<
     | 'model'
     | 'permissionMode'
     | 'autoclosedAt'
+    | 'archivedAt'
   >
 >;
 
@@ -218,14 +233,59 @@ export class SessionRepository {
     return session;
   }
 
-  /** All sessions, most recently updated first. */
-  list(): SessionRecord[] {
+  /**
+   * Sessions, most recently updated first: all, or only those that are
+   * (`only`) or are not (`exclude`) archived.
+   */
+  list(archived: 'include' | 'only' | 'exclude' = 'include'): SessionRecord[] {
     const rows = this.db
       .select()
       .from(sessions)
+      .where(
+        archived === 'only'
+          ? isNotNull(sessions.archivedAt)
+          : archived === 'exclude'
+            ? isNull(sessions.archivedAt)
+            : undefined,
+      )
       .orderBy(desc(sessions.updatedAt), desc(sessions.createdAt))
       .all();
     return this.withDirectories(rows);
+  }
+
+  /** Paths of all directories of all sessions except one. */
+  directoryPathsExcept(sessionId: string): string[] {
+    return this.db
+      .select({ path: sessionDirectories.path })
+      .from(sessionDirectories)
+      .where(ne(sessionDirectories.sessionId, sessionId))
+      .all()
+      .map((row) => row.path);
+  }
+
+  /**
+   * Deletes a session with everything the database cascades to (its
+   * directories, events, pull requests, attachments, shown files, search
+   * documents), keeping its usage records, and notes in
+   * `deleted_sessions` what it was, so the usage stays attributable.
+   */
+  delete(id: string, now = new Date()): void {
+    const record = this.require(id);
+    this.db.transaction((tx) => {
+      tx.insert(deletedSessions)
+        .values({
+          id,
+          title: record.title,
+          repositories: record.directories.flatMap((directory) =>
+            directory.repositoryName ? [directory.repositoryName] : [],
+          ),
+          createdAt: record.createdAt,
+          deletedAt: now,
+        })
+        .onConflictDoNothing()
+        .run();
+      tx.delete(sessions).where(eq(sessions.id, id)).run();
+    });
   }
 
   listByStatus(status: SessionStatus): SessionRecord[] {

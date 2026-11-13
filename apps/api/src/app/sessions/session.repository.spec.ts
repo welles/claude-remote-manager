@@ -215,7 +215,7 @@ describe('SessionRepository', () => {
     ]);
   });
 
-  it('deletes directories and usage together with the session', () => {
+  it('deletes a session but keeps its usage, attributable', () => {
     repository.create(newSession());
     new UsageRepository(db).record('session-1', null, {
       haiku: {
@@ -227,7 +227,22 @@ describe('SessionRepository', () => {
       },
     });
 
-    db.$client.prepare('DELETE FROM sessions').run();
+    repository.delete('session-1', new Date(5000));
+    expect(repository.get('session-1')).toBeUndefined();
+    expect(
+      db.$client
+        .prepare(
+          'SELECT id, title, repositories, deleted_at FROM deleted_sessions',
+        )
+        .all(),
+    ).toEqual([
+      {
+        id: 'session-1',
+        title: newSession().title,
+        repositories: '[]',
+        deleted_at: 5000,
+      },
+    ]);
 
     const count = (table: string) =>
       (
@@ -236,6 +251,6 @@ describe('SessionRepository', () => {
         }
       ).n;
     expect(count('session_directories')).toBe(0);
-    expect(count('usage_records')).toBe(0);
+    expect(count('usage_records')).toBe(1);
   });
 });

@@ -26,7 +26,11 @@ export const PERMISSION_ANSWER_FIELDS = [
   'mode',
 ] as const;
 /** Fields of `UpdateSessionRequest`. */
-export const SESSION_UPDATE_FIELDS = ['model', 'permissionMode'] as const;
+export const SESSION_UPDATE_FIELDS = [
+  'title',
+  'model',
+  'permissionMode',
+] as const;
 
 /** The given fields of an object that are present. */
 export function pick(

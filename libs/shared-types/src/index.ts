@@ -13,6 +13,7 @@ export * from './lib/previews';
 export * from './lib/repositories';
 export * from './lib/session';
 export * from './lib/session-diff';
+export * from './lib/session-management';
 export * from './lib/session-events';
 export * from './lib/settings';
 export * from './lib/shown-files';

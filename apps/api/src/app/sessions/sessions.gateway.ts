@@ -57,6 +57,12 @@ export class SessionsGateway
       sessions.updates$.subscribe((session) =>
         this.broadcast({ type: 'session.updated', session }),
       ),
+      sessions.deletions$.subscribe((sessionId) => {
+        for (const state of this.clients.values()) {
+          state.subscriptions.delete(sessionId);
+        }
+        this.broadcast({ type: 'session.deleted', sessionId });
+      }),
       limits.changes$.subscribe((limits) =>
         this.broadcast({ type: 'account.limits', limits }),
       ),

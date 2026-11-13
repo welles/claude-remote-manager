@@ -37,6 +37,8 @@ import { SessionFileAccess } from '../files/session-file-access';
 import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
 import { SessionsController } from './sessions.controller';
+import { SessionManagementController } from './session-management.controller';
+import { SessionManagementService } from './session-management.service';
 import { SessionsGateway } from './sessions.gateway';
 import { SessionsService } from './sessions.service';
 import { UsageRepository } from './usage.repository';
@@ -56,6 +58,7 @@ import { ModelsService } from './models.service';
   ],
   controllers: [
     SessionsController,
+    SessionManagementController,
     SessionGitController,
     SessionDiffController,
     SessionFilesController,
@@ -68,6 +71,7 @@ import { ModelsService } from './models.service';
     MessageContextRepository,
     UsageRepository,
     SessionsService,
+    SessionManagementService,
     SessionsGateway,
     { provide: ViewerPresence, useValue: new ViewerPresence() },
     SessionGitService,

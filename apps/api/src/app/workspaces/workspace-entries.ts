@@ -57,6 +57,7 @@ export interface DirectoryContents {
   git: boolean;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const COMMAND_TIMEOUT_MS = 10 * 60_000;
 const MAX_BUFFER = 32 * 1024 * 1024;
 
@@ -208,12 +209,74 @@ export class WorkspaceEntries {
     return true;
   }
 
-  /** What a directory holds (see {@link DirectoryContents}). */
-  async inspect(
-    path: string,
-    rule: WorkspaceRule,
-    limit = 50,
-  ): Promise<DirectoryContents | null> {
+  /**
+   * Removes what Claude Code keeps of one of its sessions in its
+   * configuration directory: the transcript `projects/<project>/<id>.jsonl`
+   * with its subagent directory `projects/<project>/<id>/` (in whichever
+   * project directory), and `file-history/<id>`, `session-env/<id>`,
+   * `tasks/<id>`. The ID must be a UUID. `find -P` locates exactly these
+   * names (no symlinks followed), `rm -rf --one-file-system` removes them,
+   * both as the session user, who owns Claude Code's files.
+   */
+  async removeClaudeSessionData(
+    configDir: string,
+    sdkSessionId: string,
+  ): Promise<void> {
+    if (!UUID.test(sdkSessionId)) {
+      throw new UnsafePathError(`${sdkSessionId} is not a session ID`);
+    }
+    const remove = (start: string, depth: string, names: string[]) =>
+      this.run('session', 'find', [
+        '-P',
+        start,
+        '-mindepth',
+        depth,
+        '-maxdepth',
+        depth,
+        '(',
+        ...names.flatMap((name, index) =>
+          index === 0 ? ['-name', name] : ['-o', '-name', name],
+        ),
+        ')',
+        '-prune',
+        '-exec',
+        'rm',
+        '-rf',
+        '--one-file-system',
+        '--',
+        '{}',
+        '+',
+      ]);
+    const failures: string[] = [];
+    const attempt = async (start: string, depth: string, names: string[]) => {
+      try {
+        await lstat(start);
+      } catch {
+        return; // nothing of this kind
+      }
+      await remove(start, depth, names).catch((error: Error) =>
+        failures.push(error.message),
+      );
+    };
+    await attempt(join(configDir, 'projects'), '2', [
+      `${sdkSessionId}.jsonl`,
+      sdkSessionId,
+    ]);
+    for (const area of ['file-history', 'session-env', 'tasks']) {
+      await attempt(join(configDir, area), '1', [sdkSessionId]);
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `Claude Code's files of the session could not all be removed: ${failures.join('; ')}`,
+      );
+    }
+  }
+
+  /**
+   * Disk usage of a directory in bytes, as the session user sees it (hard
+   * links inside counted once); `null` if it does not exist.
+   */
+  async diskUsage(path: string, rule: WorkspaceRule): Promise<number | null> {
     if (!(await this.verify(path, rule))) {
       return null;
     }
@@ -224,6 +287,19 @@ export class WorkspaceEntries {
       '--',
       path,
     ]).catch(() => '0');
+    return Number.parseInt(du, 10) || 0;
+  }
+
+  /** What a directory holds (see {@link DirectoryContents}). */
+  async inspect(
+    path: string,
+    rule: WorkspaceRule,
+    limit = 50,
+  ): Promise<DirectoryContents | null> {
+    const bytes = await this.diskUsage(path, rule);
+    if (bytes === null) {
+      return null;
+    }
     const listing = await this.run('session', 'find', [
       '-P',
       path,
@@ -249,7 +325,7 @@ export class WorkspaceEntries {
       git = false;
     }
     return {
-      bytes: Number.parseInt(du, 10) || 0,
+      bytes,
       fileCount: files.length,
       files: files.slice(0, limit),
       git,

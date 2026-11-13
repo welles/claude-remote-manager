@@ -16,6 +16,7 @@ export const sessionDto = (
   waitingFor: 'message',
   slug: 'reply-with-pong-abc123',
   pendingMessage: null,
+  archivedAt: null,
   directories: [
     {
       role: 'main',

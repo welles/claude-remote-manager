@@ -102,6 +102,28 @@ export const sessions = sqliteTable('sessions', {
    * that is not on GitHub).
    */
   autoclosedAt: timestamp('autoclosed_at'),
+  /**
+   * When the session was archived: hidden from the default list, history
+   * readable, ended; `null` while not archived.
+   */
+  archivedAt: timestamp('archived_at'),
+});
+
+/**
+ * Sessions deleted for good, so that their usage stays attributable: the
+ * title and repositories as they were when the session was deleted. The
+ * `usage_records` of a deleted session keep its ID.
+ */
+export const deletedSessions = sqliteTable('deleted_sessions', {
+  id: text('id').primaryKey(),
+  title: text('title'),
+  /** Full names (`owner/name`) of its repositories in order, as JSON. */
+  repositories: text('repositories', { mode: 'json' })
+    .$type<string[]>()
+    .notNull(),
+  /** When the session was created. */
+  createdAt: timestamp('created_at').notNull(),
+  deletedAt: timestamp('deleted_at').notNull(),
 });
 
 /**
@@ -234,15 +256,14 @@ export const pullRequests = sqliteTable(
 
 /**
  * Token usage and theoretical API cost per request (one result message of
- * Claude Code) and model.
+ * Claude Code) and model. Kept when its session is deleted (no foreign
+ * key): `deleted_sessions` says what the session was.
  */
 export const usageRecords = sqliteTable(
   'usage_records',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    sessionId: text('session_id')
-      .notNull()
-      .references(() => sessions.id, { onDelete: 'cascade' }),
+    sessionId: text('session_id').notNull(),
     /** Claude Code session the request ran in. */
     sdkSessionId: text('sdk_session_id'),
     model: text('model').notNull(),
@@ -429,6 +450,52 @@ export const previews = sqliteTable(
   ],
 );
 
+/**
+ * Conversation text of sessions for the full-text search: the user's
+ * messages and Claude's answers (top-level text blocks), rebuilt from a
+ * session's history whenever it is loaded and added to as the session
+ * runs. `folded` is the text in lower case (Unicode), which the FTS5 table
+ * `search_index` (trigram tokenizer, external content, kept in sync by
+ * triggers; created in the migration, not by drizzle) indexes.
+ */
+export const searchDocuments = sqliteTable(
+  'search_documents',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    /** `user` or `assistant`. */
+    kind: text('kind').$type<'user' | 'assistant'>().notNull(),
+    /** ID of the user message, or of Claude's message. */
+    anchor: text('anchor').notNull(),
+    /** SHA-1 of the text: the same text of the same message is stored once. */
+    hash: text('hash').notNull(),
+    text: text('text').notNull(),
+    folded: text('folded').notNull(),
+  },
+  (table) => [
+    uniqueIndex('search_documents_unique').on(
+      table.sessionId,
+      table.anchor,
+      table.hash,
+    ),
+  ],
+);
+
+/**
+ * What the search index of a session was built from: the transcript's
+ * size and modification time (or `missing`), so a transcript that changed
+ * or disappeared while the server was down is indexed again at startup.
+ */
+export const searchSessions = sqliteTable('search_sessions', {
+  sessionId: text('session_id')
+    .primaryKey()
+    .references(() => sessions.id, { onDelete: 'cascade' }),
+  source: text('source').notNull(),
+  indexedAt: timestamp('indexed_at').notNull(),
+});
+
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
 export type SessionDirectoryRow = typeof sessionDirectories.$inferSelect;
@@ -442,3 +509,4 @@ export type ShownFileRow = typeof shownFiles.$inferSelect;
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type MessageContextRow = typeof messageContexts.$inferSelect;
 export type PreviewRow = typeof previews.$inferSelect;
+export type DeletedSessionRow = typeof deletedSessions.$inferSelect;

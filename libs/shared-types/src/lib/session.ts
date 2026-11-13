@@ -262,6 +262,11 @@ export interface SessionDto {
    * first (see `PreviewDto`).
    */
   previews: PreviewDto[];
+  /**
+   * When the session was archived (hidden from the default list, ended,
+   * history readable); `null` while it is not.
+   */
+  archivedAt: string | null;
 }
 
 /** A repository a new session works on. */
@@ -305,7 +310,28 @@ export interface CreateSessionRequest {
   scratch?: boolean;
 }
 
-/** Response of `GET /api/sessions`, newest first. */
+/**
+ * Response of `GET /api/sessions?archived=`, newest first: without
+ * `archived` the sessions that are not archived, `archived=only` the
+ * archived ones, `archived=include` all.
+ */
 export interface SessionListResponse {
   sessions: SessionDto[];
+}
+
+/** Which sessions `GET /api/sessions` lists. */
+export type SessionListFilter = 'exclude' | 'only' | 'include';
+
+/**
+ * A session can be resumed (sent a message) only while all its
+ * directories exist and it is not archived; after its clones were cleaned
+ * up its history stays readable.
+ */
+export function canResume(
+  session: Pick<SessionDto, 'directories' | 'archivedAt'>,
+): boolean {
+  return (
+    session.archivedAt === null &&
+    session.directories.every((directory) => directory.state === 'ready')
+  );
 }
