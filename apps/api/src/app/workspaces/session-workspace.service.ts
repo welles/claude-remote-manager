@@ -41,6 +41,7 @@ import {
   type SessionRecord,
 } from '../sessions/session.repository';
 import { SettingsService } from '../settings/settings.service';
+import { cloneRule, scratchRule, WorkspaceEntries } from './workspace-entries';
 import { SetupScriptRunner } from './setup-script-runner';
 
 /** Repositories a session may have. */
@@ -113,6 +114,7 @@ const isClone = (directory: SessionDirectoryRecord) =>
 export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SessionWorkspaceService.name);
   private subscription: Subscription | null = null;
+  private workspaceEntries: WorkspaceEntries | null = null;
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -342,7 +344,12 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
       // Paths contain the session's unique slug: nobody else created them.
       const created = await exists(directory.path);
       try {
-        await this.git.removeSessionClone(directory.path);
+        await this.entries.remove(
+          directory.path,
+          directory.kind === 'scratch'
+            ? scratchRule(session.slug)
+            : cloneRule(session.slug),
+        );
         await this.removeEmptyParents(directory.path);
         this.sessions.updateDirectory(sessionId, directory.position, {
           state: directory.state === 'ready' ? 'removed' : 'failed',
@@ -383,6 +390,14 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
   }
 
   // -------------------------------------------------------------------------
+
+  private get entries(): WorkspaceEntries {
+    this.workspaceEntries ??= new WorkspaceEntries(
+      this.config,
+      this.git.launcher,
+    );
+    return this.workspaceEntries;
+  }
 
   private parseRepositories(
     value: unknown,

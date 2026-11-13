@@ -1,3 +1,4 @@
+import { WorkspaceEntries } from '../workspaces/workspace-entries';
 import { Module } from '@nestjs/common';
 import { GitService } from '../git/git.service';
 import { RepositoriesController } from './repositories.controller';
@@ -13,12 +14,14 @@ import { RepositoryRepository } from './repository.repository';
     RepositoriesService,
     RepositoryCredentials,
     GitService,
+    WorkspaceEntries,
   ],
   exports: [
     RepositoriesService,
     RepositoryRepository,
     RepositoryCredentials,
     GitService,
+    WorkspaceEntries,
   ],
 })
 export class RepositoriesModule {}

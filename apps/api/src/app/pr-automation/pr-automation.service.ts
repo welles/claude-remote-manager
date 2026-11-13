@@ -1,4 +1,5 @@
 import { readdir, rmdir } from 'node:fs/promises';
+import { cloneRule, WorkspaceEntries } from '../workspaces/workspace-entries';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   BadRequestException,
@@ -1135,10 +1136,22 @@ export class PrAutomationService
     session: SessionRecord,
     directory: SessionDirectoryRecord,
   ): Promise<void> {
-    await this.git.removeSessionClone(directory.path);
+    await new WorkspaceEntries(this.config, this.git.launcher).remove(
+      directory.path,
+      cloneRule(session.slug),
+      this.otherSessionPaths(session.id),
+    );
     this.records.updateDirectory(session.id, directory.position, {
       state: 'removed',
     });
+  }
+
+  /** Directories of other sessions, which a removal must never reach. */
+  private otherSessionPaths(sessionId: string): string[] {
+    return this.records
+      .list()
+      .filter((session) => session.id !== sessionId)
+      .flatMap((session) => session.directories.map((entry) => entry.path));
   }
 
   /** Removes `sessions/<slug>/<owner>` and `sessions/<slug>` once empty. */

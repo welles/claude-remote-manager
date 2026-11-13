@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { cloneRule, WorkspaceEntries } from './workspace-entries';
 import { readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { BadRequestException, ConflictException } from '@nestjs/common';
@@ -271,7 +272,11 @@ describe('session preparation', () => {
     const remote = await commitFile(repo.origin, 'remote.txt', 'remote');
     const sixth = await create({ repositories: [{ repositoryId: repo.id }] });
     await harness.prepared(sixth.id);
-    await harness.git.removeSessionClone(paths[0]);
+    await new WorkspaceEntries(harness.config).remove(
+      paths[0],
+      cloneRule(slugs[0]),
+    );
+    expect(existsSync(paths[0])).toBe(false);
 
     expect(harness.service.get(sixth.id).directories[0].baseCommit).toBe(
       remote,

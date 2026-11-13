@@ -330,14 +330,6 @@ export class GitService {
   }
 
   /**
-   * Removes a session clone. It is independent of the mirror and of other
-   * sessions, so this is deleting its directory.
-   */
-  async removeSessionClone(path: string): Promise<void> {
-    await rm(path, { recursive: true, force: true });
-  }
-
-  /**
    * Brings a session branch into a local project: fast-forwards
    * `targetBranch` of the mirror (creating it if unborn) to `sourceBranch`
    * of the session clone. Git refuses if that is not a fast-forward; merge

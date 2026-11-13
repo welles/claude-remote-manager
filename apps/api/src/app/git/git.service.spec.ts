@@ -414,13 +414,6 @@ describe('GitService', () => {
 
       expect(existsSync(marker)).toBe(false);
     });
-
-    it('removes a session clone by deleting it', async () => {
-      const path = await addSession('remove-me');
-      await service.removeSessionClone(path);
-      expect(existsSync(path)).toBe(false);
-      await service.removeSessionClone(path);
-    });
   });
 
   describe('isolation of sessions in the same repository', () => {
@@ -501,7 +494,7 @@ describe('GitService', () => {
       await writeFile(join(b, 'work.txt'), 'in progress');
 
       await Promise.all([
-        service.removeSessionClone(a),
+        rm(a, { recursive: true, force: true }),
         commitFile(b, 'work.txt', 'in progress'),
         service.updateMirror(mirror, origin),
       ]);
