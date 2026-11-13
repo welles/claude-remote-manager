@@ -18,6 +18,11 @@ export const appRoutes: Route[] = [
       import('./repositories/repository-list').then((m) => m.RepositoryList),
   },
   {
+    path: 'settings',
+    loadComponent: () =>
+      import('./settings/settings-page').then((m) => m.SettingsPage),
+  },
+  {
     path: 'status',
     loadComponent: () => import('./home/home').then((m) => m.Home),
   },

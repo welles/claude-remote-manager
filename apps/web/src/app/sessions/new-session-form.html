@@ -55,8 +55,8 @@
     } @if (mode() !== 'scratch' && repositoriesLoaded() && repositories().length
     === 0) {
     <p class="hint">
-      No repositories registered yet.
-      <a routerLink="/repositories">Add one</a> to work on it.
+      No repositories registered yet. Choose one from GitHub below or
+      <a routerLink="/repositories">add one by URL</a>.
     </p>
     } @for (choice of choices(); track $index; let index = $index) {
     <div class="choice" data-testid="repository-choice">
@@ -121,6 +121,12 @@
         }
       </div>
     </div>
+    } @if (mode() !== 'scratch') {
+    <app-github-repository-picker
+      class="github-picker"
+      label="Add from GitHub"
+      (picked)="addFromGitHub($event)"
+    />
     } @if (mode() !== 'scratch' && repositories().length > choices().length) {
     <button
       matButton

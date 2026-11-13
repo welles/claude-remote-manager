@@ -2,6 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 import type {
+  ConnectGitHubRequest,
   CreateRepositoryRequest,
   RepositoryBranchesResponse,
   RepositoryDto,
@@ -32,6 +33,21 @@ export class RepositoriesApi {
 
   fetch(id: string): Observable<RepositoryDto> {
     return this.http.post<RepositoryDto>(`${path(id)}/fetch`, {});
+  }
+
+  /** Registers a GitHub repository (idempotent) and starts cloning it. */
+  registerGitHub(githubRepositoryId: number): Observable<RepositoryDto> {
+    return this.http.post<RepositoryDto>('/api/repositories', {
+      githubRepositoryId,
+    });
+  }
+
+  /** Gives a local project a GitHub repository as remote. */
+  connectGitHub(
+    id: string,
+    request: ConnectGitHubRequest,
+  ): Observable<RepositoryDto> {
+    return this.http.post<RepositoryDto>(`${path(id)}/github`, request);
   }
 
   branches(id: string): Observable<RepositoryBranchesResponse> {

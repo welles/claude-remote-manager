@@ -1,0 +1,46 @@
+<mat-form-field appearance="outline" class="picker" subscriptSizing="dynamic">
+  <mat-label>{{ label() }}</mat-label>
+  <input
+    matInput
+    name="githubQuery"
+    [(ngModel)]="query"
+    (ngModelChange)="search($event)"
+    (focus)="search(query)"
+    [matAutocomplete]="auto"
+    [disabled]="registering()"
+    placeholder="owner/name"
+    autocomplete="off"
+    autocapitalize="off"
+    spellcheck="false"
+    data-testid="github-search"
+  />
+  <mat-autocomplete
+    #auto="matAutocomplete"
+    [displayWith]="display"
+    (optionSelected)="choose($event.option.value)"
+  >
+    @for (repository of results(); track repository.id) {
+    <mat-option [value]="repository" data-testid="github-option">
+      <span class="name">{{ repository.fullName }}</span>
+      @if (repository.private) {
+      <span class="tag">private</span>
+      } @if (repository.archived) {
+      <span class="tag">archived</span>
+      } @if (repository.registeredRepositoryId) {
+      <span class="tag">added</span>
+      }
+    </mat-option>
+    } @if (total() > results().length) {
+    <mat-option disabled
+      >{{ total() - results().length }} more; type to narrow down</mat-option
+    >
+    }
+  </mat-autocomplete>
+  @if (message(); as text) {
+  <mat-hint class="message" data-testid="github-message">{{ text }}</mat-hint>
+  } @else {
+  <mat-hint
+    >Repositories of all accounts the GitHub App is installed on</mat-hint
+  >
+  }
+</mat-form-field>

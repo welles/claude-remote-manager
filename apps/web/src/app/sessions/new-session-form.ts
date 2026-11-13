@@ -20,6 +20,7 @@ import type {
   RepositoryDto,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
+import { GitHubRepositoryPicker } from '../github/github-repository-picker';
 import {
   RepositoriesApi,
   errorMessage,
@@ -63,6 +64,7 @@ const emptyChoice = (): RepositoryChoice => ({
   selector: 'app-new-session-form',
   imports: [
     FormsModule,
+    GitHubRepositoryPicker,
     MatButtonModule,
     MatButtonToggleModule,
     MatFormFieldModule,
@@ -145,6 +147,29 @@ export class NewSessionForm implements OnInit {
         error: () => undefined,
       });
     }
+  }
+
+  /**
+   * A repository chosen from GitHub (now registered): it fills the first
+   * empty slot or is added as a further repository.
+   */
+  protected addFromGitHub(repository: RepositoryDto): void {
+    this.repositories.update((list) =>
+      list.some((entry) => entry.id === repository.id)
+        ? list
+        : [...list, repository].sort((a, b) =>
+            a.fullName.localeCompare(b.fullName),
+          ),
+    );
+    if (this.chosenIds().has(repository.id)) {
+      return;
+    }
+    const empty = this.choices().findIndex((choice) => !choice.repositoryId);
+    if (empty < 0) {
+      this.addRepository();
+    }
+    const index = empty < 0 ? this.choices().length - 1 : empty;
+    this.chooseRepository(index, repository.id);
   }
 
   protected chooseBaseBranch(index: number, baseBranch: string): void {

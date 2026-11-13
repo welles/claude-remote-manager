@@ -1,5 +1,10 @@
 <h1 class="heading">Repositories</h1>
 
+<app-github-repository-picker
+  label="Add from GitHub"
+  (picked)="pickedFromGitHub($event)"
+/>
+
 <form class="add" (ngSubmit)="add()">
   <mat-form-field
     appearance="outline"
@@ -98,11 +103,28 @@
         }
       </div>
       <div class="paths">
-        @if (repository.cloneUrl) {
+        @if (repository.github; as github) {
+        <a
+          class="tag tag-github"
+          [href]="github.htmlUrl"
+          target="_blank"
+          rel="noopener"
+          data-testid="github-tag"
+          >GitHub</a
+        >
+        } @if (repository.cloneUrl) {
         <code>{{ repository.cloneUrl }}</code>
         } @else {
         <span class="tag tag-local">Local project</span> no remote ·
         <code>{{ repository.localPath }}</code>
+        <button
+          matButton
+          type="button"
+          (click)="openPublish(repository)"
+          data-testid="publish"
+        >
+          Put on GitHub
+        </button>
         }
       </div>
       @if (repository.lastError) {
@@ -111,7 +133,80 @@
       </p>
       } @if (actionError(); as failure) { @if (failure.id === repository.id) {
       <p class="error">{{ failure.message }}</p>
-      } }
+      } } @if (publishing() === repository.id) {
+      <form
+        class="publish"
+        (ngSubmit)="publish(repository)"
+        data-testid="publish-form"
+      >
+        <p class="muted">
+          Creates a repository on GitHub (or uses an existing, empty one),
+          pushes the project's branches there and makes it a normal GitHub
+          repository. Existing session clones keep working.
+        </p>
+        <div class="publish-row">
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>How</mat-label>
+            <mat-select name="publishMode" [(ngModel)]="publishMode">
+              <mat-option value="create">Create a new repository</mat-option>
+              <mat-option value="attach">Use an existing repository</mat-option>
+            </mat-select>
+          </mat-form-field>
+          @if (publishMode === 'create') {
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>Owner</mat-label>
+            <mat-select
+              name="publishOwner"
+              [(ngModel)]="publishOwner"
+              data-testid="publish-owner"
+            >
+              @for (owner of owners(); track owner.account) {
+              <mat-option [value]="owner.account"
+                >{{ owner.account }} ({{ owner.accountType === 'Organization' ?
+                'organization' : 'account' }})</mat-option
+              >
+              }
+            </mat-select>
+          </mat-form-field>
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>Name</mat-label>
+            <input
+              matInput
+              name="publishName"
+              [(ngModel)]="publishName"
+              data-testid="publish-name"
+            />
+          </mat-form-field>
+          <mat-checkbox name="publishPrivate" [(ngModel)]="publishPrivate"
+            >Private</mat-checkbox
+          >
+          } @else {
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>Repository (owner/name)</mat-label>
+            <input
+              matInput
+              name="publishExisting"
+              [(ngModel)]="publishExisting"
+              data-testid="publish-existing"
+            />
+          </mat-form-field>
+          }
+        </div>
+        <div class="setup-actions">
+          <button matButton type="button" (click)="publishing.set(null)">
+            Cancel
+          </button>
+          <button
+            matButton="filled"
+            type="submit"
+            [disabled]="saving()"
+            data-testid="publish-submit"
+          >
+            Put on GitHub
+          </button>
+        </div>
+      </form>
+      }
 
       <section class="setup">
         @if (editing() === repository.id) {

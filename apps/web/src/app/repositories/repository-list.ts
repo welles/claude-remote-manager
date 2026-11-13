@@ -14,12 +14,18 @@ import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatSelectModule } from '@angular/material/select';
 import { RouterLink } from '@angular/router';
 import type {
+  ConnectGitHubRequest,
   CreateRepositoryRequest,
+  GitHubInstallationDto,
   RepositoryDto,
   SessionCloneDto,
 } from '@claude-remote-manager/shared-types';
+import { GitHubApi } from '../github/github-api';
+import { GitHubRepositoryPicker } from '../github/github-repository-picker';
 import { RepositoriesApi, errorMessage } from './repositories-api';
 
 /** How often the page reloads while a clone or fetch runs. */
@@ -39,8 +45,11 @@ export const cloneSlug = (path: string) =>
   imports: [
     DatePipe,
     FormsModule,
+    GitHubRepositoryPicker,
     MatButtonModule,
     MatCardModule,
+    MatCheckboxModule,
+    MatSelectModule,
     MatFormFieldModule,
     MatInputModule,
     MatProgressSpinnerModule,
@@ -52,6 +61,7 @@ export const cloneSlug = (path: string) =>
 })
 export class RepositoryList implements OnInit {
   private readonly api = inject(RepositoriesApi);
+  private readonly github = inject(GitHubApi);
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly loading = signal(true);
@@ -75,6 +85,15 @@ export class RepositoryList implements OnInit {
     id: string;
     message: string;
   } | null>(null);
+
+  /** Local project being put on GitHub, and the form fields. */
+  protected readonly publishing = signal<string | null>(null);
+  protected readonly owners = signal<GitHubInstallationDto[]>([]);
+  protected publishMode: 'create' | 'attach' = 'create';
+  protected publishOwner = '';
+  protected publishName = '';
+  protected publishPrivate = true;
+  protected publishExisting = '';
 
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -116,6 +135,82 @@ export class RepositoryList implements OnInit {
           errorMessage(error, 'The repository could not be added.'),
         );
       },
+    });
+  }
+
+  /** A repository chosen from GitHub is registered and being cloned. */
+  protected pickedFromGitHub(repository: RepositoryDto): void {
+    this.upsert(repository);
+    this.schedulePoll();
+  }
+
+  protected openPublish(repository: RepositoryDto): void {
+    this.publishMode = 'create';
+    this.publishName = repository.name;
+    this.publishPrivate = true;
+    this.publishExisting = '';
+    this.actionError.set(null);
+    this.publishing.set(repository.id);
+    this.github.status().subscribe({
+      next: (status) => {
+        if (!status.configured) {
+          this.actionError.set({
+            id: repository.id,
+            message: `GitHub is not configured: ${status.problem}`,
+          });
+        }
+        this.owners.set(status.installations);
+        this.publishOwner ||= status.installations[0]?.account ?? '';
+      },
+      error: () => this.owners.set([]),
+    });
+  }
+
+  protected publish(repository: RepositoryDto): void {
+    this.saving.set(true);
+    this.actionError.set(null);
+    const fail = (error: unknown) => {
+      this.saving.set(false);
+      this.actionError.set({
+        id: repository.id,
+        message: errorMessage(error, 'The project could not be put on GitHub.'),
+      });
+    };
+    const connect = (request: ConnectGitHubRequest) =>
+      this.api.connectGitHub(repository.id, request).subscribe({
+        next: (updated) => {
+          this.saving.set(false);
+          this.publishing.set(null);
+          this.upsert(updated);
+        },
+        error: fail,
+      });
+    if (this.publishMode === 'create') {
+      connect({
+        mode: 'create',
+        owner: this.publishOwner,
+        name: this.publishName.trim() || repository.name,
+        private: this.publishPrivate,
+      });
+      return;
+    }
+    const wanted = this.publishExisting.trim().toLowerCase();
+    this.github.repositories(wanted, { perPage: 100 }).subscribe({
+      next: ({ repositories }) => {
+        const found = repositories.find(
+          (entry) => entry.fullName.toLowerCase() === wanted,
+        );
+        if (!found) {
+          fail({
+            error: {
+              message: `${this.publishExisting.trim()} is not accessible to the GitHub App`,
+            },
+          });
+          return;
+        }
+        connect({ mode: 'attach', githubRepositoryId: found.id });
+      },
+      error: fail,
     });
   }
 

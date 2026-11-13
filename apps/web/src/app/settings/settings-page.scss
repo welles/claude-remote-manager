@@ -1,0 +1,71 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.heading {
+  font: var(--mat-sys-title-large);
+  margin: 4px 0;
+}
+
+.subheading {
+  font: var(--mat-sys-title-small);
+  margin: 12px 0 4px;
+}
+
+.hint,
+.muted {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+}
+
+.identity mat-form-field {
+  flex: 1 1 220px;
+}
+
+.identity button {
+  margin-top: 8px;
+}
+
+.warning,
+.error {
+  color: var(--mat-sys-error);
+}
+
+.message {
+  margin: 8px 0 0;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.facts dd {
+  margin: 0;
+}
+
+.installations {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.installations li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}

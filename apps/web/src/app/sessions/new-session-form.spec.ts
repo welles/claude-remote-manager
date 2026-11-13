@@ -53,6 +53,7 @@ interface FormInternals {
   chooseBaseBranch(index: number, branch: string): void;
   canStart(): boolean;
   create(): void;
+  addFromGitHub(repository: RepositoryDto): void;
 }
 
 describe('NewSessionForm', () => {
@@ -87,6 +88,25 @@ describe('NewSessionForm', () => {
     const element = fixture.nativeElement as HTMLElement;
     return { fixture, form, element, created };
   };
+
+  it('uses repositories chosen from GitHub as main or additional repository', async () => {
+    const { form } = await render([repository('r1', 'acme/app')]);
+    form.addFromGitHub(repository('g1', 'alice/tool'));
+    http
+      .expectOne('/api/repositories/g1/branches')
+      .flush({ defaultBranch: null, branches: [] });
+    expect(form.choices()).toEqual([{ repositoryId: 'g1', baseBranch: '' }]);
+    form.addFromGitHub(repository('g2', 'acme/lib'));
+    http
+      .expectOne('/api/repositories/g2/branches')
+      .flush({ defaultBranch: null, branches: [] });
+    // Choosing one again changes nothing.
+    form.addFromGitHub(repository('g1', 'alice/tool'));
+    expect(form.choices().map((choice) => choice.repositoryId)).toEqual([
+      'g1',
+      'g2',
+    ]);
+  });
 
   it('starts a session on a main repository plus another with a base branch', async () => {
     const { fixture, form, element, created } = await render([
