@@ -7,10 +7,13 @@ cleanup. Everything runs in one Docker container. See [docs/specification.md](do
 
 Current state: repositories are chosen from GitHub through the app's GitHub App (or registered
 by clone URL), local projects by name; sessions run through the Claude Agent SDK in their own
-clones of one or more repositories (or in a scratch directory) and stream to a minimal chat
-view; session branches are pushed and pull requests created by button, or by Claude after the
-user's approval; usage is recorded per request. Approval dialogs, the full chat view and the
-cleanup of sessions follow.
+clones of one or more repositories (or in a scratch directory) and stream to the chat view,
+where Claude's approval requests, questions and plans are answered; model and permission mode
+are chosen per session and switchable while it runs; messages sent while Claude works are
+queued; Claude's task list, the context window and the account's plan limits are shown; session
+branches are pushed and pull requests created by button, or by Claude after the user's
+approval; usage is recorded per request. Diffs in the history, images, `@` file references,
+`show_file` and the cleanup of sessions follow.
 
 ## Workspace layout
 
@@ -199,7 +202,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   An unused session's log is released and rebuilt this way when it is opened again.
 - Status: `preparing` (clones and setup scripts; messages are refused until it is done),
   `running` (Claude works on a turn), `waiting` (waits for the user, whether or not a process
-  is alive; with `pendingMessage` set after a failed setup script, see below), `finished`
+  is alive; `waitingFor` says for what: `message`, the next message; `permission`, an answer to
+  an approval request, question or plan of the running turn; `setup`, a decision about the first
+  message after a failed setup script, see below), `finished`
   (ended with "End session", `POST /api/sessions/:id/end` or the `session.end` frame) and
   `failed` (a clone could not be created, or the process could not start or ended with an
   error during a turn). A message to a finished or failed session resumes it, unless its
@@ -208,11 +213,38 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   the server waits up to 5 seconds for the Claude Code processes to exit.
 - Usage: every result message's tokens (input, output, cache write, cache read) and the SDK's
   theoretical cost in USD are stored per request and model in `usage_records`; the session
-  shows the totals. Context window usage and the account's rate limits are captured after
-  each turn (`GET /api/limits`).
-- Permissions: sessions run in permission mode `default`. Every tool use that needs approval
-  goes through a `ToolApprover`; until the approval dialogs exist it denies everything and the
-  chat shows the denial. Approved uses are recorded (see [Push and pull requests](#push-and-pull-requests)).
+  shows the totals. Context window usage is read from Claude Code (no API request) during a
+  turn (at most every 5 s, live only) and after each turn (stored), so it survives reloads.
+- Approvals: see [Approval requests](#approval-requests).
+- Model and permission mode: chosen when the session is created and switchable at any time
+  (`PATCH /api/sessions/:id` or the `session.update` frame): a running process switches right
+  away (`setModel`, `setPermissionMode`), otherwise the next process starts with it. The models
+  are the list Claude Code reports for the account (`GET /api/models`, read through a
+  short-lived Claude Code process without prompt, cached for an hour; the aliases default,
+  opus, sonnet and haiku if that fails). Modes offered: `default` (ask), `acceptEdits`, `plan`
+  and `dontAsk`; `bypassPermissions` and `auto` are never offered or accepted, and every
+  session's flag settings disable both (`disableBypassPermissionsMode`, `disableAutoMode`, and
+  `useAutoModeDuringPlan: false`), so approvals come from the user and not from a classifier.
+  Mode changes Claude Code makes itself (entering plan mode, approving a plan) are taken over
+  from its `status`/`init` messages. Changes are logged as `settings.changed` events.
+- Queued messages: a message sent while a turn runs (also while it waits for an approval) is
+  queued by the app (`message.queued`), not handed to Claude Code, and goes to Claude when the
+  turn ends (all queued messages at once; Claude Code may take them as one turn). Until then it
+  can be removed (`DELETE /api/sessions/:id/queued-messages/:messageId` or `message.unqueue`).
+  Stop, ending the session, a failed process or a server stop withdraw the queue
+  (`message.dequeued` with `withdrawn`); the view offers the text again. Claude Code's own queue
+  would take messages into the running turn earlier, but the SDK has no public way to remove
+  one from it, so the app keeps the queue itself.
+- Task list: Claude's task list is shown live from its `TaskCreate`/`TaskUpdate` (and, in
+  other Claude Code versions, `TodoWrite`) tool calls, so it is rebuilt with the history. The
+  bundled Claude Code offers these tools to SDK sessions only with
+  `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, which every session process gets.
+- Plan limits: the 5-hour, weekly and per-model weekly windows of the account come from
+  `rate_limit_event` messages of any session and from Claude Code's plan usage request after
+  turns; `GET /api/limits` reads them again through a short-lived process when they are unknown
+  or older than 5 minutes (the web app asks every 5 minutes), and a later answer drops windows
+  it no longer lists. Changes go to all clients as `account.limits`. The header shows them with
+  percent, reset time and when they were last updated.
 - Integrations: each Claude Code process gets a session token and the API URL for the git
   credential helper, the tool `create_pull_request` (in-process MCP server `crm`) when the
   session has a GitHub repository, a permission rule that makes `git push` always ask, and the
@@ -222,7 +254,10 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   policy `/etc/claude-code/CLAUDE.md` is always loaded.
 
 REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
-`POST /api/sessions/:id/messages`, `POST /api/sessions/:id/interrupt`,
+`PATCH /api/sessions/:id`, `POST /api/sessions/:id/messages`,
+`DELETE /api/sessions/:id/queued-messages/:messageId`,
+`GET /api/sessions/:id/permission-requests`,
+`POST /api/sessions/:id/permission-requests/:requestId`, `POST /api/sessions/:id/interrupt`,
 `POST /api/sessions/:id/end`, `POST /api/sessions/:id/pending-message/send`,
 `POST /api/sessions/:id/setup/rerun`, `POST /api/sessions/:id/repositories/:repositoryId/push`,
 `POST /api/sessions/:id/repositories/:repositoryId/pull-requests`,
@@ -231,8 +266,44 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `POST /api/repositories/:id/fetch`, `POST /api/repositories/:id/github`,
 `GET /api/repositories/:id/branches`, `GET /api/github/status`, `GET /api/github/repositories`,
 `GET /api/settings`, `PUT /api/settings`, `POST /api/git/credentials` (credential helper only),
-`GET /api/limits`, `GET /api/health`. WebSocket: `/api/ws` with the versioned protocol in
+`GET /api/models`, `GET /api/limits`, `GET /api/health`. WebSocket: `/api/ws` with the versioned protocol in
 `libs/shared-types/src/lib/session-events.ts`.
+
+### Approval requests
+
+Every tool use that Claude Code does not allow on its own (by a rule or the permission mode)
+reaches the session's `canUseTool` and becomes a pending request: a `permission.request` event
+(stored, so a reloaded history shows it) with the tool, its input and a readable summary in the
+view (command, file and change, URL, …), `gitPushes` for `git push` commands and `pullRequest`
+for `create_pull_request`. Every client of the session shows it as a card above the input (also
+on phones) and the session is `waiting` for `permission` meanwhile. The first answer counts
+(`permission.respond` frame, or `POST /api/sessions/:id/permission-requests/:requestId` for
+answers without WebSocket, e.g. from a notification later); it is logged as
+`permission.resolved` for all clients. A second answer changes nothing and gets the earlier
+resolution back (`alreadyResolved`); session processes cannot call these routes (see
+[Authentication](#authentication)).
+
+- Kinds: `tool` (allow once, allow for this session, deny with an optional message to Claude:
+  without a message the turn stops and Claude waits, with one Claude continues with it),
+  `question` (Claude's `AskUserQuestion`: options, multi-select and own words; the answers go
+  back as `answers` keyed by question text, multi-select labels joined with `, `), `plan`
+  (`ExitPlanMode` in plan mode: the plan as Markdown; approve into `default` or `acceptEdits`,
+  which is applied as a session `setMode` update, or keep planning with feedback).
+- "Allow for this session" is offered only from Claude Code's own suggestions for the request,
+  rewritten to the destination `session` (never to settings files): allow rules (not for all
+  Bash commands, not for prefixes covering `git push`, not for the app's tools), directories,
+  or a switch to `acceptEdits`. It is never offered for pushes, pull requests, questions, plans
+  or when Claude Code says not to (`suppressAlwaysAllowRule`): each push and each pull request
+  needs its own approval (see [Push and pull requests](#push-and-pull-requests)). Rules and
+  directories allowed for the session are given to every later Claude Code process of the
+  session (`allowedTools`, additional directories), so they hold until the session ends.
+- A request never stays pending without a process waiting for it: it is cancelled (resolved
+  as `deny` with `cause`) when its abort signal fires or the user stops the turn
+  (`interrupted`), the session is ended (`ended`), the process exits (`process_exit`), or the
+  server stops (`restart`; after a crash the next start closes requests left open). Claude
+  Code's own permission prompts have no deadline (`dialogExpiry: never` is set as well), so a
+  request waits for the user as long as the process lives; the idle timeout does not apply
+  while one is pending.
 
 ## Repositories and session clones
 
@@ -455,10 +526,9 @@ Both work two ways:
    tool `create_pull_request` (repository, title, body, base branch, draft), which never
    pushes and runs only for a call the user approved, once.
 
-Approval: every tool use that needs approval goes through `canUseTool` and the
-`ToolApprover`. Today it denies everything (the approval dialogs come in the next step), so
-these paths only work by button; tests use a fake approver. Approvals are what unlock them, not
-Claude Code's own decision: `git push` has an `ask` permission rule in every session (it wins
+Approval: every tool use that needs approval goes through `canUseTool` and the user's answer
+(see [Approval requests](#approval-requests)); "allow for this session" is never offered for
+these two. Approvals are what unlock them, not Claude Code's own decision: `git push` has an `ask` permission rule in every session (it wins
 over allow rules, e.g. from a repository's `.claude/settings.json`), the tool has the MCP
 permission policy `always_ask`, and if anything still skipped `canUseTool` (a permission mode,
 an allow rule) no grant is recorded, so the helper stays read-only and the tool refuses.
