@@ -1,4 +1,9 @@
 <h1 class="heading">Repositories</h1>
+<p class="muted">
+  Leftover clones and scratch directories without a session can be reviewed and
+  removed under
+  <a routerLink="/workspace" data-testid="workspace-link">Workspace cleanup</a>.
+</p>
 
 <app-github-repository-picker
   label="Add from GitHub"
@@ -311,7 +316,8 @@
   <h2 class="heading">Other clone directories</h2>
   <p class="muted">
     Session clones of repositories that are not registered and scratch
-    directories. No session uses them.
+    directories. No session uses them; see what they hold and remove them under
+    <a routerLink="/workspace">Workspace cleanup</a>.
   </p>
   <ul>
     @for (path of strayDirectories(); track path) {

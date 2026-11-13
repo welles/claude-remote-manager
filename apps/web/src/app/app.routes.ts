@@ -28,6 +28,15 @@ export const appRoutes: Route[] = [
       import('./settings/settings-page').then((m) => m.SettingsPage),
   },
   {
+    path: 'usage',
+    loadComponent: () => import('./usage/usage-page').then((m) => m.UsagePage),
+  },
+  {
+    path: 'workspace',
+    loadComponent: () =>
+      import('./workspace/workspace-page').then((m) => m.WorkspacePage),
+  },
+  {
     path: 'status',
     loadComponent: () => import('./home/home').then((m) => m.Home),
   },

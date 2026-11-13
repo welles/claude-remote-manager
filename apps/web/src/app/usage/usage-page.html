@@ -1,0 +1,224 @@
+<h1 class="heading">Usage</h1>
+<p class="note" data-testid="cost-note">
+  Costs are theoretical: what these requests would have cost at Anthropic's API
+  prices, as the Agent SDK estimates them. The subscription costs the same
+  however much it is used. Days, weeks (Monday to Sunday) and months follow your
+  time zone, {{ timeZone }}.
+</p>
+
+<div class="controls">
+  <mat-button-toggle-group
+    [value]="granularity()"
+    (change)="setGranularity($event.value)"
+    aria-label="Period"
+    hideSingleSelectionIndicator
+  >
+    <mat-button-toggle value="day" data-testid="by-day">Days</mat-button-toggle>
+    <mat-button-toggle value="week" data-testid="by-week"
+      >Weeks</mat-button-toggle
+    >
+    <mat-button-toggle value="month" data-testid="by-month"
+      >Months</mat-button-toggle
+    >
+  </mat-button-toggle-group>
+  <mat-button-toggle-group
+    [value]="groupBy()"
+    (change)="setGroupBy($event.value)"
+    aria-label="Split by"
+    hideSingleSelectionIndicator
+  >
+    <mat-button-toggle value="session" data-testid="group-session"
+      >Session</mat-button-toggle
+    >
+    <mat-button-toggle value="repository" data-testid="group-repository"
+      >Repository</mat-button-toggle
+    >
+    <mat-button-toggle value="model" data-testid="group-model"
+      >Model</mat-button-toggle
+    >
+  </mat-button-toggle-group>
+  <mat-button-toggle-group
+    [value]="measure()"
+    (change)="measure.set($event.value)"
+    aria-label="Measure"
+    hideSingleSelectionIndicator
+  >
+    <mat-button-toggle value="cost" data-testid="measure-cost"
+      >Cost</mat-button-toggle
+    >
+    <mat-button-toggle value="tokens" data-testid="measure-tokens"
+      >Tokens</mat-button-toggle
+    >
+  </mat-button-toggle-group>
+</div>
+
+@if (loading()) {
+<mat-progress-bar mode="indeterminate" />
+} @if (error(); as text) {
+<p class="error" role="alert">{{ text }}</p>
+} @if (statistics(); as statistics) {
+<div class="tiles">
+  <div class="tile" data-testid="total-cost">
+    <span class="tile-label">Theoretical API cost</span>
+    <span class="tile-value">{{ formatCost(statistics.totals.costUsd) }}</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Tokens</span>
+    <span class="tile-value"
+      >{{ formatTokens(totalTokens(statistics.totals)) }}</span
+    >
+  </div>
+  <div class="tile">
+    <span class="tile-label">Requests</span>
+    <span class="tile-value">{{ statistics.requests }}</span>
+  </div>
+</div>
+<p class="period">{{ periodLabel(statistics) }}</p>
+
+@if (statistics.series.length === 0) {
+<p class="empty" data-testid="usage-empty">No usage in this period.</p>
+} @else { @if (chart(); as chart) {
+<figure class="chart viz" (mouseleave)="hovered.set(null)">
+  <div class="tooltip" aria-live="polite">
+    @if (tooltip(); as tip) {
+    <strong>{{ tip.label }}</strong>
+    @if (granularity() === 'week') { (week) }: {{ tip.total }}
+    <ul>
+      @for (row of tip.rows; track row.label) {
+      <li>
+        <span class="swatch slot-{{ row.slot }}"></span>{{ row.label }}: {{
+        row.value }}
+      </li>
+      }
+    </ul>
+    } @else {
+    <span class="hint">Point at a bar (or focus it) for its values.</span>
+    }
+  </div>
+  <svg
+    [attr.viewBox]="'0 0 ' + width + ' ' + height"
+    role="img"
+    [attr.aria-label]="'Usage per ' + granularity() + ', stacked by ' + groupBy()"
+    data-testid="usage-chart"
+  >
+    @for (tick of chart.ticks; track tick.value) {
+    <line
+      class="grid"
+      [attr.x1]="plot.left"
+      [attr.x2]="width - plot.right"
+      [attr.y1]="tick.y"
+      [attr.y2]="tick.y"
+    />
+    <text
+      class="axis"
+      [attr.x]="plot.left - 6"
+      [attr.y]="tick.y + 4"
+      text-anchor="end"
+    >
+      {{ axisLabel(tick.value) }}
+    </text>
+    } @for (bar of chart.bars; track bar.bucket) {
+    <g
+      class="bar"
+      [class.active]="hovered() === bar.index"
+      tabindex="0"
+      (mouseenter)="hovered.set(bar.index)"
+      (focus)="hovered.set(bar.index)"
+      (blur)="hovered.set(null)"
+      data-testid="usage-bar"
+    >
+      <rect
+        class="hit"
+        [attr.x]="plot.left + chart.slot * bar.index"
+        [attr.y]="plot.top"
+        [attr.width]="chart.slot"
+        [attr.height]="chart.baseline - plot.top"
+      />
+      @for (segment of bar.segments; track segment.key) {
+      <rect
+        class="segment slot-{{ segment.slot }}"
+        [attr.x]="bar.x"
+        [attr.y]="segment.y"
+        [attr.width]="chart.barWidth"
+        [attr.height]="segment.height"
+        [attr.rx]="$last ? 3 : 0"
+      />
+      } @if (bar.label) {
+      <text
+        class="axis"
+        [attr.x]="bar.x + chart.barWidth / 2"
+        [attr.y]="height - 8"
+        text-anchor="middle"
+      >
+        {{ bar.label }}
+      </text>
+      }
+    </g>
+    }
+    <line
+      class="baseline"
+      [attr.x1]="plot.left"
+      [attr.x2]="width - plot.right"
+      [attr.y1]="chart.baseline"
+      [attr.y2]="chart.baseline"
+    />
+  </svg>
+  <figcaption>
+    <ul class="legend" data-testid="usage-legend">
+      @for (entry of series(); track entry.key) {
+      <li>
+        <span class="swatch slot-{{ entry.slot }}"></span>{{ entry.label }}
+        <span class="muted">{{ format(entry.total) }}</span>
+      </li>
+      }
+    </ul>
+  </figcaption>
+</figure>
+}
+
+<table class="table" data-testid="usage-table">
+  <caption>
+    Totals by {{ groupBy() }}
+  </caption>
+  <thead>
+    <tr>
+      <th scope="col">
+        {{ groupBy() === 'session' ? 'Session' : groupBy() === 'model' ? 'Model'
+        : 'Repositories' }}
+      </th>
+      <th scope="col" class="number">Input</th>
+      <th scope="col" class="number">Output</th>
+      <th scope="col" class="number wide">Cache write</th>
+      <th scope="col" class="number wide">Cache read</th>
+      <th scope="col" class="number">Cost</th>
+    </tr>
+  </thead>
+  <tbody>
+    @for (row of statistics.series; track row.key) {
+    <tr>
+      <th scope="row">
+        @if (row.sessionId) {
+        <a [routerLink]="['/sessions', row.sessionId]">{{ row.label }}</a>
+        } @else { {{ row.label }} } @if (row.state) {
+        <span class="tag">{{ row.state }}</span>
+        }
+      </th>
+      <td class="number">{{ formatTokens(row.totals.inputTokens) }}</td>
+      <td class="number">{{ formatTokens(row.totals.outputTokens) }}</td>
+      <td class="number wide">
+        {{ formatTokens(row.totals.cacheCreationInputTokens) }}
+      </td>
+      <td class="number wide">
+        {{ formatTokens(row.totals.cacheReadInputTokens) }}
+      </td>
+      <td class="number">{{ formatCost(row.totals.costUsd) }}</td>
+    </tr>
+    }
+  </tbody>
+</table>
+@if (groupBy() === 'repository') {
+<p class="note">
+  A session with several repositories counts once, under all of them together,
+  so the rows add up to the total.
+</p>
+} } }
