@@ -37,6 +37,7 @@ Auf dem Server liegen inzwischen viele Repositories. Die bisherigen Wege (Devbox
 - Branch-Namensschema: `claude/<sitzungs-slug>`.
 - Eine Sitzung kennt alle ihre Klone; beim Aufräumen werden sie gemeinsam behandelt. Verwerfen heißt, das Verzeichnis der Sitzung zu löschen.
 - Verwaiste Sitzungsklone (ohne zugehörige Sitzung) werden in der Übersicht markiert.
+- **Umsetzung (entschieden):** Aufräumen geht erst, wenn die Sitzung beendet ist (beim Archivieren wird sie dafür beendet); pro Verzeichnis Push des Sitzungs-Branches (Repos mit Remote, nie Force), Fast-Forward des Basis-Branches (lokale Projekte), Verwerfen oder Behalten (Standard). Was verloren ginge (uncommittete Dateien, Commits ohne Remote, Stash-Einträge), wird vorher gezeigt; ein Verzeichnis mit solcher Arbeit wird nur nach ausdrücklicher Bestätigung gelöscht. Danach bleibt die Sitzung lesbar, lässt sich aber nicht fortsetzen. Gelöscht wird nur innerhalb von `sessions/` und `scratch/`, ohne Symlinks zu folgen und ohne die Rechte des Backends (als Sitzungsbenutzer bzw. ohne Capabilities). Verwaiste Verzeichnisse und fehlende Sitzungsverzeichnisse zeigt eine eigene Seite mit Inhalt und Größe; Entfernen nur nach Bestätigung.
 
 ## GitHub-Referenzen im Prompt
 
@@ -90,6 +91,7 @@ Das Angular-Frontend nutzt als installierbare PWA zusätzlich:
 - **To-do-Liste und Kontext:** Claudes Aufgabenliste wird live angezeigt, ebenso die Auslastung des Kontextfensters.
 - **Setup-Skripte pro Repo:** Pro Repository ein konfigurierbares Skript (z. B. `npm install`), das nach dem Anlegen eines Sitzungsklons läuft.
 - **Sitzungen verwalten:** Umbenennen, archivieren, durchsuchen.
+  - **Umsetzung (entschieden):** Umbenennen ändert nur den Titel (Slug, Branches und Verzeichnisse bleiben). Archivieren beendet die Sitzung, bietet das Aufräumen der Klone im selben Schritt an und blendet sie aus der Liste aus; archivierte Sitzungen bleiben lesbar und durchsuchbar, nehmen keine Nachrichten an und lassen sich wieder einblenden. Beendete oder archivierte Sitzungen lassen sich endgültig löschen (Verlauf, Transkript, Bilder, gezeigte Dateien, Klone) nach einem Dialog, der sagt, was verloren geht; ihr Verbrauch bleibt in der Statistik mit Titel und Repositories. Die Suche ist eine Volltextsuche über Titel, Repositories, Branches und den Gesprächstext (Nachrichten des Nutzers und Antworten von Claude), auch archivierter Sitzungen; Treffer führen an die Stelle im Verlauf.
 
 ## Anzeige von Kontext- und Abo-Limits
 
@@ -119,6 +121,7 @@ Das Backend protokolliert den Verbrauch jeder Sitzung und zeigt ihn im Frontend 
 - **Theoretische API-Kosten:** Was die Nutzung bei Abrechnung über die API gekostet hätte, obwohl über das Abo gearbeitet wird.
 - **Auswertung:** Verbrauch und Kosten über die Zeit (Tag, Woche, Monat) als Diagramm, aufgeteilt nach Sitzung, Repository und Modell.
 - **Pro Sitzung:** Summe von Tokens und theoretischen Kosten direkt in der Sitzungsansicht.
+- **Umsetzung (entschieden):** Tages-, Wochen- (Montag bis Sonntag) und Monatsgrenzen in der Zeitzone des Browsers. Eine Sitzung mit mehreren Repositories zählt einmal unter allen zusammen (z. B. `acme/app + acme/lib`), damit die Gruppen die Summe ergeben. Unterbrochene Anfragen fehlen in den Zahlen des SDK; sie werden nicht geschätzt.
 
 ## Vorschau von Dev-Servern
 

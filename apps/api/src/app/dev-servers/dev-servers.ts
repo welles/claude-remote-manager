@@ -1,6 +1,6 @@
 /**
  * Dev servers of sessions: what ends them when a session ends (the user
- * ends it, autoclose, later the cleanup). Implemented by the previews
+ * ends it, autoclose, cleanup, archiving, deleting). Implemented by the previews
  * (`previews/previews.service.ts`): it stops the session's previews and
  * the dev servers listening on their ports.
  */

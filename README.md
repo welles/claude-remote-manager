@@ -22,8 +22,11 @@ PWA with an offline shell, badge, shortcuts and a share target. Per open pull re
 autofix continues the session when CI fails or reviewers with write access comment, and
 autoclose ends the session and removes its clones when the pull request is merged or closed
 (see [PR automation](#pr-automation)). Dev servers Claude starts become previews on host names
-of their own, opened as links or embedded (see [Previews](#previews-of-dev-servers)). The
-cleanup of sessions follows.
+of their own, opened as links or embedded (see [Previews](#previews-of-dev-servers)).
+Sessions are renamed, archived, searched (titles, repositories, branches and the
+conversation), cleaned up (push, merge into a local project, discard or keep their clones) and
+deleted; leftover directories of the workspace are found and removed; usage and theoretical
+API cost are charted per day, week and month (see [Managing sessions](#managing-sessions)).
 
 ## Workspace layout
 
@@ -276,7 +279,7 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   the server waits up to 5 seconds for the Claude Code processes to exit.
 - Usage: every result message's tokens (input, output, cache write, cache read) and the SDK's
   theoretical cost in USD are stored per request and model in `usage_records`; the session
-  shows the totals. Context window usage is read from Claude Code (no API request) during a
+  shows the totals (see [Usage and cost](#usage-and-cost)). Context window usage is read from Claude Code (no API request) during a
   turn (at most every 5 s, live only) and after each turn (stored), so it survives reloads.
 - Approvals: see [Approval requests](#approval-requests).
 - Model and permission mode: chosen when the session is created and switchable at any time
@@ -306,8 +309,11 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   `rate_limit_event` messages of any session and from Claude Code's plan usage request after
   turns; `GET /api/limits` reads them again through a short-lived process when they are unknown
   or older than 5 minutes (the web app asks every 5 minutes), and a later answer drops windows
-  it no longer lists. Changes go to all clients as `account.limits`. The header shows them with
-  percent, reset time and when they were last updated.
+  it no longer lists. Changes go to all clients as `account.limits`. The header shows the
+  5-hour and weekly window (on phones only the 5-hour one) and all windows with percent, reset
+  time and when they were last updated in its menu; the session list shows every window,
+  per-model weekly ones included, with its reset time, so the weekly limit is visible on phones
+  too.
 - Integrations: each Claude Code process gets a session token and the API URL for the git
   credential helper, the tools `show_file` (always) and `create_pull_request` (when the
   session has a GitHub repository; both in the in-process MCP server `crm`), a permission rule
@@ -353,8 +359,12 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `POST /api/notifications/approval-actions`,
 `PATCH /api/sessions/:id/pull-requests/:pullRequestId/automation`,
 `POST /api/sessions/:id/autofix/stop`, `GET /api/sessions/:id/repositories/:repositoryId/clone-loss`,
-`POST /api/sessions/:id/repositories/:repositoryId/discard-clone`, `POST /api/github/webhook`
-(GitHub only). WebSocket: `/api/ws` with the versioned protocol in
+`POST /api/sessions/:id/repositories/:repositoryId/discard-clone`, `GET /api/sessions/:id/cleanup`,
+`POST /api/sessions/:id/cleanup`, `POST /api/sessions/:id/archive`,
+`POST /api/sessions/:id/unarchive`, `GET /api/sessions/:id/deletion`,
+`POST /api/sessions/:id/delete`, `GET /api/search`, `GET /api/usage`,
+`GET /api/workspace/orphans`, `POST /api/workspace/orphans/remove`,
+`POST /api/workspace/missing/forget`, `POST /api/github/webhook` (GitHub only). WebSocket: `/api/ws` with the versioned protocol in
 `libs/shared-types/src/lib/session-events.ts`.
 
 ### Diffs
@@ -387,8 +397,8 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   and 20000 in total; files left out are marked `too_large` or `omitted` and loaded one at a
   time (`GET /api/sessions/:id/diff/file?repositoryId=&path=&oldPath=`, up to 20000 lines).
   The web app shows it on the session's changes page (`/sessions/:id/changes`), unified or
-  side by side (kept per browser; unified by default on narrow screens); the component is
-  meant for the cleanup dialog too.
+  side by side (kept per browser; unified by default on narrow screens); the cleanup dialog
+  links to it ("Review the changes first").
 
 ### Images, `@` references and shown files
 
@@ -424,7 +434,8 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   PDFs are not sandboxed, because browser PDF viewers do not render sandboxed documents. The
   viewer renders Markdown (sanitized), highlights code (highlight.js, loaded on first use) and
   embeds PDFs. Snapshots and attachments belong to their session (database cascade, and
-  removal of files without a row at startup); there is no session deletion yet (cleanup step).
+  removal of files without a row at startup); deleting a session removes them (see
+  [Managing sessions](#managing-sessions)).
 
 ### GitHub references (`#123`)
 
@@ -550,6 +561,160 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
   request waits for the user as long as the process lives; the idle timeout does not apply
   while one is pending.
 
+## Managing sessions
+
+All of it is in the session view (Rename, Clean up…, Archive…, Unarchive, Delete…), the
+session list (search, Archived, Usage) and the Workspace cleanup page (linked from
+Repositories). Every route is a management route: Access token required, refused to
+session processes (see [Authentication](#authentication)).
+
+- **Rename** (`PATCH /api/sessions/:id` with `title`, 1-200 characters, or the
+  `session.update` frame): only the title changes. The slug, the session branches
+  `claude/<slug>` and the directory names keep their names (the form says so); search and
+  statistics use the new title at once.
+- **Clean up** (`GET`/`POST /api/sessions/:id/cleanup`): all directories of a session together,
+  only when it has ended (finished or failed; not while a turn runs, waits for an approval or
+  the session is being prepared). Per directory:
+  - `push` (repositories with a remote): the session branch is pushed like the Push button
+    (through the mirror, no force; nothing is pushed when the branch has no commits of its
+    own), then the clone is removed;
+  - `merge` (local projects): `GitService.fastForwardMirror` fast-forwards the base branch of
+    the project's mirror to the session branch, then the clone is removed; when the base branch
+    moved on, the clone is kept and the outcome says to merge it into the session branch
+    first (in the session);
+  - `discard`: the clone (or scratch directory) is removed;
+  - `keep` (the default): nothing happens.
+
+  What would be lost is read when the dialog opens (the PR automation's loss report:
+  uncommitted, staged and untracked files, commits on local branches no remote-tracking
+  branch has, stash entries; for a scratch directory all its files; and the size on disk), and
+  for push and merge also what would still be lost afterwards. A choice that loses anything
+  needs "I accept losing this" (`acceptLoss`); the API reads the loss again right before
+  removing and keeps the directory if it is not empty and was not accepted. Failures (a push
+  the remote refused) keep the directory and are reported; nothing else stops. The cleanup
+  stops the session's previews and is recorded in the history. Afterwards the session reads
+  as before but cannot be continued ("its directories were removed").
+
+- **Archive** (`POST /api/sessions/:id/archive` with the same choices,
+  `POST /api/sessions/:id/unarchive`): ends the session (process and dev servers), cleans up
+  as chosen (keep everything by default) and hides it from the list. Archived sessions take no
+  messages, are listed under "Archived" (`GET /api/sessions?archived=only`; `include` lists
+  all), are found by the search, and can be unarchived (and then continued if their
+  directories are still there). The session list hears about archived and deleted sessions
+  live (`session.updated`, `session.deleted`).
+- **Delete** (`GET /api/sessions/:id/deletion`, `POST /api/sessions/:id/delete` with
+  `confirm: true` and, if a directory holds work, `acceptLoss: true`): only for ended or
+  archived sessions. The dialog lists what goes and what stays. Removed: its directories,
+  Claude Code's files of the session in `CLAUDE_CONFIG_DIR` (the transcript
+  `projects/*/<id>.jsonl` and its subagent directory, `file-history/<id>`, `session-env/<id>`,
+  `tasks/<id>`; found by exact UUID with `find -P` and removed with
+  `rm -rf --one-file-system`, as the session user), attached images, snapshots of shown files,
+  stored events, pull request records, search entries. Kept: the usage records, attributed in
+  `deleted_sessions` to the title and repositories the session had, and the pull requests on
+  GitHub. Claude Code's prompt history (`history.jsonl`, typed in the CLI) is not touched;
+  SDK sessions do not write to it.
+
+### Removing directories safely
+
+Every directory the app deletes (cleanup, delete, autoclose, rolling back a failed
+preparation, leftovers) goes through `WorkspaceEntries`
+(`apps/api/src/app/workspaces/workspace-entries.ts`):
+
+1. **Text of the path** (`checkLexical`): absolute and normalized (no `..`, `.`, double or
+   trailing slashes, no NUL), strictly inside `sessions/` or `scratch/` of the workspace, at the
+   depth the kind needs (a clone is `sessions/<slug>/<owner>/<name>`, a scratch directory
+   `scratch/<slug>`), and inside the session's own `<slug>`. A path from the database is
+   never trusted beyond this: `../../etc`, the root itself, `sessions-evil/…`, another
+   session's slug are refused before anything happens.
+2. **The disk**: from the real path of the area's root down, every segment must be a real
+   directory, not a symlink and not a file, so the path is its own real path.
+3. **Other sessions**: a directory that is or contains a directory any other session uses is
+   refused (a hostile row cannot make one session's removal reach another's clone; `app` and
+   `app2` are told apart, not by prefix).
+4. **Deleting without privileges**: `find -P <path> -xdev -mindepth 1 -delete` (no symlink is
+   followed, no other filesystem entered) runs as the session user, who owns clones and scratch
+   directories, then as the API's user without capabilities (the directories around clones
+   and the object files hardlinked from mirrors are the API's), and `rmdir` removes the then
+   empty directory. The API's own capabilities (`DAC_OVERRIDE` in the container) are never
+   used for it, so even a symlink swapped in after the checks by a running session can only
+   make it delete what the session user or the unprivileged API user could delete anyway, and
+   `rmdir` of a symlink fails. Symlinks and hard links inside a clone are removed as links;
+   their targets stay. In `single-user` development everything runs as the developer.
+
+Tested with hostile layouts (symlinked clone and parent directories, links to outside files,
+database paths pointing elsewhere, a prefix-named sibling, a file where a directory belongs).
+
+### Leftovers
+
+`GET /api/workspace/orphans` lists directories under `sessions/` and `scratch/` that no session
+claims (no session directory row that is ready or pending): clones (`sessions/<slug>/<o>/<n>`),
+scratch directories, and other directories under `sessions/` without clones (empty ones left
+behind). Symlinks there are never listed or followed. Each comes with what it holds, read as the
+session user (size with `du`, files with `find -P`, and for clones the branch and the loss
+report). `POST /api/workspace/orphans/remove` (`path`, `confirm`, `acceptLoss` when work would be
+lost) removes only a path the list holds at that moment, with the rules above, and then its
+empty parents. The list also shows directories sessions expect that are gone;
+`POST /api/workspace/missing/forget` marks such a directory removed, so the session says it
+cannot be continued. In the container (`separate-users`) these files belong to the session
+user: inspection and removal run as that user through `setpriv`, as above.
+
+### Search
+
+`GET /api/search?q=` searches titles, repository names and branches (in the sessions' metadata)
+and the conversation: the owner's messages and Claude's text answers (top-level, not those of
+subagents), archived sessions included. Every word of the query must occur, as a substring and
+in any case (Unicode lower case; `Größe` finds `größe`), within the same message. The query is
+plain text: words become `LIKE` patterns with `%`, `_` and `\` escaped against the FTS5
+trigram index, never FTS query syntax, so no input causes a syntax error (words of one or two
+characters work too, without the index). At most 8 words, 200 characters; at most 50 sessions,
+3 matches shown per session. Results show the session (title, repositories, archived) and
+snippets with the words marked; a conversation match opens the session at that message
+(`?at=<message ID>&q=`, scrolled into view and outlined; if the message is not found, the first
+one containing the first word).
+
+The conversation lives in Claude Code's transcripts and the app's stored events, and the history
+is built from both, so the index follows the history:
+
+- whenever a session's history is built (opening it, sending to it), its entries are replaced by
+  what the history holds; if the transcript cannot be read, the entries stay as they were;
+- while a session runs, each user message and each complete text block of Claude's is added as
+  it arrives;
+- at startup (2 s after), every session whose transcript changed or disappeared while the
+  server was down is indexed again (the transcript's size and modification time, from the Agent
+  SDK's `getSessionInfo`, are stored per session in `search_sessions`); a session whose
+  transcript is gone keeps only what the app stored (its pending first message);
+- deleting a session deletes its entries (cascade and triggers).
+
+FTS5 with the trigram tokenizer is part of the SQLite that `better-sqlite3` builds (checked on
+the host and in the image).
+
+### Usage and cost
+
+Every result message of Claude Code is recorded per model (input, output, cache write, cache
+read tokens, and the SDK's cost estimate `costUSD`): `modelUsage` is cumulative per Claude Code
+process, so the app stores the difference to the previous result (`UsageTracker`). That covers
+the main loop, subagents and internal calls (a Sonnet session also shows a little Haiku usage).
+Interrupted turns: the result of a stopped turn (`error_during_execution`) carries the usage of
+the calls that completed, which is recorded; the request that was cut off is not in the SDK's
+totals at all (checked with the bundled Claude Code: its `message_start` usage, input and cache
+tokens without the final output count and without a cost, reaches the app only as part of the
+streamed assistant message), so the app records nothing for it rather than an estimate.
+
+`GET /api/usage?granularity=day|week|month&groupBy=session|repository|model&tz=&from=&to=`
+sums the records per day, ISO week (Monday to Sunday) or calendar month and per group.
+Day boundaries are those of the time zone the browser sends (`tz`, IANA name), UTC for none or
+an unknown one; the page says which zone it uses. Default ranges: the last 30 days, 12 weeks or
+12 months (at most 400 buckets). A session with several repositories counts once, under all of
+them together (`acme/app + acme/lib`), so the groups add up to the total; scratch sessions are
+"No repository". Deleted sessions keep their usage under their former title and repositories.
+
+The Usage page (`/usage`, lazy-loaded) shows the totals (theoretical API cost, tokens,
+requests), a stacked bar chart (plain SVG, no chart library; the six largest groups in fixed
+colours, the rest as "Other", a legend, values of a bar on hover, focus or tap) and a table per
+group with all four token counts and the cost. The cost is labelled theoretical everywhere:
+what the requests would have cost at API prices, as the Agent SDK estimates it, not what the
+subscription costs. The session view shows the session's totals the same way.
+
 ## Previews of dev servers
 
 Claude starts a dev server in its session (in the background, in the session's directory) and
@@ -585,7 +750,8 @@ name of its own, so absolute asset paths and hot-reload WebSockets work unchange
   preview stops, the idle clock starts from then. The session view says so above the
   previews. A server restart still ends the processes (and their background dev servers);
   the previews then show "not reachable" until Claude starts the server again.
-- **Session end** (End session, autoclose through `DevServers.stopSession`, later the cleanup)
+- **Session end** (End session, autoclose through `DevServers.stopSession`, cleanup, archiving
+  and deleting)
   stops all its previews and, with `PROCESS_ISOLATION=separate-users`, the processes that
   listen on their ports: a helper run as the session user (`stop-listeners.cjs`) finds them
   by the listening socket's inode in its own processes' `/proc/<pid>/fd` and sends SIGTERM,
@@ -865,7 +1031,7 @@ base commit and parallel first sessions share history; sessions clone it like an
 repository, with the mirror as `origin`. A session's work reaches later
 sessions only when it is brought into the project's `main`: `GitService.fastForwardMirror`
 fast-forwards `main` of the mirror to the session branch (merge `main` into the session
-branch first if it moved on); the cleanup step will offer that as "merge". Pushes from session
+branch first if it moved on); the cleanup offers that as "merge". Pushes from session
 clones into the mirror may only fast-forward and never delete branches. Attaching a GitHub
 remote later turns the project into a normal repository without moving data: "Put on GitHub"
 on the Repositories page (`POST /api/repositories/:id/github`) sets the mirror's remote, pushes
@@ -880,8 +1046,14 @@ its branches and tags, and points the existing session clones' `origin` there (s
   fetched), path of the mirror, setup script, clone/fetch times and last error;
   `github_repository_id` and `github_installation_id` for repositories registered from GitHub
   (fetched, cloned and pushed with installation tokens).
-- `sessions`: as before plus the `slug` and the `pending_message` (the first message while it
-  has not been sent to Claude).
+- `sessions`: title, model, permission mode, status, the `slug`, the `pending_message` (the
+  first message while it has not been sent to Claude), `archived_at` (archived sessions).
+- `deleted_sessions`: per deleted session its title and repositories as they were, so its
+  usage stays attributable; `usage_records` (tokens and cost per request and model) have no
+  foreign key and keep the deleted session's ID.
+- `search_documents` with the FTS5 table `search_index` (trigram tokenizer, external content,
+  kept in sync by triggers) and `search_sessions` (what each session's entries were built
+  from), see [Search](#search).
 - `session_directories`: the session's directories in order; position 0 is the working
   directory, the others are additional directories. `kind` is `clone` (with `repository_id`,
   `branch`, `base_branch`, `base_commit` — the commit the branch started at, the fallback
@@ -941,7 +1113,8 @@ from `sessions/<slug>/<owner>/<repo>` on disk. Clones without a session are mark
 clones a session expects but that are gone are marked missing; clones of unregistered
 repositories and unused scratch directories are listed as stray. Removing a session clone
 (`GitService.removeSessionClone`) is used by autoclose (see [PR automation](#pr-automation));
-fast-forwarding a local project exists for the cleanup step, without UI yet.
+fast-forwarding a local project is the cleanup's "merge". Leftovers are listed with what they
+hold and removed on the Workspace cleanup page (see [Managing sessions](#managing-sessions)).
 
 Repositories registered from GitHub are cloned and fetched with installation tokens (see
 [GitHub](#github)). Repositories registered by clone URL use whatever git credentials the
@@ -1122,8 +1295,8 @@ and "Stop autofix" while a run goes on (`apps/api/src/app/pr-automation`).
   feedback from someone with write access to the repository, continues the session with what
   failed or what the reviewers wrote. Claude fixes it, commits and pushes the session branch.
 - **Autoclose**: when the pull request is merged or closed and the session has no open pull
-  request left, the session ends, its dev servers stop (`DevServers.stopSession`, the hook for
-  the dev-server step; nothing to stop yet) and its clones are removed, except clones with
+  request left, the session ends, its dev servers stop (`DevServers.stopSession`: its
+  previews and the processes behind them) and its clones are removed, except clones with
   work that is not on GitHub.
 
 ### Where events come from
@@ -1161,7 +1334,7 @@ at a time; one asked for meanwhile runs afterwards.
   permission lookups
   (cached ten minutes) and logs of failed jobs; a rate limit pauses the automation until
   GitHub's reset time. Pull requests without automation are read when their session is
-  opened, as before.
+  opened.
 
 ### Autofix
 
