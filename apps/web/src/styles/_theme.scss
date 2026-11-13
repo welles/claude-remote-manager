@@ -105,19 +105,6 @@ $color: (
       outlined-label-text-color: var(--mat-sys-on-surface),
     )
   );
-  @include mat.icon-button-overrides(
-    (
-      container-shape: var(--mat-sys-corner-small),
-    )
-  );
-  @include mat.button-toggle-overrides(
-    (
-      shape: var(--mat-sys-corner-small),
-      selected-state-background-color: var(--mat-sys-surface-container-highest),
-      selected-state-text-color: var(--mat-sys-on-surface),
-      divider-color: var(--mat-sys-outline-variant),
-    )
-  );
   // One card style: hairline border on the low container, medium radius.
   @include mat.card-overrides(
     (
@@ -134,12 +121,6 @@ $color: (
     (
       outlined-container-shape: var(--mat-sys-corner-small),
       outlined-outline-color: var(--mat-sys-outline-variant),
-    )
-  );
-  @include mat.menu-overrides(
-    (
-      container-shape: var(--mat-sys-corner-medium),
-      container-color: var(--mat-sys-surface-container-high),
     )
   );
   @include mat.select-overrides(
