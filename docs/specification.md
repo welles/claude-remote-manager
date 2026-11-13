@@ -27,6 +27,7 @@ Auf dem Server liegen inzwischen viele Repositories. Die bisherigen Wege (Devbox
 - **Frontend:** Angular-Single-Page-App, responsiv, damit es auch am Handy nutzbar ist.
 - **Persistenz:** SQLite für Metadaten (Sitzungen, zugehörige Repos und Sitzungsklone, Titel, Zeitstempel). Die eigentlichen Gesprächsverläufe speichert Claude Code selbst.
 - **Betrieb:** Docker-Container auf dem Heimserver, erreichbar über den bestehenden Cloudflare Tunnel mit Google Single Sign-On über Cloudflare Access davor (gilt auch für die Vorschau-Subdomains; nur der GitHub-Webhook-Pfad wird per Bypass-Regel ausgenommen). Keine eigene Anmeldung in der App.
+- **Prüfung des Access-Tokens im Backend:** Das Backend verlässt sich nicht allein darauf, dass Cloudflare Access davor sitzt, sondern prüft das Access-JWT jeder Anfrage und jedes WebSocket-Aufbaus selbst (Signatur über die Schlüssel des Teams, Aussteller, Audience der Anwendung, Ablauf; optional eine Liste erlaubter E-Mail-Adressen). Grund: Alles, was den Port des Containers ohne Umweg über Cloudflare erreicht – ein anderer Prozess im Container, der Host, das lokale Netz –, könnte sonst die API bedienen und etwa ohne Freigabe des Nutzers pushen. Ausgenommen sind nur der Health-Check, der Endpunkt des Credential-Helpers der Sitzungsklone (eigenes Sitzungs-Token) und später der Webhook (Signatur). Für die lokale Entwicklung lässt sich die Prüfung ausdrücklich abschalten. Prozesse der Sitzungen laufen im Container unter einem eigenen Benutzer und dürfen die Verwaltungs-API gar nicht aufrufen.
 
 ## Konzept der Sitzungsklone
 

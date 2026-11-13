@@ -33,6 +33,7 @@ Requires Node.js 24 and npm.
 npm ci
 npm start              # web app on http://localhost:4200, starts the API (port 3000) too
 npm run start:api      # API only
+# both set AUTH_MODE=none and PROCESS_ISOLATION=single-user (local development)
 npm run check          # lint, test and build all projects, as in CI
 npm run lint           # or: npm test, npm run build
 npm run format         # Prettier
@@ -63,32 +64,42 @@ message: the session is resumed. Mirrors, session clones and scratch directories
 `~/.local/share/claude-remote-manager/workspace` by default, outside this repository; the
 database lives in `data/db` of this repository (gitignored).
 
-For GitHub, start it with `GITHUB_APP_ID=… GITHUB_APP_PRIVATE_KEY_FILE=/path/to/key.pem`. In
-development the session clones also see your global git configuration (e.g. commit signing);
-in the container that is `/data/git/gitconfig`.
+For GitHub, start it with `GITHUB_APP_ID=… GITHUB_APP_PRIVATE_KEY_FILE=/path/to/key.pem`.
+
+In development (`PROCESS_ISOLATION=single-user`) the API and the sessions run as you, with
+your global git configuration: credentials for repositories registered by clone URL, and
+settings such as commit signing apply in session clones too. To keep them apart, start the
+API with `GIT_CONFIG_GLOBAL` pointing to a separate file. The tests never use your git
+configuration (each test runs git with its own).
 
 Start the API from a normal shell. Started from inside a Claude Code session it inherits that
 session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions it runs.
 
 ### Environment variables of the API
 
-| Variable                            | Default (development)                                                                            | Purpose                                                         |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                         |
-| `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                  |
-| `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem             |
-| `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                       |
-| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them      |
-| `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                   |
-| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts               |
-| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                        |
-| `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                  |
-| `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret     |
-| `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                     |
-| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API |
-| `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                 |
-| `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                |
-| `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                |
+| Variable                            | Default (development)                                                                            | Purpose                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                                            |
+| `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                                     |
+| `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem                                |
+| `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                          |
+| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them                         |
+| `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                      |
+| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts                                  |
+| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                                           |
+| `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                                     |
+| `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret                        |
+| `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                                        |
+| `AUTH_MODE`                         | none, required                                                                                   | `cloudflare-access` or `none`, see [Authentication](#authentication)               |
+| `CF_ACCESS_TEAM_DOMAIN`             | none                                                                                             | Team domain (`<team>.cloudflareaccess.com`) for `cloudflare-access`                |
+| `CF_ACCESS_AUD`                     | none                                                                                             | Application Audience (AUD) tag(s), comma-separated                                 |
+| `CF_ACCESS_ALLOWED_EMAILS`          | none (everyone Access lets in)                                                                   | Optional comma-separated email allowlist                                           |
+| `PROCESS_ISOLATION`                 | none, required (image: `separate-users`)                                                         | `separate-users` or `single-user`, see [Users](#users-and-what-sessions-can-reach) |
+| `SESSION_USER`                      | `claude`                                                                                         | OS user of session processes with `separate-users`                                 |
+| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API                    |
+| `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                                    |
+| `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                                   |
+| `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                                   |
 
 Secrets of the app are never passed to the processes it starts (Claude Code, setup scripts,
 its own git commands): every variable named `CRM_SECRET_*` is removed, plus a registry of fixed
@@ -97,6 +108,42 @@ names in `apps/api/src/app/common/child-environment.ts` (`ANTHROPIC_API_KEY`,
 secrets must use the `CRM_SECRET_` prefix, so a forgotten registration still keeps them out.
 The GitHub App's private key is read once at startup and kept only in the API's memory (see
 [GitHub](#github) for what that does and does not protect).
+
+### Authentication
+
+`AUTH_MODE` has no default; the API refuses to start without it.
+
+- `cloudflare-access` (production): the API verifies the Cloudflare Access token of every HTTP
+  request and WebSocket upgrade itself, also for the static web app: header
+  `Cf-Access-Jwt-Assertion`, cookie `CF_Authorization` as fallback. Verified as Cloudflare
+  documents it: RS256 signature with the team's keys from
+  `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` (cached; a token with an
+  unknown key ID makes the API re-read them, at most every 30 s, so key rotations need no
+  restart), issuer `https://<team>.cloudflareaccess.com`, audience = `CF_ACCESS_AUD`,
+  expiry and not-before (one minute of clock skew), and optionally `CF_ACCESS_ALLOWED_EMAILS`.
+  Refusals are `401` with `WWW-Authenticate: CloudflareAccess` and a JSON body with a
+  machine-readable `reason` (`access_token_missing`, `access_token_expired`,
+  `access_token_invalid`), or `403` with `access_email_not_allowed`, so the web app can tell
+  an expired Access session from other errors.
+- `none` (local development only): no authentication; the API logs a warning at startup.
+
+Why the API checks the token although Access sits in front: anything that reaches the
+container's port without going through Cloudflare (another process in the container, the host,
+the local network) would otherwise drive the API, e.g. push a session branch without the
+user's approval.
+
+Exempt, each with its own protection (`AUTH_EXEMPT_ROUTES` in
+`apps/api/src/app/auth/authenticator.ts`): `GET /api/health` (no data) and
+`POST /api/git/credentials` (session process token); later the GitHub webhook (signature).
+
+**Session processes cannot call the API.** With `PROCESS_ISOLATION=separate-users`, connections
+over loopback from a process of the session user (looked up in the kernel's socket table,
+`/proc/net/tcp*`) are refused with `403` (`session_process_refused`) except on the routes
+sessions need (the credential endpoint, the health check), in either auth mode. This is what
+closes the hole in `AUTH_MODE=none` inside the container. Still open with `AUTH_MODE=none`:
+every process outside the container that can reach the port (the compose file publishes it on
+the host's loopback only) and, in development (`single-user`), session processes themselves,
+which run as the same user as the API.
 
 ### Request guard
 
@@ -416,6 +463,12 @@ over allow rules, e.g. from a repository's `.claude/settings.json`), the tool ha
 permission policy `always_ask`, and if anything still skipped `canUseTool` (a permission mode,
 an allow rule) no grant is recorded, so the helper stays read-only and the tool refuses.
 
+The approval request carries, for every `git push` in a Bash command, what it would update
+(`gitPushes`: remote, destinations, force, deletes, all branches or tags, and whether it pushes
+only the session branch, with warnings otherwise; `apps/api/src/app/agent/git-push-analysis.ts`),
+so the approval dialog can warn: the approval lets the helper write to the whole repository,
+including e.g. `git push origin HEAD:main`.
+
 What this boundary cannot guarantee:
 
 - An approved command does whatever it does. A push grant is recognized from the command
@@ -426,20 +479,23 @@ What this boundary cannot guarantee:
 - Read-only tokens are available to every process of the session at any time (for
   `git fetch`), e.g. by running the helper or `git credential fill`, which itself is a Bash
   command that needs approval.
-- All sessions and the API run as one user in the container. A process of a session can read
-  files and `/proc/<pid>/environ` of other processes of that user: other sessions' tokens,
-  and the private key file (or the API's environment, if the key is passed as variable).
-  Claude Code asks before reading outside the session's directories, so only an approved tool
-  use can get there; a hard boundary needs separate users or a separate token service.
+- Sessions are separated from the API (see [Users](#users-and-what-sessions-can-reach)), not
+  from each other: all sessions share the session user, so a process of one session can read
+  another session's clones and process environment (its session token). Claude Code asks
+  before reading outside the session's directories, so only an approved tool use gets there.
+- In development (`single-user`) none of this separation exists.
 
 ### Local projects on GitHub
 
 "Put on GitHub" (`POST /api/repositories/:id/github`) creates a repository and pushes the
 project's branches and tags there, or attaches an existing empty repository the app can
-access. Organizations: `POST /orgs/{org}/repos` with an installation token works with the
-Administration permission. Personal account: GitHub's documentation lists
-`POST /user/repos` for installation tokens too, but this is not verified; if GitHub refuses,
-the error says to create an empty repository on GitHub and attach it instead.
+access. Organizations: `POST /orgs/{org}/repos` with an installation token (Administration
+permission). Personal accounts: the app cannot create repositories there. GitHub's
+documentation lists `POST /user/repos` for installation tokens, but for this app GitHub
+answers `403` ("Rate Limit Exceeded", with
+`x-accepted-github-permissions: administration=write; repository_creation=write`). The form
+therefore offers creating only in organizations; for the personal account, create an empty
+repository on GitHub and attach it.
 
 ## Container
 
@@ -468,8 +524,49 @@ commit SHA, `latest` on `main`). `VERSION`, `COMMIT` and `COMMIT_TIME` end up in
 
 The image (linux/amd64, Debian based) contains Node.js 24, git, openssh-client, curl, the
 Claude Code CLI and Nix (single-user, flakes enabled). The `claude` command is the native
-binary that ships with the Agent SDK, so the CLI and the sessions always use the same version. The app runs as the non-root user
-`claude` (UID/GID 1000, changeable with the build args `USER_UID`/`USER_GID`) on port 8080.
+binary that ships with the Agent SDK, so the CLI and the sessions always use the same version.
+It listens on port 8080.
+
+### Users and what sessions can reach
+
+The image runs with `PROCESS_ISOLATION=separate-users`:
+
+| User     | UID (build arg)   | Runs                                                                     | Owns                                                        |
+| -------- | ----------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `crm`    | 1000 (`API_UID`)  | the API                                                                  | `/data/db` (0700), `/data/git` (0700), mirrors, GitHub key  |
+| `claude` | 1001 (`USER_UID`) | Claude Code, setup scripts, git in session clones, the credential helper | `/data/claude`, `/nix`, session clones, scratch directories |
+
+The container starts as root only for the entrypoint (`docker/entrypoint.sh`): it gives the
+volumes these owners (also volumes of older images), checks that the session user cannot read
+the GitHub App key, and starts the API as `crm` with exactly the capabilities CHOWN,
+DAC_OVERRIDE, KILL, SETGID and SETUID (ambient, through `capsh`; do not drop them from the
+container). The API starts every session process through `setpriv` as `claude`, with all
+capabilities dropped and `no_new_privs`, and with an environment built from an allowlist
+(`SESSION_ENV_ALLOWLIST` in `apps/api/src/app/common/process-isolation.ts`); its own git
+commands on the mirrors run without capabilities too. It refuses to start as root or without
+the capabilities.
+
+Session clones still hardlink the mirrors' objects: the API makes the clone (with
+`fs.protected_hardlinks` only the owner may link the mirror's read-only object files) and
+hands it to `claude`, except the hardlinked object files, which stay the mirror's (changing
+their owner would change the mirror's files). The session owns all directories, so commits,
+`git gc` and deletes work, but it cannot change or delete mirror content. Pushes by button run
+in the mirror: the session user writes a bundle of the branch, the API fetches it and pushes,
+so no token reaches a session process and git never runs as the API in the session's
+repository.
+
+What a session process can and cannot reach (checked in the container):
+
+- cannot: read the GitHub App key, the database, `/data/git` (the API's SSH key and git
+  configuration), the API's `/proc/<pid>/environ`; write or delete in the mirrors; call the
+  management API (refused by peer user, see [Authentication](#authentication)); become
+  another user (`setpriv`/`su` fail);
+- can: its clones, `/data/claude` (login, transcripts, memory), `/nix`, the credential
+  endpoint with its session token, and everything of other sessions (same user).
+
+Sessions have no ambient git credentials anymore: repositories registered by clone URL are
+fetched and pushed (by button) by the API with `/data/git`; Claude's own `git push` works only
+for GitHub repositories (credential helper).
 
 ### Volumes
 
@@ -479,7 +576,7 @@ All state lives in volumes under `/data`, plus the Nix store, which has to stay 
 | ----------------- | ----------------------------------------------------------------------------------------------- |
 | `/data/workspace` | `repos/` (mirrors), `sessions/<slug>/<owner>/<repo>` (session clones), `scratch/<slug>`         |
 | `/data/claude`    | Claude Code configuration dir (`CLAUDE_CONFIG_DIR`): login, settings, transcripts               |
-| `/data/git`       | `ssh/` (linked as `~/.ssh`: key, `known_hosts`), `gitconfig` (`GIT_CONFIG_GLOBAL`), credentials |
+| `/data/git`       | the API's `ssh/` (linked as `~crm/.ssh`: key, `known_hosts`), `gitconfig` (`GIT_CONFIG_GLOBAL`) |
 | `/data/db`        | SQLite database                                                                                 |
 | `/nix`            | Nix store and Nix's user cache, so tools are downloaded only once                               |
 
@@ -487,8 +584,8 @@ The paths are also available to the app as `DATA_DIR`, `WORKSPACE_DIR`, `DB_DIR`
 `CLAUDE_CONFIG_DIR` and `GIT_CONFIG_GLOBAL`. The workspace must be one volume (one filesystem),
 so that session clones can hardlink the mirrors' objects.
 
-`docker-compose.yml` uses named volumes. Bind mounts work as well; the directories must then be
-owned by UID 1000 (or the configured `USER_UID`). The entrypoint creates missing directories.
+`docker-compose.yml` uses named volumes. Bind mounts work as well; the entrypoint creates
+missing directories and gives them their owners (see the table above).
 
 **Nix store volume.** A volume over `/nix` hides the Nix installation in the image. Docker fills
 an empty _named_ volume with the image content on first use, so that case needs nothing else.
@@ -517,8 +614,9 @@ secrets:
     file: ./secrets/github-app.pem
 ```
 
-Compose bind-mounts the file with its host owner and mode; it must be readable by the
-container user (UID 1000), e.g. owned by it with mode `0400`. Or without Compose:
+Compose bind-mounts the file with its host owner and mode; it must be readable by the API user
+(UID 1000) and not by the session user (UID 1001), e.g. owned by UID 1000 with mode `0400`
+or `0600`. The entrypoint refuses to start otherwise. Or without Compose:
 `docker run -v /path/github-app.pem:/run/secrets/github-app-key:ro -e GITHUB_APP_ID=…
 -e GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github-app-key …`. Never put the key into the image
 or the compose file itself.
@@ -530,12 +628,14 @@ running container; the credentials are stored in `/data/claude/.credentials.json
 restarts and re-creations of the container.
 
 ```sh
-docker compose exec claude-remote-manager claude
+docker compose exec -u claude claude-remote-manager claude
 ```
 
-On first start Claude Code asks you to log in (otherwise type `/login`). Choose the Claude
-account, open the shown URL in your browser and paste the code back into the terminal. Check the
-result with `docker compose exec claude-remote-manager claude auth status`.
+Log in as the session user (`-u claude`): `docker compose exec` runs as root otherwise (the
+entrypoint gives `/data/claude` back to `claude` on the next start). On first start Claude
+Code asks you to log in (otherwise type `/login`). Choose the Claude account, open the shown
+URL in your browser and paste the code back into the terminal. Check the result with
+`docker compose exec -u claude claude-remote-manager claude auth status`.
 
 Alternative for setups without an interactive terminal: run `claude setup-token` (anywhere, also
 in the container) to create a long-lived OAuth token and pass it to the container as the

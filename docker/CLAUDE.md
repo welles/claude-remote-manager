@@ -14,8 +14,7 @@ sessions.
 | `/data/workspace/sessions/<session>/<owner>/<repo>` | The session's own clone of a repository, on branch `claude/<session>`    |
 | `/data/workspace/scratch/<session>`                 | Scratch directory of a session without repository (no git)               |
 | `/data/claude`                                      | Claude Code configuration, login and transcripts. Do not edit.           |
-| `/data/git`                                         | SSH key (`ssh/`), git config and credentials. Do not edit.               |
-| `/data/db`                                          | Database of the session manager. Do not touch.                           |
+| `/data/git`, `/data/db`                             | The session manager's own; not accessible to sessions.                   |
 | `/nix`                                              | Nix store, shared cache for all sessions                                 |
 
 ## Your directories
@@ -40,6 +39,8 @@ sessions.
 - Missing tools: get them from Nix instead of installing them globally, e.g.
   `nix shell nixpkgs#dotnet-sdk -c dotnet build`. There is no root access and no `apt`.
 - The image itself only provides a small base: git, Node.js/npm, curl, ssh and Nix.
+- You run as the user `claude`, not as the session manager: the session manager's API, its
+  database and keys are out of reach, and `sudo`/`su` do not work.
 
 ## Git and GitHub
 
@@ -54,4 +55,6 @@ sessions.
 - Create pull requests with the tool `create_pull_request` (repository `owner/name`, title,
   body, base branch), after pushing the branch; each call asks the user. Do not use `gh` or
   the GitHub API directly.
+- There are no other git credentials: repositories that are not on GitHub can be pushed only
+  by the user (Push button).
 - Never force-push or rewrite published history unless the user explicitly asks for it.

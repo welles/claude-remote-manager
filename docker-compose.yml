@@ -30,8 +30,12 @@ services:
       # URLs still work).
       # GITHUB_APP_ID: '123456'
       # GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app-key
+    # The key file must be readable by UID 1000 (the API user) and not by
+    # UID 1001 (the session user), e.g. owned by 1000 with mode 0400.
     # secrets:
     #   - github-app-key
+    # Log in to Claude as the session user:
+    #   docker compose exec -u claude claude-remote-manager claude
     volumes:
       # Session workspace on one filesystem: repos/ (mirrors), sessions/
       # (one clone per session and repository, hardlinked), scratch/
