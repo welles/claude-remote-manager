@@ -13,6 +13,12 @@ export abstract class TranscriptReader {
 
   /** Whether Claude Code has a transcript for this session ID. */
   abstract exists(sdkSessionId: string, cwd: string): Promise<boolean>;
+
+  /**
+   * Size and modification time of the transcript, to tell whether it
+   * changed; `null` if there is none.
+   */
+  abstract stamp(sdkSessionId: string, cwd: string): Promise<string | null>;
 }
 
 @Injectable()
@@ -25,5 +31,11 @@ export class SdkTranscriptReader implements TranscriptReader {
   async exists(sdkSessionId: string, cwd: string): Promise<boolean> {
     const sdk = await loadAgentSdk();
     return (await sdk.getSessionInfo(sdkSessionId, { dir: cwd })) !== undefined;
+  }
+
+  async stamp(sdkSessionId: string, cwd: string): Promise<string | null> {
+    const sdk = await loadAgentSdk();
+    const info = await sdk.getSessionInfo(sdkSessionId, { dir: cwd });
+    return info ? `${info.fileSize ?? '?'}@${info.lastModified}` : null;
   }
 }

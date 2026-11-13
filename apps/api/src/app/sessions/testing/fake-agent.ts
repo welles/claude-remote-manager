@@ -180,8 +180,23 @@ export class FakeTranscriptReader implements TranscriptReader {
     );
   }
 
+  /** Changes the stamp of every transcript (as if they were written). */
+  version = 1;
+
+  async stamp(sdkSessionId: string): Promise<string | null> {
+    return (await this.exists(sdkSessionId))
+      ? `${this.transcripts.get(sdkSessionId)?.length ?? 0}@${this.version}`
+      : null;
+  }
+
+  /** Makes `read` fail, like an unreadable transcript. */
+  failing = false;
+
   async read(sdkSessionId: string, cwd: string): Promise<SessionMessage[]> {
     this.reads.push({ sdkSessionId, cwd });
+    if (this.failing) {
+      throw new Error('transcript unreadable');
+    }
     return this.transcripts.get(sdkSessionId) ?? [];
   }
 }

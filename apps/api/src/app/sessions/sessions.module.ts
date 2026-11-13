@@ -99,6 +99,7 @@ import { ModelsService } from './models.service';
     SessionRepository,
     SessionGitService,
     SessionAutomationHooks,
+    TranscriptReader,
   ],
 })
 export class SessionsModule {

@@ -18,6 +18,7 @@ import {
   REQUEST_GUARD_EXEMPT_ROUTES,
   RequestGuardMiddleware,
 } from './security/request-guard.middleware';
+import { SearchModule } from './search/search.module';
 import { SecurityModule } from './security/security.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { SettingsModule } from './settings/settings.module';
@@ -40,6 +41,7 @@ const webRoot = resolve(process.env.WEB_ROOT || join(__dirname, 'public'));
     SessionsModule,
     NotificationsModule,
     PrAutomationModule,
+    SearchModule,
     ...(existsSync(webRoot)
       ? [
           ServeStaticModule.forRoot({

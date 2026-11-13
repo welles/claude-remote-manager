@@ -316,8 +316,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly updates = new Subject<SessionDto>();
   private readonly deletions = new Subject<string>();
   private shuttingDown = false;
-  /** Called when a session's title changed (the search index). */
-  titleChanged: ((sessionId: string) => void) | null = null;
   /**
    * Called when a session's history was built (the search index rebuilds
    * the session's entries from it); `transcript` is whether the
@@ -898,7 +896,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (title !== undefined && title !== record.title) {
       // Only the title: slug, branches and directories keep their names.
       this.updates.next(this.toDto(this.sessions.update(sessionId, { title })));
-      this.titleChanged?.(sessionId);
     }
     if (Object.keys(changes).length === 0) {
       return this.get(sessionId);
@@ -1064,7 +1061,16 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const live = this.live.get(sessionId);
     if (live) {
       this.clearIdleTimer(live);
-      live.run?.close();
+      const run = live.run;
+      // Detached first: the message loop then ends without looking for
+      // the session's record.
+      live.run = null;
+      live.closing = 'end';
+      if (run) {
+        this.approver.cancelSession(sessionId, 'ended');
+        this.support.released(sessionId);
+        run.close();
+      }
       this.live.delete(sessionId);
     }
     this.deletions.next(sessionId);

@@ -11,6 +11,7 @@ export * from './lib/permissions';
 export * from './lib/pr-automation';
 export * from './lib/previews';
 export * from './lib/repositories';
+export * from './lib/search';
 export * from './lib/session';
 export * from './lib/session-diff';
 export * from './lib/session-management';
