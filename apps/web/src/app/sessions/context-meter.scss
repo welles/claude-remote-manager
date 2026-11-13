@@ -7,14 +7,12 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 12px;
-  margin-top: 8px;
   font: var(--mat-sys-body-small);
   color: var(--mat-sys-on-surface-variant);
 }
 
 .context-bar {
   flex: 1 1 120px;
-  max-width: 240px;
   height: 6px;
   border-radius: var(--mat-sys-corner-extra-small);
   background: var(--mat-sys-surface-container-highest);
@@ -23,7 +21,7 @@
 
 .context-fill {
   height: 100%;
-  background: var(--mat-sys-primary);
+  background: var(--app-status-running);
 
   &.high {
     background: var(--mat-sys-error);

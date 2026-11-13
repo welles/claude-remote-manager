@@ -14,197 +14,217 @@
     }
   </header>
 
-  @switch (r.kind) { @case ('question') {
-  <div class="questions">
-    @for (question of r.questions ?? []; track question.question) {
-    <fieldset class="question" data-testid="question">
-      <legend>
-        @if (question.header) {
-        <span class="app-tag">{{ question.header }}</span>
-        }
-        <span class="question-text">{{ question.question }}</span>
-      </legend>
-      @if (question.multiSelect) { @for (option of question.options; track
-      option.label) {
-      <mat-checkbox
-        [checked]="isSelected(question, option.label)"
-        (change)="toggle(question, option.label, $event.checked)"
-      >
-        <span class="option-label">{{ option.label }}</span>
-        @if (option.description) {
-        <span class="option-description">{{ option.description }}</span>
-        }
-      </mat-checkbox>
-      @if (option.preview) {
-      <div
-        class="preview markdown"
-        [innerHTML]="option.preview | markdown"
-      ></div>
-      } } } @else {
-      <mat-radio-group
-        [value]="singleValue(question)"
-        (change)="choose(question, $event.value)"
-        class="options"
-      >
-        @for (option of question.options; track option.label) {
-        <mat-radio-button [value]="option.label">
+  <!-- What is asked scrolls here; the buttons below stay in view. -->
+  <div class="content" data-testid="permission-content">
+    @switch (r.kind) { @case ('question') {
+    <div class="questions">
+      @for (question of r.questions ?? []; track question.question) {
+      <fieldset class="question" data-testid="question">
+        <legend>
+          @if (question.header) {
+          <span class="app-tag">{{ question.header }}</span>
+          }
+          <span class="question-text">{{ question.question }}</span>
+        </legend>
+        @if (question.multiSelect) { @for (option of question.options; track
+        option.label) {
+        <mat-checkbox
+          [checked]="isSelected(question, option.label)"
+          (change)="toggle(question, option.label, $event.checked)"
+        >
           <span class="option-label">{{ option.label }}</span>
           @if (option.description) {
           <span class="option-description">{{ option.description }}</span>
           }
-        </mat-radio-button>
+        </mat-checkbox>
         @if (option.preview) {
         <div
           class="preview markdown"
           [innerHTML]="option.preview | markdown"
         ></div>
-        } }
-        <mat-radio-button [value]="other">Own answer</mat-radio-button>
-      </mat-radio-group>
-      }
-      <mat-form-field appearance="outline" subscriptSizing="dynamic">
-        <mat-label
-          >{{ question.multiSelect ? 'Also (own words)' : 'Own answer'
-          }}</mat-label
+        } } } @else {
+        <mat-radio-group
+          [value]="singleValue(question)"
+          (change)="choose(question, $event.value)"
+          class="options"
         >
-        <input
-          matInput
-          [value]="otherText(question)"
-          (input)="setOther(question, $event)"
-          data-testid="other-answer"
-        />
-      </mat-form-field>
-    </fieldset>
-    } @empty {
-    <p>Claude asks, but the questions could not be read.</p>
-    }
-  </div>
-  } @case ('plan') { @if (r.plan; as plan) {
-  <div
-    class="plan markdown"
-    data-testid="plan"
-    [innerHTML]="plan | markdown"
-  ></div>
-  } @else {
-  <p>Claude wants to leave plan mode and start implementing.</p>
-  }
-  <mat-radio-group
-    class="options"
-    [value]="planMode()"
-    (change)="planMode.set($event.value)"
-    aria-label="Continue in"
-  >
-    <mat-radio-button value="default">
-      <span class="option-label">Ask before changes</span>
-      <span class="option-description">{{ modeInfo.default.description }}</span>
-    </mat-radio-button>
-    <mat-radio-button value="acceptEdits" data-testid="plan-accept-edits">
-      <span class="option-label">Accept edits</span>
-      <span class="option-description"
-        >{{ modeInfo.acceptEdits.description }}</span
-      >
-    </mat-radio-button>
-  </mat-radio-group>
-  } @default { @if (r.title) {
-  <p class="title">{{ r.title }}</p>
-  } @else {
-  <p class="title">{{ summary().action }}</p>
-  }
-  <dl class="fields">
-    @for (field of summary().fields; track field.label) {
-    <div class="field">
-      <dt>{{ field.label }}</dt>
-      <dd>
-        @if (field.code) {
-        <pre>{{ field.value }}</pre>
-        } @else { {{ field.value }} }
-      </dd>
-    </div>
-    }
-  </dl>
-  @if (r.diff; as diff) {
-  <app-file-diff-card
-    class="diff"
-    [diff]="diff"
-    [label]="diffLabel()"
-    data-testid="request-diff"
-  />
-  } @if (r.pullRequest; as pull) {
-  <dl class="fields" data-testid="pull-request">
-    <div class="field">
-      <dt>Repository</dt>
-      <dd><code>{{ pull.repository ?? 'not named' }}</code></dd>
-    </div>
-    <div class="field">
-      <dt>Title</dt>
-      <dd>{{ pull.title }}</dd>
-    </div>
-    <div class="field">
-      <dt>Into</dt>
-      <dd>
-        <code>{{ pull.base ?? 'the base branch' }}</code>@if (pull.draft) {
-        (draft) }
-      </dd>
-    </div>
-    @if (pull.body) {
-    <div class="field">
-      <dt>Description</dt>
-      <dd class="markdown body" [innerHTML]="pull.body | markdown"></dd>
-    </div>
-    }
-  </dl>
-  } @if (r.gitPushes.length > 0) {
-  <div class="pushes" [class.danger]="!plainPushes()" data-testid="git-pushes">
-    @for (push of r.gitPushes; track $index) {
-    <p class="push">
-      Push @for (target of push.targets; track $index) {
-      <code>{{ target.destination }}</code>
-      } @empty { the current branch } to
-      <code>{{ push.remote ?? 'its upstream' }}</code>
-    </p>
-    @if (push.warnings.length > 0) {
-    <ul class="warnings">
-      @for (warning of push.warnings; track warning) {
-      <li>{{ warning }}</li>
+          @for (option of question.options; track option.label) {
+          <mat-radio-button [value]="option.label">
+            <span class="option-label">{{ option.label }}</span>
+            @if (option.description) {
+            <span class="option-description">{{ option.description }}</span>
+            }
+          </mat-radio-button>
+          @if (option.preview) {
+          <div
+            class="preview markdown"
+            [innerHTML]="option.preview | markdown"
+          ></div>
+          } }
+          <mat-radio-button [value]="other">Own answer</mat-radio-button>
+        </mat-radio-group>
+        }
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label
+            >{{ question.multiSelect ? 'Also (own words)' : 'Own answer'
+            }}</mat-label
+          >
+          <input
+            matInput
+            [value]="otherText(question)"
+            (input)="setOther(question, $event)"
+            data-testid="other-answer"
+          />
+        </mat-form-field>
+      </fieldset>
+      } @empty {
+      <p>Claude asks, but the questions could not be read.</p>
       }
-    </ul>
-    } } @if (plainPushes()) {
-    <p class="hint">Pushes only the session branch.</p>
+    </div>
+    } @case ('plan') { @if (r.plan; as plan) {
+    <div
+      class="plan markdown"
+      data-testid="plan"
+      [innerHTML]="plan | markdown"
+    ></div>
     } @else {
+    <p>Claude wants to leave plan mode and start implementing.</p>
+    }
+    <mat-radio-group
+      class="options"
+      [value]="planMode()"
+      (change)="planMode.set($event.value)"
+      aria-label="Continue in"
+    >
+      <mat-radio-button value="default">
+        <span class="option-label">Ask before changes</span>
+        <span class="option-description"
+          >{{ modeInfo.default.description }}</span
+        >
+      </mat-radio-button>
+      <mat-radio-button value="acceptEdits" data-testid="plan-accept-edits">
+        <span class="option-label">Accept edits</span>
+        <span class="option-description"
+          >{{ modeInfo.acceptEdits.description }}</span
+        >
+      </mat-radio-button>
+    </mat-radio-group>
+    } @default { @if (r.title) {
+    <p class="title">{{ r.title }}</p>
+    } @else {
+    <p class="title">{{ summary().action }}</p>
+    }
+    <dl class="fields">
+      @for (field of summary().fields; track field.label) {
+      <div class="field">
+        <dt>{{ field.label }}</dt>
+        <dd>
+          @if (field.code) {
+          <pre>{{ field.value }}</pre>
+          } @else { {{ field.value }} }
+        </dd>
+      </div>
+      }
+    </dl>
+    @if (r.diff; as diff) {
+    <app-file-diff-card
+      class="diff"
+      [diff]="diff"
+      [label]="diffLabel()"
+      data-testid="request-diff"
+    />
+    } @if (r.pullRequest; as pull) {
+    <dl class="fields" data-testid="pull-request">
+      <div class="field">
+        <dt>Repository</dt>
+        <dd><code>{{ pull.repository ?? 'not named' }}</code></dd>
+      </div>
+      <div class="field">
+        <dt>Title</dt>
+        <dd>{{ pull.title }}</dd>
+      </div>
+      <div class="field">
+        <dt>Into</dt>
+        <dd>
+          <code>{{ pull.base ?? 'the base branch' }}</code>@if (pull.draft) {
+          (draft) }
+        </dd>
+      </div>
+      @if (pull.body) {
+      <div class="field">
+        <dt>Description</dt>
+        <dd class="markdown body" [innerHTML]="pull.body | markdown"></dd>
+      </div>
+      }
+    </dl>
+    } @if (r.gitPushes.length > 0) {
+    <div
+      class="pushes"
+      [class.danger]="!plainPushes()"
+      data-testid="git-pushes"
+    >
+      @for (push of r.gitPushes; track $index) {
+      <p class="push">
+        Push @for (target of push.targets; track $index) {
+        <code>{{ target.destination }}</code>
+        } @empty { the current branch } to
+        <code>{{ push.remote ?? 'its upstream' }}</code>
+      </p>
+      @if (push.warnings.length > 0) {
+      <ul class="warnings">
+        @for (warning of push.warnings; track warning) {
+        <li>{{ warning }}</li>
+        }
+      </ul>
+      } } @if (plainPushes()) {
+      <p class="hint">Pushes only the session branch.</p>
+      } @else {
+      <p class="hint">
+        Allowing it lets this command write to the whole repository.
+      </p>
+      }
+    </div>
+    } @if (r.description) {
+    <p class="hint">{{ r.description }}</p>
+    } @if (r.decisionReason) {
+    <p class="hint">Asked because: {{ r.decisionReason }}</p>
+    } } } @if (denying()) {
+    <mat-form-field
+      appearance="outline"
+      class="message"
+      subscriptSizing="dynamic"
+    >
+      <mat-label
+        >{{ r.kind === 'plan' ? 'What should change? (optional)' : 'Message to
+        Claude (optional)' }}</mat-label
+      >
+      <textarea
+        matInput
+        [value]="message()"
+        (input)="onMessage($event)"
+        cdkTextareaAutosize
+        cdkAutosizeMinRows="2"
+        cdkAutosizeMaxRows="6"
+        data-testid="deny-message"
+      ></textarea>
+    </mat-form-field>
     <p class="hint">
-      Allowing it lets this command write to the whole repository.
+      @if (r.kind === 'plan') { With feedback Claude revises the plan; without,
+      Claude stops and waits for your message. } @else { With a message Claude
+      continues with it; without, Claude stops and waits. }
+    </p>
+    } @else if (r.sessionAllow; as allowed) {
+    <p class="hint" data-testid="session-allow">
+      "Allow for this session" also allows from now on: @for (rule of
+      allowed.rules; track rule) {
+      <code>{{ rule }}</code>
+      } @for (directory of allowed.directories; track directory) { access to
+      <code>{{ directory }}</code>
+      }
     </p>
     }
   </div>
-  } @if (r.description) {
-  <p class="hint">{{ r.description }}</p>
-  } @if (r.decisionReason) {
-  <p class="hint">Asked because: {{ r.decisionReason }}</p>
-  } } } @if (denying()) {
-  <mat-form-field
-    appearance="outline"
-    class="message"
-    subscriptSizing="dynamic"
-  >
-    <mat-label
-      >{{ r.kind === 'plan' ? 'What should change? (optional)' : 'Message to
-      Claude (optional)' }}</mat-label
-    >
-    <textarea
-      matInput
-      [value]="message()"
-      (input)="onMessage($event)"
-      cdkTextareaAutosize
-      cdkAutosizeMinRows="2"
-      cdkAutosizeMaxRows="6"
-      data-testid="deny-message"
-    ></textarea>
-  </mat-form-field>
-  <p class="hint">
-    @if (r.kind === 'plan') { With feedback Claude revises the plan; without,
-    Claude stops and waits for your message. } @else { With a message Claude
-    continues with it; without, Claude stops and waits. }
-  </p>
+  @if (denying()) {
   <div class="buttons">
     <button
       matButton="filled"
@@ -267,14 +287,5 @@
       'Decline…' : 'Deny…' }}
     </button>
   </div>
-  @if (r.sessionAllow; as allowed) {
-  <p class="hint" data-testid="session-allow">
-    "Allow for this session" also allows from now on: @for (rule of
-    allowed.rules; track rule) {
-    <code>{{ rule }}</code>
-    } @for (directory of allowed.directories; track directory) { access to
-    <code>{{ directory }}</code>
-    }
-  </p>
-  } }
+  }
 </section>

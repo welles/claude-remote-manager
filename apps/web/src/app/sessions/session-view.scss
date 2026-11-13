@@ -1,286 +1,117 @@
+// Phone: app bar, strip, conversation, dock; details in an overlay panel.
+// From 1100 px the session list sits on the left, from 1360 px the
+// details are a permanent column on the right.
 :host {
-  padding-bottom: 0;
+  display: block;
 }
 
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+
+  @media (min-width: 1100px) {
+    grid-template-columns: 320px minmax(0, 1fr);
+  }
+
+  @media (min-width: 1360px) {
+    grid-template-columns: 320px minmax(0, 1fr) 340px;
+  }
+}
+
+.list-pane {
+  position: sticky;
+  top: var(--app-top-inset, 0px);
+  height: calc(100dvh - var(--app-top-inset, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--mat-sys-outline-variant);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: calc(100dvh - var(--app-top-inset, 0px));
+  padding: 0 var(--app-gutter);
+}
+
+.strip {
+  position: sticky;
+  top: calc(var(--app-top-inset, 0px) + var(--app-bar-height));
+  z-index: 3;
+}
+
+.banners:not(:empty),
+.conversation,
+.dock > * {
+  width: 100%;
+  max-width: 880px;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+
+.banners:not(:empty) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-2);
+  padding-top: var(--app-space-3);
+}
+
+// The dock: request, queue, decisions and the composer above the page's
+// bottom edge; over the conversation (z 2), under the app bar (z 3).
+.dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 calc(-1 * var(--app-gutter));
+  padding: 8px var(--app-gutter) calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--mat-sys-outline-variant);
+  background: var(--mat-sys-surface);
+}
+
+// Details panel content.
 .facts {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 12px;
-  color: var(--mat-sys-on-surface-variant);
 }
 
-.usage-detail {
+.muted {
+  color: var(--mat-sys-on-surface-variant);
   font: var(--mat-sys-body-small);
-  color: var(--mat-sys-on-surface-variant);
-  margin-top: 2px;
 }
 
-.conversation {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 40vh;
-}
-
-.user-message {
-  align-self: flex-end;
-  max-width: 85%;
-  padding: 8px 12px;
-  border-radius: var(--mat-sys-corner-medium);
-  background: var(--mat-sys-surface-container-high);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.app-message {
-  align-self: stretch;
-  max-width: none;
-  background: var(--mat-sys-surface-container-high);
-  color: var(--mat-sys-on-surface);
-  border-left: 3px solid var(--mat-sys-secondary);
-}
-
-.tool-by-app {
-  margin: 4px 0;
-  font: var(--mat-sys-body-small);
-  color: var(--mat-sys-secondary);
-}
-
-.message-origin {
-  display: block;
-  margin-bottom: 4px;
-  font: var(--mat-sys-label-medium);
-  color: var(--mat-sys-secondary);
-  white-space: normal;
-}
-
-.assistant-text {
-  overflow-wrap: anywhere;
-
-  &.streaming::after {
-    content: '▍';
-    color: var(--mat-sys-primary);
-  }
-}
-
-.nested {
-  margin-left: 16px;
-  padding-left: 8px;
-  border-left: 2px solid var(--mat-sys-outline-variant);
-}
-
-.tool,
-.setup {
-  border: 1px solid var(--mat-sys-outline-variant);
-  border-radius: var(--mat-sys-corner-small);
-  padding: 4px 8px;
-  font: var(--mat-sys-body-small);
-
-  summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    min-width: 0;
-  }
-}
-
-.tool-name {
-  font-weight: 600;
-}
-
-.tool-summary {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-state {
-  color: var(--mat-sys-on-surface-variant);
-}
-
-.tool-state-error,
-.tool-state-denied,
-.tool-state-failed,
-.tool-state-timed_out {
-  color: var(--mat-sys-error);
-}
-
-.tool-denied {
-  color: var(--mat-sys-error);
-  margin: 4px 0;
-}
-
-.tool-io {
-  max-height: 240px;
-  overflow: auto;
-  margin: 4px 0;
-  padding: 6px;
-  border-radius: var(--mat-sys-corner-extra-small);
-  background: var(--mat-sys-surface-container);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.tool-error {
-  color: var(--mat-sys-error);
-}
-
-.setup-duration,
-.setup-truncated {
-  color: var(--mat-sys-on-surface-variant);
-}
-
-.setup-truncated {
-  margin: 4px 0 0;
-}
-
-.progress {
+.usage {
   margin: 0;
-  font: var(--mat-sys-body-small);
-  color: var(--mat-sys-on-surface-variant);
-  overflow-wrap: anywhere;
 }
 
-.progress-failed {
-  color: var(--mat-sys-error);
-}
-
-.notice,
-.turn,
-.working {
+.small {
   margin: 0;
-  font: var(--mat-sys-body-small);
-  color: var(--mat-sys-on-surface-variant);
-}
-
-.notice-warning {
-  color: var(--mat-sys-error);
-}
-
-.error-message,
-.error {
-  margin: 0;
-  color: var(--mat-sys-error);
-}
-
-.composer {
-  position: sticky;
-  bottom: 0;
-  // Above Material's button labels (z-index 1) scrolling underneath.
-  z-index: 2;
-  padding: 8px 0 12px;
-  background: var(--mat-sys-surface);
-}
-
-.held-back {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 8px;
-  padding: 8px 12px;
-  border-radius: var(--mat-sys-corner-small);
-  background: var(--app-status-attention-container);
-  color: var(--app-status-on-attention-container);
-
-  p {
-    margin: 0;
-  }
-
-  .buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-}
-
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  // Each field keeps its own height (the hint under one must not stretch
-  // the outline of the other).
-  align-items: flex-start;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.control {
-  flex: 1 1 160px;
-  max-width: 280px;
-}
-
-.permission-line {
-  margin: -4px 0 0 8px;
-  font: var(--mat-sys-body-small);
-  color: var(--mat-sys-secondary);
-  overflow-wrap: anywhere;
-}
-
-.permission-denied {
-  color: var(--mat-sys-error);
-}
-
-.plan {
-  font: var(--mat-sys-body-small);
-
-  summary {
-    cursor: pointer;
-    color: var(--mat-sys-on-surface-variant);
-  }
-}
-
-.answers {
-  margin: 4px 0;
-
-  dt {
-    font-weight: 600;
-  }
-
-  dd {
-    margin: 0 0 4px;
-  }
-}
-
-.withdrawn {
-  align-self: flex-end;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  max-width: 85%;
-  padding: 6px 12px;
-  border-radius: var(--mat-sys-corner-medium);
-  border: 1px dashed var(--mat-sys-outline);
-  overflow-wrap: anywhere;
-}
-
-.withdrawn-text {
-  white-space: pre-wrap;
-  color: var(--mat-sys-on-surface-variant);
-}
-
-.withdrawn-reason {
-  font: var(--mat-sys-body-small);
-  color: var(--mat-sys-error);
-}
-
-.approvals {
-  max-height: 60vh;
-  overflow-y: auto;
-  margin-bottom: 8px;
-  overscroll-behavior: contain;
 }
 
 .manage {
   display: flex;
   flex-wrap: wrap;
-  gap: 0 4px;
-  margin-left: -12px;
+  gap: 8px;
+
+  app-icon {
+    --app-icon-size: 16px;
+
+    margin-right: 6px;
+  }
+
+  .delete {
+    margin-left: auto;
+  }
 }
 
-.search-target {
-  outline: 2px solid var(--mat-sys-primary);
-  outline-offset: 4px;
+.error {
+  margin: 0;
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-error);
 }

@@ -32,6 +32,41 @@ export function sessionPath(
   return path;
 }
 
+/**
+ * A command or path from a tool call with the session's directories
+ * shortened like {@link sessionPath}: `/…/sessions/x/acme/app/src/a.ts`
+ * becomes `src/a.ts`, the working directory itself `.`.
+ */
+export function relativePaths(
+  text: string,
+  directories: SessionDirectoryDto[],
+): string {
+  const roots = directories
+    .map((directory) => ({
+      root: directory.path.replace(/\/+$/, ''),
+      prefix:
+        directory.role === 'main' || directories.length === 1
+          ? ''
+          : `${directoryName(directory)}/`,
+    }))
+    .filter(({ root }) => root.length > 1)
+    .sort((a, b) => b.root.length - a.root.length);
+  let result = text;
+  for (const { root, prefix } of roots) {
+    result = result
+      .split(`${root}/`)
+      .join(prefix)
+      .replace(
+        new RegExp(
+          `${root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s'"])`,
+          'g',
+        ),
+        prefix ? prefix.slice(0, -1) : '.',
+      );
+  }
+  return result;
+}
+
 /** The directories of a session (collapsed: repository names). */
 @Component({
   selector: 'app-session-directories',

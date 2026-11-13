@@ -3,7 +3,6 @@
 }
 
 .directories {
-  margin-top: 8px;
   font: var(--mat-sys-body-small);
 
   summary {
@@ -43,7 +42,7 @@
 
 .tag {
   padding: 0 6px;
-  border-radius: var(--mat-sys-corner-full);
+  border-radius: var(--mat-sys-corner-extra-small);
   background: var(--mat-sys-surface-container-highest);
   color: var(--mat-sys-on-surface-variant);
 }

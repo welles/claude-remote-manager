@@ -1,3 +1,16 @@
+@if (pane()) {
+<header class="pane-head">
+  <h2 class="pane-title">Sessions</h2>
+  <a
+    class="app-icon-btn"
+    routerLink="/new"
+    aria-label="New session"
+    title="New session"
+    data-testid="new-session"
+    ><app-icon name="plus"
+  /></a>
+</header>
+} @else {
 <app-page-bar heading="Sessions">
   <app-limits-indicator />
   <a
@@ -8,13 +21,14 @@
     ><app-icon name="plus" />New session</a
   >
 </app-page-bar>
+}
 
 <app-session-search (active)="searching.set($event)" />
 @if (!searching()) {
 <div class="filters" role="group" aria-label="Show">
   <button
     type="button"
-    class="chip"
+    class="app-chip"
     [class.on]="filter() === 'all'"
     [attr.aria-pressed]="filter() === 'all'"
     (click)="setFilter('all')"
@@ -24,7 +38,7 @@
   </button>
   <button
     type="button"
-    class="chip"
+    class="app-chip"
     [class.on]="filter() === 'waiting'"
     [attr.aria-pressed]="filter() === 'waiting'"
     (click)="setFilter('waiting')"
@@ -37,7 +51,7 @@
   </button>
   <button
     type="button"
-    class="chip"
+    class="app-chip"
     [class.on]="filter() === 'running'"
     [attr.aria-pressed]="filter() === 'running'"
     (click)="setFilter('running')"
@@ -49,7 +63,7 @@
   </button>
   <button
     type="button"
-    class="chip"
+    class="app-chip"
     [class.on]="archived()"
     [attr.aria-pressed]="archived()"
     (click)="setFilter('archived')"

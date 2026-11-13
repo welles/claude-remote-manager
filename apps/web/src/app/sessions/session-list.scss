@@ -47,35 +47,6 @@ app-session-search {
   padding: 0 var(--app-gutter);
 }
 
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--mat-sys-outline-variant);
-  border-radius: var(--mat-sys-corner-small);
-  background: none;
-  color: var(--mat-sys-on-surface-variant);
-  font: var(--mat-sys-label-large);
-  cursor: pointer;
-
-  &:hover {
-    background: var(--mat-sys-surface-container);
-  }
-
-  &.on {
-    border-color: var(--mat-sys-outline);
-    background: var(--mat-sys-surface-container-highest);
-    color: var(--mat-sys-on-surface);
-  }
-
-  @media (pointer: coarse) {
-    height: 36px;
-  }
-}
-
 .count {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -232,4 +203,57 @@ app-session-search {
 
 .stale-list {
   opacity: 0.7;
+}
+
+// Beside an open session: a compact column with its own scrolling.
+:host(.pane) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-2);
+  padding: 0 var(--app-space-3) var(--app-space-4);
+  --app-gutter: 12px;
+
+  .list {
+    margin: 0;
+  }
+
+  .row {
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'dot title time'
+      '. meta meta';
+    padding: 8px 10px;
+  }
+
+  .extra {
+    display: none;
+  }
+
+  .time {
+    min-width: 0;
+  }
+}
+
+.row.active {
+  background: var(--mat-sys-secondary-container);
+  box-shadow: inset 3px 0 0 var(--mat-sys-primary);
+}
+
+.pane-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  min-height: var(--app-bar-height);
+  margin: 0 calc(-1 * var(--app-space-3));
+  padding: 0 var(--app-space-1) 0 var(--app-space-4);
+  border-bottom: 1px solid var(--mat-sys-outline-variant);
+  background: var(--mat-sys-surface);
+}
+
+.pane-title {
+  flex: 1;
+  margin: 0;
+  font: var(--mat-sys-title-medium);
 }

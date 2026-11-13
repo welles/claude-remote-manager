@@ -1,5 +1,6 @@
 // Global styles: the Material theme and the app's tokens (see styles/).
 // Components use `--mat-sys-*` and `--app-*` variables only.
+@use '@angular/cdk' as cdk;
 @use 'styles/theme';
 @use 'styles/tokens';
 @use 'styles/base';
@@ -9,6 +10,9 @@ html {
   @include theme.theme;
   @include tokens.tokens;
 }
+
+// Measuring styles of cdkTextareaAutosize (the composer's textarea).
+@include cdk.text-field-autosize();
 
 @include base.base;
 @include base.markdown;

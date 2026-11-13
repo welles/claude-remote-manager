@@ -36,67 +36,67 @@
   />
   <app-draft-images [drafts]="images" />
   <div class="composer-row">
-    <mat-form-field
-      appearance="outline"
-      class="input"
-      subscriptSizing="dynamic"
+    <button
+      type="button"
+      class="app-icon-btn attach"
+      (click)="picker.click()"
+      title="Attach images (or paste or drop them)"
+      data-testid="attach-image"
     >
-      <mat-label>{{ label() }}</mat-label>
-      <textarea
-        matInput
-        [value]="draft()"
-        (input)="onInput($event)"
-        (keydown)="onKeydown($event)"
-        (paste)="onPaste($event)"
-        (click)="onCaret($event)"
-        (keyup)="onCaret($event)"
-        (blur)="closeSuggestions()"
-        #textarea
-        role="combobox"
-        aria-autocomplete="list"
-        [attr.aria-controls]="suggesting() ? 'mention-list' : null"
-        [attr.aria-expanded]="suggesting()"
-        cdkTextareaAutosize
-        cdkAutosizeMinRows="1"
-        cdkAutosizeMaxRows="8"
-        data-testid="message-input"
-      ></textarea>
-    </mat-form-field>
-    <div class="buttons">
-      <button
-        matButton="filled"
-        (click)="submit()"
-        [disabled]="!canSend()"
-        data-testid="send"
+      <app-icon name="attach" /><span class="visually-hidden"
+        >Attach images</span
       >
-        Send
-      </button>
-      <button
-        matButton
-        (click)="picker.click()"
-        title="Attach images (or paste or drop them)"
-        data-testid="attach-image"
-      >
-        Image
-      </button>
-      <input
-        #picker
-        type="file"
-        [accept]="accept"
-        multiple
-        hidden
-        (change)="onPick($event)"
-        data-testid="image-picker"
-      />
-      @if (running()) {
-      <button
-        matButton="outlined"
-        (click)="interrupt.emit()"
-        data-testid="interrupt"
-      >
-        Stop
-      </button>
-      }
-    </div>
+    </button>
+    <input
+      #picker
+      type="file"
+      [accept]="accept"
+      multiple
+      hidden
+      (change)="onPick($event)"
+      data-testid="image-picker"
+    />
+    <textarea
+      class="input"
+      [value]="draft()"
+      [placeholder]="label()"
+      [attr.aria-label]="label()"
+      (input)="onInput($event)"
+      (keydown)="onKeydown($event)"
+      (paste)="onPaste($event)"
+      (click)="onCaret($event)"
+      (keyup)="onCaret($event)"
+      (blur)="closeSuggestions()"
+      #textarea
+      rows="1"
+      role="combobox"
+      aria-autocomplete="list"
+      [attr.aria-controls]="suggesting() ? 'mention-list' : null"
+      [attr.aria-expanded]="suggesting()"
+      enterkeyhint="send"
+      data-testid="message-input"
+    ></textarea>
+    @if (running()) {
+    <button
+      type="button"
+      class="app-icon-btn stop"
+      (click)="interrupt.emit()"
+      title="Stop Claude"
+      data-testid="interrupt"
+    >
+      <app-icon name="stop" /><span class="visually-hidden">Stop</span>
+    </button>
+    }
+    <button
+      type="button"
+      class="app-icon-btn send"
+      [class.ready]="canSend()"
+      (click)="submit()"
+      [disabled]="!canSend()"
+      title="Send (Ctrl+Enter)"
+      data-testid="send"
+    >
+      <app-icon name="send" /><span class="visually-hidden">Send</span>
+    </button>
   </div>
 </div>

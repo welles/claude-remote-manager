@@ -1,6 +1,6 @@
-import { TextFieldModule } from '@angular/cdk/text-field';
 import {
   Component,
+  afterRenderEffect,
   computed,
   ElementRef,
   inject,
@@ -12,9 +12,6 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { catchError, debounceTime, of, Subject, switchMap } from 'rxjs';
-import { MatButtonModule } from '@angular/material/button';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
 import {
   ATTACHMENT_MEDIA_TYPES,
   type AttachmentDto,
@@ -22,6 +19,7 @@ import {
   type MessageReference,
   type MessageReferenceRequest,
 } from '@claude-remote-manager/shared-types';
+import { AppIcon } from '../ui/icon';
 import { ReferenceAutocomplete } from '../github-references/reference-autocomplete';
 import { ReferenceChips } from '../github-references/reference-chips';
 import { ReferenceSuggestions } from '../github-references/reference-suggestions';
@@ -37,6 +35,9 @@ import { SessionsApi } from './sessions-api';
 
 /** The `@` reference being typed before the caret: `@` then no spaces. */
 const MENTION = /(?:^|\s)@([^\s"@]*)$/;
+
+/** Eight lines of the composer's text plus its padding. */
+const MAX_INPUT_HEIGHT = 8 * 22 + 20;
 
 /** A message the user wants to send. */
 export interface ComposedMessage {
@@ -57,15 +58,7 @@ export interface ComposedMessage {
  */
 @Component({
   selector: 'app-message-composer',
-  imports: [
-    DraftImages,
-    MatButtonModule,
-    MatFormFieldModule,
-    MatInputModule,
-    ReferenceChips,
-    ReferenceSuggestions,
-    TextFieldModule,
-  ],
+  imports: [AppIcon, DraftImages, ReferenceChips, ReferenceSuggestions],
   templateUrl: './message-composer.html',
   styleUrl: './message-composer.scss',
 })
@@ -92,6 +85,18 @@ export class MessageComposer {
   private readonly api = inject(SessionsApi);
   private readonly textarea =
     viewChild<ElementRef<HTMLTextAreaElement>>('textarea');
+  /**
+   * Grows the textarea with its text, up to 8 lines (then it scrolls); also
+   * when the draft changes from outside (sent, restored).
+   */
+  private readonly autosize = afterRenderEffect(() => {
+    this.draft();
+    const field = this.textarea()?.nativeElement;
+    if (field) {
+      field.style.height = 'auto';
+      field.style.height = `${Math.min(field.scrollHeight, MAX_INPUT_HEIGHT)}px`;
+    }
+  });
   /** Where the `@` reference being typed starts, and its text. */
   protected readonly mention = signal<{ start: number; query: string } | null>(
     null,

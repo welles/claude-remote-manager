@@ -4,13 +4,19 @@ import {
   computed,
   effect,
   inject,
+  input,
   signal,
   type OnInit,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import {
+  ActivatedRoute,
+  Router,
+  RouterLink,
+  convertToParamMap,
+} from '@angular/router';
 import {
   canResume,
   needsUser,
@@ -61,7 +67,7 @@ const RUNNING = new Set(['preparing', 'running']);
  */
 @Component({
   selector: 'app-session-list',
-  host: { class: 'app-page' },
+  host: { '[class.app-page]': '!pane()', '[class.pane]': 'pane()' },
   imports: [
     AppDatePipe,
     AppIcon,
@@ -82,6 +88,11 @@ export class SessionList implements OnInit {
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
+
+  /** Beside an open session on wide screens: compact, no app bar. */
+  readonly pane = input(false);
+  /** The session open beside the pane (marked in the list). */
+  readonly activeId = input<string | null>(null);
 
   protected readonly statusLabel = statusLabel;
   protected readonly needLabel = needLabel;
@@ -166,7 +177,9 @@ export class SessionList implements OnInit {
   }
 
   ngOnInit(): void {
-    const params = this.route.snapshot.queryParamMap;
+    const params = this.pane()
+      ? convertToParamMap({})
+      : this.route.snapshot.queryParamMap;
     // Older shortcuts and share redirects: starting a session is a page.
     if (params.has('new') || params.has('share')) {
       const share = params.get('share');
@@ -261,15 +274,17 @@ export class SessionList implements OnInit {
   protected setFilter(filter: SessionFilter): void {
     const wasArchived = this.archived();
     this.filter.set(filter);
-    void this.router.navigate([], {
-      queryParams: {
-        waiting: filter === 'waiting' ? 1 : null,
-        running: filter === 'running' ? 1 : null,
-        archived: filter === 'archived' ? 1 : null,
-      },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
+    void (this.pane()
+      ? Promise.resolve()
+      : this.router.navigate([], {
+          queryParams: {
+            waiting: filter === 'waiting' ? 1 : null,
+            running: filter === 'running' ? 1 : null,
+            archived: filter === 'archived' ? 1 : null,
+          },
+          queryParamsHandling: 'merge',
+          replaceUrl: true,
+        }));
     if (wasArchived !== this.archived()) {
       this.switched = true;
       this.sessionMap.set(new Map());

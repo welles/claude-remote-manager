@@ -1,10 +1,14 @@
-import { TextFieldModule } from '@angular/cdk/text-field';
-import { DecimalPipe, KeyValuePipe } from '@angular/common';
 import { AppDatePipe } from '../ui/dates';
 import { AppBanner } from '../ui/banner';
 import { AppIcon } from '../ui/icon';
 import { AppPageBar } from '../ui/page-bar';
 import { StatusBadge } from '../ui/status-badge';
+import { AppSidePanel } from '../ui/side-panel';
+import { mediaQuery, WIDE_LIST, WIDE_PANEL } from '../ui/media';
+import { LimitWindows } from '../limits/limit-windows';
+import { SessionList } from './session-list';
+import { SessionStrip, type DetailSection } from './session-strip';
+import { SessionConversation, type QueuedItem } from './session-conversation';
 import {
   Component,
   DestroyRef,
@@ -19,7 +23,6 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -42,29 +45,21 @@ import {
   applyEvent,
   buildConversation,
   pendingRequests,
-  progressText,
-  resolutionText,
   type ConversationItem,
 } from './conversation';
-import { formatCost, formatTokens, totalTokens } from './format';
-import { MarkdownPipe } from './markdown.pipe';
+import { groupPreparation } from './preparation';
+import { formatCost, formatTokens, needLabel, totalTokens } from './format';
 import { ModelsStore, modelOptionsWith, normalizeModel } from './models-store';
 import { PermissionCard } from './permission-card';
 import { ContextMeter } from './context-meter';
-import { MessageImages } from '../attachments/message-images';
-import { MessageContext } from '../github-references/message-context';
-import { MessageText } from '../github-references/message-text';
 import { sessionGitHubRepositories } from '../github-references/references';
-import { ShownFileCard } from '../shown-files/shown-file-card';
-import { PreviewCard } from '../previews/preview-card';
 import { PreviewFrame } from '../previews/preview-frame';
 import { currentPreview } from '../previews/previews-api';
 import { SessionPreviews } from '../previews/session-previews';
 import { FileViewer } from '../shown-files/file-viewer';
 import { MessageComposer, type ComposedMessage } from './message-composer';
-import { FileDiffCard } from '../diffs/file-diff-card';
 import { QueuedMessages } from './queued-messages';
-import { SessionDirectories, sessionPath } from './session-directories';
+import { SessionDirectories } from './session-directories';
 import { TodoPanel } from './todo-panel';
 import { todoList } from './todos';
 import { SessionGitPanel } from './session-git-panel';
@@ -78,8 +73,12 @@ import { errorMessage } from '../repositories/repositories-api';
 /** One session: the streamed conversation, input and usage. */
 @Component({
   selector: 'app-session-view',
-  host: { class: 'app-page' },
   imports: [
+    AppSidePanel,
+    SessionConversation,
+    LimitWindows,
+    SessionList,
+    SessionStrip,
     CleanupDialog,
     ContextMeter,
     AppBanner,
@@ -87,32 +86,21 @@ import { errorMessage } from '../repositories/repositories-api';
     AppPageBar,
     AppDatePipe,
     StatusBadge,
-    DecimalPipe,
     DeleteSessionDialog,
     SessionTitle,
-    FileDiffCard,
-    KeyValuePipe,
-    MarkdownPipe,
     MatButtonModule,
     MatFormFieldModule,
-    MatInputModule,
     MatProgressBarModule,
     MatSelectModule,
     MessageComposer,
-    MessageContext,
-    MessageImages,
-    MessageText,
     PermissionCard,
-    PreviewCard,
     PreviewFrame,
     QueuedMessages,
     FileViewer,
-    ShownFileCard,
     RouterLink,
     SessionDirectories,
     SessionGitPanel,
     SessionPreviews,
-    TextFieldModule,
     TodoPanel,
   ],
   templateUrl: './session-view.html',
@@ -125,15 +113,24 @@ export class SessionView implements OnInit {
   private readonly modelsStore = inject(ModelsStore);
   private readonly host = inject(ElementRef);
 
-  protected readonly resolutionText = resolutionText;
   protected readonly modes = SESSION_PERMISSION_MODES;
   protected readonly modeInfo = PERMISSION_MODE_INFO;
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;
-  protected readonly progressText = progressText;
   protected readonly connected = this.socket.connected;
   protected readonly incompatible = this.socket.incompatible;
+
+  protected readonly needLabel = needLabel;
+  /** The session list beside the session (wide screens). */
+  protected readonly wideList = mediaQuery(WIDE_LIST);
+  /** The details as a permanent column (wider screens). */
+  protected readonly docked = mediaQuery(WIDE_PANEL);
+  /** The details are open (phone and narrower desktops). */
+  protected readonly panelOpen = signal(false);
+  private readonly panel = viewChild(AppSidePanel);
+  protected readonly cleanupDialog = viewChild(CleanupDialog);
+  protected readonly deleteDialog = viewChild(DeleteSessionDialog);
 
   protected readonly sessionId = signal('');
   protected readonly session = signal<SessionDto | null>(null);
@@ -159,6 +156,22 @@ export class SessionView implements OnInit {
         item.kind === 'queued' && item.state === 'queued',
     ),
   );
+  /**
+   * What the conversation shows: consecutive preparation steps become one
+   * collapsible row ("Prepare: …"), open while a step failed.
+   */
+  protected readonly shownItems = computed(() =>
+    groupPreparation(this.items()),
+  );
+  /** Name of the session's model for the strip. */
+  protected readonly modelName = computed(() => {
+    const model = normalizeModel(this.session()?.model ?? null);
+    const label =
+      this.modelOptions().find((option) => option.value === model)?.label ??
+      model ??
+      'Default';
+    return label.replace(/\s*\(.*\)$/, '');
+  });
   /** Claude's task list. */
   protected readonly todos = computed(() => todoList(this.items()));
   /** Models to choose from, including the session's own. */
@@ -388,7 +401,7 @@ export class SessionView implements OnInit {
   }
 
   /** Puts a message that was not sent back into the input. */
-  protected edit(item: Extract<ConversationItem, { kind: 'queued' }>): void {
+  protected edit(item: QueuedItem): void {
     this.composer()?.restore(
       item.id,
       item.text,
@@ -462,11 +475,6 @@ export class SessionView implements OnInit {
     void this.router.navigate(['/']);
   }
 
-  /** The anchor of an assistant text item (Claude's message ID). */
-  protected anchorOf(key: string): string | null {
-    return key.startsWith('text:') ? (key.split(':')[1] ?? null) : null;
-  }
-
   /**
    * Shows the place a search result points to (`?at=` message ID, else the
    * first message containing the first word of `?q=`), once the history
@@ -501,6 +509,17 @@ export class SessionView implements OnInit {
     }
   }
 
+  /** Opens the details at a section, or goes to the pending request. */
+  protected openPanel(section: DetailSection | 'dock'): void {
+    if (section === 'dock') {
+      this.stickToBottom = true;
+      window.scrollTo({ top: document.documentElement.scrollHeight });
+      return;
+    }
+    this.panelOpen.set(true);
+    this.panel()?.reveal(`details-${section}`);
+  }
+
   /** Stops the session's process and marks it finished. */
   protected end(): void {
     const requestId = newId();
@@ -512,47 +531,6 @@ export class SessionView implements OnInit {
       })
     ) {
       this.pending.add(requestId);
-    }
-  }
-
-  protected toolState(
-    item: Extract<ConversationItem, { kind: 'tool' }>,
-  ): string {
-    if (item.byApp) {
-      return item.byApp.outcome === 'succeeded' ? 'done by the app' : 'failed';
-    }
-    if (item.denied) {
-      return 'denied';
-    }
-    const permission = item.permission;
-    if (permission && !permission.resolved) {
-      return permission.request.kind === 'question'
-        ? 'question'
-        : 'needs approval';
-    }
-    if (permission?.resolved?.decision === 'deny') {
-      return permission.resolved.cause === 'user' ? 'denied' : 'cancelled';
-    }
-    if (!item.result) {
-      return this.running() ? 'running' : 'no result';
-    }
-    return item.result.isError ? 'error' : 'done';
-  }
-
-  protected setupState(
-    item: Extract<ConversationItem, { kind: 'setup' }>,
-  ): string {
-    switch (item.state) {
-      case 'started':
-        return 'running';
-      case 'failed':
-        return item.exitCode !== null
-          ? `failed (exit ${item.exitCode})`
-          : 'failed';
-      case 'timed_out':
-        return 'timed out';
-      default:
-        return item.state;
     }
   }
 
@@ -581,15 +559,6 @@ export class SessionView implements OnInit {
   /** Opens a file Claude showed in the viewer. */
   protected openFile(file: ShownFileDto): void {
     this.viewing.set(file);
-  }
-
-  /** A path of the session, relative to its directories. */
-  protected sessionPath(path: string): string {
-    return sessionPath(path, this.session()?.directories ?? []);
-  }
-
-  protected inputJson(input: unknown): string {
-    return JSON.stringify(input, null, 2);
   }
 
   /** An answer frame was acknowledged or refused: the card is usable again. */

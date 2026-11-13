@@ -1,4 +1,5 @@
 import { AppDatePipe } from '../ui/dates';
+import { AppIcon } from '../ui/icon';
 import { Component, computed, inject, input, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import {
@@ -27,7 +28,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
  */
 @Component({
   selector: 'app-pull-request-automation',
-  imports: [AppDatePipe, MatButtonModule, MatSlideToggleModule],
+  imports: [AppDatePipe, AppIcon, MatButtonModule, MatSlideToggleModule],
   template: `
     @let automation = pull().automation;
     <div class="automation" data-testid="pr-automation">
@@ -55,24 +56,24 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       </span>
       <span class="limit-buttons">
         <button
-          matButton
           type="button"
+          class="app-icon-btn"
           aria-label="Lower the attempt limit"
           [disabled]="busy() || automation.maxAttempts <= range.min"
           (click)="save({ maxAttempts: automation.maxAttempts - 1 })"
           data-testid="autofix-limit-down"
         >
-          −
+          <app-icon name="minus" />
         </button>
         <button
-          matButton
           type="button"
+          class="app-icon-btn"
           aria-label="Raise the attempt limit"
           [disabled]="busy() || automation.maxAttempts >= range.max"
           (click)="save({ maxAttempts: automation.maxAttempts + 1 })"
           data-testid="autofix-limit-up"
         >
-          +
+          <app-icon name="plus" />
         </button>
       </span>
       @if (automation.attempts > 0) {
@@ -130,7 +131,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
     }
     .limit-buttons {
       display: inline-flex;
-      margin-left: -12px;
+      margin-left: -8px;
     }
     .note {
       margin: 2px 0 2px 4px;

@@ -1,408 +1,332 @@
-<app-page-bar back="/" backLabel="Back to the sessions">
-  @if (session(); as s) {
-  <app-session-title bar-title [session]="s" (renamed)="session.set($event)" />
-  } @if (session(); as s) { @if (hasRepositories()) {
-  <a
-    class="app-icon-btn"
-    [routerLink]="['/sessions', s.id, 'changes']"
-    aria-label="Changes"
-    title="Changes"
-    data-testid="changes-link"
-    ><app-icon name="changes"
-  /></a>
-  } }
-</app-page-bar>
-<header class="header">
-  @if (session(); as s) { @if (s.archivedAt) {
-  <app-banner data-testid="archived-banner">
-    Archived {{ s.archivedAt | appDate }}: hidden from the session list, history
-    readable. @if (removedDirectories(); as removed) { {{ removed.text }} {{
-    removed.verb }} removed, so it cannot be continued. } @else { Unarchive it
-    to continue it. }
-  </app-banner>
-  } @else if (removedDirectories()) {
-  <app-banner data-testid="cleaned-banner">
-    @let removed = removedDirectories(); {{ removed?.text }} of this session {{
-    removed?.verb }} removed: its history can be read, but it cannot be
-    continued.
-  </app-banner>
+<div class="layout">
+  @if (wideList()) {
+  <aside class="list-pane" aria-label="All sessions">
+    <app-session-list [pane]="true" [activeId]="sessionId()" />
+  </aside>
   }
-  <div class="facts">
-    <app-status-badge [session]="s" data-testid="status" />
-    <span
-      data-testid="usage"
-      title="Input {{ s.usage.inputTokens }} · Output {{ s.usage.outputTokens }} · Cache write {{ s.usage.cacheCreationInputTokens }} · Cache read {{ s.usage.cacheReadInputTokens }} · Cost: what the requests would have cost at API prices, not what the subscription costs"
-    >
-      {{ formatTokens(totalTokens(s.usage)) }} tokens · {{
-      formatCost(s.usage.costUsd) }} theoretical API cost
-    </span>
-  </div>
-  <div class="manage">
-    @if (s.status !== 'finished' && !s.archivedAt) {
-    <button
-      matButton
-      class="end"
-      (click)="end()"
-      [disabled]="!connected()"
-      data-testid="end"
-    >
-      End session
-    </button>
-    } @if (canCleanUp()) {
-    <button
-      matButton
-      type="button"
-      (click)="cleanupDialog.show('cleanup')"
-      data-testid="cleanup"
-    >
-      Clean up…
-    </button>
-    } @if (s.archivedAt) {
-    <button
-      matButton
-      type="button"
-      (click)="unarchive()"
-      data-testid="unarchive"
-    >
-      Unarchive
-    </button>
-    } @else if (canArchive()) {
-    <button
-      matButton
-      type="button"
-      (click)="cleanupDialog.show('archive')"
-      data-testid="archive"
-    >
-      Archive…
-    </button>
-    } @if (canDelete()) {
-    <button
-      matButton
-      type="button"
-      (click)="deleteDialog.show()"
-      data-testid="delete"
-    >
-      Delete…
-    </button>
-    }
-  </div>
-  <app-cleanup-dialog
-    #cleanupDialog
-    [sessionId]="s.id"
-    (done)="session.set($event.session)"
-  />
-  <app-delete-session-dialog
-    #deleteDialog
-    [sessionId]="s.id"
-    (deleted)="deleted()"
-  />
-  <div class="usage-detail">
-    In {{ formatTokens(s.usage.inputTokens) }} · Out {{
-    formatTokens(s.usage.outputTokens) }} · Cache write {{
-    formatTokens(s.usage.cacheCreationInputTokens) }} · Cache read {{
-    formatTokens(s.usage.cacheReadInputTokens) }} · the cost is what these
-    requests would have cost at API prices; the subscription costs the same
-    either way
-  </div>
-  <div class="controls">
-    <mat-form-field
-      appearance="outline"
-      subscriptSizing="dynamic"
-      class="control"
-    >
-      <mat-label>Model</mat-label>
-      <mat-select
-        [value]="normalizeModel(s.model) ?? ''"
-        (selectionChange)="configure({ model: $event.value })"
-        [disabled]="!connected() || s.status === 'preparing'"
-        data-testid="model-select"
+  <div class="main" [attr.inert]="panelOpen() && !docked() ? '' : null">
+    <app-page-bar back="/" backLabel="Back to the sessions">
+      @if (session(); as s) {
+      <app-session-title
+        bar-title
+        [session]="s"
+        (renamed)="session.set($event)"
+      />
+      } @if (session(); as s) { @if (hasRepositories()) {
+      <a
+        class="app-icon-btn"
+        [routerLink]="['/sessions', s.id, 'changes']"
+        aria-label="Changes"
+        title="Changes"
+        data-testid="changes-link"
+        ><app-icon name="changes"
+      /></a>
+      } } @if (!docked()) {
+      <button
+        type="button"
+        class="app-icon-btn"
+        [attr.aria-expanded]="panelOpen()"
+        aria-label="Session details"
+        title="Session details"
+        (click)="openPanel('status')"
+        data-testid="details-toggle"
       >
-        @for (option of modelOptions(); track option.value) {
-        <mat-option [value]="option.value ?? ''" [title]="option.description"
-          >{{ option.label }}</mat-option
-        >
-        }
-      </mat-select>
-      @if (resolvedModel(); as resolved) {
-      <mat-hint data-testid="resolved-model">{{ resolved }}</mat-hint>
+        <app-icon name="info" />
+      </button>
       }
-    </mat-form-field>
-    <mat-form-field
-      appearance="outline"
-      subscriptSizing="dynamic"
-      class="control"
-    >
-      <mat-label>Permissions</mat-label>
-      <mat-select
-        [value]="s.permissionMode"
-        (selectionChange)="configure({ permissionMode: $event.value })"
-        [disabled]="!connected() || s.status === 'preparing'"
-        data-testid="mode-select"
-      >
-        @for (mode of modes; track mode) {
-        <mat-option [value]="mode" [title]="modeInfo[mode].description"
-          >{{ modeInfo[mode].label }}</mat-option
-        >
-        }
-      </mat-select>
-      <mat-hint>{{ modeInfo[s.permissionMode].description }}</mat-hint>
-    </mat-form-field>
-  </div>
-  <app-context-meter [context]="context()" />
-  @if (s.directories.length > 0) {
-  <app-session-directories [directories]="s.directories" />
-  } @if (todos().length > 0) {
-  <app-todo-panel [todos]="todos()" />
-  }
-  <app-session-previews
-    [previews]="s.previews"
-    (embed)="embedPreview($event)"
-  />
-  <app-session-git-panel [session]="s" />
-  } @if (incompatible()) {
-  <app-banner kind="error"
-    >The server uses a newer protocol. Reload the page.</app-banner
-  >
-  } @else if (!connected()) {
-  <app-banner role="status">Connecting to the server…</app-banner>
-  }
-</header>
-
-<section class="conversation" data-testid="conversation">
-  @if (!loaded() && !error()) {
-  <mat-progress-bar mode="indeterminate" />
-  } @for (item of items(); track item.key) { @switch (item.kind) { @case
-  ('user') {
-  <!-- prettier-ignore -->
-  <div class="user-message" [class.app-message]="item.origin === 'app'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="message-origin" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" /></div>
-  @if (item.contextLength) {
-  <app-message-context
-    [sessionId]="sessionId()"
-    [messageId]="item.id"
-    [length]="item.contextLength"
-  />
-  } } @case ('assistant') {
-  <div
-    class="assistant-text markdown"
-    [attr.data-anchor]="anchorOf(item.key)"
-    [class.nested]="item.nested"
-    [class.streaming]="item.streaming"
-    [innerHTML]="item.text | markdown"
-  ></div>
-  } @case ('tool') {
-  <details class="tool" [class.nested]="item.nested">
-    <summary>
-      <span class="tool-name">{{ item.name }}</span>
-      <code class="tool-summary">{{ item.summary }}</code>
-      <span class="tool-state tool-state-{{ toolState(item) }}"
-        >{{ toolState(item) }}</span
-      >
-    </summary>
-    @if (item.byApp; as byApp) {
-    <p class="tool-by-app" data-testid="tool-by-app">
-      Run by the app (autofix): {{ byApp.summary }}
-    </p>
-    } @if (item.denied) {
-    <p class="tool-denied">{{ item.denied }}</p>
-    } @if (item.permission?.resolved?.answers; as answers) {
-    <dl class="answers">
-      @for (answer of answers | keyvalue; track answer.key) {
-      <dt>{{ answer.key }}</dt>
-      <dd>{{ answer.value }}</dd>
-      }
-    </dl>
-    }
-    <pre class="tool-io">{{ inputJson(item.input) }}</pre>
-    @if (item.result; as result) {
-    <pre class="tool-io" [class.tool-error]="result.isError">
-{{ result.content }}@if (result.truncated) {
-…(truncated)}</pre
-    >
-    }
-  </details>
-  @if (item.diff; as change) {
-  <app-file-diff-card
-    class="tool-diff"
-    [class.nested]="item.nested"
-    [diff]="change.diff"
-    [label]="sessionPath(change.diff.path)"
-    data-testid="tool-diff"
-  />
-  } @for (file of item.shown; track file.id) {
-  <app-shown-file-card
-    class="shown"
-    [class.nested]="item.nested"
-    [file]="file"
-    (open)="openFile($event)"
-  />
-  } @for (preview of item.previews; track preview.id) {
-  <app-preview-card
-    class="shown"
-    [class.nested]="item.nested"
-    [preview]="current(preview)"
-    (embed)="embedPreview($event)"
-  />
-  } @if (item.permission; as permission) {
-  <p
-    class="permission-line"
-    [class.permission-denied]="permission.resolved?.decision === 'deny'"
-    [class.nested]="item.nested"
-    data-testid="permission-line"
-  >
-    {{ resolutionText(permission) }}
-  </p>
-  @if (permission.request.plan && permission.resolved) {
-  <details class="plan" [class.nested]="item.nested">
-    <summary>Plan</summary>
-    <div
-      class="markdown"
-      [innerHTML]="permission.request.plan | markdown"
-    ></div>
-  </details>
-  } } } @case ('queued') { @if (item.state === 'withdrawn') {
-  <div class="withdrawn" data-testid="withdrawn">
-    <span class="withdrawn-text"
-      ><app-message-text [text]="item.text" [references]="item.references"
-    /></span>
-    @if (item.attachments.length > 0) {
-    <app-message-images [attachments]="item.attachments" />
-    }
-    <span class="withdrawn-reason"
-      >Not sent{{ item.reason ? ': ' + item.reason : '' }}</span
-    >
-    <button matButton (click)="edit(item)" data-testid="edit-withdrawn">
-      Edit and send again
-    </button>
-  </div>
-  } } @case ('file') {
-  <app-shown-file-card
-    class="shown"
-    [file]="item.file"
-    (open)="openFile($event)"
-  />
-  } @case ('preview') {
-  <app-preview-card
-    class="shown"
-    [preview]="current(item.preview)"
-    (embed)="embedPreview($event)"
-  />
-  } @case ('settings') {
-  <p class="notice" data-testid="settings-changed">{{ item.text }}</p>
-  } @case ('notice') {
-  <p class="notice notice-{{ item.level }}">{{ item.text }}</p>
-  } @case ('error') {
-  <p class="error-message">{{ item.text }}</p>
-  } @case ('progress') {
-  <p class="progress progress-{{ item.state }}" data-testid="progress">
-    {{ progressText(item) }}
-  </p>
-  } @case ('setup') {
-  <details
-    class="setup"
-    [open]="item.state === 'failed' || item.state === 'timed_out'"
-    data-testid="setup"
-  >
-    <summary>
-      <span class="tool-name">Setup {{ item.repository }}</span>
-      <span class="tool-state tool-state-{{ item.state }}"
-        >{{ setupState(item) }}</span
-      >
-      @if (item.durationMs !== null) {
-      <span class="setup-duration"
-        >{{ item.durationMs / 1000 | number: '1.1-1' }} s</span
-      >
-      }
-    </summary>
-    @if (item.message) {
-    <p class="tool-denied">{{ item.message }}</p>
-    } @if (item.output) {
-    <pre class="tool-io">{{ item.output }}</pre>
-    } @if (item.outputTail) {
-    <p class="setup-truncated">Output truncated. Last lines:</p>
-    <pre class="tool-io">{{ item.outputTail }}</pre>
-    }
-  </details>
-  } @case ('turn') {
-  <p class="turn">
-    @if (item.interrupted) { Interrupted · } {{ item.durationMs / 1000 | number:
-    '1.1-1' }} s · {{ formatTokens(totalTokens(item.usage)) }} tokens · {{
-    formatCost(item.usage.costUsd) }}
-  </p>
-  } } } @if (running() && requests().length === 0) {
-  <p class="working">Claude is working…</p>
-  } @else if (preparing()) {
-  <p class="working">Preparing the session…</p>
-  }
-</section>
-
-<footer class="composer">
-  @if (requests().length > 0) {
-  <div class="approvals" data-testid="approvals">
-    @for (request of requests().slice(0, 1); track request.requestId) {
-    <app-permission-card
-      [request]="request"
-      [enabled]="connected() && !answering().has(request.requestId)"
-      [position]="requests().length > 1 ? '1 of ' + requests().length : null"
-      [directories]="session()?.directories ?? []"
-      (answer)="respond(request, $event)"
+    </app-page-bar>
+    @if (session(); as s) {
+    <app-session-strip
+      class="strip"
+      [session]="s"
+      [context]="context()"
+      [todos]="todos()"
+      [model]="modelName()"
+      [mode]="modeInfo[s.permissionMode].label"
+      (opened)="openPanel($event)"
     />
     }
-  </div>
-  } @if (queued().length > 0) {
-  <app-queued-messages
-    [messages]="queued()"
-    [enabled]="connected()"
-    (remove)="unqueue($event)"
-  />
-  } @if (heldBack()) {
-  <div class="held-back" data-testid="held-back">
-    <p>
-      A setup script failed, so the first message has not been sent to Claude
-      yet. Check its output above, then decide:
-    </p>
-    <div class="buttons">
-      <button
-        matButton="filled"
-        (click)="sendPending()"
-        [disabled]="!connected()"
-        data-testid="send-pending"
+    <div class="banners">
+      @if (session(); as s) { @if (s.archivedAt) {
+      <app-banner data-testid="archived-banner">
+        Archived {{ s.archivedAt | appDate }}: hidden from the session list,
+        history readable. @if (removedDirectories(); as removed) { {{
+        removed.text }} {{ removed.verb }} removed, so it cannot be continued. }
+        @else { Unarchive it to continue it. }
+        <div banner-actions>
+          <button
+            matButton
+            type="button"
+            (click)="unarchive()"
+            data-testid="unarchive-banner"
+          >
+            Unarchive
+          </button>
+        </div>
+      </app-banner>
+      } @else if (removedDirectories()) {
+      <app-banner data-testid="cleaned-banner">
+        @let removed = removedDirectories(); {{ removed?.text }} of this session
+        {{ removed?.verb }} removed: its history can be read, but it cannot be
+        continued.
+      </app-banner>
+      } } @if (incompatible()) {
+      <app-banner kind="error"
+        >The server uses a newer protocol. Reload the page.</app-banner
       >
-        Send anyway
-      </button>
-      <button
-        matButton="outlined"
-        (click)="rerunSetup()"
-        [disabled]="!connected()"
-        data-testid="rerun-setup"
-      >
-        Run setup again
-      </button>
-      <button
-        matButton
-        (click)="end()"
-        [disabled]="!connected()"
-        data-testid="end-pending"
-      >
-        End session
-      </button>
+      } @else if (!connected()) {
+      <app-banner role="status">Connecting to the server…</app-banner>
+      }
     </div>
+
+    <app-session-conversation
+      [items]="shownItems()"
+      [session]="session()"
+      [sessionId]="sessionId()"
+      [loading]="!loaded() && !error()"
+      [running]="running()"
+      [preparing]="preparing()"
+      [pendingRequests]="requests().length"
+      [resumable]="resumable()"
+      (openFile)="openFile($event)"
+      (embed)="embedPreview($event)"
+      (edit)="edit($event)"
+    />
+
+    <footer class="dock" #dock>
+      @if (requests().length > 0) {
+      <div class="approvals" data-testid="approvals">
+        @for (request of requests().slice(0, 1); track request.requestId) {
+        <app-permission-card
+          [request]="request"
+          [enabled]="connected() && !answering().has(request.requestId)"
+          [position]="requests().length > 1 ? '1 of ' + requests().length : null"
+          [directories]="session()?.directories ?? []"
+          (answer)="respond(request, $event)"
+        />
+        }
+      </div>
+      } @if (queued().length > 0) {
+      <app-queued-messages
+        [messages]="queued()"
+        [enabled]="connected()"
+        (remove)="unqueue($event)"
+      />
+      } @if (heldBack()) {
+      <app-banner kind="attention" data-testid="held-back">
+        A setup script failed, so the first message waits: send it anyway, run
+        the setup again, or end the session.
+        <div banner-actions>
+          <button
+            matButton="filled"
+            (click)="sendPending()"
+            [disabled]="!connected()"
+            data-testid="send-pending"
+          >
+            Send anyway
+          </button>
+          <button
+            matButton="outlined"
+            (click)="rerunSetup()"
+            [disabled]="!connected()"
+            data-testid="rerun-setup"
+          >
+            Run setup again
+          </button>
+          <button
+            matButton
+            (click)="end()"
+            [disabled]="!connected()"
+            data-testid="end-pending"
+          >
+            End session
+          </button>
+        </div>
+      </app-banner>
+      } @if (error(); as message) {
+      <p class="error" data-testid="error">{{ message }}</p>
+      }
+      <app-message-composer
+        [(draft)]="draft"
+        [label]="composerLabel()"
+        [disabled]="!connected() || preparing() || heldBack() || !resumable()"
+        [running]="running()"
+        [sessionId]="sessionId()"
+        [showRepository]="(session()?.directories?.length ?? 0) > 1"
+        [githubRepositories]="githubRepositories()"
+        (send)="send($event)"
+        (interrupt)="interrupt()"
+      />
+    </footer>
   </div>
-  } @if (error(); as message) {
-  <p class="error" data-testid="error">{{ message }}</p>
-  }
-  <app-message-composer
-    [(draft)]="draft"
-    [label]="composerLabel()"
-    [disabled]="!connected() || preparing() || heldBack() || !resumable()"
-    [running]="running()"
-    [sessionId]="sessionId()"
-    [showRepository]="(session()?.directories?.length ?? 0) > 1"
-    [githubRepositories]="githubRepositories()"
-    (send)="send($event)"
-    (interrupt)="interrupt()"
-  />
-</footer>
-@if (viewing(); as file) {
+
+  <app-side-panel
+    class="details"
+    heading="Session details"
+    [docked]="docked()"
+    [(open)]="panelOpen"
+    data-testid="details"
+  >
+    @if (session(); as s) {
+    <section class="panel-section" id="details-status">
+      <h3 class="app-section-label">Status</h3>
+      <div class="facts">
+        <app-status-badge
+          [session]="s"
+          [text]="needLabel(s)"
+          data-testid="details-status"
+        />
+        <span class="muted"
+          >updated {{ s.updatedAt | appDate: 'relative' }}</span
+        >
+      </div>
+      @if (s.lastError && s.status === 'failed') {
+      <p class="app-error">{{ s.lastError }}</p>
+      }
+    </section>
+    <section class="panel-section" id="details-context">
+      <app-context-meter [context]="context()" />
+    </section>
+    @if (todos().length > 0) {
+    <section class="panel-section" id="details-tasks">
+      <app-todo-panel [todos]="todos()" />
+    </section>
+    }
+    <section class="panel-section" id="details-git">
+      <h3 class="app-section-label">Repositories and pull requests</h3>
+      @if (s.directories.length > 0) {
+      <app-session-directories [directories]="s.directories" />
+      }
+      <app-session-git-panel [session]="s" />
+    </section>
+    @if (s.previews.length > 0) {
+    <section class="panel-section" id="details-previews">
+      <app-session-previews
+        [previews]="s.previews"
+        (embed)="embedPreview($event)"
+      />
+    </section>
+    }
+    <section class="panel-section app-compact" id="details-settings">
+      <h3 class="app-section-label">Settings</h3>
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Model</mat-label>
+        <mat-select
+          [value]="normalizeModel(s.model) ?? ''"
+          (selectionChange)="configure({ model: $event.value })"
+          [disabled]="!connected() || s.status === 'preparing'"
+          data-testid="model-select"
+        >
+          @for (option of modelOptions(); track option.value) {
+          <mat-option [value]="option.value ?? ''" [title]="option.description"
+            >{{ option.label }}</mat-option
+          >
+          }
+        </mat-select>
+        @if (resolvedModel(); as resolved) {
+        <mat-hint data-testid="resolved-model">{{ resolved }}</mat-hint>
+        }
+      </mat-form-field>
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Permissions</mat-label>
+        <mat-select
+          [value]="s.permissionMode"
+          (selectionChange)="configure({ permissionMode: $event.value })"
+          [disabled]="!connected() || s.status === 'preparing'"
+          data-testid="mode-select"
+        >
+          @for (mode of modes; track mode) {
+          <mat-option [value]="mode" [title]="modeInfo[mode].description"
+            >{{ modeInfo[mode].label }}</mat-option
+          >
+          }
+        </mat-select>
+        <mat-hint>{{ modeInfo[s.permissionMode].description }}</mat-hint>
+      </mat-form-field>
+    </section>
+    <section class="panel-section" id="details-usage">
+      <h3 class="app-section-label">Usage</h3>
+      <p
+        class="usage"
+        data-testid="usage"
+        title="Input {{ s.usage.inputTokens }} · Output {{ s.usage.outputTokens }} · Cache write {{ s.usage.cacheCreationInputTokens }} · Cache read {{ s.usage.cacheReadInputTokens }}"
+      >
+        {{ formatTokens(totalTokens(s.usage)) }} tokens · {{
+        formatCost(s.usage.costUsd) }} theoretical API cost
+      </p>
+      <p class="muted small">
+        In {{ formatTokens(s.usage.inputTokens) }} · Out {{
+        formatTokens(s.usage.outputTokens) }} · Cache write {{
+        formatTokens(s.usage.cacheCreationInputTokens) }} · Cache read {{
+        formatTokens(s.usage.cacheReadInputTokens) }}. The cost is what these
+        requests would have cost at API prices; the subscription costs the same
+        either way.
+      </p>
+      @if (panelOpen() || docked()) {
+      <h3 class="app-section-label">Plan limits</h3>
+      <app-limit-windows />
+      }
+    </section>
+    <section class="panel-section" id="details-manage">
+      <h3 class="app-section-label">Session</h3>
+      <div class="manage">
+        @if (s.status !== 'finished' && !s.archivedAt) {
+        <button
+          matButton="outlined"
+          (click)="end()"
+          [disabled]="!connected()"
+          data-testid="end"
+        >
+          End session
+        </button>
+        } @if (canCleanUp()) {
+        <button
+          matButton="outlined"
+          type="button"
+          (click)="cleanupDialog()?.show('cleanup')"
+          data-testid="cleanup"
+        >
+          <app-icon name="clean" />Clean up…
+        </button>
+        } @if (s.archivedAt) {
+        <button
+          matButton="outlined"
+          type="button"
+          (click)="unarchive()"
+          data-testid="unarchive"
+        >
+          Unarchive
+        </button>
+        } @else if (canArchive()) {
+        <button
+          matButton="outlined"
+          type="button"
+          (click)="cleanupDialog()?.show('archive')"
+          data-testid="archive"
+        >
+          <app-icon name="archive" />Archive…
+        </button>
+        } @if (canDelete()) {
+        <button
+          matButton="outlined"
+          class="app-danger delete"
+          type="button"
+          (click)="deleteDialog()?.show()"
+          data-testid="delete"
+        >
+          <app-icon name="trash" />Delete…
+        </button>
+        }
+      </div>
+    </section>
+    }
+  </app-side-panel>
+</div>
+
+@if (session(); as s) {
+<app-cleanup-dialog [sessionId]="s.id" (done)="session.set($event.session)" />
+<app-delete-session-dialog [sessionId]="s.id" (deleted)="deleted()" />
+} @if (viewing(); as file) {
 <app-file-viewer [file]="file" (closed)="viewing.set(null)" />
 } @if (embedded(); as preview) {
 <app-preview-frame [preview]="preview" (closed)="closePreview()" />

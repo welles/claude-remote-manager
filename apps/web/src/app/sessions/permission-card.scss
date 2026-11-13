@@ -2,7 +2,10 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px;
+  // Long requests scroll inside .content; header and buttons stay.
+  max-height: min(62dvh, 640px);
+  box-sizing: border-box;
+  padding: 10px 12px 12px;
   border-radius: var(--mat-sys-corner-medium);
   // Needs the user: the attention colour, like every "needs you" state.
   border: 1px solid var(--app-status-attention);
@@ -14,6 +17,7 @@
 }
 
 .card-header {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -53,9 +57,18 @@
   }
 }
 
+.content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 pre {
-  max-height: 30vh;
-  overflow: auto;
+  overflow-x: auto;
   margin: 2px 0 0;
   padding: 6px;
   border-radius: var(--mat-sys-corner-extra-small);
@@ -67,8 +80,6 @@ pre {
 
 .body,
 .plan {
-  max-height: 40vh;
-  overflow: auto;
   padding: 0 8px;
   border-radius: var(--mat-sys-corner-extra-small);
   background: var(--mat-sys-surface-container-highest);
@@ -162,6 +173,7 @@ pre {
 }
 
 .buttons {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;

@@ -601,7 +601,11 @@ describe('SessionView', () => {
     await harness.fixture.whenStable();
     expect(text('status')).toBe('Needs you');
     expect(text('resolved-model')).toBe('claude-haiku-5');
-    expect(text('permission-line')).toBe('Waiting for your approval');
+    // The row says it waits; the card in the dock is the only other place.
+    expect(text('permission-line')).toBeUndefined();
+    expect(
+      element.querySelector('.tool .tool-state')?.textContent?.trim(),
+    ).toBe('needs approval');
     // A turn waits: it can be stopped, and messages are queued.
     expect(text('interrupt')).toBe('Stop');
     const card = element.querySelector('[data-testid="approvals"]');

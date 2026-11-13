@@ -3,15 +3,14 @@
 }
 
 .todos {
-  margin-top: 8px;
-  padding: 4px 8px;
-  border-radius: var(--mat-sys-corner-small);
-  background: var(--mat-sys-surface-container);
   font: var(--mat-sys-body-medium);
 
   summary {
     cursor: pointer;
-    font-weight: 500;
+    font: var(--mat-sys-label-small);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--mat-sys-on-surface-variant);
   }
 
   ul {
@@ -36,7 +35,7 @@
 
 .todo-in_progress {
   font-weight: 600;
-  color: var(--mat-sys-primary);
+  color: var(--app-status-running);
 }
 
 .todo-completed .todo-text {
