@@ -4,6 +4,7 @@ import type { Observable } from 'rxjs';
 import type {
   CreatePullRequestRequest,
   CreateSessionRequest,
+  FileMentionsResponse,
   PullRequestDto,
   SessionDiffFile,
   SessionDiffResponse,
@@ -46,6 +47,14 @@ export class SessionsApi {
     return this.http.post<PullRequestDto>(
       `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/pull-requests`,
       request,
+    );
+  }
+
+  /** Files of the session's directories matching a query (`@`). */
+  files(sessionId: string, query: string): Observable<FileMentionsResponse> {
+    return this.http.get<FileMentionsResponse>(
+      `${sessionPath(sessionId)}/files`,
+      { params: { query } },
     );
   }
 

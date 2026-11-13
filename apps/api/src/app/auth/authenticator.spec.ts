@@ -157,6 +157,8 @@ describe('authentication', () => {
       // Images for messages.
       ['POST', '/api/attachments'],
       ['GET', '/api/attachments/x'],
+      // Files of the session for @ references.
+      ['GET', '/api/sessions/x/files?query=a'],
       // What the session changed.
       ['GET', '/api/sessions/x/diff'],
       ['GET', '/api/sessions/x/diff/file?repositoryId=r&path=a'],

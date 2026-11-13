@@ -1,4 +1,22 @@
-<div (dragover)="onDragOver($event)" (drop)="onDrop($event)">
+<div class="composer" (dragover)="onDragOver($event)" (drop)="onDrop($event)">
+  @if (suggesting()) {
+  <ul class="mentions" role="listbox" aria-label="Files" data-testid="mentions">
+    @for (file of suggestions(); track file.mention; let i = $index) {
+    <li
+      role="option"
+      [class.active]="i === active()"
+      [attr.aria-selected]="i === active()"
+      (mousedown)="$event.preventDefault(); choose(file)"
+      data-testid="mention"
+    >
+      <span class="mention-path">{{ file.path }}</span>
+      @if (showRepository() && file.repository) {
+      <span class="mention-repository">{{ file.repository }}</span>
+      }
+    </li>
+    }
+  </ul>
+  }
   <app-draft-images [drafts]="images" />
   <div class="composer-row">
     <mat-form-field
@@ -13,6 +31,14 @@
         (input)="onInput($event)"
         (keydown)="onKeydown($event)"
         (paste)="onPaste($event)"
+        (click)="onCaret($event)"
+        (keyup)="onCaret($event)"
+        (blur)="closeMention()"
+        #textarea
+        role="combobox"
+        aria-autocomplete="list"
+        aria-controls="mention-list"
+        [attr.aria-expanded]="suggesting()"
         cdkTextareaAutosize
         cdkAutosizeMinRows="1"
         cdkAutosizeMaxRows="8"

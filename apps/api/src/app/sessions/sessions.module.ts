@@ -24,6 +24,8 @@ import { SessionWorkspaceService } from '../workspaces/session-workspace.service
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { SessionDiffController } from '../diffs/session-diff.controller';
 import { SessionDiffService } from '../diffs/session-diff.service';
+import { FileMentionsService } from '../files/file-mentions.service';
+import { SessionFilesController } from '../files/files.controller';
 import { SessionFileAccess } from '../files/session-file-access';
 import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
@@ -41,6 +43,7 @@ import { ModelsService } from './models.service';
     SessionsController,
     SessionGitController,
     SessionDiffController,
+    SessionFilesController,
     GitCredentialsController,
     ModelsController,
   ],
@@ -61,6 +64,7 @@ import { ModelsService } from './models.service';
     SetupScriptRunner,
     SessionFileAccess,
     SessionDiffService,
+    FileMentionsService,
     { provide: AgentRunner, useClass: SdkAgentRunner },
     { provide: TranscriptReader, useClass: SdkTranscriptReader },
   ],

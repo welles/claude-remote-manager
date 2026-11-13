@@ -4,6 +4,7 @@ import {
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
+import { words } from '../testing/text';
 import { MessageComposer, type ComposedMessage } from './message-composer';
 
 const png = (name = 'shot.png') =>
@@ -125,5 +126,63 @@ describe('MessageComposer', () => {
     ).toContain('/api/attachments/a1');
     button('send').click();
     expect(sent).toEqual([{ id: 'm1', text: 'Again', attachmentIds: ['a1'] }]);
+  });
+
+  it('completes @ references from the session’s files', async () => {
+    fixture.componentRef.setInput('sessionId', 's1');
+    fixture.componentRef.setInput('showRepository', true);
+    await fixture.whenStable();
+    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const type = async (value: string) => {
+      textarea.value = value;
+      textarea.setSelectionRange(value.length, value.length);
+      textarea.dispatchEvent(new Event('input'));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    };
+    await type('Look at @log');
+    http
+      .expectOne(
+        (request) =>
+          request.url === '/api/sessions/s1/files' &&
+          request.params.get('query') === 'log',
+      )
+      .flush({
+        files: [
+          {
+            directory: 0,
+            repository: 'acme/app',
+            path: 'src/login.ts',
+            mention: '@src/login.ts',
+          },
+          {
+            directory: 1,
+            repository: 'acme/lib',
+            path: 'docs/log book.md',
+            mention: '@"/w/acme/lib/docs/log book.md"',
+          },
+        ],
+        truncated: false,
+      });
+    await fixture.whenStable();
+    const options = element.querySelectorAll('[data-testid="mention"]');
+    expect([...options].map((option) => words(option))).toEqual([
+      'src/login.ts acme/app',
+      'docs/log book.md acme/lib',
+    ]);
+    const key = (name: string) =>
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: name, cancelable: true }),
+      );
+    key('ArrowDown');
+    key('Enter');
+    await fixture.whenStable();
+    expect(textarea.value).toBe('Look at @"/w/acme/lib/docs/log book.md" ');
+    expect(element.querySelector('[data-testid="mentions"]')).toBeNull();
+    // Enter sent nothing.
+    expect(sent).toEqual([]);
+
+    // Without "@" before the caret: no request.
+    await type('plain text');
+    http.expectNone('/api/sessions/s1/files');
   });
 });

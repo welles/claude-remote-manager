@@ -1,3 +1,49 @@
+.composer {
+  position: relative;
+}
+
+.mentions {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  max-height: 40vh;
+  overflow-y: auto;
+  margin: 0 0 4px;
+  padding: 4px 0;
+  list-style: none;
+  border-radius: 8px;
+  background: var(--mat-sys-surface-container-high);
+  box-shadow: var(--mat-sys-level2);
+
+  li {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+
+  .active {
+    background: var(--mat-sys-secondary-container);
+  }
+}
+
+.mention-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font:
+    13px ui-monospace,
+    monospace;
+}
+
+.mention-repository {
+  flex-shrink: 0;
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-on-surface-variant);
+}
+
 .composer-row {
   display: flex;
   align-items: flex-end;

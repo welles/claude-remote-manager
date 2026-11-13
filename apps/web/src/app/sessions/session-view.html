@@ -285,6 +285,8 @@
     [label]="composerLabel()"
     [disabled]="!connected() || preparing() || heldBack()"
     [running]="running()"
+    [sessionId]="sessionId()"
+    [showRepository]="(session()?.directories?.length ?? 0) > 1"
     (send)="send($event)"
     (interrupt)="interrupt()"
   />
