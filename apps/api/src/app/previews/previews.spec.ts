@@ -21,7 +21,7 @@ import type { PreviewConfig } from '../config/app-config';
 import { SessionRepository } from '../sessions/session.repository';
 import { SessionsService } from '../sessions/sessions.service';
 import { newSessionRecord } from '../sessions/testing/records';
-import { waitFor } from '../sessions/testing/fake-agent';
+import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import {
   postJson,
   rawRequest,
@@ -588,6 +588,62 @@ describe('previews of dev servers', () => {
     expect(appCsp({ ...PREVIEWS, port: 3000 })).toContain(
       'http://*.preview.localhost:3000;',
     );
+  });
+});
+
+describe('sessions with previews', () => {
+  let app: TestApp;
+  let dev: DevServer;
+
+  beforeEach(async () => {
+    app = await startTestApp({ previews: PREVIEWS, sessionIdleTimeoutMs: 150 });
+    dev = new DevServer();
+    await dev.listen();
+  });
+  afterEach(async () => {
+    await dev.close();
+    await app.close();
+  });
+
+  const pause = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  it('do not go idle; the idle clock starts when the last preview stops', async () => {
+    const created = await postJson(app.port, '/api/sessions', {
+      prompt: 'Start the dev server',
+      newProject: { name: 'web' },
+    });
+    const session = created.json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    const run = app.runner.last;
+    const previews = app.app.get(PreviewsService);
+    const sessions = app.app.get(SessionsService);
+    const preview = previews.expose(session.id, dev.port, 'Web', 't1').preview;
+    run.emit(resultMessage(1, 0));
+    await waitFor(() => sessions.get(session.id).status === 'waiting');
+
+    await pause(400);
+    expect(run.closed).toBe(false);
+
+    previews.stop(session.id, preview.id);
+    await pause(60);
+    // The clock started at the stop, not at the end of the turn.
+    expect(run.closed).toBe(false);
+    await waitFor(() => run.closed, 2000);
+  });
+
+  it('go idle as usual without previews', async () => {
+    const created = await postJson(app.port, '/api/sessions', {
+      prompt: 'Hi',
+      newProject: { name: 'plain' },
+    });
+    const session = created.json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    app.runner.last.emit(resultMessage(1, 0));
+    await waitFor(
+      () => app.app.get(SessionsService).get(session.id).status === 'waiting',
+    );
+    await waitFor(() => app.runner.last.closed, 2000);
   });
 });
 

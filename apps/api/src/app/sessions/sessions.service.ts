@@ -1948,14 +1948,47 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return true;
   }
 
+  /**
+   * The session's previews changed: while it has active previews its
+   * process is not closed for idleness (dev servers Claude started as
+   * background tasks end with the process); once the last one stopped,
+   * the idle clock starts from now.
+   */
+  previewsChanged(sessionId: string): void {
+    const live = this.live.get(sessionId);
+    if (
+      !live?.run ||
+      this.requireRecord(sessionId).status !== 'waiting' ||
+      live.closing
+    ) {
+      return;
+    }
+    if (this.keptForPreviews(sessionId)) {
+      this.clearIdleTimer(live);
+    } else if (!live.idleTimer) {
+      this.startIdleTimer(live);
+    }
+  }
+
+  private keptForPreviews(sessionId: string): boolean {
+    return (this.previews?.forSession(sessionId).length ?? 0) > 0;
+  }
+
   private startIdleTimer(live: LiveSession): void {
     this.clearIdleTimer(live);
-    if (this.config.sessionIdleTimeoutMs <= 0) {
+    if (
+      this.config.sessionIdleTimeoutMs <= 0 ||
+      this.keptForPreviews(live.id)
+    ) {
       return;
     }
     live.idleTimer = setTimeout(() => {
       live.idleTimer = null;
-      if (live.run && this.requireRecord(live.id).status === 'waiting') {
+      if (
+        live.run &&
+        this.requireRecord(live.id).status === 'waiting' &&
+        !this.keptForPreviews(live.id)
+      ) {
         this.logger.log(`Closing idle session ${live.id}`);
         live.closing = 'idle';
         live.run.close();

@@ -115,7 +115,10 @@ export class SessionsModule {
     previews.events$.subscribe(({ sessionId, event }) =>
       sessions.recordEvent(sessionId, event),
     );
-    previews.changes$.subscribe((id) => sessions.publishUpdate(id));
+    previews.changes$.subscribe((id) => {
+      sessions.previewsChanged(id);
+      sessions.publishUpdate(id);
+    });
     // Pushes and pull requests change what the session view shows.
     git.changes$.subscribe((id) => sessions.publishUpdate(id));
     // Limits are also read when no session runs (see LimitsService).

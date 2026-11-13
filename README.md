@@ -97,7 +97,7 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `FILES_DIR`                         | `$DB_DIR/files`                                                                                  | The API's own files: attached images, snapshots of shown files (not for sessions)                        |
 | `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem                                                      |
 | `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                                                |
-| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them                                               |
+| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long (never while the session has previews); `0` keeps them        |
 | `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                                            |
 | `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts                                                        |
 | `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                                                                 |
@@ -237,8 +237,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   repository's clone is the working directory, the other clones are additional directories.
   The process stays alive
   for follow-up messages; several sessions run side by side. The process is an internal
-  detail: it is closed after `SESSION_IDLE_TIMEOUT_MINUTES` without activity and when the
-  server stops, and the next message starts it again with the SDK's resume option.
+  detail: it is closed after `SESSION_IDLE_TIMEOUT_MINUTES` without activity (not while the
+  session has previews, see [Previews](#previews-of-dev-servers)) and when the server stops,
+  and the next message starts it again with the SDK's resume option.
 - SDK messages are mapped to session events (`libs/shared-types/src/lib/session-events.ts`):
   streamed text deltas, complete text blocks, tool calls and results, permission denials,
   notices, errors, turn results with usage, and context usage. The server keeps an event log
@@ -566,6 +567,13 @@ name of its own, so absolute asset paths and hot-reload WebSockets work unchange
   (`preview.exposed`, `preview.stopped`, stored).
 - **Stop** ends the forwarding (also open WebSockets); the dev server keeps running, Claude
   can expose it again. `POST /api/sessions/:id/previews/:previewId/stop`.
+- **No idle shutdown while previews run**: dev servers Claude starts as background tasks of
+  its Bash tool end with the Claude Code process (checked: after the idle timeout closed the
+  process, such a server was gone, while one started with `nohup … &` survived). So a
+  session with at least one active preview is never closed for idleness; when its last
+  preview stops, the idle clock starts from then. The session view says so above the
+  previews. A server restart still ends the processes (and their background dev servers);
+  the previews then show "not reachable" until Claude starts the server again.
 - **Session end** (End session, autoclose through `DevServers.stopSession`, later the cleanup)
   stops all its previews and, with `PROCESS_ISOLATION=separate-users`, the processes that
   listen on their ports: a helper run as the session user (`stop-listeners.cjs`) finds them

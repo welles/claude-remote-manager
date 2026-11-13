@@ -387,6 +387,9 @@ describe('SessionView', () => {
       '[data-testid="session-previews"]',
     ) as HTMLElement;
     expect(panel.textContent).toContain('Web app');
+    expect(
+      panel.querySelector('[data-testid="previews-keep-running"]')?.textContent,
+    ).toContain('does not go idle while it has previews');
     // The history's card shows the preview as it is now.
     const cards = [
       ...element.querySelectorAll('[data-testid="preview-card"]'),

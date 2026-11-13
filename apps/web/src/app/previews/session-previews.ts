@@ -10,6 +10,11 @@ import { PreviewCard } from './preview-card';
     @if (previews().length > 0) {
       <section class="previews" data-testid="session-previews">
         <h2>Previews</h2>
+        <p class="kept" data-testid="previews-keep-running">
+          The session does not go idle while it has previews: Claude Code and
+          the dev servers it started keep running until you stop the previews or
+          end the session.
+        </p>
         @for (preview of previews(); track preview.id) {
           <app-preview-card [preview]="preview" (embed)="embed.emit($event)" />
         }
@@ -26,6 +31,11 @@ import { PreviewCard } from './preview-card';
     h2 {
       margin: 0;
       font: var(--mat-sys-title-small);
+    }
+    .kept {
+      margin: 0 0 4px;
+      font: var(--mat-sys-body-small);
+      color: var(--mat-sys-on-surface-variant);
     }
   `,
 })
