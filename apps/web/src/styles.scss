@@ -83,3 +83,30 @@ body {
   overflow: hidden;
   clip-path: inset(50%);
 }
+
+/*
+ * Markdown rendered with [innerHTML] (assistant text, plans, shown files):
+ * component styles do not reach it, so its layout rules are global. Wide
+ * code blocks and tables scroll inside themselves instead of widening the
+ * page.
+ */
+.markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+
+  pre {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-wrap: normal;
+  }
+
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  img {
+    max-width: 100%;
+  }
+}
