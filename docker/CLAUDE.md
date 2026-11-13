@@ -51,6 +51,20 @@ sessions.
 - Only files in your session's directories can be shown. HTML pages are shown sandboxed and
   cannot load anything from the network: keep them self-contained (inline CSS and scripts).
 
+## Previews of dev servers
+
+- To let the user see a web app you run (dev server, Storybook, a static build), start the
+  server in the background in your session's directory, listening on `127.0.0.1`, `localhost`
+  or `0.0.0.0` (not on another interface), on a free port of your choice; then call the tool
+  `expose_port` (port, short name). It returns the preview URL; the user gets a card with the
+  link and can open it in the browser or embedded, with hot reload. No allowed-hosts or
+  public-URL configuration is needed: the dev server sees requests as from
+  `http://localhost:<port>`.
+- You cannot open the preview URL yourself; test the server on `http://localhost:<port>`.
+- Call `stop_preview` (port) when the server is no longer needed. The user can stop a preview
+  too; ending the session stops its previews and the servers behind them.
+- If `expose_port` is not available, previews are not configured on this server.
+
 ## Git and GitHub
 
 - Commit on the session branch. You may commit on your own; commits are made with the user's

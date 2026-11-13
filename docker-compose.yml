@@ -30,6 +30,15 @@ services:
       # URLs still work).
       # GITHUB_APP_ID: '123456'
       # GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app-key
+      # Previews of dev servers (optional): Claude's exposed ports get host
+      # names <session>-<port>.<preview domain>, served through this one port
+      # (a wildcard route in the tunnel; no further ports are published).
+      # Locally, browsers resolve *.localhost to loopback:
+      # PREVIEW_URL: http://preview.localhost:8080
+      # Behind Cloudflare Access the previews need an Access application of
+      # their own, with an audience tag other than CF_ACCESS_AUD:
+      #   PREVIEW_URL: https://preview.example.com
+      #   PREVIEW_ACCESS_AUD: <audience tag of the preview application>
       # PR automation: the secret of the GitHub App's webhook (without it
       # the webhook refuses everything and pull requests are polled).
       # GITHUB_WEBHOOK_SECRET_FILE: /run/secrets/github-webhook-secret

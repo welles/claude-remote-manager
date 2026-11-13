@@ -21,7 +21,9 @@ approval; usage is recorded per request. Sessions notify the user over Web Push 
 PWA with an offline shell, badge, shortcuts and a share target. Per open pull request,
 autofix continues the session when CI fails or reviewers with write access comment, and
 autoclose ends the session and removes its clones when the pull request is merged or closed
-(see [PR automation](#pr-automation)). The cleanup of sessions follows.
+(see [PR automation](#pr-automation)). Dev servers Claude starts become previews on host names
+of their own, opened as links or embedded (see [Previews](#previews-of-dev-servers)). The
+cleanup of sessions follows.
 
 ## Workspace layout
 
@@ -88,43 +90,45 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 
 ### Environment variables of the API
 
-| Variable                            | Default (development)                                                                            | Purpose                                                                                  |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                                                  |
-| `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                                           |
-| `FILES_DIR`                         | `$DB_DIR/files`                                                                                  | The API's own files: attached images, snapshots of shown files (not for sessions)        |
-| `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem                                      |
-| `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                                |
-| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them                               |
-| `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                            |
-| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts                                        |
-| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                                                 |
-| `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                                           |
-| `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret                              |
-| `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                                              |
-| `AUTH_MODE`                         | none, required                                                                                   | `cloudflare-access` or `none`, see [Authentication](#authentication)                     |
-| `CF_ACCESS_TEAM_DOMAIN`             | none                                                                                             | Team domain (`<team>.cloudflareaccess.com`) for `cloudflare-access`                      |
-| `CF_ACCESS_AUD`                     | none                                                                                             | Application Audience (AUD) tag(s), comma-separated                                       |
-| `CF_ACCESS_ALLOWED_EMAILS`          | none (everyone Access lets in)                                                                   | Optional comma-separated email allowlist                                                 |
-| `PROCESS_ISOLATION`                 | none, required (image: `separate-users`)                                                         | `separate-users` or `single-user`, see [Users](#users-and-what-sessions-can-reach)       |
-| `SESSION_USER`                      | `claude`                                                                                         | OS user of session processes with `separate-users`                                       |
-| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API                          |
-| `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                                          |
-| `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                                         |
-| `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                                         |
-| `PUBLIC_URL`                        | none                                                                                             | Public URL of the app, e.g. `https://crm.example.com`: ntfy links open sessions there    |
-| `SESSION_STALL_MINUTES`             | `15`                                                                                             | A running turn without any event this long "hangs" (notification); `0` never             |
-| `NTFY_URL`                          | none (ntfy off)                                                                                  | ntfy server, e.g. `https://ntfy.example.com`                                             |
-| `NTFY_TOPIC`                        | none                                                                                             | ntfy topic (letters, digits, `_`, `-`)                                                   |
-| `NTFY_TOKEN_FILE`                   | none                                                                                             | File with the ntfy access token (required with `NTFY_URL`), e.g. a Docker secret         |
-| `CRM_SECRET_NTFY_TOKEN`             | none                                                                                             | The ntfy access token itself, instead of the file                                        |
-| `VAPID_PRIVATE_KEY_FILE`            | none (keys generated into `DB_DIR`)                                                              | File with the VAPID private key (base64url), to use own keys                             |
-| `CRM_SECRET_VAPID_PRIVATE_KEY`      | none                                                                                             | The VAPID private key itself, instead of the file                                        |
-| `VAPID_PUBLIC_KEY`                  | derived from the private key                                                                     | Optional; checked against the private key                                                |
-| `VAPID_SUBJECT`                     | `PUBLIC_URL` if https, else a placeholder `mailto:`                                              | Contact for the push services (`mailto:` or `https:`)                                    |
-| `GITHUB_WEBHOOK_SECRET_FILE`        | none (webhook refuses everything)                                                                | File with the GitHub App's webhook secret (at least 16 characters), e.g. a Docker secret |
-| `CRM_SECRET_GITHUB_WEBHOOK_SECRET`  | none                                                                                             | The webhook secret itself, instead of the file                                           |
-| `PR_POLL_INTERVAL_SECONDS`          | `120` without webhook secret, `900` with one                                                     | How often open pull requests with automation are read from GitHub; `0` off, else >= 30   |
+| Variable                            | Default (development)                                                                            | Purpose                                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `PORT`                              | `3000` (image: `8080`)                                                                           | HTTP and WebSocket port                                                                                  |
+| `DB_DIR`                            | `data/db` in the working directory (image: `/data/db`)                                           | SQLite database `claude-remote-manager.sqlite`                                                           |
+| `FILES_DIR`                         | `$DB_DIR/files`                                                                                  | The API's own files: attached images, snapshots of shown files (not for sessions)                        |
+| `WORKSPACE_DIR`                     | `~/.local/share/claude-remote-manager/workspace`                                                 | `repos/`, `sessions/`, `scratch/` on one filesystem                                                      |
+| `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                                                |
+| `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long; `0` keeps them                                               |
+| `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                                            |
+| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts                                                        |
+| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                                                                 |
+| `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                                                           |
+| `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret                                              |
+| `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                                                              |
+| `AUTH_MODE`                         | none, required                                                                                   | `cloudflare-access` or `none`, see [Authentication](#authentication)                                     |
+| `CF_ACCESS_TEAM_DOMAIN`             | none                                                                                             | Team domain (`<team>.cloudflareaccess.com`) for `cloudflare-access`                                      |
+| `CF_ACCESS_AUD`                     | none                                                                                             | Application Audience (AUD) tag(s), comma-separated                                                       |
+| `CF_ACCESS_ALLOWED_EMAILS`          | none (everyone Access lets in)                                                                   | Optional comma-separated email allowlist                                                                 |
+| `PROCESS_ISOLATION`                 | none, required (image: `separate-users`)                                                         | `separate-users` or `single-user`, see [Users](#users-and-what-sessions-can-reach)                       |
+| `SESSION_USER`                      | `claude`                                                                                         | OS user of session processes with `separate-users`                                                       |
+| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API                                          |
+| `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                                                          |
+| `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                                                         |
+| `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                                                         |
+| `PUBLIC_URL`                        | none                                                                                             | Public URL of the app, e.g. `https://crm.example.com`: ntfy links open sessions there                    |
+| `SESSION_STALL_MINUTES`             | `15`                                                                                             | A running turn without any event this long "hangs" (notification); `0` never                             |
+| `NTFY_URL`                          | none (ntfy off)                                                                                  | ntfy server, e.g. `https://ntfy.example.com`                                                             |
+| `NTFY_TOPIC`                        | none                                                                                             | ntfy topic (letters, digits, `_`, `-`)                                                                   |
+| `NTFY_TOKEN_FILE`                   | none                                                                                             | File with the ntfy access token (required with `NTFY_URL`), e.g. a Docker secret                         |
+| `CRM_SECRET_NTFY_TOKEN`             | none                                                                                             | The ntfy access token itself, instead of the file                                                        |
+| `VAPID_PRIVATE_KEY_FILE`            | none (keys generated into `DB_DIR`)                                                              | File with the VAPID private key (base64url), to use own keys                                             |
+| `CRM_SECRET_VAPID_PRIVATE_KEY`      | none                                                                                             | The VAPID private key itself, instead of the file                                                        |
+| `VAPID_PUBLIC_KEY`                  | derived from the private key                                                                     | Optional; checked against the private key                                                                |
+| `VAPID_SUBJECT`                     | `PUBLIC_URL` if https, else a placeholder `mailto:`                                              | Contact for the push services (`mailto:` or `https:`)                                                    |
+| `GITHUB_WEBHOOK_SECRET_FILE`        | none (webhook refuses everything)                                                                | File with the GitHub App's webhook secret (at least 16 characters), e.g. a Docker secret                 |
+| `CRM_SECRET_GITHUB_WEBHOOK_SECRET`  | none                                                                                             | The webhook secret itself, instead of the file                                                           |
+| `PR_POLL_INTERVAL_SECONDS`          | `120` without webhook secret, `900` with one                                                     | How often open pull requests with automation are read from GitHub; `0` off, else >= 30                   |
+| `PREVIEW_URL`                       | none (previews off; `npm start`: `http://preview.localhost:3000`)                                | Base of preview host names, e.g. `https://preview.example.com`, see [Previews](#previews-of-dev-servers) |
+| `PREVIEW_ACCESS_AUD`                | none, required with `cloudflare-access` and `PREVIEW_URL`                                        | Audience tag(s) of the previews' own Access application; never one of `CF_ACCESS_AUD`                    |
 
 Secrets of the app are never passed to the processes it starts (Claude Code, setup scripts,
 its own git commands): every variable named `CRM_SECRET_*` is removed, plus a registry of fixed
@@ -181,8 +185,11 @@ WebSocket upgrade passes a guard (`apps/api/src/app/security`):
   a name in `ALLOWED_HOSTS` or the host of an `ALLOWED_ORIGINS` entry. This stops DNS
   rebinding. **In production set `ALLOWED_HOSTS` to the public host name**, e.g.
   `ALLOWED_HOSTS=crm.example.com`, or every request through the tunnel is refused with 403.
+  Names in the preview domain (`PREVIEW_URL`) are never the app's, also not as `*.localhost`;
+  the preview gateway answers them before the guard (see
+  [Previews](#previews-of-dev-servers)).
 - A request with an `Origin` header must come from the same origin (`Origin` host equals
-  `Host`) or from `ALLOWED_ORIGINS`; `Origin: null` is refused. Browsers send `Origin` on
+  `Host`) or from `ALLOWED_ORIGINS`; `Origin: null` and preview origins are refused. Browsers send `Origin` on
   every WebSocket upgrade and on cross-site or non-GET requests.
 - Without `Origin`, POSTs and WebSocket upgrades are refused only if the browser marks them
   as cross-site (`Sec-Fetch-Site`). Non-browser clients such as curl or the container health
@@ -203,7 +210,8 @@ finds no route (404).
 The web app's pages (everything outside `/api`) carry a Content Security Policy (`APP_CSP` in
 `apps/api/src/app/configure-app.ts`): scripts only from the app's own files (the production
 build inlines none; critical CSS inlining is off for that), images only from the app, `data:`
-and `blob:`, connections (API, WebSocket) and frames only to the app's origin, no plugins, no
+and `blob:`, connections (API, WebSocket) and frames only to the app's origin (frames also from the
+preview hosts, with `PREVIEW_URL`), no plugins, no
 `<base>` elsewhere, and the app itself may not be framed. Styles need `'unsafe-inline'`
 because Angular inserts component styles at runtime. The service worker and the manifest need
 nothing beyond `worker-src 'self'` and `manifest-src 'self'` (both same-origin). Rendered Markdown (Claude's messages,
@@ -530,6 +538,161 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
   request waits for the user as long as the process lives; the idle timeout does not apply
   while one is pending.
 
+## Previews of dev servers
+
+Claude starts a dev server in its session (in the background, in the session's directory) and
+makes it reachable for the user with the tool `expose_port` (port, name). The user opens the
+running app in the browser, with hot reload, as if it ran locally: every preview gets a host
+name of its own, so absolute asset paths and hot-reload WebSockets work unchanged.
+
+- **Addresses**: `<session slug>-<port>.<preview domain>`, from `PREVIEW_URL` (e.g.
+  `https://preview.example.com` gives `https://fix-login-k3x9q2-5173.preview.example.com`;
+  `npm start` uses `http://preview.localhost:3000`, which browsers resolve to loopback). Slugs
+  are unique, lowercase `[a-z0-9-]` with a random part, and ports have no dash, so labels are
+  valid DNS labels (at most 53 characters) and never collide between sessions. A port is
+  exposed by at most one session at a time. Without `PREVIEW_URL` previews are off and Claude
+  does not get the tools.
+- **Tools** (app's MCP server `crm`, no approval, the owner's decision): `expose_port` checks
+  the port and returns the preview URL; exposing a port again renames the preview;
+  `stop_preview` (port) ends it. Refused: the API's own port, ports another user listens on
+  (root, the API), ports bound to other addresses than loopback or `0.0.0.0`/`::`, a port
+  exposed by another session, more than 10 previews per session. A port nothing listens on
+  yet is accepted (the preview waits for it). Claude cannot open the preview URL itself (see
+  below) and tests on `localhost:<port>`.
+- **Session view**: running previews in the header with state (running; not reachable, with
+  the reason, e.g. "Nothing listens on port 5173"; stopped, checked every 3 s from the
+  kernel's socket table), a link (new tab, no opener, no referrer), Embed and Stop; the
+  history shows the same card where Claude exposed the port, and notes stopped previews
+  (`preview.exposed`, `preview.stopped`, stored).
+- **Stop** ends the forwarding (also open WebSockets); the dev server keeps running, Claude
+  can expose it again. `POST /api/sessions/:id/previews/:previewId/stop`.
+- **Session end** (End session, autoclose through `DevServers.stopSession`, later the cleanup)
+  stops all its previews and, with `PROCESS_ISOLATION=separate-users`, the processes that
+  listen on their ports: a helper run as the session user (`stop-listeners.cjs`) finds them
+  by the listening socket's inode in its own processes' `/proc/<pid>/fd` and sends SIGTERM,
+  SIGKILL after 5 s. Only listeners of the session user can be found and signalled. Which
+  session started a process cannot be told (all sessions share the user `claude`), so this is
+  the process behind the exposed port, whoever started it. In `single-user` development
+  nothing is killed: the listener could be any program of the developer's. Dev servers Claude
+  started but never exposed are not found; they end with the Claude Code process if they ran
+  as its background tasks.
+- **No automatic detection** of newly listening ports: the socket table shows a listener's
+  owner, but all sessions run as the same user, and which process (and so which session)
+  holds a socket is only visible in `/proc/<pid>/fd`, which the API (another user, without
+  `CAP_SYS_PTRACE`) cannot read. A port cannot be attributed to the right session reliably,
+  so previews come only from `expose_port`.
+
+### The proxy
+
+The API forwards preview hosts itself (Node's `http`, no proxy library: the parts that need
+care — checking every upstream connection, header rules, upgrades — are what a library would
+not do, and streaming is `pipe` with backpressure). A gateway in front of the HTTP server
+takes every request and WebSocket upgrade whose `Host` lies in the preview domain before
+Express or the WebSocket server see it: preview hosts serve nothing of the app (no `/api`,
+no app shell, no `/api/ws`; those paths go to the dev server), and the app's host serves no
+preview. Unknown names in the preview domain (also deeper ones and the domain itself) get a
+plain 404 page, stopped previews 410.
+
+- **Upstream**: only `127.0.0.1`/`::1` at the exposed port. Before a connection is used, the
+  socket that accepted it is looked up in `/proc/net/tcp*` and must belong to the session user
+  (`separate-users`) or to the API's user (`single-user`), whatever listened when the port
+  was exposed; the API's own port is always refused. With separate users the API (`crm`)
+  and root listeners can never be reached through a preview. Not enforceable: which session's
+  process listens (one user for all sessions); in `single-user` development any service of
+  the developer's user on loopback could be exposed (never the API's port).
+- **Headers to the dev server**: `Host: localhost:<port>`; `Origin` and `Referer` of the
+  preview itself become `http://localhost:<port>` (host and CSRF checks of Vite, webpack,
+  Next.js and others pass as locally); a foreign `Origin` is passed on as it is; any other
+  `Referer` (the app's page that embeds the preview) is dropped. Dropped: `Cf-*` (the Access
+  token `Cf-Access-Jwt-Assertion`, the identity, client IP), `X-Forwarded-*`, `Forwarded`,
+  `X-Real-IP`, `True-Client-IP`, `CDN-Loop`, hop-by-hop headers, and the cookies
+  `CF_Authorization`, `CF_*`, `__cf*`.
+- **Headers to the browser**: `Location` to `localhost:<port>` points back to the preview;
+  `Set-Cookie` loses its `Domain` attribute (cookies stay host-only on the preview host; a
+  preview cannot set cookies for the parent domain through its responses).
+- **Unavailable dev server**: refused connection → 502 page "The dev server is not running"
+  that reloads every 5 s (navigations) or `Retry-After` (other requests); no connection within
+  10 s → 504; no answer within 120 s → 504; the dev server closing the connection before an
+  answer → 502. After the answer started, a broken connection ends the response. The pages
+  are the app's own (no scripts, `default-src 'none'`, `no-store`).
+- **WebSockets** are forwarded with the same rules, then bytes both ways. Upgrades whose
+  `Origin` is not a preview host (any preview: a front end may talk to its back end on another
+  port) are refused with 403, so other sites cannot open the dev servers' hot-reload sockets;
+  clients without `Origin` are not browsers.
+
+### Previews and the app's security
+
+A preview serves what Claude or a repository wrote, in the owner's browser, on a host next to
+the app's. It is treated as a hostile page:
+
+- **Calling the API**: a preview is another origin than the app. Its requests to the app
+  carry `Origin: <preview>`, which the request guard refuses (403) for every HTTP request and
+  WebSocket upgrade, also when the browser sends the app's cookies along (the app and
+  `*.preview.example.com` are the same _site_, so `SameSite=Lax` cookies are sent on
+  same-site requests); preview origins are refused even if listed in `ALLOWED_ORIGINS`, and
+  the configuration refuses app hosts inside the preview domain. Requests without `Origin`
+  (`<img>`, `<script>`) are GETs whose answers the browser does not hand to the page.
+  Preview host names are refused by the request guard as the app's host (a second line
+  behind the gateway, which matters for `*.localhost`).
+- **Cookies and storage**: Cloudflare Access sets `CF_Authorization` per application host
+  name, host-only, by default `HttpOnly`, `Secure`, `SameSite=Lax`. The app's cookie (on
+  `crm.example.com`) is neither readable by a preview nor sent to preview hosts; the proxy
+  removes Access cookies and headers before the dev server, so neither the dev server nor its
+  server-side code sees a token. Storage, IndexedDB and the service worker are per origin:
+  a preview has its own, and cannot register a service worker for the app's scope.
+- **The preview's own token**: previews need an Access application of their own, with its own
+  audience (`PREVIEW_ACCESS_AUD`), which the API never accepts (it checks `CF_ACCESS_AUD`),
+  and the preview gateway accepts only that audience. Even a preview token that leaked
+  (a page reading a non-`HttpOnly` cookie and sending it away) cannot drive the API; it
+  could open other previews until it expires. The app refuses to start when
+  `PREVIEW_ACCESS_AUD` is missing or shares a tag with `CF_ACCESS_AUD`, and if Access issues
+  the app's audience on preview hosts (one application for both), every preview request is
+  refused. Remaining: a preview can set cookies for the parent domain from script
+  (`document.cookie`, `Domain=example.com`), e.g. a bogus `CF_Authorization`; that can
+  disturb the owner's sign-in (the app shows "sign in again"), not act as the owner. A
+  separate registrable domain for previews removes even that, at the price of embedding
+  (cross-site frames do not get `SameSite=Lax` cookies).
+- **Embedding**: the app's CSP allows frames from `'self'` and exactly the preview hosts
+  (`frame-src 'self' https://*.preview.example.com`); the app itself still may not be framed
+  (`frame-ancestors 'none'`), also not by a preview. The frame is
+  `sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"`,
+  `referrerpolicy="no-referrer"`, `allow=""`. `allow-same-origin` gives the preview _its own_
+  origin (dev servers need storage, cookies and their WebSocket; without it the origin would
+  be opaque, `Origin: null`); it cannot reach the app's because the hosts differ (Chrome's
+  console warning about the combination concerns same-origin frames). Without
+  `allow-top-navigation` it cannot navigate the app's window; popups stay sandboxed. What it
+  breaks: links with `target=_top` and OAuth redirects of the previewed app (use New tab),
+  camera, microphone and other permission policies. Behind Access, a preview host the
+  browser has no cookie for yet shows nothing in the frame (the Access login cannot run in a
+  frame): open it in a new tab once.
+- **Session processes** cannot open previews (refused by peer user like the management API,
+  in either auth mode) and cannot call the stop route; they expose only through their own
+  tool.
+
+Checked in a browser (Chromium, app on `crm.localhost`, previews on
+`*.preview.crm.localhost`, i.e. same site as in production) with a hostile page served
+through a preview, directly and embedded: `fetch` of the app's API with credentials blocked
+(403 from the guard, CORS), a no-cors POST refused (403), `/api/ws` refused (403), the app's
+cookie and `localStorage` invisible, registering a service worker for the app's scope
+refused (SecurityError), framing the app blocked (`frame-ancestors`), and, embedded,
+`parent.document`, `parent.localStorage` and `top.location` refused.
+
+### Setting it up at deployment
+
+1. **DNS and tunnel**: a wildcard route for the preview domain in the Cloudflare Tunnel, e.g.
+   public hostname `*.preview.example.com` → `http://localhost:8080` (the app's one port; the
+   tunnel keeps the `Host` header), and the DNS record `*.preview` as CNAME to the tunnel
+   (`<tunnel id>.cfargotunnel.com`, proxied). No further published ports.
+2. **Certificate**: Cloudflare's Universal SSL covers `example.com` and `*.example.com`, not
+   `*.preview.example.com`; a second-level wildcard needs an Advanced Certificate (or choose a
+   first-level preview domain, e.g. `PREVIEW_URL=https://preview-example.com`, a separate zone).
+3. **Access**: a second self-hosted Access application for `*.preview.example.com` with the
+   same policy (the owner's Google login), cookie settings: HTTP Only on (default), SameSite
+   Lax (the default; the embedded frame is same-site with the app). Its Application Audience
+   tag goes into `PREVIEW_ACCESS_AUD`. Do not add the preview hosts to the app's application.
+4. **Variables**: `PREVIEW_URL=https://preview.example.com`, `PREVIEW_ACCESS_AUD=<tag>`; keep
+   `ALLOWED_HOSTS` the app's host only (the preview domain must not be in it).
+
 ## Notifications
 
 Sessions run unattended, so the API reports what needs the user, over two channels, each
@@ -620,7 +783,8 @@ web build runs it first):
   4 seconds without an answer, or when the tunnel in front answers with an error because the
   server is down (502, 503, 504, 52x, 530), the app starts from the cache. The session list
   shows the last list this browser loaded, marked as stale with its time, and reloads when
-  the connection is back. `/api` is never cached by the service worker. Only the app's own
+  the connection is back. `/api` is never cached by the service worker, and other origins
+  (previews of dev servers among them) are never handled. Only the app's own
   page is cached as shell: redirected answers, non-HTML answers and pages that are not the app
   (e.g. the Access login page) are never stored.
 - **Expired Cloudflare Access session**: API calls then end at the Access login (a redirect
@@ -1162,7 +1326,10 @@ What a session process can and cannot reach (checked in the container):
   management API (refused by peer user, see [Authentication](#authentication)); become
   another user (`setpriv`/`su` fail);
 - can: its clones, `/data/claude` (login, transcripts, memory), `/nix`, the credential
-  endpoint with its session token, and everything of other sessions (same user).
+  endpoint with its session token, and everything of other sessions (same user), including
+  their dev servers on loopback; expose ports of its own user through `expose_port` (never the
+  API's or root's, see [Previews](#previews-of-dev-servers)); not open preview hosts through
+  the API's port.
 
 Sessions have no ambient git credentials anymore: repositories registered by clone URL are
 fetched and pushed (by button) by the API with `/data/git`; Claude's own `git push` works only
