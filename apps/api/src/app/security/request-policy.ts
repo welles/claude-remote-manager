@@ -14,11 +14,19 @@ import type { IncomingHttpHeaders } from 'node:http';
  *   WebSocket upgrades and on every cross-site or non-GET fetch), it must be
  *   the same origin as `Host` or listed in `ALLOWED_ORIGINS`. `Origin: null`
  *   (sandboxed frames, file pages) is refused.
- * - Without `Origin`, state-changing requests and WebSocket upgrades are
- *   refused only if the browser marks them as cross-site through
- *   `Sec-Fetch-Site`. Clients without these headers (curl, scripts, the
- *   container health check) are not browsers and cannot be abused by a
- *   foreign web page; requiring an Origin from them would add no security.
+ * - `Sec-Fetch-Site`: API requests (`/api`, of any method) and WebSocket
+ *   upgrades are accepted from browsers only as `same-origin` (the app
+ *   itself, its service worker, its frames) or `none` (typed or
+ *   bookmarked, e.g. a shown file opened in a new tab). `same-site`
+ *   matters most: previews of dev servers are same-site with the app, so
+ *   the browser attaches the app's cookies to their `<img>`, `<script>`
+ *   and no-cors requests, which carry no `Origin`; the API does not rely on
+ *   GET routes having no effect. Outside `/api` (the web app's pages, which
+ *   Cloudflare Access redirects back to cross-site) only state-changing
+ *   requests are refused this way. An origin in `ALLOWED_ORIGINS` is
+ *   another site on purpose and exempt. Clients without these headers
+ *   (curl, scripts, the container health check) are not browsers and
+ *   cannot be abused by a web page; requiring them would add no security.
  * - Bodies must be JSON (checked in the middleware): HTML forms can only send
  *   urlencoded, multipart or text bodies without a CORS preflight.
  */
@@ -75,12 +83,13 @@ export class RequestPolicy {
 
   /**
    * Checks a request. `upgrade` marks a WebSocket upgrade, which is treated
-   * like a state-changing request.
+   * like a state-changing request; `api` a request to the API (`/api`).
    */
   check(
     method: string,
     headers: IncomingHttpHeaders,
     upgrade = false,
+    api = false,
   ): PolicyVerdict {
     const host = header(headers, 'host');
     if (!host) {
@@ -100,16 +109,20 @@ export class RequestPolicy {
 
     const origin = header(headers, 'origin');
     if (origin !== null) {
-      return this.checkOrigin(origin, host);
+      const verdict = this.checkOrigin(origin, host);
+      if (verdict !== 'same-origin') {
+        // Refused, or another origin allowed on purpose.
+        return verdict === 'allowlisted' ? { ok: true } : verdict;
+      }
     }
-    const changesState = upgrade || !SAFE_METHODS.has(method.toUpperCase());
     const fetchSite = header(headers, 'sec-fetch-site');
-    if (
-      changesState &&
-      fetchSite &&
-      !['same-origin', 'none'].includes(fetchSite)
-    ) {
-      return { ok: false, status: 403, reason: 'Cross-site request' };
+    const strict = api || upgrade || !SAFE_METHODS.has(method.toUpperCase());
+    if (strict && fetchSite && !['same-origin', 'none'].includes(fetchSite)) {
+      return {
+        ok: false,
+        status: 403,
+        reason: `${fetchSite === 'same-site' ? 'Same-site' : 'Cross-site'} request`,
+      };
     }
     return { ok: true };
   }
@@ -120,7 +133,10 @@ export class RequestPolicy {
     );
   }
 
-  private checkOrigin(origin: string, host: string): PolicyVerdict {
+  private checkOrigin(
+    origin: string,
+    host: string,
+  ): PolicyVerdict | 'same-origin' | 'allowlisted' {
     let url: URL;
     try {
       url = new URL(origin);
@@ -141,11 +157,11 @@ export class RequestPolicy {
     }
     // Same origin: the page was loaded from the host it talks to. The scheme
     // is not compared because TLS usually ends at the tunnel in front.
-    if (
-      url.host === host.trim().toLowerCase() ||
-      this.origins.has(url.origin)
-    ) {
-      return { ok: true };
+    if (url.host === host.trim().toLowerCase()) {
+      return 'same-origin';
+    }
+    if (this.origins.has(url.origin)) {
+      return 'allowlisted';
     }
     return {
       ok: false,

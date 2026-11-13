@@ -26,7 +26,7 @@ export class GuardedWsAdapter extends WsAdapter {
         info: { req: IncomingMessage },
         callback: (result: boolean, code?: number, message?: string) => void,
       ) => {
-        const verdict = this.policy.check('GET', info.req.headers, true);
+        const verdict = this.policy.check('GET', info.req.headers, true, true);
         if (!verdict.ok) {
           this.guardLogger.warn(`Refused WebSocket upgrade: ${verdict.reason}`);
           callback(false, verdict.status, verdict.reason);

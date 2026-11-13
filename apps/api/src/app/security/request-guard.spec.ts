@@ -70,6 +70,27 @@ describe('request guard (HTTP and WebSocket)', () => {
     expect(testApp.runner.runs).toHaveLength(0);
   });
 
+  it('refuses same-site and cross-site browser requests to the API, also GETs', async () => {
+    for (const site of ['same-site', 'cross-site']) {
+      const response = await rawRequest(testApp.port, 'GET', '/api/sessions', {
+        'sec-fetch-site': site,
+        'sec-fetch-mode': 'no-cors',
+        'sec-fetch-dest': 'image',
+      });
+      expect(response.status).toBe(403);
+    }
+    for (const site of ['same-origin', 'none']) {
+      const response = await rawRequest(testApp.port, 'GET', '/api/sessions', {
+        'sec-fetch-site': site,
+      });
+      expect(response.status).toBe(200);
+    }
+    // Non-browser clients send no such header.
+    expect(
+      (await rawRequest(testApp.port, 'GET', '/api/sessions')).status,
+    ).toBe(200);
+  });
+
   it('refuses form posts (urlencoded and text bodies) with 415', async () => {
     for (const contentType of [
       'application/x-www-form-urlencoded',
@@ -125,6 +146,16 @@ describe('request guard (HTTP and WebSocket)', () => {
         opened: true,
       });
       expect(await connect({ origin: 'http://localhost:4200' })).toEqual({
+        opened: true,
+      });
+    });
+
+    it('refuses same-site upgrades without Origin', async () => {
+      expect(await connect({ 'sec-fetch-site': 'same-site' })).toEqual({
+        opened: false,
+        status: 403,
+      });
+      expect(await connect({ 'sec-fetch-site': 'same-origin' })).toEqual({
         opened: true,
       });
     });

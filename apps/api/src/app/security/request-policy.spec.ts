@@ -104,6 +104,62 @@ describe('RequestPolicy', () => {
   });
 });
 
+describe('RequestPolicy and Sec-Fetch-Site', () => {
+  const policy = new RequestPolicy({
+    allowedOrigins: ['https://tools.example.com'],
+    allowedHosts: ['crm.example.com'],
+  });
+  const api = (headers: Record<string, string>, method = 'GET') =>
+    policy.check(method, { host: 'crm.example.com', ...headers }, false, true);
+
+  it('accepts API requests of the app itself, typed URLs and non-browsers', () => {
+    for (const site of ['same-origin', 'none']) {
+      expect(api({ 'sec-fetch-site': site })).toEqual({ ok: true });
+      expect(api({ 'sec-fetch-site': site }, 'POST')).toEqual({ ok: true });
+    }
+    expect(api({})).toEqual({ ok: true });
+  });
+
+  it('refuses same-site and cross-site API requests, also GETs without Origin', () => {
+    // E.g. <img src="https://crm.example.com/api/..."> on a preview page.
+    expect(api({ 'sec-fetch-site': 'same-site' })).toEqual({
+      ok: false,
+      status: 403,
+      reason: 'Same-site request',
+    });
+    expect(api({ 'sec-fetch-site': 'cross-site' })).toMatchObject({
+      ok: false,
+      status: 403,
+    });
+    expect(
+      policy.check(
+        'GET',
+        { host: 'crm.example.com', 'sec-fetch-site': 'same-site' },
+        true,
+        true,
+      ),
+    ).toMatchObject({ ok: false });
+  });
+
+  it('keeps the web app’s pages reachable from other sites (Access redirects back)', () => {
+    expect(
+      policy.check('GET', {
+        host: 'crm.example.com',
+        'sec-fetch-site': 'cross-site',
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it('exempts origins allowed on purpose', () => {
+    expect(
+      api({
+        origin: 'https://tools.example.com',
+        'sec-fetch-site': 'same-site',
+      }),
+    ).toEqual({ ok: true });
+  });
+});
+
 describe('RequestPolicy with previews', () => {
   const policy = new RequestPolicy({
     allowedOrigins: [],

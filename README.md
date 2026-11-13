@@ -191,9 +191,19 @@ WebSocket upgrade passes a guard (`apps/api/src/app/security`):
 - A request with an `Origin` header must come from the same origin (`Origin` host equals
   `Host`) or from `ALLOWED_ORIGINS`; `Origin: null` and preview origins are refused. Browsers send `Origin` on
   every WebSocket upgrade and on cross-site or non-GET requests.
-- Without `Origin`, POSTs and WebSocket upgrades are refused only if the browser marks them
-  as cross-site (`Sec-Fetch-Site`). Non-browser clients such as curl or the container health
-  check work unchanged.
+- `Sec-Fetch-Site`: requests to the API (`/api`, any method) and WebSocket upgrades from a
+  browser are accepted only as `same-origin` (the app, its service worker, its frames: the
+  shown-file frame's request is made by the app's page) or `none` (a typed or bookmarked URL,
+  e.g. a shown file opened in a new tab); `same-site` and `cross-site` are refused with 403,
+  also for GETs without `Origin`. This matters for previews of dev servers: they are the same
+  site as the app, so the browser attaches the app's cookies to their `<img>`, `<script>` and
+  no-cors requests, which carry no `Origin`; the API does not have to rely on no GET route
+  ever having an effect. Origins in `ALLOWED_ORIGINS` are other sites on purpose and exempt.
+  Outside `/api` (the web app's pages, which Cloudflare Access redirects back to cross-site)
+  only POSTs and other state-changing requests are refused this way. Non-browser clients such
+  as curl or the container health check send no such header and work unchanged. One edge
+  case: an API URL opened in a tab while the Access session had expired comes back from the
+  Access login as a cross-site redirect and is refused; open it again from the app.
 - Request bodies must be `application/json` (415 otherwise), so HTML forms on other sites
   cannot post to the API. The only exception is the image upload (`POST /api/attachments`),
   which takes `image/png`, `image/jpeg`, `image/gif` or `image/webp` bodies and nothing else
@@ -639,7 +649,9 @@ the app's. It is treated as a hostile page:
   `*.preview.example.com` are the same _site_, so `SameSite=Lax` cookies are sent on
   same-site requests); preview origins are refused even if listed in `ALLOWED_ORIGINS`, and
   the configuration refuses app hosts inside the preview domain. Requests without `Origin`
-  (`<img>`, `<script>`) are GETs whose answers the browser does not hand to the page.
+  (`<img>`, `<script>`, no-cors `fetch`) carry `Sec-Fetch-Site: same-site` and are refused
+  as well (checked in the browser: an `<img>` and a no-cors fetch of `/api/sessions` from a
+  preview page were refused with 403).
   Preview host names are refused by the request guard as the app's host (a second line
   behind the gateway, which matters for `*.localhost`).
 - **Cookies and storage**: Cloudflare Access sets `CF_Authorization` per application host

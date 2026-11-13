@@ -62,7 +62,12 @@ export class RequestGuardMiddleware implements NestMiddleware {
   constructor(@Inject(RequestPolicy) private readonly policy: RequestPolicy) {}
 
   use(request: Request, response: Response, next: NextFunction): void {
-    const verdict = this.policy.check(request.method, request.headers);
+    const verdict = this.policy.check(
+      request.method,
+      request.headers,
+      false,
+      /^\/api(\/|$)/.test(request.originalUrl.split('?')[0]),
+    );
     if (!verdict.ok) {
       this.logger.warn(
         `Refused ${request.method} ${request.originalUrl}: ${verdict.reason}`,
