@@ -3,6 +3,7 @@ export * from './lib/attachments';
 export * from './lib/diffs';
 export * from './lib/files';
 export * from './lib/github';
+export * from './lib/github-references';
 export * from './lib/health';
 export * from './lib/limits';
 export * from './lib/notifications';

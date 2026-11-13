@@ -52,10 +52,54 @@ export interface FakePullRequest {
   createdAt: string;
 }
 
+/** An issue or pull request for references (`#12`). */
+export interface FakeIssue {
+  repositoryId: number;
+  number: number;
+  title: string;
+  body: string;
+  state: 'open' | 'closed';
+  author: string | null;
+  labels: string[];
+  updatedAt: string;
+  comments: { author: string | null; body: string; createdAt: string }[];
+  /** Set for pull requests. */
+  pull: {
+    merged: boolean;
+    draft: boolean;
+    head: string;
+    base: string;
+    /** `null`: GitHub refuses the diff as too large (406). */
+    diff: string | null;
+    files: {
+      filename: string;
+      status: string;
+      additions: number;
+      deletions: number;
+      patch?: string;
+    }[];
+    reviewComments: {
+      author: string | null;
+      body: string;
+      createdAt: string;
+      path: string;
+      line: number;
+    }[];
+    reviews: {
+      author: string | null;
+      body: string;
+      state: string;
+      submittedAt: string;
+    }[];
+  } | null;
+}
+
 export interface RecordedRequest {
   method: string;
   path: string;
   query: URLSearchParams;
+  /** `Accept` header. */
+  accept: string | null;
   /** `jwt`, a minted token, or `none`. */
   auth: 'jwt' | MintedToken | 'none';
   body: unknown;
@@ -78,6 +122,7 @@ export class FakeGitHub {
   readonly installations: FakeInstallation[] = [];
   readonly tokens: MintedToken[] = [];
   readonly pulls: FakePullRequest[] = [];
+  readonly issues: FakeIssue[] = [];
   readonly requests: RecordedRequest[] = [];
   /** Page size of `/installation/repositories` (to test pagination). */
   pageSize = 100;
@@ -135,6 +180,47 @@ export class FakeGitHub {
     return repository;
   }
 
+  /** Adds an issue (or, with `pull`, a pull request) to a repository. */
+  addIssue(
+    repository: FakeRepository,
+    options: Partial<Omit<FakeIssue, 'pull'>> & {
+      pull?: Partial<NonNullable<FakeIssue['pull']>> | boolean;
+    } = {},
+  ): FakeIssue {
+    const { pull, ...rest } = options;
+    const issue: FakeIssue = {
+      repositoryId: repository.id,
+      number:
+        this.issues.filter((entry) => entry.repositoryId === repository.id)
+          .length + 1,
+      title: 'An issue',
+      body: '',
+      state: 'open',
+      author: 'octocat',
+      labels: [],
+      updatedAt: new Date(
+        Date.UTC(2026, 0, 1 + this.issues.length),
+      ).toISOString(),
+      comments: [],
+      ...rest,
+      pull: pull
+        ? {
+            merged: false,
+            draft: false,
+            head: 'feature',
+            base: 'main',
+            diff: 'diff --git a/a.txt b/a.txt\n+added\n',
+            files: [],
+            reviewComments: [],
+            reviews: [],
+            ...(typeof pull === 'object' ? pull : {}),
+          }
+        : null,
+    };
+    this.issues.push(issue);
+    return issue;
+  }
+
   /** Requests to a path (without query), e.g. to count token mints. */
   requestsTo(method: string, pattern: RegExp): RecordedRequest[] {
     return this.requests.filter(
@@ -151,6 +237,7 @@ export class FakeGitHub {
       method,
       path: parsed.pathname,
       query: parsed.searchParams,
+      accept: new Headers(init.headers).get('accept'),
       auth: this.authOf(credential),
       body: typeof init.body === 'string' ? JSON.parse(init.body) : null,
     };
@@ -235,6 +322,194 @@ export class FakeGitHub {
     };
   }
 
+  private rawIssue(issue: FakeIssue) {
+    const repository = this.repositoryById(issue.repositoryId);
+    return {
+      number: issue.number,
+      title: issue.title,
+      body: issue.body,
+      state: issue.state,
+      draft: issue.pull?.draft ?? false,
+      user: issue.author ? { login: issue.author } : null,
+      labels: issue.labels.map((name) => ({ name })),
+      comments: issue.comments.length,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: issue.updatedAt,
+      closed_at: issue.state === 'closed' ? issue.updatedAt : null,
+      html_url: `https://github.com/${repository.owner}/${repository.name}/${issue.pull ? 'pull' : 'issues'}/${issue.number}`,
+      ...(issue.pull
+        ? {
+            pull_request: {
+              merged_at: issue.pull.merged ? issue.updatedAt : null,
+            },
+          }
+        : {}),
+    };
+  }
+
+  private repositoryById(id: number): FakeRepository {
+    return this.installations
+      .flatMap((installation) => installation.repositories)
+      .find((entry) => entry.id === id) as FakeRepository;
+  }
+
+  /** A page of a list, with a `Link` header to the next one. */
+  private page<T>(request: RecordedRequest, all: T[]): Response {
+    const perPage = Number(request.query.get('per_page') ?? 30);
+    const page = Number(request.query.get('page') ?? 1);
+    const headers: Record<string, string> = {};
+    if (page * perPage < all.length) {
+      headers['link'] =
+        `<https://api.github.com${request.path}?per_page=${perPage}&page=${page + 1}>; rel="next"`;
+    }
+    return json(200, all.slice((page - 1) * perPage, page * perPage), headers);
+  }
+
+  /** Issue routes: issues, comments, pull request details, diffs, search. */
+  private issueRoute(request: RecordedRequest): Response | undefined {
+    const { method, path, auth } = request;
+    if (method !== 'GET') {
+      return undefined;
+    }
+    if (path === '/search/issues') {
+      const q = request.query.get('q') ?? '';
+      const repo = /repo:(\S+)/.exec(q)?.[1] ?? '';
+      const [owner, name] = repo.split('/');
+      const found = this.repositoryByName(owner ?? '', name ?? '');
+      if (!found || !this.allows(auth, found.repository, 'issues', 'read')) {
+        return json(422, { message: 'Validation Failed' });
+      }
+      const words = q
+        .replace(/repo:\S+/, '')
+        .replace('in:title', '')
+        .trim()
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean);
+      const items = this.issues.filter(
+        (issue) =>
+          issue.repositoryId === found.repository.id &&
+          words.every((word) => issue.title.toLowerCase().includes(word)),
+      );
+      return json(200, {
+        total_count: items.length,
+        items: items.map((issue) => this.rawIssue(issue)),
+      });
+    }
+    const match =
+      /^\/repos\/([^/]+)\/([^/]+)\/(issues|pulls)(?:\/(\d+)(?:\/(comments|reviews|files))?)?$/.exec(
+        path,
+      );
+    if (!match) {
+      return undefined;
+    }
+    const found = this.repositoryByName(
+      decodeURIComponent(match[1]),
+      decodeURIComponent(match[2]),
+    );
+    if (!found) {
+      return json(404, { message: 'Not Found' });
+    }
+    const { repository } = found;
+    const [, , , collection, number, sub] = match;
+    const issue = number
+      ? this.issues.find(
+          (entry) =>
+            entry.repositoryId === repository.id &&
+            entry.number === Number(number),
+        )
+      : undefined;
+    if (collection === 'pulls' && (!number || !issue)) {
+      // Pull requests created through the app (see `pulls`).
+      return undefined;
+    }
+    const permission = collection === 'issues' ? 'issues' : 'pull_requests';
+    if (!this.allows(auth, repository, permission, 'read')) {
+      return json(403, { message: 'Resource not accessible by integration' });
+    }
+    if (collection === 'issues' && !number) {
+      return this.page(
+        request,
+        this.issues
+          .filter((entry) => entry.repositoryId === repository.id)
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+          .map((entry) => this.rawIssue(entry)),
+      );
+    }
+    if (!issue || (collection === 'pulls' && !issue.pull)) {
+      return json(404, { message: 'Not Found' });
+    }
+    if (collection === 'issues') {
+      return sub === 'comments'
+        ? this.page(
+            request,
+            issue.comments.map((comment) => ({
+              user: comment.author ? { login: comment.author } : null,
+              body: comment.body,
+              created_at: comment.createdAt,
+            })),
+          )
+        : sub
+          ? json(404, { message: 'Not Found' })
+          : json(200, this.rawIssue(issue));
+    }
+    const pull = issue.pull as NonNullable<FakeIssue['pull']>;
+    if (
+      (request.accept === 'application/vnd.github.diff' || sub === 'files') &&
+      !this.allows(auth, repository, 'contents', 'read')
+    ) {
+      // As GitHub: rendering changes needs read access to the code.
+      return json(403, { message: 'Resource not accessible by integration' });
+    }
+    switch (sub) {
+      case 'comments':
+        return this.page(
+          request,
+          pull.reviewComments.map((comment) => ({
+            user: comment.author ? { login: comment.author } : null,
+            body: comment.body,
+            created_at: comment.createdAt,
+            path: comment.path,
+            line: comment.line,
+          })),
+        );
+      case 'reviews':
+        return this.page(
+          request,
+          pull.reviews.map((review) => ({
+            user: review.author ? { login: review.author } : null,
+            body: review.body,
+            state: review.state,
+            submitted_at: review.submittedAt,
+          })),
+        );
+      case 'files':
+        return this.page(request, pull.files);
+    }
+    if (request.accept === 'application/vnd.github.diff') {
+      return pull.diff === null
+        ? json(406, {
+            message:
+              'Sorry, the diff exceeded the maximum number of lines (20000)',
+          })
+        : new Response(pull.diff, {
+            status: 200,
+            headers: { 'content-type': 'text/plain' },
+          });
+    }
+    return json(200, {
+      number: issue.number,
+      draft: pull.draft,
+      merged_at: pull.merged ? issue.updatedAt : null,
+      head: { ref: pull.head },
+      base: { ref: pull.base },
+      additions: 10,
+      deletions: 2,
+      changed_files: pull.files.length || 1,
+      review_comments: pull.reviewComments.length,
+    });
+  }
+
   /** Token check for repository endpoints. */
   private allows(
     auth: RecordedRequest['auth'],
@@ -264,6 +539,10 @@ export class FakeGitHub {
       json(403, { message: 'Resource not accessible by integration' });
     let match: RegExpExecArray | null;
 
+    const issueResponse = this.issueRoute(request);
+    if (issueResponse) {
+      return issueResponse;
+    }
     if (method === 'GET' && path === '/app') {
       return auth === 'jwt'
         ? json(200, {

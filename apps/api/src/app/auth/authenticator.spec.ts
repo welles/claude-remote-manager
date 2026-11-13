@@ -163,6 +163,10 @@ describe('authentication', () => {
       ['GET', '/api/attachments/x'],
       // Files of the session for @ references.
       ['GET', '/api/sessions/x/files?query=a'],
+      // GitHub references: suggestions, previews, what Claude got.
+      ['GET', '/api/github/references?query=1&repositories=a/b'],
+      ['GET', '/api/github/references/a/b/1'],
+      ['GET', '/api/sessions/x/messages/y/context'],
       // What the session changed.
       ['GET', '/api/sessions/x/diff'],
       ['GET', '/api/sessions/x/diff/file?repositoryId=r&path=a'],

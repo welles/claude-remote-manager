@@ -21,6 +21,12 @@ export interface GitHubRequest {
   token: string;
   query?: Record<string, string | number | undefined>;
   body?: unknown;
+  /**
+   * Media type to ask for instead of JSON, e.g.
+   * `application/vnd.github.diff`; the response body is then returned as
+   * text.
+   */
+  accept?: string;
 }
 
 export interface GitHubResponse<T> {
@@ -137,7 +143,7 @@ export class GitHubHttp {
         response = await this.fetchImpl(url, {
           method: request.method ?? 'GET',
           headers: {
-            Accept: 'application/vnd.github+json',
+            Accept: request.accept ?? 'application/vnd.github+json',
             Authorization: `Bearer ${request.token}`,
             'X-GitHub-Api-Version': API_VERSION,
             'User-Agent': 'claude-remote-manager',
@@ -166,7 +172,7 @@ export class GitHubHttp {
         const text = await response.text();
         return {
           status: response.status,
-          data: (text ? JSON.parse(text) : null) as T,
+          data: (request.accept ? text : text ? JSON.parse(text) : null) as T,
           headers: response.headers,
         };
       }

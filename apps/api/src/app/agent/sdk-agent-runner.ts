@@ -206,6 +206,46 @@ export function userContent(
   ];
 }
 
+/**
+ * The SDK messages for a user message: the message itself, preceded by its
+ * untrusted context if any. The context goes as its own message with
+ * - `client_composed: true`: Claude Code delivers the text as written, with
+ *   no `@path` file expansion and no slash-command dispatch;
+ * - `shouldQuery: false`: it starts no turn; Claude Code merges it into the
+ *   next message, the user's, whose text keeps `@` expansion and the
+ *   context Claude Code attaches at the start of a turn (which
+ *   `client_composed` would skip for the turn it starts);
+ * - `isSynthetic: true`: Claude Code prefixes it with "[MESSAGE FROM
+ *   NON-USER SOURCE - NOT USER INPUT]" and leaves it out of the
+ *   conversation `getSessionMessages` returns.
+ * Checked with the bundled Claude Code (see the README).
+ */
+export function sdkUserMessages(
+  message: AgentUserMessage,
+): Sdk.SDKUserMessage[] {
+  const user: Sdk.SDKUserMessage = {
+    type: 'user',
+    message: { role: 'user', content: userContent(message) },
+    parent_tool_use_id: null,
+    uuid: message.id as Sdk.SDKUserMessage['uuid'],
+  };
+  if (!message.context) {
+    return [user];
+  }
+  return [
+    {
+      type: 'user',
+      message: { role: 'user', content: message.context.text },
+      parent_tool_use_id: null,
+      uuid: message.context.id as Sdk.SDKUserMessage['uuid'],
+      client_composed: true,
+      shouldQuery: false,
+      isSynthetic: true,
+    },
+    user,
+  ];
+}
+
 /** Builds the SDK options for a session. Exported for tests. */
 export function buildQueryOptions(
   options: AgentStartOptions,
@@ -274,13 +314,12 @@ export class SdkAgentRunner implements AgentRunner {
   ): Promise<AgentRun> {
     const sdk = await loadAgentSdk();
     const input = new AsyncQueue<Sdk.SDKUserMessage>();
-    const toSdk = (message: AgentUserMessage): Sdk.SDKUserMessage => ({
-      type: 'user',
-      message: { role: 'user', content: userContent(message) },
-      parent_tool_use_id: null,
-      uuid: message.id as Sdk.SDKUserMessage['uuid'],
-    });
-    input.push(toSdk(firstMessage));
+    const push = (message: AgentUserMessage) => {
+      for (const sdkMessage of sdkUserMessages(message)) {
+        input.push(sdkMessage);
+      }
+    };
+    push(firstMessage);
     const stderr: string[] = [];
     const query = sdk.query({
       prompt: input,
@@ -304,7 +343,7 @@ export class SdkAgentRunner implements AgentRunner {
 
     return {
       messages: query,
-      send: (message) => input.push(toSdk(message)),
+      send: push,
       interrupt: async () => {
         await query.interrupt();
       },

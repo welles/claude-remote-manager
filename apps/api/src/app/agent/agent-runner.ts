@@ -85,6 +85,14 @@ export interface AgentUserMessage {
   text: string;
   /** Images, sent as image content before the text. */
   images?: AgentUserImage[];
+  /**
+   * Untrusted context for this message (GitHub content, see
+   * `untrusted-context.ts`), sent to Claude Code as a message of its own
+   * right before this one, delivered as written: no `@path` expansion and
+   * no slash command, without a turn of its own. `id` is its UUID in the
+   * transcript.
+   */
+  context?: { id: string; text: string };
 }
 
 /**

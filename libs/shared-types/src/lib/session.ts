@@ -1,3 +1,4 @@
+import type { MessageReferenceRequest } from './github-references';
 /**
  * Lifecycle of a session as shown in the UI. The Claude Code process is an
  * internal detail: it is closed when idle or when the server stops and
@@ -252,6 +253,8 @@ export interface CreateSessionRequest {
   prompt: string;
   /** Uploaded images (`POST /api/attachments`) for the first message. */
   attachmentIds?: string[];
+  /** GitHub issues and pull requests referenced in the first message. */
+  references?: MessageReferenceRequest[];
   title?: string;
   /** Model name or alias such as `sonnet`, `opus` or `haiku`. */
   model?: string;

@@ -322,6 +322,37 @@ export const pushSubscriptions = sqliteTable('push_subscriptions', {
   lastError: text('last_error'),
 });
 
+/**
+ * What the app gave Claude with a user message besides the message itself:
+ * the GitHub issues and pull requests it references (as resolved when it
+ * was sent, for the chips) and the untrusted context text exactly as
+ * Claude got it. Also marks messages the app composed itself (`origin`
+ * `app`, e.g. the PR automation). One row per message that has any of it.
+ */
+export const messageContexts = sqliteTable(
+  'message_contexts',
+  {
+    /** ID of the user message (also the transcript entry's UUID). */
+    messageId: text('message_id').primaryKey(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    /** `user` or `app`. */
+    origin: text('origin').$type<'user' | 'app'>().notNull(),
+    /** `MessageReference[]` as JSON. */
+    references: text('references').notNull(),
+    /**
+     * UUID of the context message in the Claude Code transcript (sent
+     * before the user message); `null` without context.
+     */
+    contextId: text('context_id'),
+    /** The context text Claude got; `null` without. */
+    context: text('context'),
+    createdAt: createdAt(),
+  },
+  (table) => [index('message_contexts_session').on(table.sessionId)],
+);
+
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
 export type SessionDirectoryRow = typeof sessionDirectories.$inferSelect;
@@ -333,3 +364,4 @@ export type NewUsageRecordRow = typeof usageRecords.$inferInsert;
 export type AttachmentRow = typeof attachments.$inferSelect;
 export type ShownFileRow = typeof shownFiles.$inferSelect;
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
+export type MessageContextRow = typeof messageContexts.$inferSelect;

@@ -37,6 +37,7 @@ describe('openDatabase', () => {
     expect(tables(db)).toEqual([
       'app_settings',
       'attachments',
+      'message_contexts',
       'pull_requests',
       'push_subscriptions',
       'repositories',

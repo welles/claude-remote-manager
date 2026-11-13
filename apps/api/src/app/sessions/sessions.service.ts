@@ -24,6 +24,9 @@ import {
   type CreateSessionRequest,
   type FileDiff,
   type LogPosition,
+  type MessageContextResponse,
+  type MessageReference,
+  type MessageReferenceRequest,
   type PermissionRequestEvent,
   type PermissionResponseResult,
   type PullRequestCall,
@@ -42,6 +45,19 @@ import {
   type AgentUserMessage,
 } from '../agent/agent-runner';
 import { AttachmentStore } from '../attachments/attachment.store';
+import {
+  formatUntrustedContext,
+  untrustedTag,
+  type UntrustedContext,
+} from '../agent/untrusted-context';
+import {
+  GitHubReferencesService,
+  parseReferenceRequests,
+} from '../github-references/github-references.service';
+import {
+  MessageContextRepository,
+  type MessageContextSummary,
+} from './message-context.repository';
 import {
   ToolApprover,
   type PermissionResolvedInput,
@@ -122,6 +138,48 @@ interface UserMessage {
   text: string;
   /** Images of the message (`[]` without). */
   attachments: AttachmentDto[];
+  /** GitHub references of the message (`[]` without). */
+  references: MessageReference[];
+  /** Length of the untrusted context sent with it, if any. */
+  contextLength: number | null;
+  origin: 'user' | 'app';
+}
+
+/**
+ * A message for a session (see {@link SessionsService.sendMessage}): the
+ * user's from the input, or one the app composes (the PR automation).
+ */
+export interface SessionMessageInput {
+  /** UUID; also the message's UUID in the transcript. New if absent. */
+  id?: string;
+  /**
+   * The words of the message, delivered to Claude Code as typed: `@path`
+   * mentions are expanded, a leading `/command` runs. Text of origin `app`
+   * may contain neither (put variable content into `untrusted`).
+   */
+  text: string;
+  /** `app`: composed by the app, not typed by the user. Default `user`. */
+  origin?: 'user' | 'app';
+  /** Uploaded images (`POST /api/attachments`). */
+  attachmentIds?: string[];
+  /**
+   * GitHub issues and pull requests to fetch through the GitHub App and
+   * give Claude as untrusted context.
+   */
+  references?: MessageReferenceRequest[];
+  /**
+   * Further untrusted content the caller fetched itself (e.g. review
+   * comments, CI logs), given to Claude like the references: wrapped, as
+   * data, never expanded or run.
+   */
+  untrusted?: UntrustedContext;
+}
+
+/** What a message's references and untrusted content became. */
+interface PreparedContext {
+  references: MessageReference[];
+  /** The text Claude gets before the message; `null` without. */
+  text: string | null;
 }
 
 /** A queued message, ready for Claude Code (images loaded). */
@@ -191,6 +249,14 @@ interface LiveSession {
   queue: QueuedMessage[];
   /** IDs of messages whose sending has begun (images being loaded). */
   sending: Set<string>;
+  /** Settles when the message sent before has been queued or sent. */
+  order: Promise<void>;
+  /**
+   * Context messages sent to the current process whose own result has not
+   * arrived yet: Claude Code answers each message with `shouldQuery:
+   * false` with a result of zero turns, which is not the end of a turn.
+   */
+  contextResults: number;
   /** Status and `waitingFor` last published (`status/waitingFor`). */
   publishedStatus: string;
   /** Why the current process is being closed on purpose. */
@@ -269,6 +335,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly attachments?: AttachmentStore,
     @Optional()
     private readonly shownFiles?: ShownFilesService,
+    @Optional()
+    private readonly githubReferences?: GitHubReferencesService,
+    @Optional()
+    private readonly contexts?: MessageContextRepository,
   ) {}
 
   /**
@@ -397,6 +467,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   async create(request: CreateSessionRequest): Promise<SessionDto> {
     const body = requireObject(request);
     const { text: prompt, attachmentIds } = this.messageContent(body, 'prompt');
+    const referenceRequests = parseReferenceRequests(body['references']);
     const title =
       optionalString(body, 'title', { maxLength: MAX_TITLE_LENGTH })?.trim() ||
       titleFromPrompt(prompt) ||
@@ -412,6 +483,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.attachmentStore(attachmentIds).check(attachmentIds);
     const plan = await this.workspaces.plan(request, title);
     const message = { id: randomUUID(), text: prompt };
+    // Resolved now, so the chips show at once; sent with the message later.
+    const context = await this.prepareContext(referenceRequests);
     let record: SessionRecord;
     try {
       record = this.sessions.create({
@@ -441,6 +514,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       record.id,
       message.id,
     );
+    this.saveContext(record.id, message.id, 'user', context);
     const live = this.liveSession(record.id);
     live.historyLoaded = Promise.resolve();
     this.append(live, {
@@ -448,7 +522,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       status: 'preparing',
       waitingFor: null,
     });
-    this.appendUserMessage(live, { ...message, attachments });
+    this.appendUserMessage(live, {
+      ...message,
+      attachments,
+      references: context.references,
+      contextLength: context.text?.length ?? null,
+      origin: 'user',
+    });
     const dto = this.toDto(record);
     this.updates.next(dto);
     this.startPreparation(live, message);
@@ -456,18 +536,58 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Sends a user message. Starts a turn, queues it behind the running turn
-   * (it goes to Claude when the turn ends), or resumes the session if no
-   * process is running.
+   * Sends a user message (REST, WebSocket). Starts a turn, queues it behind
+   * the running turn (it goes to Claude when the turn ends), or resumes the
+   * session if no process is running.
    */
   async send(
     sessionId: string,
-    message: { id?: string; text: string; attachmentIds?: string[] },
+    message: {
+      id?: string;
+      text: string;
+      attachmentIds?: string[];
+      references?: MessageReferenceRequest[];
+    },
   ): Promise<void> {
     const body = requireObject(message);
     const { text, attachmentIds } = this.messageContent(body, 'text');
-    // The ID goes to Claude Code as the message UUID.
-    const id = optionalUuid(body, 'id') ?? randomUUID();
+    await this.sendMessage(sessionId, {
+      // The ID goes to Claude Code as the message UUID.
+      id: optionalUuid(body, 'id'),
+      text,
+      attachmentIds,
+      references: parseReferenceRequests(body['references']),
+      origin: 'user',
+    });
+  }
+
+  /**
+   * Sends a message to a session, with untrusted context if it has any:
+   * the reusable way to give Claude content that nobody in this session
+   * wrote (GitHub issues, review comments, CI output). The context goes to
+   * Claude Code right before the message, wrapped and marked as untrusted
+   * data that does not come from the user, and delivered as written (never
+   * `@` expanded or run as a slash command; see `sdkUserMessages`); the
+   * message's own text is delivered as typed. GitHub references are
+   * resolved first; references that cannot be resolved do not stop the
+   * message (Claude is told their content is missing). Stored with the
+   * message, so the history shows its references and what Claude got.
+   * Like {@link send}, it starts a turn, queues the message or resumes the
+   * session.
+   */
+  async sendMessage(
+    sessionId: string,
+    input: SessionMessageInput,
+  ): Promise<void> {
+    const origin = input.origin ?? 'user';
+    const text = input.text;
+    if (origin === 'app' && (text.includes('@') || /^\s*\//.test(text))) {
+      throw new Error(
+        'Text the app composes must contain no @ and not start with /: put such content into the untrusted context',
+      );
+    }
+    const attachmentIds = input.attachmentIds ?? [];
+    const id = input.id ?? randomUUID();
     const record = this.requireRecord(sessionId);
     this.requireUsable(record);
     const live = this.liveSession(sessionId);
@@ -479,46 +599,93 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Sent twice (e.g. a retry after a reconnect).
       return;
     }
-    // Marked until it is queued or sent: a second request with this ID
-    // that arrives during the awaits below finds it here.
-    live.sending.add(id);
-    let attachments: AttachmentDto[];
-    let agent: AgentUserMessage;
+    const previous = live.order;
+    let release = () => undefined as void;
+    live.order = new Promise<void>((resolve) => (release = resolve));
     try {
-      attachments = this.attachmentStore(attachmentIds).claim(
-        attachmentIds,
-        sessionId,
-        id,
-      );
-      agent = await this.agentMessage(sessionId, { id, text });
-      if (live.starting) {
-        await live.starting;
+      // Marked until it is queued or sent: a second request with this ID
+      // that arrives during the awaits below finds it here.
+      live.sending.add(id);
+      let attachments: AttachmentDto[];
+      let context: PreparedContext;
+      let agent: AgentUserMessage;
+      try {
+        attachments = this.attachmentStore(attachmentIds).claim(
+          attachmentIds,
+          sessionId,
+          id,
+        );
+        context = await this.prepareContext(
+          input.references ?? [],
+          input.untrusted,
+        );
+        this.saveContext(sessionId, id, origin, context);
+        agent = await this.agentMessage(sessionId, { id, text });
+        // Messages are queued or sent in the order they arrived, even when
+        // an earlier one takes longer to prepare (its references).
+        await previous;
+        if (live.starting) {
+          await live.starting;
+        }
+      } finally {
+        live.sending.delete(id);
       }
-    } finally {
-      live.sending.delete(id);
-    }
-    // No await from here on until it is queued or sent.
-    if (this.isKnownMessage(live, id)) {
-      return;
-    }
-    if (live.run && this.requireRecord(sessionId).status === 'running') {
-      live.queue.push({ id, text, attachments, agent });
-      this.append(live, {
-        type: 'message.queued',
+      // No await from here on until it is queued or sent.
+      if (this.isKnownMessage(live, id)) {
+        return;
+      }
+      const message: UserMessage = {
         id,
         text,
-        ...(attachments.length > 0 ? { attachments } : {}),
-      });
-      return;
+        attachments,
+        references: context.references,
+        contextLength: context.text?.length ?? null,
+        origin,
+      };
+      if (live.run && this.requireRecord(sessionId).status === 'running') {
+        live.queue.push({ ...message, agent });
+        this.append(live, {
+          type: 'message.queued',
+          id,
+          text,
+          ...(attachments.length > 0 ? { attachments } : {}),
+          ...(message.references.length > 0
+            ? { references: message.references }
+            : {}),
+        });
+        return;
+      }
+      this.appendUserMessage(live, message);
+      if (live.run) {
+        live.run.send(agent);
+        this.countContext(live, agent);
+        this.setStatus(live, 'running');
+      } else {
+        this.setStatus(live, 'running');
+        this.startRun(live, this.requireRecord(sessionId), { id, text });
+      }
+    } finally {
+      release();
     }
-    this.appendUserMessage(live, { id, text, attachments });
-    if (live.run) {
-      live.run.send(agent);
-      this.setStatus(live, 'running');
-    } else {
-      this.setStatus(live, 'running');
-      this.startRun(live, this.requireRecord(sessionId), { id, text });
+  }
+
+  /**
+   * The context the app gave Claude with a message (GitHub content),
+   * exactly as Claude got it; 404 when the message had none.
+   */
+  messageContext(sessionId: string, messageId: string): MessageContextResponse {
+    this.requireRecord(sessionId);
+    const record = this.contexts?.get(sessionId, messageId);
+    if (!record?.context) {
+      throw new NotFoundException(
+        `Message ${messageId} of session ${sessionId} has no context`,
+      );
     }
+    return {
+      messageId,
+      context: record.context,
+      references: record.references,
+    };
   }
 
   /** A message with this ID is queued, being sent, or in the log. */
@@ -834,6 +1001,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         interruptRequested: null,
         queue: [],
         sending: new Set(),
+        order: Promise.resolve(),
+        contextResults: 0,
         publishedStatus: '',
         closing: null,
         idleTimer: null,
@@ -876,13 +1045,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       // Nothing else is logged before the history is loaded.
       const images = this.attachments?.forSession(record.id) ?? new Map();
+      const contexts = this.contexts?.forSession(record.id) ?? new Map();
+      const extras = (event: SessionEventInput) =>
+        withContext(withAttachments(event, images), contexts);
+      // Context messages sent before user messages are not conversation.
+      const contextIds = new Set(
+        [...contexts.values()].map((summary) => summary.contextId),
+      );
+      entries = entries.filter((entry) => !contextIds.has(entry.uuid));
       if (record.pendingMessage) {
         // Not sent to Claude (yet), so not in the transcript.
         live.log.append(
-          withAttachments(
-            { type: 'user.message', ...record.pendingMessage },
-            images,
-          ),
+          extras({ type: 'user.message', ...record.pendingMessage }),
           record.createdAt.toISOString(),
         );
       }
@@ -891,7 +1065,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         (event, at) => ({ event, at }),
       );
       for (const item of history) {
-        live.log.append(withAttachments(item.event, images), item.at);
+        live.log.append(extras(item.event), item.at);
       }
       if (failed) {
         // Live-only: the transcript may be readable next time.
@@ -1041,11 +1215,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.tracker = new UsageTracker(this.usage.totalsByModel(record.id));
     live.interruptRequested = null;
     live.closing = null;
+    live.contextResults = 0;
     try {
       const extras = await this.support.prepare(record);
       // What the user allowed for the session applies to every process.
       const allowed = sessionAllows(this.storedEvents.list(record.id));
       const directories = additionalDirectories(record);
+      const first = await this.agentMessage(live.id, firstMessage);
       const run = await this.runner.start(
         {
           cwd: workingDirectory(record),
@@ -1066,9 +1242,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           tools: extras.tools,
           settings: extras.settings,
         },
-        await this.agentMessage(live.id, firstMessage),
+        first,
       );
       live.run = run;
+      this.countContext(live, first);
       live.consuming = this.consume(live, run);
     } catch (error) {
       this.support.released(live.id);
@@ -1214,10 +1391,27 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Expects the zero-turn result Claude Code sends for a context message. */
+  private countContext(live: LiveSession, message: AgentUserMessage): void {
+    if (message.context) {
+      live.contextResults++;
+    }
+  }
+
   private handleResult(
     live: LiveSession,
     result: Extract<SDKMessage, { type: 'result' }>,
   ): void {
+    if (
+      live.contextResults > 0 &&
+      result.subtype === 'success' &&
+      result.num_turns === 0
+    ) {
+      // The answer to a context message (`shouldQuery: false`): no turn
+      // ended, the message after it starts the turn.
+      live.contextResults--;
+      return;
+    }
     const record = this.requireRecord(live.id);
     const byModel = live.tracker.consume(result.modelUsage);
     this.usage.record(
@@ -1327,6 +1521,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       });
       this.appendUserMessage(live, message);
       run.send(message.agent);
+      this.countContext(live, message.agent);
     }
     return messages.length;
   }
@@ -1754,6 +1949,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       ...(message.attachments.length > 0
         ? { attachments: message.attachments }
         : {}),
+      ...(message.references.length > 0
+        ? { references: message.references }
+        : {}),
+      ...(message.contextLength !== null
+        ? { contextLength: message.contextLength }
+        : {}),
+      ...(message.origin === 'app' ? { origin: 'app' as const } : {}),
     });
     // Claude Code uses the message ID as the transcript entry's UUID.
     live.anchor = { uuid: message.id, userId: message.id };
@@ -1795,14 +1997,87 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return { check: () => undefined, claim: () => [] };
   }
 
-  /** A message as Claude Code gets it, with its images. */
+  /**
+   * A message as Claude Code gets it, with its images and its untrusted
+   * context (both stored under the message's ID).
+   */
   private async agentMessage(
     sessionId: string,
     message: { id: string; text: string },
   ): Promise<AgentUserMessage> {
     const images =
       (await this.attachments?.agentImages(sessionId, message.id)) ?? [];
-    return images.length > 0 ? { ...message, images } : { ...message };
+    const stored = this.contexts?.get(sessionId, message.id);
+    return {
+      ...message,
+      ...(images.length > 0 ? { images } : {}),
+      ...(stored?.context && stored.contextId
+        ? { context: { id: stored.contextId, text: stored.context } }
+        : {}),
+    };
+  }
+
+  /**
+   * Resolves a message's GitHub references and formats them, with any
+   * other untrusted content, into the context Claude gets before it.
+   */
+  private async prepareContext(
+    references: MessageReferenceRequest[],
+    untrusted?: UntrustedContext,
+  ): Promise<PreparedContext> {
+    let resolved: {
+      references: MessageReference[];
+      context: UntrustedContext | null;
+    } = {
+      references: [],
+      context: null,
+    };
+    if (references.length > 0) {
+      if (!this.githubReferences) {
+        throw new BadRequestException('GitHub references are not available');
+      }
+      resolved = await this.githubReferences.resolve(references);
+    }
+    const contexts = [resolved.context, untrusted].filter(
+      (context): context is UntrustedContext =>
+        !!context && context.items.length > 0,
+    );
+    // One random tag for the whole message.
+    const tag = untrustedTag();
+    return {
+      references: resolved.references,
+      text:
+        contexts.length > 0
+          ? contexts
+              .map((context) => formatUntrustedContext(context, tag))
+              .join('\n')
+          : null,
+    };
+  }
+
+  /** Stores what goes with a message (references, context, origin). */
+  private saveContext(
+    sessionId: string,
+    messageId: string,
+    origin: 'user' | 'app',
+    context: PreparedContext,
+  ): void {
+    if (
+      !this.contexts ||
+      (context.text === null &&
+        context.references.length === 0 &&
+        origin === 'user')
+    ) {
+      return;
+    }
+    this.contexts.save({
+      messageId,
+      sessionId,
+      origin,
+      references: context.references,
+      contextId: context.text === null ? null : randomUUID(),
+      context: context.text,
+    });
   }
 
   /**
@@ -1925,4 +2200,31 @@ function withAttachments(
   }
   const attachments = images.get(event.id);
   return attachments ? { ...event, attachments } : event;
+}
+
+/**
+ * A user message event with its references and context length from the
+ * message context store.
+ */
+function withContext(
+  event: SessionEventInput,
+  contexts: Map<string, MessageContextSummary>,
+): SessionEventInput {
+  if (event.type !== 'user.message') {
+    return event;
+  }
+  const summary = contexts.get(event.id);
+  if (!summary) {
+    return event;
+  }
+  return {
+    ...event,
+    ...(summary.references.length > 0
+      ? { references: summary.references }
+      : {}),
+    ...(summary.contextLength !== null
+      ? { contextLength: summary.contextLength }
+      : {}),
+    ...(summary.origin === 'app' ? { origin: 'app' as const } : {}),
+  };
 }

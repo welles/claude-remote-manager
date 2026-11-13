@@ -165,6 +165,7 @@ export class SessionsGateway
           id: message.id,
           text: message.text,
           attachmentIds: message.attachmentIds,
+          references: message.references,
         });
         return;
       case 'interrupt':

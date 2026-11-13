@@ -2,6 +2,7 @@ import { Global, Logger, Module } from '@nestjs/common';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { GitHubAppCredentials } from './github-app-credentials';
 import { GitHubController } from './github.controller';
+import { GitHubIssues } from './github-issues';
 import { GITHUB_FETCH, GitHubHttp, type FetchLike } from './github-http';
 import { GitHubService } from './github.service';
 import { InstallationTokens } from './installation-tokens';
@@ -53,7 +54,18 @@ import { InstallationTokens } from './installation-tokens';
         tokens: InstallationTokens,
       ) => new GitHubService(credentials, http, tokens),
     },
+    {
+      provide: GitHubIssues,
+      inject: [GitHubService, GitHubHttp],
+      useFactory: (github: GitHubService, http: GitHubHttp) =>
+        new GitHubIssues(github, http),
+    },
   ],
-  exports: [GitHubService, GitHubAppCredentials, InstallationTokens],
+  exports: [
+    GitHubService,
+    GitHubAppCredentials,
+    InstallationTokens,
+    GitHubIssues,
+  ],
 })
 export class GitHubModule {}

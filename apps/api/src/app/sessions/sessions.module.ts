@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AttachmentsModule } from '../attachments/attachments.module';
+import { GitHubReferencesModule } from '../github-references/github-references.module';
+import { MessageContextRepository } from './message-context.repository';
 import { ShownFilesModule } from '../shown-files/shown-files.module';
 import { ShownFilesService } from '../shown-files/shown-files.service';
 import { ToolApprover } from '../agent/tool-approval';
@@ -43,6 +45,7 @@ import { ModelsService } from './models.service';
 @Module({
   imports: [
     AttachmentsModule,
+    GitHubReferencesModule,
     LimitsModule,
     RepositoriesModule,
     ShownFilesModule,
@@ -58,6 +61,7 @@ import { ModelsService } from './models.service';
   providers: [
     SessionRepository,
     SessionEventRepository,
+    MessageContextRepository,
     UsageRepository,
     SessionsService,
     SessionsGateway,

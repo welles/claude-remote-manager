@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   type ClientMessage,
+  type MessageReferenceRequest,
   type PermissionResponse,
   type UpdateSessionRequest,
 } from '@claude-remote-manager/shared-types';
@@ -93,6 +94,12 @@ export function parseClientFrame(raw: unknown): ClientMessage {
                 'attachmentIds',
                 MAX_ATTACHMENTS_PER_MESSAGE,
               ),
+            }
+          : {}),
+        // Validated by the session service, as for REST.
+        ...(frame['references'] !== undefined
+          ? {
+              references: frame['references'] as MessageReferenceRequest[],
             }
           : {}),
         ...base,

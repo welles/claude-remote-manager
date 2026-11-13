@@ -10,6 +10,8 @@ import {
 } from '@nestjs/common';
 import type {
   CreateSessionRequest,
+  MessageContextResponse,
+  MessageReferenceRequest,
   PendingPermissionRequestsResponse,
   PermissionResponse,
   PermissionResponseResult,
@@ -56,9 +58,24 @@ export class SessionsController {
   @HttpCode(202)
   async send(
     @Param('id') id: string,
-    @Body() body: { id?: string; text: string; attachmentIds?: string[] },
+    @Body()
+    body: {
+      id?: string;
+      text: string;
+      attachmentIds?: string[];
+      references?: MessageReferenceRequest[];
+    },
   ): Promise<void> {
     await this.sessions.send(id, body);
+  }
+
+  /** The context the app gave Claude with a message (GitHub content). */
+  @Get(':id/messages/:messageId/context')
+  messageContext(
+    @Param('id') id: string,
+    @Param('messageId') messageId: string,
+  ): MessageContextResponse {
+    return this.sessions.messageContext(id, messageId);
   }
 
   /** Stops the session's process and marks it finished. */

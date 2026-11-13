@@ -1,5 +1,9 @@
 import type { AttachmentDto } from './attachments';
 import type { FileDiff, ToolDiffSource } from './diffs';
+import type {
+  MessageReference,
+  MessageReferenceRequest,
+} from './github-references';
 import type { AccountLimits } from './limits';
 import type { ShownFileDto } from './shown-files';
 import type {
@@ -60,6 +64,19 @@ export interface UserMessageEvent extends SessionEventBase {
   text: string;
   /** Images sent with the message (absent from older servers). */
   attachments?: AttachmentDto[];
+  /** GitHub issues and pull requests referenced in the message. */
+  references?: MessageReference[];
+  /**
+   * Length of the context the app gave Claude with the message (GitHub
+   * content), absent without; read it with
+   * `GET /api/sessions/:id/messages/:messageId/context`.
+   */
+  contextLength?: number;
+  /**
+   * `app`: the app composed the message (e.g. the PR automation), not the
+   * user. Absent for the user's own messages.
+   */
+  origin?: 'app';
 }
 
 /**
@@ -215,6 +232,7 @@ export interface MessageQueuedEvent extends SessionEventBase {
   id: string;
   text: string;
   attachments?: AttachmentDto[];
+  references?: MessageReference[];
 }
 
 /**
@@ -509,6 +527,8 @@ export interface SendMessageMessage {
   text: string;
   /** Uploaded images (`POST /api/attachments`) to send with it. */
   attachmentIds?: string[];
+  /** GitHub issues and pull requests to give Claude with the message. */
+  references?: MessageReferenceRequest[];
   requestId?: string;
 }
 
