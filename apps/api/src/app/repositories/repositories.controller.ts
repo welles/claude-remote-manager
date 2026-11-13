@@ -8,6 +8,7 @@ import {
   Post,
 } from '@nestjs/common';
 import type {
+  ConnectGitHubRequest,
   CreateRepositoryRequest,
   RepositoryBranchesResponse,
   RepositoryDto,
@@ -54,6 +55,19 @@ export class RepositoriesController {
   @HttpCode(202)
   fetch(@Param('id') id: string): Promise<RepositoryDto> {
     return this.repositories.refresh(id);
+  }
+
+  /**
+   * Gives a local project a GitHub repository (new or existing and empty)
+   * as remote and pushes its branches there.
+   */
+  @Post(':id/github')
+  @HttpCode(200)
+  connectGitHub(
+    @Param('id') id: string,
+    @Body() request: ConnectGitHubRequest,
+  ): Promise<RepositoryDto> {
+    return this.repositories.connectGitHub(id, request);
   }
 
   @Get(':id/branches')

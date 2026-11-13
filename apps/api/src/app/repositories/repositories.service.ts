@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   Inject,
@@ -11,6 +12,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import type {
+  ConnectGitHubRequest,
   CreateRepositoryRequest,
   GitHubRepositoryDto,
   GitHubRepositoryListResponse,
@@ -20,7 +22,14 @@ import type {
   SessionCloneDto,
   UpdateRepositoryRequest,
 } from '@claude-remote-manager/shared-types';
-import { requireObject, requireString } from '../common/validation';
+import {
+  optionalString,
+  requireObject,
+  requireString,
+} from '../common/validation';
+import { credentialHelperCommand } from '../git/credential-helper';
+import { githubTokenAuth } from '../git/git-auth';
+import { GitHubApiError } from '../github/github-errors';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import {
   InvalidCloneUrlError,
@@ -148,9 +157,14 @@ export class RepositoriesService implements OnModuleInit {
     const known = new Set(
       records.map((record) => `${record.owner}/${record.name}`),
     );
+    // Clones are known by their session too: a local project that got a
+    // GitHub remote keeps its earlier clones under `local/<name>`.
+    const linked = new Set([...links.values()].flat().map((link) => link.path));
+    const diskPaths = new Set([...onDisk.values()].flat());
     const strayDirectories = [...onDisk.entries()]
       .filter(([key]) => !known.has(key))
-      .flatMap(([, paths]) => paths);
+      .flatMap(([, paths]) => paths)
+      .filter((path) => !linked.has(path));
     const scratch = this.repositories.activeScratchPaths();
     for (const slug of await subdirectories(this.config.scratchDir)) {
       const path = join(this.config.scratchDir, slug);
@@ -165,6 +179,7 @@ export class RepositoriesService implements OnModuleInit {
             record,
             links.get(record.id) ?? [],
             onDisk.get(`${record.owner}/${record.name}`) ?? [],
+            diskPaths,
           ),
         ),
       ),
@@ -342,6 +357,103 @@ export class RepositoriesService implements OnModuleInit {
   }
 
   /**
+   * Gives a local project a GitHub repository as remote: creates one in an
+   * account or organization of an installation (`create`) or uses an
+   * existing empty one the app can access (`attach`), pushes the mirror's
+   * branches and tags there, and makes the project a normal GitHub
+   * repository. No data moves: the mirror stays where it is, existing
+   * session clones get the new `origin` and the credential helper.
+   */
+  async connectGitHub(
+    id: string,
+    request: ConnectGitHubRequest,
+  ): Promise<RepositoryDto> {
+    const body = requireObject(request);
+    const record = this.require(id);
+    if (record.cloneUrl !== null) {
+      throw new ConflictException(
+        `${record.owner}/${record.name} has a remote already`,
+      );
+    }
+    this.github.requireConfigured();
+    const target =
+      body['mode'] === 'create'
+        ? await this.createGitHubRepository(record, body)
+        : body['mode'] === 'attach'
+          ? await this.attachableRepository(body['githubRepositoryId'])
+          : null;
+    if (!target) {
+      throw new BadRequestException('mode must be create or attach');
+    }
+    if (
+      !record.clonedAt ||
+      !(await this.git.isBareRepository(record.localPath))
+    ) {
+      await this.update(id);
+    }
+    const url = githubCloneUrl(target.owner, target.name);
+    const pushed = {
+      ...record,
+      owner: target.owner,
+      name: target.name,
+      githubRepositoryId: target.id,
+      githubInstallationId: target.installationId,
+    };
+    const workflows = await this.git.changesWorkflows(
+      record.localPath,
+      '--all',
+      null,
+    );
+    const token = await this.retryNewRepository(() =>
+      this.credentials.token(
+        pushed,
+        {
+          contents: 'write',
+          ...(workflows ? { workflows: 'write' as const } : {}),
+        },
+        { fresh: true },
+      ),
+    );
+    try {
+      await this.git.attachRemote(
+        record.localPath,
+        url,
+        githubTokenAuth(token.token),
+      );
+    } catch (error) {
+      this.repositories.update(id, { lastError: errorText(error) });
+      throw new BadGatewayException(
+        `${target.owner}/${target.name} was ${body['mode'] === 'create' ? 'created' : 'chosen'}, but pushing the project there failed: ${errorText(error)}`,
+      );
+    } finally {
+      this.github.tokens.revoke(token.token).catch(() => undefined);
+    }
+    this.repositories.update(id, {
+      owner: target.owner,
+      name: target.name,
+      cloneUrl: url,
+      githubRepositoryId: target.id,
+      githubInstallationId: target.installationId,
+      lastError: null,
+    });
+    const helper = credentialHelperCommand();
+    for (const link of this.repositories.cloneLinks([id]).get(id) ?? []) {
+      try {
+        await this.git.setOrigin(link.path, url);
+        await this.git.setCredentialHelper(link.path, helper);
+      } catch (error) {
+        this.logger.warn(
+          `Could not point ${link.path} to ${url}: ${errorText(error)}`,
+        );
+      }
+    }
+    await this.update(id).catch((error: unknown) =>
+      this.logger.warn(`Fetching ${url} failed: ${errorText(error)}`),
+    );
+    return this.get(id);
+  }
+
+  /**
    * Registers a local project `local/<name>` without remote. Its mirror is
    * created on first use, with an empty initial commit on `main` by the
    * configured commit identity (required).
@@ -441,6 +553,99 @@ export class RepositoriesService implements OnModuleInit {
 
   // -------------------------------------------------------------------------
 
+  private async createGitHubRepository(
+    record: RepositoryRecord,
+    body: Record<string, unknown>,
+  ): Promise<{
+    id: number;
+    owner: string;
+    name: string;
+    installationId: number;
+  }> {
+    const owner = requireString(body, 'owner', { maxLength: 100 }).trim();
+    const name =
+      optionalString(body, 'name', { maxLength: 100 })?.trim() || record.name;
+    const description =
+      optionalString(body, 'description', { maxLength: 350 })?.trim() || null;
+    const isPrivate = body['private'];
+    if (isPrivate !== undefined && typeof isPrivate !== 'boolean') {
+      throw new BadRequestException('private must be a boolean');
+    }
+    if (!NAME_PATTERN.test(name)) {
+      throw new BadRequestException(
+        'The repository name may contain letters, digits, ".", "_" and "-"',
+      );
+    }
+    const installation = (await this.github.installations()).find(
+      (entry) => entry.account.toLowerCase() === owner.toLowerCase(),
+    );
+    if (!installation) {
+      throw new BadRequestException(
+        `The GitHub App is not installed on ${owner}; install it there first`,
+      );
+    }
+    this.requireFreeName(installation.account, name);
+    const created = await this.github.createRepository({
+      installation,
+      name,
+      private: isPrivate !== false,
+      description,
+    });
+    this.logger.log(
+      `Created GitHub repository ${created.owner}/${created.name}`,
+    );
+    return { ...created, installationId: installation.id };
+  }
+
+  private async attachableRepository(value: unknown): Promise<{
+    id: number;
+    owner: string;
+    name: string;
+    installationId: number;
+  }> {
+    if (
+      typeof value !== 'number' ||
+      !Number.isSafeInteger(value) ||
+      value <= 0
+    ) {
+      throw new BadRequestException(
+        'githubRepositoryId must be a positive integer',
+      );
+    }
+    const found = await this.github.findRepository(value);
+    if (!found) {
+      throw new NotFoundException(
+        `GitHub repository ${value} is not accessible to the app's installations`,
+      );
+    }
+    this.requireFreeName(found.owner, found.name);
+    if (this.repositories.findByGitHubId(found.id)) {
+      throw new ConflictException(`${found.fullName} is already registered`);
+    }
+    return {
+      id: found.id,
+      owner: found.owner,
+      name: found.name,
+      installationId: found.installationId,
+    };
+  }
+
+  /** A new repository may need a moment before tokens can cover it. */
+  private async retryNewRepository<T>(operation: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (attempt >= 3 || !(error instanceof GitHubApiError)) {
+          throw error;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, 1000 * (attempt + 1)),
+        );
+      }
+    }
+  }
+
   private requireFreeName(owner: string, name: string): void {
     const existing = this.repositories.findByName(owner, name);
     if (existing) {
@@ -464,9 +669,9 @@ export class RepositoriesService implements OnModuleInit {
   private async clones(
     links: CloneLink[],
     onDisk: string[],
+    present: Set<string>,
   ): Promise<SessionCloneDto[]> {
     const byPath = new Map(links.map((link) => [link.path, link]));
-    const present = new Set(onDisk);
     const paths = [...new Set([...byPath.keys(), ...onDisk])].sort();
     return Promise.all(
       paths.map(async (path) => {
@@ -489,6 +694,7 @@ export class RepositoriesService implements OnModuleInit {
     record: RepositoryRecord,
     links: CloneLink[],
     onDisk: string[],
+    present: Set<string>,
   ): Promise<RepositoryDto> {
     const iso = (date: Date | null) => date?.toISOString() ?? null;
     return {
@@ -516,7 +722,7 @@ export class RepositoriesService implements OnModuleInit {
           ? 'fetching'
           : 'cloning'
         : null,
-      clones: await this.clones(links, onDisk),
+      clones: await this.clones(links, onDisk, present),
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
