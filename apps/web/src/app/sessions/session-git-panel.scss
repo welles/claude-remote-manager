@@ -19,7 +19,18 @@
 }
 
 .spacer {
-  flex: 1;
+  display: none;
+}
+
+// Name, then the actions in their own row (narrow details column).
+.clone-head > strong {
+  flex: 1 1 100%;
+  margin-top: 4px;
+}
+
+.clone-head button {
+  margin-left: -12px;
+  margin-right: 12px;
 }
 
 .pushed {
