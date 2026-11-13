@@ -399,9 +399,16 @@ export class FakeGitHub {
           repository,
           'pull_requests',
           write ? 'write' : 'read',
-        )
+        ) ||
+        (write && !this.allows(auth, repository, 'contents', 'read'))
       ) {
-        return denied();
+        // Creating needs to read the refs too.
+        return write
+          ? json(422, {
+              message: 'Validation Failed',
+              errors: [{ message: 'not all refs are readable' }],
+            })
+          : denied();
       }
       if (method === 'GET' && match[3]) {
         const pull = this.pulls.find(

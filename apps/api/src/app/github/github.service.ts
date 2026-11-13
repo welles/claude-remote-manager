@@ -360,8 +360,11 @@ export class GitHubService {
     fullName: string,
     input: CreatePullRequestInput,
   ): Promise<PullRequestInfo & { existing: boolean }> {
+    // GitHub also has to read the head and base refs for the token
+    // ("not all refs are readable" without contents: read).
     const { token } = await this.repositoryToken(installationId, repositoryId, {
       pull_requests: 'write',
+      contents: 'read',
     });
     try {
       const response = await this.http.request<RawPullRequest>({

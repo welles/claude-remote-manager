@@ -153,6 +153,7 @@ describe('SessionGitService', () => {
     expect(harness.github.pulls[0]).toMatchObject({ body: 'Details' });
     expect(harness.github.tokens.at(-1)?.permissions).toEqual({
       pull_requests: 'write',
+      contents: 'read',
     });
     expect(harness.service.get(session.id).pullRequests).toEqual([pull]);
 

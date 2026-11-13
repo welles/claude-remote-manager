@@ -142,7 +142,10 @@ describe('GitHubService', () => {
     });
     const token = github.tokens.at(-1);
     expect(token?.repositoryIds).toEqual([repository.id]);
-    expect(token?.permissions).toEqual({ pull_requests: 'write' });
+    expect(token?.permissions).toEqual({
+      pull_requests: 'write',
+      contents: 'read',
+    });
     const again = await github.service.createPullRequest(
       installation.id,
       repository.id,
