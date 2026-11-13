@@ -122,16 +122,9 @@ export function snippetParts(
                 }
               </span>
               @for (match of hit.matches; track $index) {
-                <span class="match" data-testid="search-match"
-                  ><span class="kind">{{ kindLabels[match.kind] }}</span>
-                  @for (part of parts(match); track $index) {
-                    @if (part.hit) {
-                      <mark>{{ part.text }}</mark>
-                    } @else {
-                      {{ part.text }}
-                    }
-                  }
-                </span>
+                <!-- One line: whitespace here would show up around the highlights. -->
+                <!-- prettier-ignore -->
+                <span class="match" data-testid="search-match"><span class="kind">{{ kindLabels[match.kind] }}</span>@for (part of parts(match); track $index) {@if (part.hit) {<mark>{{ part.text }}</mark>} @else {<span>{{ part.text }}</span>}}</span>
               }
             </a>
           }
