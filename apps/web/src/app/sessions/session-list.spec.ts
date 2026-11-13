@@ -38,6 +38,11 @@ describe('SessionList', () => {
     http
       .expectOne('/api/models')
       .flush({ models: [], source: 'fallback', updatedAt: null });
+    http.expectOne('/api/limits').flush({
+      windows: [],
+      subscriptionType: null,
+      updatedAt: null,
+    });
     return fixture;
   };
 

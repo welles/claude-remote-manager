@@ -1,17 +1,30 @@
 <header class="header">
   <a matButton routerLink="/" class="back">← Sessions</a>
   @if (session(); as s) {
-  <h1 class="title">{{ s.title || 'Untitled session' }}</h1>
+  <app-session-title [session]="s" (renamed)="session.set($event)" />
+  @if (s.archivedAt) {
+  <p class="state-banner" data-testid="archived-banner">
+    Archived {{ s.archivedAt | date: 'short' }}: hidden from the session list,
+    history readable. @if (removedDirectories()) { {{ removedDirectories() }}
+    were removed, so it cannot be continued. } @else { Unarchive it to continue
+    it. }
+  </p>
+  } @else if (removedDirectories()) {
+  <p class="state-banner" data-testid="cleaned-banner">
+    {{ removedDirectories() }} of this session were removed: its history can be
+    read, but it cannot be continued.
+  </p>
+  }
   <div class="facts">
     <span class="status {{ statusClass(s) }}" data-testid="status"
       >{{ statusLabel(s) }}</span
     >
     <span
       data-testid="usage"
-      title="Input {{ s.usage.inputTokens }} · Output {{ s.usage.outputTokens }} · Cache write {{ s.usage.cacheCreationInputTokens }} · Cache read {{ s.usage.cacheReadInputTokens }}"
+      title="Input {{ s.usage.inputTokens }} · Output {{ s.usage.outputTokens }} · Cache write {{ s.usage.cacheCreationInputTokens }} · Cache read {{ s.usage.cacheReadInputTokens }} · Cost: what the requests would have cost at API prices, not what the subscription costs"
     >
       {{ formatTokens(totalTokens(s.usage)) }} tokens · {{
-      formatCost(s.usage.costUsd) }}
+      formatCost(s.usage.costUsd) }} theoretical API cost
     </span>
   </div>
   @if (hasRepositories()) {
@@ -22,22 +35,73 @@
     data-testid="changes-link"
     >Changes</a
   >
-  } @if (s.status !== 'finished') {
-  <button
-    matButton
-    class="end"
-    (click)="end()"
-    [disabled]="!connected()"
-    data-testid="end"
-  >
-    End session
-  </button>
   }
+  <div class="manage">
+    @if (s.status !== 'finished' && !s.archivedAt) {
+    <button
+      matButton
+      class="end"
+      (click)="end()"
+      [disabled]="!connected()"
+      data-testid="end"
+    >
+      End session
+    </button>
+    } @if (canCleanUp()) {
+    <button
+      matButton
+      type="button"
+      (click)="cleanupDialog.show('cleanup')"
+      data-testid="cleanup"
+    >
+      Clean up…
+    </button>
+    } @if (s.archivedAt) {
+    <button
+      matButton
+      type="button"
+      (click)="unarchive()"
+      data-testid="unarchive"
+    >
+      Unarchive
+    </button>
+    } @else if (canArchive()) {
+    <button
+      matButton
+      type="button"
+      (click)="cleanupDialog.show('archive')"
+      data-testid="archive"
+    >
+      Archive…
+    </button>
+    } @if (canDelete()) {
+    <button
+      matButton
+      type="button"
+      (click)="deleteDialog.show()"
+      data-testid="delete"
+    >
+      Delete…
+    </button>
+    }
+  </div>
+  <app-cleanup-dialog
+    #cleanupDialog
+    [sessionId]="s.id"
+    (done)="session.set($event.session)"
+  />
+  <app-delete-session-dialog
+    #deleteDialog
+    [sessionId]="s.id"
+    (deleted)="deleted()"
+  />
   <div class="usage-detail">
     In {{ formatTokens(s.usage.inputTokens) }} · Out {{
     formatTokens(s.usage.outputTokens) }} · Cache write {{
     formatTokens(s.usage.cacheCreationInputTokens) }} · Cache read {{
-    formatTokens(s.usage.cacheReadInputTokens) }}
+    formatTokens(s.usage.cacheReadInputTokens) }} · the cost is what these
+    requests would have cost at API prices; the subscription costs the same
+    either way
   </div>
   <div class="controls">
     <mat-form-field
@@ -107,7 +171,7 @@
   } @for (item of items(); track item.key) { @switch (item.kind) { @case
   ('user') {
   <!-- prettier-ignore -->
-  <div class="user-message" [class.app-message]="item.origin === 'app'" [attr.data-origin]="item.origin">@if (item.origin === 'app') {<span class="message-origin" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" /></div>
+  <div class="user-message" [class.app-message]="item.origin === 'app'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="message-origin" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" /></div>
   @if (item.contextLength) {
   <app-message-context
     [sessionId]="sessionId()"
@@ -117,6 +181,7 @@
   } } @case ('assistant') {
   <div
     class="assistant-text markdown"
+    [attr.data-anchor]="anchorOf(item.key)"
     [class.nested]="item.nested"
     [class.streaming]="item.streaming"
     [innerHTML]="item.text | markdown"
@@ -325,7 +390,7 @@
   <app-message-composer
     [(draft)]="draft"
     [label]="composerLabel()"
-    [disabled]="!connected() || preparing() || heldBack()"
+    [disabled]="!connected() || preparing() || heldBack() || !resumable()"
     [running]="running()"
     [sessionId]="sessionId()"
     [showRepository]="(session()?.directories?.length ?? 0) > 1"

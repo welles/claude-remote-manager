@@ -16,9 +16,12 @@ import { MatCardModule } from '@angular/material/card';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
+  canResume,
   needsUser,
   type SessionDto,
 } from '@claude-remote-manager/shared-types';
+import { LimitsSummary } from '../limits/limits-summary';
+import { SessionSearch } from './session-search';
 import { SHARE_CACHE, sharedPrompt, takeShare } from '../../sw/share-store';
 import {
   formatCost,
@@ -44,11 +47,13 @@ import { SessionsApi } from './sessions-api';
   selector: 'app-session-list',
   imports: [
     DatePipe,
+    LimitsSummary,
     MatButtonModule,
     MatCardModule,
     MatProgressSpinnerModule,
     NewSessionForm,
     RouterLink,
+    SessionSearch,
   ],
   templateUrl: './session-list.html',
   styleUrl: './session-list.scss',
@@ -72,6 +77,11 @@ export class SessionList implements OnInit, AfterViewInit {
   /** When the list shown was loaded, if it is the stored one (offline). */
   protected readonly staleSince = signal<string | null>(null);
   protected readonly waitingOnly = signal(false);
+  /** Shows the archived sessions instead of the current ones. */
+  protected readonly archived = signal(false);
+  /** A search query is entered: its results replace the list. */
+  protected readonly searching = signal(false);
+  protected readonly resumable = canResume;
   protected readonly prefill = signal<SessionPrefill | null>(null);
   protected readonly shareNotice = signal<string | null>(null);
   private readonly sessionMap = signal(new Map<string, SessionDto>());
@@ -91,7 +101,12 @@ export class SessionList implements OnInit, AfterViewInit {
     // The list as last loaded, for starts without a connection.
     effect(() => {
       const sessions = this.sessions();
-      if (!this.loading() && this.staleSince() === null && !this.loadError()) {
+      if (
+        !this.loading() &&
+        this.staleSince() === null &&
+        !this.loadError() &&
+        !this.archived()
+      ) {
         saveSessionList(sessions);
       }
     });
@@ -100,6 +115,7 @@ export class SessionList implements OnInit, AfterViewInit {
   ngOnInit(): void {
     const params = this.route.snapshot.queryParamMap;
     this.waitingOnly.set(params.has('waiting'));
+    this.archived.set(params.has('archived'));
     const share = params.get('share');
     if (share) {
       void this.takeShare(share);
@@ -109,7 +125,13 @@ export class SessionList implements OnInit, AfterViewInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((message) => {
         if (message.type === 'session.updated') {
-          this.upsert(message.session);
+          if ((message.session.archivedAt !== null) === this.archived()) {
+            this.upsert(message.session);
+          } else {
+            this.drop(message.session.id);
+          }
+        } else if (message.type === 'session.deleted') {
+          this.drop(message.sessionId);
         }
       });
     // Back online after showing the stored list: load the real one.
@@ -132,20 +154,30 @@ export class SessionList implements OnInit, AfterViewInit {
   protected load(): void {
     this.loading.set(true);
     this.loadError.set(null);
-    this.api.list().subscribe({
+    const archived = this.archived();
+    this.api.list(archived).subscribe({
       next: ({ sessions }) => {
+        if (archived !== this.archived()) {
+          return; // switched meanwhile
+        }
         // Keep updates that arrived while the list was loading.
         const map = new Map(sessions.map((session) => [session.id, session]));
-        if (this.staleSince() === null) {
+        if (this.staleSince() === null && !this.switched) {
           for (const [id, session] of this.sessionMap()) {
             map.set(id, session);
           }
         }
+        this.switched = false;
         this.staleSince.set(null);
         this.sessionMap.set(map);
         this.loading.set(false);
       },
       error: () => {
+        if (archived) {
+          this.loadError.set('The archived sessions could not be loaded.');
+          this.loading.set(false);
+          return;
+        }
         const cached = loadSessionList();
         if (cached && this.sessionMap().size === 0) {
           this.sessionMap.set(
@@ -158,6 +190,32 @@ export class SessionList implements OnInit, AfterViewInit {
         this.loading.set(false);
       },
     });
+  }
+
+  /** The list was switched (current/archived): do not merge the old one. */
+  private switched = false;
+
+  protected showArchived(on: boolean): void {
+    this.archived.set(on);
+    this.waitingOnly.set(false);
+    this.switched = true;
+    this.sessionMap.set(new Map());
+    void this.router.navigate([], {
+      queryParams: { archived: on ? 1 : null, waiting: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+    this.load();
+  }
+
+  private drop(id: string): void {
+    if (this.sessionMap().has(id)) {
+      this.sessionMap.update((map) => {
+        const next = new Map(map);
+        next.delete(id);
+        return next;
+      });
+    }
   }
 
   protected showWaiting(on: boolean): void {

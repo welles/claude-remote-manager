@@ -2,7 +2,12 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 import type {
+  CleanupChoice,
+  CleanupPreview,
+  CleanupResult,
   CloneLossReport,
+  DeletionPreview,
+  SearchResponse,
   CreatePullRequestRequest,
   CreateSessionRequest,
   FileMentionsResponse,
@@ -21,8 +26,66 @@ const sessionPath = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
 export class SessionsApi {
   private readonly http = inject(HttpClient);
 
-  list(): Observable<SessionListResponse> {
-    return this.http.get<SessionListResponse>('/api/sessions');
+  /** Sessions that are not archived, or with `archived` only the archived ones. */
+  list(archived = false): Observable<SessionListResponse> {
+    return this.http.get<SessionListResponse>(
+      '/api/sessions',
+      archived ? { params: { archived: 'only' } } : {},
+    );
+  }
+
+  /** Renames a session (only the title changes). */
+  rename(sessionId: string, title: string): Observable<SessionDto> {
+    return this.http.patch<SessionDto>(sessionPath(sessionId), { title });
+  }
+
+  /** What cleaning up the session's directories would do and lose. */
+  cleanupPreview(sessionId: string): Observable<CleanupPreview> {
+    return this.http.get<CleanupPreview>(`${sessionPath(sessionId)}/cleanup`);
+  }
+
+  cleanup(
+    sessionId: string,
+    choices: CleanupChoice[],
+  ): Observable<CleanupResult> {
+    return this.http.post<CleanupResult>(`${sessionPath(sessionId)}/cleanup`, {
+      directories: choices,
+    });
+  }
+
+  archive(
+    sessionId: string,
+    choices: CleanupChoice[],
+  ): Observable<CleanupResult> {
+    return this.http.post<CleanupResult>(`${sessionPath(sessionId)}/archive`, {
+      cleanup: choices,
+    });
+  }
+
+  unarchive(sessionId: string): Observable<SessionDto> {
+    return this.http.post<SessionDto>(
+      `${sessionPath(sessionId)}/unarchive`,
+      {},
+    );
+  }
+
+  /** What deleting the session removes. */
+  deletionPreview(sessionId: string): Observable<DeletionPreview> {
+    return this.http.get<DeletionPreview>(`${sessionPath(sessionId)}/deletion`);
+  }
+
+  delete(sessionId: string, acceptLoss: boolean): Observable<void> {
+    return this.http.post<void>(`${sessionPath(sessionId)}/delete`, {
+      confirm: true,
+      acceptLoss,
+    });
+  }
+
+  /** Full-text search over sessions and their conversations. */
+  search(query: string): Observable<SearchResponse> {
+    return this.http.get<SearchResponse>('/api/search', {
+      params: { q: query },
+    });
   }
 
   get(id: string): Observable<SessionDto> {

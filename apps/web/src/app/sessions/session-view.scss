@@ -8,12 +8,6 @@
   margin-left: -12px;
 }
 
-.title {
-  font: var(--mat-sys-title-large);
-  margin: 4px 0;
-  overflow-wrap: anywhere;
-}
-
 .facts {
   display: flex;
   flex-wrap: wrap;
@@ -192,10 +186,6 @@
   background: var(--mat-sys-surface);
 }
 
-.end {
-  margin-left: -12px;
-}
-
 .held-back {
   display: flex;
   flex-direction: column;
@@ -288,4 +278,22 @@
   overflow-y: auto;
   margin-bottom: 8px;
   overscroll-behavior: contain;
+}
+
+.state-banner {
+  margin: 4px 0;
+  padding: 8px 12px;
+  background: var(--mat-sys-surface-container-high);
+}
+
+.manage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  margin-left: -12px;
+}
+
+.search-target {
+  outline: 2px solid var(--mat-sys-tertiary);
+  outline-offset: 4px;
 }

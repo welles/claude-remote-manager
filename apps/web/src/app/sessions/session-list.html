@@ -11,20 +11,36 @@
 </mat-card>
 
 <div class="heading-row">
-  <h2 class="heading">Sessions</h2>
-  @if (sessions().length > 0) {
-  <button
-    matButton
-    type="button"
-    (click)="showWaiting(!waitingOnly())"
-    [attr.aria-pressed]="waitingOnly()"
-    data-testid="waiting-filter"
-  >
-    {{ waitingOnly() ? 'Show all' : 'Needs you (' + needsYouCount() + ')' }}
-  </button>
-  }
+  <h2 class="heading">{{ archived() ? 'Archived sessions' : 'Sessions' }}</h2>
+  <span class="heading-actions">
+    @if (sessions().length > 0 && !archived()) {
+    <button
+      matButton
+      type="button"
+      (click)="showWaiting(!waitingOnly())"
+      [attr.aria-pressed]="waitingOnly()"
+      data-testid="waiting-filter"
+    >
+      {{ waitingOnly() ? 'Show all' : 'Needs you (' + needsYouCount() + ')' }}
+    </button>
+    }
+    <button
+      matButton
+      type="button"
+      (click)="showArchived(!archived())"
+      [attr.aria-pressed]="archived()"
+      data-testid="archived-filter"
+    >
+      {{ archived() ? 'Current sessions' : 'Archived' }}
+    </button>
+    <a matButton routerLink="/usage" data-testid="usage-link">Usage</a>
+  </span>
 </div>
-@if (staleSince(); as since) {
+<app-limits-summary />
+<app-session-search (active)="searching.set($event)" />
+@if (searching()) {
+<!-- The search results replace the list. -->
+} @else { @if (staleSince(); as since) {
 <p class="stale" role="status" data-testid="stale-list">
   Offline: the sessions as of {{ since | date: 'short' }}. They may be out of
   date.
@@ -35,7 +51,9 @@
 } @else if (loadError(); as error) {
 <p class="error">{{ error }}</p>
 } @else if (sessions().length === 0) {
-<p class="empty">No sessions yet.</p>
+<p class="empty">
+  {{ archived() ? 'No archived sessions.' : 'No sessions yet.' }}
+</p>
 } @else if (shown().length === 0) {
 <p class="empty" data-testid="no-waiting">No session needs you.</p>
 } @else {
@@ -63,8 +81,13 @@
         {{ formatTokens(totalTokens(session.usage)) }} tokens · {{
         formatCost(session.usage.costUsd) }}
       </span>
+      @if (!resumable(session)) {
+      <span class="tag" data-testid="not-resumable"
+        >{{ session.archivedAt ? 'Archived' : 'Clones removed' }}</span
+      >
+      }
     </span>
   </a>
   }
 </nav>
-}
+} }

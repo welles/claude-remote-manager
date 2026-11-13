@@ -1,8 +1,9 @@
 import { TextFieldModule } from '@angular/cdk/text-field';
-import { DecimalPipe, KeyValuePipe } from '@angular/common';
+import { DatePipe, DecimalPipe, KeyValuePipe } from '@angular/common';
 import {
   Component,
   DestroyRef,
+  ElementRef,
   afterRenderEffect,
   computed,
   inject,
@@ -16,8 +17,9 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
+  canResume,
   PERMISSION_MODE_INFO,
   SESSION_PERMISSION_MODES,
   type ContextUsage,
@@ -68,14 +70,22 @@ import { TodoPanel } from './todo-panel';
 import { todoList } from './todos';
 import { SessionGitPanel } from './session-git-panel';
 import { SessionSocket } from './session-socket';
-import { newId } from './sessions-api';
+import { newId, SessionsApi } from './sessions-api';
+import { CleanupDialog } from './cleanup-dialog';
+import { SessionTitle } from './session-title';
+import { DeleteSessionDialog } from './delete-session-dialog';
+import { errorMessage } from '../repositories/repositories-api';
 
 /** One session: the streamed conversation, input and usage. */
 @Component({
   selector: 'app-session-view',
   imports: [
+    CleanupDialog,
     ContextMeter,
+    DatePipe,
     DecimalPipe,
+    DeleteSessionDialog,
+    SessionTitle,
     FileDiffCard,
     KeyValuePipe,
     MarkdownPipe,
@@ -109,6 +119,7 @@ export class SessionView implements OnInit {
   private readonly socket = inject(SessionSocket);
   private readonly destroyRef = inject(DestroyRef);
   private readonly modelsStore = inject(ModelsStore);
+  private readonly host = inject(ElementRef);
 
   protected readonly statusLabel = statusLabel;
   protected readonly statusClass = statusClass;
@@ -190,10 +201,63 @@ export class SessionView implements OnInit {
   protected readonly composerLabel = computed(() =>
     this.preparing()
       ? 'Available when the preparation is done'
-      : this.running()
-        ? 'Queue a message'
-        : 'Message',
+      : !this.resumable()
+        ? this.session()?.archivedAt
+          ? 'Unarchive the session to continue it'
+          : 'The session cannot be continued: its directories were removed'
+        : this.running()
+          ? 'Queue a message'
+          : 'Message',
   );
+  /** The session can take messages (not archived, all directories there). */
+  protected readonly resumable = computed(() => {
+    const session = this.session();
+    return !session || canResume(session);
+  });
+  /** Names of the session's directories that were removed, if any. */
+  protected readonly removedDirectories = computed(() => {
+    const removed =
+      this.session()?.directories.filter(
+        (directory) => directory.state === 'removed',
+      ) ?? [];
+    if (removed.length === 0) {
+      return null;
+    }
+    const names = removed.map((directory) =>
+      directory.kind === 'scratch'
+        ? 'The scratch directory'
+        : `The clone of ${directory.repository?.fullName ?? directory.path}`,
+    );
+    return names.join(', ');
+  });
+  private readonly ended = computed(() => {
+    const status = this.session()?.status;
+    return status === 'finished' || status === 'failed';
+  });
+  /** Ended, with clones or a scratch directory left. */
+  protected readonly canCleanUp = computed(
+    () =>
+      this.ended() &&
+      (this.session()?.directories.some(
+        (directory) =>
+          directory.state === 'ready' && directory.kind !== 'directory',
+      ) ??
+        false),
+  );
+  protected readonly canArchive = computed(() => {
+    const session = this.session();
+    return (
+      !!session &&
+      !session.archivedAt &&
+      session.status !== 'preparing' &&
+      !this.running()
+    );
+  });
+  protected readonly canDelete = computed(
+    () => !!this.session()?.archivedAt || this.ended(),
+  );
+  private readonly sessionsApi = inject(SessionsApi);
+  private readonly router = inject(Router);
 
   /** Request IDs of frames this view sent, to show their errors. */
   private readonly pending = new Set<string>();
@@ -205,8 +269,13 @@ export class SessionView implements OnInit {
   private stickToBottom = true;
 
   constructor() {
+    let revealed = false;
     afterRenderEffect(() => {
       this.items();
+      if (this.loaded() && !revealed) {
+        revealed = true;
+        this.revealSearchTarget();
+      }
       if (this.stickToBottom) {
         window.scrollTo({ top: document.documentElement.scrollHeight });
       }
@@ -372,6 +441,58 @@ export class SessionView implements OnInit {
     }
   }
 
+  protected unarchive(): void {
+    this.sessionsApi.unarchive(this.sessionId()).subscribe({
+      next: (session) => this.session.set(session),
+      error: (error: unknown) =>
+        this.error.set(errorMessage(error, 'The session was not unarchived.')),
+    });
+  }
+
+  /** The session was deleted: back to the list. */
+  protected deleted(): void {
+    void this.router.navigate(['/']);
+  }
+
+  /** The anchor of an assistant text item (Claude's message ID). */
+  protected anchorOf(key: string): string | null {
+    return key.startsWith('text:') ? (key.split(':')[1] ?? null) : null;
+  }
+
+  /**
+   * Shows the place a search result points to (`?at=` message ID, else the
+   * first message containing the first word of `?q=`), once the history
+   * has loaded.
+   */
+  private revealSearchTarget(): void {
+    const params = this.route.snapshot.queryParamMap;
+    const anchor = params.get('at');
+    const word = (params.get('q') ?? '').trim().split(/\s+/)[0]?.toLowerCase();
+    if (!anchor && !word) {
+      return;
+    }
+    const host: HTMLElement = this.host.nativeElement;
+    let target = anchor
+      ? host.querySelector<HTMLElement>(`[data-anchor="${CSS.escape(anchor)}"]`)
+      : null;
+    if (!target && word) {
+      target =
+        [
+          ...host.querySelectorAll<HTMLElement>(
+            '.user-message, .assistant-text',
+          ),
+        ].find((element) =>
+          (element.textContent ?? '').toLowerCase().includes(word),
+        ) ?? null;
+    }
+    if (target) {
+      this.stickToBottom = false;
+      target.scrollIntoView({ block: 'center' });
+      target.classList.add('search-target');
+      setTimeout(() => target?.classList.remove('search-target'), 4000);
+    }
+  }
+
   /** Stops the session's process and marks it finished. */
   protected end(): void {
     const requestId = newId();
@@ -533,6 +654,11 @@ export class SessionView implements OnInit {
       case 'session.updated':
         if (message.session.id === id) {
           this.session.set(message.session);
+        }
+        return;
+      case 'session.deleted':
+        if (message.sessionId === id) {
+          void this.router.navigate(['/']);
         }
         return;
       case 'error':
