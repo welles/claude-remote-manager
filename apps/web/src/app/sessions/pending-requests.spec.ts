@@ -14,37 +14,29 @@ const request = (
   ...overrides,
 });
 
+const label = (requests: Parameters<typeof summarizePendingRequests>[0]) => {
+  const summary = summarizePendingRequests(requests);
+  return summary ? pendingRequestLabel(summary) : null;
+};
+
 describe('pending request summary', () => {
   it('names what the oldest request asks for, without details', () => {
-    expect(pendingRequestLabel(summarizePendingRequests([request({})])!)).toBe(
-      'Approve command',
-    );
+    expect(label([request({})])).toBe('Approve command');
+    expect(label([request({ toolName: 'Write' })])).toBe('Approve edit');
     expect(
-      pendingRequestLabel(
-        summarizePendingRequests([request({ toolName: 'Write' })])!,
-      ),
-    ).toBe('Approve edit');
-    expect(
-      pendingRequestLabel(
-        summarizePendingRequests([
-          request({
-            kind: 'question',
-            toolName: 'AskUserQuestion',
-            questions: [
-              { question: 'A?', header: '', options: [], multiSelect: false },
-              { question: 'B?', header: '', options: [], multiSelect: false },
-            ],
-          }),
-        ])!,
-      ),
+      label([
+        request({
+          kind: 'question',
+          toolName: 'AskUserQuestion',
+          questions: [
+            { question: 'A?', header: '', options: [], multiSelect: false },
+            { question: 'B?', header: '', options: [], multiSelect: false },
+          ],
+        }),
+      ]),
     ).toBe('2 questions');
     expect(
-      pendingRequestLabel(
-        summarizePendingRequests([
-          request({ kind: 'plan', toolName: 'ExitPlanMode' }),
-          request({}),
-        ])!,
-      ),
+      label([request({ kind: 'plan', toolName: 'ExitPlanMode' }), request({})]),
     ).toBe('Plan ready · 1 more');
     expect(summarizePendingRequests([])).toBeNull();
   });
