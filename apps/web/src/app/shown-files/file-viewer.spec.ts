@@ -63,7 +63,9 @@ describe('FileViewer', () => {
     const markdown = element.querySelector('[data-testid="markdown"]');
     expect(markdown?.querySelector('h1')?.textContent).toBe('Report');
     expect(markdown?.querySelector('script')).toBeNull();
-    expect(markdown?.querySelector('img')?.getAttribute('onerror')).toBeNull();
+    // Not even an image from the app's origin loads; no handler survives.
+    expect(markdown?.querySelector('img')).toBeNull();
+    expect(markdown?.innerHTML).not.toContain('onerror');
   });
 
   it('highlights code', async () => {

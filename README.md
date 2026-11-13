@@ -175,6 +175,17 @@ WebSocket upgrade passes a guard (`apps/api/src/app/security`):
 Routes that need another protection (e.g. a signed webhook) are exempted in
 `REQUEST_GUARD_EXEMPT_ROUTES`.
 
+The web app's pages (everything outside `/api`) carry a Content Security Policy (`APP_CSP` in
+`apps/api/src/app/configure-app.ts`): scripts only from the app's own files (the production
+build inlines none; critical CSS inlining is off for that), images only from the app, `data:`
+and `blob:`, connections (API, WebSocket) and frames only to the app's origin, no plugins, no
+`<base>` elsewhere, and the app itself may not be framed. Styles need `'unsafe-inline'`
+because Angular inserts component styles at runtime. Rendered Markdown (Claude's messages,
+plans, shown Markdown files) never loads remote resources either: images other than `data:`
+become links (also from raw HTML), and links open in a new tab without referrer. Otherwise
+content from a repository or a web page could make Claude write an image URL that sends data
+to any server as soon as the message renders.
+
 ## Sessions
 
 ```

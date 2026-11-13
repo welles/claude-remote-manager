@@ -4,6 +4,32 @@ import { Authenticator } from './auth/authenticator';
 import { GuardedWsAdapter } from './security/guarded-ws-adapter';
 import { RequestPolicy } from './security/request-policy';
 
+/**
+ * Content Security Policy of the web app (everything outside `/api`; the
+ * API's own content sets its own). Defense in depth against content that
+ * reaches the page (Markdown, file names, diffs): scripts only from the
+ * app's own files (the build inlines none; critical CSS inlining, which
+ * adds an inline script, is off), nothing loaded or contacted elsewhere,
+ * frames only from the app's origin (the viewer's sandboxed HTML and PDFs),
+ * and the app itself not framed. Styles need `'unsafe-inline'`: Angular
+ * adds component styles as `<style>` elements at runtime.
+ */
+export const APP_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-src 'self'",
+  "worker-src 'self'",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 /** Largest accepted JSON request body. */
 export const MAX_BODY_SIZE = '1mb';
 
@@ -34,6 +60,13 @@ export function configureApp(app: NestExpressApplication): void {
         });
       })
       .catch(next);
+  });
+  app.use((request: Request, response: Response, next: NextFunction) => {
+    if (!/^\/api(\/|$)/.test(request.path)) {
+      response.setHeader('Content-Security-Policy', APP_CSP);
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+    }
+    next();
   });
   app.useBodyParser('json', { limit: MAX_BODY_SIZE });
   // Plain WebSockets for streaming session events (see SessionsGateway),
