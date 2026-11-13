@@ -6,6 +6,24 @@
   "sourceRoot": "apps/web/src",
   "tags": [],
   "targets": {
+    "build-sw": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/src/sw/**/*.ts",
+        "{projectRoot}/tsconfig.sw.json",
+        "{projectRoot}/scripts/build-service-worker.mjs",
+        "{workspaceRoot}/libs/shared-types/src/**/*.ts"
+      ],
+      "outputs": ["{workspaceRoot}/dist/apps/web-sw"],
+      "options": {
+        "commands": [
+          "npx tsc -p apps/web/tsconfig.sw.json",
+          "node apps/web/scripts/build-service-worker.mjs --minify"
+        ],
+        "parallel": false
+      }
+    },
     "build": {
       "executor": "@angular/build:application",
       "outputs": ["{options.outputPath}"],
@@ -19,6 +37,11 @@
           {
             "glob": "**/*",
             "input": "apps/web/public"
+          },
+          {
+            "glob": "sw.js",
+            "input": "dist/apps/web-sw",
+            "output": "/"
           }
         ],
         "styles": ["apps/web/src/styles.scss"]
@@ -40,7 +63,10 @@
           "outputHashing": "all",
           "optimization": {
             "scripts": true,
-            "styles": { "minify": true, "inlineCritical": false },
+            "styles": {
+              "minify": true,
+              "inlineCritical": false
+            },
             "fonts": true
           }
         },
@@ -49,7 +75,8 @@
           "extractLicenses": false,
           "sourceMap": true
         }
-      }
+      },
+      "dependsOn": ["^build", "build-sw"]
     },
     "serve": {
       "continuous": true,
@@ -66,7 +93,7 @@
           "buildTarget": "web:build:development"
         }
       },
-      "dependsOn": ["api:serve"],
+      "dependsOn": ["api:serve", "build-sw"],
       "options": {
         "proxyConfig": "apps/web/proxy.conf.json"
       }
