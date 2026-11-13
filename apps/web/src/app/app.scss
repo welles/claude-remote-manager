@@ -45,6 +45,10 @@
   border-bottom: 1px solid var(--mat-sys-outline-variant);
 }
 
+.banner > span {
+  flex: 1 1 14em;
+}
+
 .expired {
   background: var(--mat-sys-error-container);
   color: var(--mat-sys-on-error-container);
