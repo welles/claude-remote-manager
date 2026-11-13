@@ -1,8 +1,19 @@
-<header class="header">
-  <a matButton routerLink="/" class="back">← Sessions</a>
+<app-page-bar back="/" backLabel="Back to the sessions">
   @if (session(); as s) {
-  <app-session-title [session]="s" (renamed)="session.set($event)" />
-  @if (s.archivedAt) {
+  <app-session-title bar-title [session]="s" (renamed)="session.set($event)" />
+  } @if (session(); as s) { @if (hasRepositories()) {
+  <a
+    class="app-icon-btn"
+    [routerLink]="['/sessions', s.id, 'changes']"
+    aria-label="Changes"
+    title="Changes"
+    data-testid="changes-link"
+    ><app-icon name="changes"
+  /></a>
+  } }
+</app-page-bar>
+<header class="header">
+  @if (session(); as s) { @if (s.archivedAt) {
   <app-banner data-testid="archived-banner">
     Archived {{ s.archivedAt | appDate }}: hidden from the session list, history
     readable. @if (removedDirectories(); as removed) { {{ removed.text }} {{
@@ -26,15 +37,6 @@
       formatCost(s.usage.costUsd) }} theoretical API cost
     </span>
   </div>
-  @if (hasRepositories()) {
-  <a
-    matButton
-    class="changes"
-    [routerLink]="['/sessions', s.id, 'changes']"
-    data-testid="changes-link"
-    >Changes</a
-  >
-  }
   <div class="manage">
     @if (s.status !== 'finished' && !s.archivedAt) {
     <button

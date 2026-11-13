@@ -24,6 +24,7 @@ import {
   chartSeries,
   type UsageMeasure,
 } from './usage-chart';
+import { AppPageBar } from '../ui/page-bar';
 
 /**
  * Geometry of the chart's SVG; the width follows the element's (one user
@@ -49,7 +50,13 @@ function browserTimeZone(): string {
  */
 @Component({
   selector: 'app-usage-page',
-  imports: [MatButtonToggleModule, MatProgressBarModule, RouterLink],
+  host: { class: 'app-page' },
+  imports: [
+    AppPageBar,
+    MatButtonToggleModule,
+    MatProgressBarModule,
+    RouterLink,
+  ],
   templateUrl: './usage-page.html',
   styleUrl: './usage-page.scss',
 })

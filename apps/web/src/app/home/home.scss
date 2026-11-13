@@ -1,3 +1,7 @@
+:host {
+  --app-page-max: 800px;
+}
+
 .facts {
   display: grid;
   grid-template-columns: max-content 1fr;

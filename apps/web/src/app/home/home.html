@@ -1,7 +1,5 @@
+<app-page-bar heading="Server status" back="/settings" />
 <mat-card appearance="outlined">
-  <mat-card-header>
-    <mat-card-title>Server status</mat-card-title>
-  </mat-card-header>
   <mat-card-content>
     @if (health.isLoading()) {
     <mat-progress-spinner mode="indeterminate" diameter="32" />

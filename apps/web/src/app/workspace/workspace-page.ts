@@ -12,6 +12,7 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { LossDetails } from '../sessions/loss-details';
+import { AppPageBar } from '../ui/page-bar';
 
 const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
   clone: 'Clone without session',
@@ -26,7 +27,9 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
  */
 @Component({
   selector: 'app-workspace-page',
+  host: { class: 'app-page' },
   imports: [
+    AppPageBar,
     FormsModule,
     LossDetails,
     MatButtonModule,
@@ -35,7 +38,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
     RouterLink,
   ],
   template: `
-    <h1 class="heading">Workspace cleanup</h1>
+    <app-page-bar heading="Workspace cleanup" back="/settings" />
     <p class="muted">
       Directories under the workspace's <code>sessions/</code> and
       <code>scratch/</code> that no session uses (left by a crash, a deleted
@@ -142,13 +145,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
   `,
   styles: `
     :host {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .heading {
-      font: var(--mat-sys-headline-small);
-      margin: 0;
+      gap: var(--app-space-2);
     }
     h2 {
       font: var(--mat-sys-title-medium);

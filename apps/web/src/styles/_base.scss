@@ -75,6 +75,53 @@
     white-space: nowrap;
   }
 
+  // A page in the shell: centred column, its app bar (`app-page-bar`)
+  // first. Pages set `--app-page-max` for their width.
+  .app-page {
+    display: flex;
+    flex-direction: column;
+    gap: var(--app-space-3);
+    box-sizing: border-box;
+    width: 100%;
+    max-width: var(--app-page-max, 960px);
+    margin: 0 auto;
+    padding: 0 var(--app-gutter) var(--app-space-6);
+  }
+
+  // Icon-only buttons and links (plain elements, no Material module):
+  // 40 px, 44 px on touch screens. They carry an aria-label.
+  .app-icon-btn {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--mat-sys-corner-small);
+    background: none;
+    color: var(--mat-sys-on-surface-variant);
+    cursor: pointer;
+    text-decoration: none;
+
+    &:hover {
+      background: var(--mat-sys-surface-container-high);
+      color: var(--mat-sys-on-surface);
+      text-decoration: none;
+    }
+
+    &:disabled {
+      opacity: 0.38;
+      cursor: default;
+      background: none;
+    }
+
+    @media (pointer: coarse) {
+      width: 44px;
+      height: 44px;
+    }
+  }
+
   // Monospace inline text: paths, branches, repositories, commands.
   .mono {
     font-family: var(--app-font-mono);

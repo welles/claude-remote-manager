@@ -20,7 +20,9 @@ import {
   needsUser,
   type SessionDto,
 } from '@claude-remote-manager/shared-types';
+import { LimitsIndicator } from '../limits/limits-indicator';
 import { LimitsSummary } from '../limits/limits-summary';
+import { AppPageBar } from '../ui/page-bar';
 import { SessionSearch } from './session-search';
 import { SHARE_CACHE, sharedPrompt, takeShare } from '../../sw/share-store';
 import {
@@ -46,8 +48,11 @@ import { SessionsApi } from './sessions-api';
  */
 @Component({
   selector: 'app-session-list',
+  host: { class: 'app-page' },
   imports: [
     AppDatePipe,
+    AppPageBar,
+    LimitsIndicator,
     LimitsSummary,
     MatButtonModule,
     MatCardModule,

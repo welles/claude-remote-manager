@@ -4,6 +4,7 @@ import {
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import type { GitHubStatusDto } from '@claude-remote-manager/shared-types';
 import { words } from '../testing/text';
 import { notificationStatus } from './testing/notification-status';
@@ -47,7 +48,11 @@ describe('SettingsPage', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [SettingsPage],
-      providers: [provideHttpClient(), provideHttpClientTesting()],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
     }).compileComponents();
     http = TestBed.inject(HttpTestingController);
   });

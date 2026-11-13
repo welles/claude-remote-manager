@@ -27,6 +27,7 @@ import type {
 import { GitHubApi } from '../github/github-api';
 import { GitHubRepositoryPicker } from '../github/github-repository-picker';
 import { RepositoriesApi, errorMessage } from './repositories-api';
+import { AppPageBar } from '../ui/page-bar';
 
 /** How often the page reloads while a clone or fetch runs. */
 export const ACTIVITY_POLL_MS = 2000;
@@ -42,7 +43,9 @@ export const cloneSlug = (path: string) =>
  */
 @Component({
   selector: 'app-repository-list',
+  host: { class: 'app-page' },
   imports: [
+    AppPageBar,
     AppDatePipe,
     FormsModule,
     GitHubRepositoryPicker,

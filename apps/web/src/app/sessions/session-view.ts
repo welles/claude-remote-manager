@@ -2,6 +2,8 @@ import { TextFieldModule } from '@angular/cdk/text-field';
 import { DecimalPipe, KeyValuePipe } from '@angular/common';
 import { AppDatePipe } from '../ui/dates';
 import { AppBanner } from '../ui/banner';
+import { AppIcon } from '../ui/icon';
+import { AppPageBar } from '../ui/page-bar';
 import { StatusBadge } from '../ui/status-badge';
 import {
   Component,
@@ -76,10 +78,13 @@ import { errorMessage } from '../repositories/repositories-api';
 /** One session: the streamed conversation, input and usage. */
 @Component({
   selector: 'app-session-view',
+  host: { class: 'app-page' },
   imports: [
     CleanupDialog,
     ContextMeter,
     AppBanner,
+    AppIcon,
+    AppPageBar,
     AppDatePipe,
     StatusBadge,
     DecimalPipe,

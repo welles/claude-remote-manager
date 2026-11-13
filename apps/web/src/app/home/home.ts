@@ -5,10 +5,13 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import type { HealthResponse } from '@claude-remote-manager/shared-types';
+import { AppPageBar } from '../ui/page-bar';
 
 @Component({
   selector: 'app-home',
+  host: { class: 'app-page' },
   imports: [
+    AppPageBar,
     AppDatePipe,
     MatButtonModule,
     MatCardModule,

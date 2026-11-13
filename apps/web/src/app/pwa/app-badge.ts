@@ -5,6 +5,7 @@ import {
 } from '@claude-remote-manager/shared-types';
 import { SessionSocket } from '../sessions/session-socket';
 import { SessionsApi } from '../sessions/sessions-api';
+import { NeedsYouCount } from './needs-you';
 
 type BadgeNavigator = Navigator & {
   setAppBadge?: (count?: number) => Promise<void>;
@@ -33,25 +34,31 @@ export function setBadge(
 }
 
 /**
- * Keeps the app icon's badge at the number of sessions blocked on the
- * user (open approval, question, plan, or failed setup) while the app is open; push messages update it while it is closed.
+ * Keeps the number of sessions blocked on the user (open approval,
+ * question, plan, or failed setup) current while the app is open: for the
+ * navigation's badge and, in the installed app, the icon's badge (push
+ * messages update that one while the app is closed).
  */
 @Injectable({ providedIn: 'root' })
 export class AppBadge {
   private readonly api = inject(SessionsApi);
   private readonly socket = inject(SessionSocket);
+  private readonly needsYou = inject(NeedsYouCount);
   private readonly sessions = new Map<string, SessionDto>();
   private started = false;
 
   start(): void {
-    if (this.started || !('setAppBadge' in navigator)) {
+    if (this.started) {
       return;
     }
     this.started = true;
     this.socket.messages$.subscribe((message) => {
       if (message.type === 'session.updated') {
         this.sessions.set(message.session.id, message.session);
-        setBadge(needsUserCount(this.sessions.values()));
+        this.publish();
+      } else if (message.type === 'session.deleted') {
+        this.sessions.delete(message.sessionId);
+        this.publish();
       }
     });
     this.api.list().subscribe({
@@ -61,9 +68,17 @@ export class AppBadge {
             this.sessions.set(session.id, session);
           }
         }
-        setBadge(needsUserCount(this.sessions.values()));
+        this.publish();
       },
       error: () => undefined,
     });
+  }
+
+  private publish(): void {
+    const count = needsUserCount(this.sessions.values());
+    this.needsYou.count.set(count);
+    if ('setAppBadge' in navigator) {
+      setBadge(count);
+    }
   }
 }

@@ -1,7 +1,5 @@
 :host {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  --app-page-max: 1200px;
 }
 
 .viz {
@@ -19,11 +17,6 @@
     fill: var(--series-#{$slot});
     background: var(--series-#{$slot});
   }
-}
-
-.heading {
-  font: var(--mat-sys-headline-small);
-  margin: 0;
 }
 
 .note,

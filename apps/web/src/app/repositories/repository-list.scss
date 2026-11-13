@@ -1,12 +1,5 @@
 :host {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.heading {
-  font: var(--mat-sys-title-large);
-  margin: 4px 0;
+  --app-page-max: 960px;
 }
 
 h2.heading {

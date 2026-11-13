@@ -10,6 +10,9 @@ import { GitHubApi } from '../github/github-api';
 import { errorMessage } from '../repositories/repositories-api';
 import { NotificationSettings } from './notification-settings';
 import { SettingsApi } from './settings-api';
+import { RouterLink } from '@angular/router';
+import { AppIcon } from '../ui/icon';
+import { AppPageBar } from '../ui/page-bar';
 
 /**
  * Settings of the app: the commit identity of session clones,
@@ -17,7 +20,11 @@ import { SettingsApi } from './settings-api';
  */
 @Component({
   selector: 'app-settings-page',
+  host: { class: 'app-page' },
   imports: [
+    AppIcon,
+    AppPageBar,
+    RouterLink,
     FormsModule,
     MatButtonModule,
     MatCardModule,
