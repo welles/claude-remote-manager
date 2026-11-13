@@ -156,6 +156,11 @@ Die Anbindung läuft über eine eigene GitHub App.
 - Das Backend erzeugt daraus kurzlebige Installation-Tokens für Repo-Liste, Klonen und Pushen.
 - Private Key und App-ID liegen als Secrets im Container, nicht im Image.
 
+**Pushen und Pull Requests:** Beides geht auf zwei Wegen.
+
+- **Per Knopf:** Die Oberfläche bietet pro Repository der Sitzung „Push“ und „PR erstellen“ an; das Backend führt es mit einem Installation-Token aus.
+- **Durch Claude:** Claude kann den Sitzungs-Branch selbst pushen (`git push`, das Backend stellt die Zugangsdaten bereit) und über ein eigenes Tool `create_pull_request` (Repository, Titel, Beschreibung, Basis-Branch) einen PR anlegen. Beides läuft über den Freigabe-Dialog und passiert erst nach Bestätigung durch den Nutzer in der jeweiligen Sitzung.
+
 ## Spätere Ausbaustufen
 
 Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
