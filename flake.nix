@@ -55,6 +55,15 @@
         default = claude-remote-manager;
       });
 
+      nixosModules.default =
+        { pkgs, lib, ... }:
+        {
+          imports = [ ./nix/module.nix ];
+          services.claude-remote-manager.package =
+            lib.mkDefault
+              self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        };
+
       devShells = forAllSystems (system: {
         default = (pkgsFor system).mkShell {
           packages = with (pkgsFor system); [
