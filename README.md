@@ -2,7 +2,8 @@
 
 A self-hosted web frontend for managing Claude Code sessions on a home server: sessions that
 work on several repositories at once, each in its own clone of the repository, with live chat, diffs and
-cleanup. Everything runs in one Docker container. See [docs/specification.md](docs/specification.md)
+cleanup. Everything runs in one Docker container, or as a NixOS service (see
+[Running as a NixOS service](#running-as-a-nixos-service)). See [docs/specification.md](docs/specification.md)
 (German) for the full specification.
 
 Current state: repositories are chosen from GitHub through the app's GitHub App (or registered
@@ -41,6 +42,7 @@ Nx monorepo with npm:
 | `claude-md/`         | The global `CLAUDE.md` for sessions: shared part, container and NixOS parts  |
 | `Dockerfile`         | Multi-stage image build                                                      |
 | `docker-compose.yml` | Local container setup with all volumes                                       |
+| `flake.nix`, `nix/`  | Nix package, NixOS module, VM tests (see the NixOS section)                  |
 
 ## Development
 
@@ -1650,3 +1652,318 @@ hold the rules for all sessions in the container. The image installs them as the
 file `/etc/claude-code/CLAUDE.md`, which Claude Code loads in addition to the user's
 `/data/claude/CLAUDE.md`. That way it is not hidden by the Claude volume and image updates take
 effect immediately, while personal additions can still go into the volume.
+
+## Running as a NixOS service
+
+The repository is a flake with a package (`packages.x86_64-linux.default`) and a NixOS module
+(`nixosModules.default`) that runs the app as a hardened systemd service with
+`PROCESS_ISOLATION=separate-users`: the API as its own system user, sessions as a session user.
+Sessions then use the machine's own tools, Nix and network, and the machine (e.g. a VM) is the
+sandbox. The Docker image stays supported; both are built and tested in CI.
+
+### Minimal configuration
+
+```nix
+# flake.nix of the machine's configuration
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.claude-remote-manager.url = "github:<owner>/claude-remote-manager";
+  # Optional: build it with the machine's nixpkgs instead of the pinned one.
+  # inputs.claude-remote-manager.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { nixpkgs, claude-remote-manager, ... }: {
+    nixosConfigurations.machine = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        claude-remote-manager.nixosModules.default
+        {
+          nix.settings.experimental-features = [ "nix-command" "flakes" ];
+          services.claude-remote-manager = {
+            enable = true;
+            auth.mode = "none"; # loopback only; see the fuller example
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+This listens on `127.0.0.1:8080`, keeps all state in `/var/lib/claude-remote-manager` and
+creates the users `claude-remote-manager` (API) and `claude` (sessions). Log in to Claude (see
+below) and open it through an SSH tunnel, or put a tunnel or proxy with authentication in front.
+
+### Fuller configuration with Cloudflare Access and sops-nix
+
+```nix
+{ config, pkgs, ... }:
+{
+  sops.secrets = {
+    # Root-owned files are fine: systemd hands them to the service as
+    # credentials readable by the API user only.
+    "crm/github-app-key" = { };
+    "crm/github-webhook-secret" = { };
+    "crm/ntfy-token" = { };
+  };
+
+  services.claude-remote-manager = {
+    enable = true;
+    # With impermanence: state below the persistent volume.
+    dataDir = "/persist/var/lib/claude-remote-manager";
+    listenAddress = "127.0.0.1"; # cloudflared on the same machine
+    port = 8080;
+
+    auth = {
+      mode = "cloudflare-access";
+      teamDomain = "example.cloudflareaccess.com";
+      audiences = [ "<application audience tag>" ];
+      allowedEmails = [ "owner@example.com" ];
+    };
+    allowedHosts = [ "crm.example.com" ];
+    publicUrl = "https://crm.example.com";
+    preview = {
+      url = "https://preview.example.com";
+      accessAudiences = [ "<audience tag of the preview application>" ];
+    };
+
+    github = {
+      appId = 123456;
+      privateKeyFile = config.sops.secrets."crm/github-app-key".path;
+      webhookSecretFile = config.sops.secrets."crm/github-webhook-secret".path;
+    };
+    ntfy = {
+      url = "https://ntfy.example.com";
+      topic = "claude-sessions";
+      tokenFile = config.sops.secrets."crm/ntfy-token".path;
+    };
+
+    sessionUser = {
+      # Access to selected resources of the home network or the machine.
+      extraGroups = [ "dialout" ];
+      packages = with pkgs; [ jq python3 gnumake ];
+    };
+
+    environment = {
+      SESSION_STALL_MINUTES = "20";
+      SESSION_IDLE_TIMEOUT_MINUTES = "120";
+    };
+
+    extraInstructions = ''
+      ## Home network
+
+      - The NAS is nas.example.com (read-only share under /mnt/media).
+    '';
+  };
+}
+```
+
+The module checks at evaluation time what the app would refuse at startup: Cloudflare Access
+without team domain or audience, previews behind Access without their own audience (or with
+one of the app's), ntfy without topic or token, a GitHub key without App ID, secret files in
+the Nix store or as relative paths, the same user for API and sessions, an existing session user
+the configuration does not define.
+
+### Options
+
+| Option (`services.claude-remote-manager.`) | Default                          | Meaning                                                                             |
+| ------------------------------------------ | -------------------------------- | ----------------------------------------------------------------------------------- |
+| `enable`                                   | `false`                          | Run the service                                                                     |
+| `package`                                  | the flake's package              | The app                                                                             |
+| `listenAddress`, `port`                    | `127.0.0.1`, `8080`              | Where the server listens (`LISTEN_ADDRESS`, `PORT`)                                 |
+| `openFirewall`                             | `false`                          | Open `port` in the firewall                                                         |
+| `dataDir`                                  | `/var/lib/claude-remote-manager` | All state: `db/`, `workspace/`, `git/`, `claude/`, `home/` (see below)              |
+| `claudeConfigDir`                          | `<dataDir>/claude`               | `CLAUDE_CONFIG_DIR` of the sessions: login, transcripts, memory                     |
+| `user`, `group`                            | `claude-remote-manager`          | The API's system user and group (created)                                           |
+| `sessionUser.name`                         | `claude`                         | User of session processes                                                           |
+| `sessionUser.create`                       | `true`                           | Create it (`false`: use a user defined elsewhere, e.g. a login user)                |
+| `sessionUser.group`                        | `claude`                         | Primary group of a created session user                                             |
+| `sessionUser.home`                         | `<dataDir>/home` or the user's   | `HOME` of sessions                                                                  |
+| `sessionUser.extraGroups`                  | `[ ]`                            | Supplementary groups of a created session user                                      |
+| `sessionUser.packages`                     | `[ ]`                            | Packages on the sessions' `PATH`                                                    |
+| `sessionUser.writablePaths`                | `[ ]`                            | Further existing paths sessions may write                                           |
+| `auth.mode`                                | none, required                   | `cloudflare-access` or `none`                                                       |
+| `auth.teamDomain`, `auth.audiences`        | `null`, `[ ]`                    | Cloudflare Access team domain and audience tags                                     |
+| `auth.allowedEmails`                       | `[ ]`                            | Optional email allowlist                                                            |
+| `allowedHosts`, `allowedOrigins`           | `[ ]`                            | `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`                                                  |
+| `publicUrl`                                | `null`                           | `PUBLIC_URL`                                                                        |
+| `preview.url`, `preview.accessAudiences`   | `null`, `[ ]`                    | `PREVIEW_URL`, `PREVIEW_ACCESS_AUD`                                                 |
+| `ntfy.url`, `ntfy.topic`                   | `null`                           | `NTFY_URL`, `NTFY_TOPIC`                                                            |
+| `ntfy.tokenFile`                           | `null`                           | Secret file: ntfy token                                                             |
+| `github.appId`                             | `null`                           | `GITHUB_APP_ID`                                                                     |
+| `github.privateKeyFile`                    | `null`                           | Secret file: the GitHub App's private key                                           |
+| `github.webhookSecretFile`                 | `null`                           | Secret file: the webhook secret                                                     |
+| `vapid.privateKeyFile`                     | `null`                           | Secret file: own VAPID private key (otherwise generated into `db/`)                 |
+| `vapid.publicKey`, `vapid.subject`         | `null`                           | `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT`                                                 |
+| `environment`                              | `{ }`                            | Further variables (tunables such as `SESSION_STALL_MINUTES`); never secrets         |
+| `environmentFiles`                         | `[ ]`                            | Secret files with `NAME=value` lines, e.g. `CLAUDE_CODE_OAUTH_TOKEN`                |
+| `hiddenPaths`                              | `[ ]`                            | Further paths made inaccessible inside the service (e.g. an age key file elsewhere) |
+| `extraInstructions`                        | `""`                             | Markdown appended to the sessions' managed `CLAUDE.md`                              |
+
+Secret files are paths as strings (for sops-nix `config.sops.secrets.<name>.path`), never
+contents: nothing secret ends up in the Nix store. systemd reads them as root when the service
+starts (`LoadCredential`) and gives the API copies under `/run/credentials/` that only the API
+user can read; before that, a check refuses to start when the session user can read one of the
+original files (like the image's entrypoint does).
+
+### Data directory
+
+| Path         | Owner, mode       | Contents                                                                         |
+| ------------ | ----------------- | -------------------------------------------------------------------------------- |
+| `db/`        | API user, 0700    | SQLite database, `files/` (attachments, shown files), generated VAPID keys       |
+| `git/`       | API user, 0700    | The API's `gitconfig` and `ssh/` (its home; `.ssh` points there)                 |
+| `workspace/` | API user, 0755    | `repos/` (mirrors), `sessions/` (clones, the session user's), `scratch/`; one FS |
+| `claude/`    | session user 0700 | Claude Code's configuration directory: login, transcripts, auto-memory           |
+| `home/`      | session user 0700 | Home of a session user the module created (caches, its Nix profile)              |
+
+The directories are created by systemd-tmpfiles with these owners (not recursively). On a
+machine with impermanence put `dataDir` below the persistent volume (or persist
+`/var/lib/claude-remote-manager`); everything the app needs across reboots is in there. Moving
+data from the container: copy the volumes into these directories, then
+`chown -R` `db`, `git` and `workspace` to the API user and `claude`, `sessions/*` and `scratch/*`
+to the session user, except the object files in session clones that are hardlinks of the
+mirrors' (see what `docker/entrypoint.sh` does).
+
+### Logging in to Claude
+
+The module installs `claude-remote-manager-claude`: Claude Code from the package (the version
+the sessions use), run as the session user with the service's `CLAUDE_CONFIG_DIR`, `HOME` and
+`PATH`. Log in once:
+
+```sh
+sudo claude-remote-manager-claude          # then /login if it does not ask, or:
+sudo claude-remote-manager-claude auth login
+sudo claude-remote-manager-claude auth status
+```
+
+The credentials end up in `<claudeConfigDir>/.credentials.json`, mode 0600 in the session
+user's 0700 directory: readable by the session user (and so by every session, as in the
+container), by root and by the API through its DAC_OVERRIDE capability; not by other users.
+With an existing login user as session user, that user can also run the command directly.
+Alternatively put `CLAUDE_CODE_OAUTH_TOKEN=…` (from `claude setup-token`) into a secret file
+listed in `environmentFiles`.
+
+### The session user: dedicated or an existing login user
+
+By default the module creates the system user `claude` with its home in the data directory; this
+is the recommended setup. With `sessionUser = { name = "alice"; create = false; }` sessions run
+as a user the configuration defines itself, e.g. the owner's login user; the module then neither
+creates nor changes that user or its home (its groups, shell and packages stay where they are
+defined, `sessionUser.extraGroups` is refused), and `HOME` defaults to the user's home. The
+workspace and Claude Code's configuration directory still live in the data directory, owned so
+that the user can work there and the API can manage them; `claudeConfigDir` can point elsewhere,
+but should not be the user's own `~/.claude`.
+
+What running sessions as a login user means: sessions get everything that user has: its SSH
+keys and agent sockets, its files, its groups, and indirectly its `sudo` (sessions cannot use
+`sudo` themselves, since they run with `no_new_privs`, but they can write files such as the
+user's shell startup files that the user's own later logins execute). If the user has
+passwordless `sudo`, is a trusted Nix user or is in the `docker` group, sessions are effectively
+root, and then also the protection of the database, the API's files and the secrets is gone.
+The API still runs as its own user, so in the plain case the database and secrets stay out of
+reach as with a dedicated user. And every process of that user on the machine is a session
+process to the API: requests from the user's own browser or `curl` on that machine to the API
+are refused with `session_process_refused` (over loopback and over the machine's own
+addresses); open the app through its public host name (or from another machine).
+
+### The service
+
+- **Users**: the API runs as `claude-remote-manager` (system user, home `<dataDir>/git`);
+  everything a session runs (Claude Code, setup scripts, git in session clones, the file
+  helpers) as the session user, started by the API through `setpriv` with all capabilities
+  dropped and `no_new_privs`, as in the container.
+- **Privileges**: `AmbientCapabilities` and `CapabilityBoundingSet` are exactly `CAP_CHOWN`
+  (hand clones to the session user), `CAP_DAC_OVERRIDE` (read Claude Code's transcripts in the
+  session user's 0700 configuration directory), `CAP_KILL` (signal session processes),
+  `CAP_SETGID` and `CAP_SETUID` (switch to the session user and its groups); the same for a
+  dedicated and an existing session user. `NoNewPrivileges`, `SecureBits=noroot-locked`.
+- **Hardening**: `ProtectSystem=strict` with only the data directory, the session user's home
+  and `sessionUser.writablePaths` writable; `ProtectHome=tmpfs` (other homes hidden, the
+  session user's bound back); `PrivateTmp` (one `/tmp` for the service and its sessions);
+  `PrivateDevices`; `ProtectProc=invisible` (sessions see only the session user's processes,
+  the API only its own); `ProtectKernelTunables/Modules/Logs`, `ProtectControlGroups`,
+  `ProtectClock`, `ProtectHostname`, `LockPersonality`, `RestrictRealtime`, `RestrictSUIDSGID`,
+  `RemoveIPC`, `RestrictAddressFamilies` (Unix, IPv4, IPv6, netlink), native system calls only
+  and a deny list (`@clock @cpu-emulation @module @obsolete @raw-io @reboot @swap`).
+  `InaccessiblePaths` hides sops-nix's `/run/secrets*` and age key, `/etc/shadow`,
+  `/etc/gshadow` and the SSH host keys inside the service, which `CAP_DAC_OVERRIDE` could read
+  otherwise; add more with `hiddenPaths`.
+- **Deliberately off**, because sessions are real development environments on this machine:
+  `PrivateNetwork`/`IPAddressDeny` (sessions reach the network and the home network),
+  `PrivateUsers` (the API switches to a real user), `RestrictNamespaces` (Chromium's sandbox,
+  bubblewrap and container tools need user namespaces), `MemoryDenyWriteExecute` (Node.js and
+  other JIT runtimes), `ProcSubset=pid` (the API reads the socket table in `/proc/net` to refuse
+  session processes), an `@system-service` system call allowlist (debuggers and tracing in
+  sessions). A consumer can change any of these with `systemd.services.claude-remote-manager.serviceConfig`.
+- **Managed `CLAUDE.md`**: `claude-md/nixos.md` (this machine: paths, NixOS, Nix, what is
+  writable) followed by `claude-md/core.md` (shared with the image) and `extraInstructions`,
+  bind-mounted read-only to `/etc/claude-code/CLAUDE.md` inside the service only, so Claude Code
+  used outside the service on the same machine does not get it.
+- **No health check unit**: systemd restarts the service when it fails (`Restart=on-failure`);
+  `GET /api/health` answers as in the container for external monitoring.
+
+### The sessions' environment
+
+The app builds session environments from an allowlist; the module sets the allowlisted
+variables to what a login shell of the session user would have:
+
+- `PATH` (`SESSION_PATH`): `/run/wrappers/bin`, the user's own Nix profiles
+  (`~/.nix-profile`, `~/.local/state/nix/profile`), `/etc/profiles/per-user/<user>`, the default
+  and the system profile (`/run/current-system/sw`), then a base of bash, coreutils, findutils,
+  grep, sed, awk, tar, gzip, xz, zstd, which, ps, less, git, ssh, curl, ripgrep, Node.js, the
+  machine's Nix, and `sessionUser.packages`. The API's own `PATH` holds store paths only, so
+  nothing the session user installs runs as the API.
+- `HOME`, `USER`, `LOGNAME` of the session user, `SHELL` (its login shell, or bash), `LANG` and
+  `LOCALE_ARCHIVE` from `i18n`, `TZ` from `time.timeZone`, `SSL_CERT_FILE` and
+  `NIX_SSL_CERT_FILE` (the system's CA bundle), `CLAUDE_CONFIG_DIR`, `DISABLE_AUTOUPDATER`.
+- Nothing else: no `CRM_SECRET_*`, no secret file paths, no credentials directory.
+
+**Nix**: sessions use the machine's Nix daemon (multi-user Nix), with flakes when the
+configuration enables them (`nix.settings.experimental-features`). The session user needs to be
+allowed (`nix.settings.allowed-users`, `*` by default) and must not be trusted
+(`nix.settings.trusted-users`): a trusted user can make the daemon do things as root. The module
+warns about both. Builds land in the shared, read-only `/nix/store`; a session's
+`nix profile install` goes to its home.
+
+### What differs from the container
+
+- No `/nix` volume and no Nix inside an image: the host's Nix and store.
+- No entrypoint: systemd-tmpfiles creates the directories, systemd gives the capabilities and
+  reads the secrets; there is no recursive ownership repair of data from older layouts.
+- Secrets may be root-owned files (they arrive as credentials), instead of files owned by UID 1000.
+- The managed `CLAUDE.md` describes the NixOS machine and is visible inside the service only.
+- Sessions see the machine's file system read-only except their directories, home and the
+  configured paths; `/tmp` is private to the service.
+- The server listens on `127.0.0.1` by default (`listenAddress`).
+
+### Updating
+
+- **The app**: `nix flake update claude-remote-manager` in the machine's configuration, then
+  rebuild; the service restarts with the new package (database migrations run at startup).
+- **npm dependencies** in this repository: the package fetches the npm dependencies as one
+  fixed-output derivation whose hash is in `nix/npm-deps-hash.json`. After changing
+  `package-lock.json`, run `nix/update-npm-deps-hash.sh` and commit the file. The hash covers the
+  lockfile reduced to this platform's packages (`nix/lockfile-filter.jq`: other platforms'
+  binaries such as the Agent SDK's other Claude Code builds are not downloaded). CI fails with
+  a pointer to the script when the hash is stale.
+- **nixpkgs**: `nix flake update nixpkgs` here (or `follows` in the consumer); CI runs the VM
+  tests against the pinned revision.
+
+### Checks
+
+`nix flake check` builds the package and runs:
+
+- `vm-session-user`, `vm-login-user`: NixOS VM tests with the module and secrets as root-only
+  files, one with the dedicated session user, one with a login user defined outside the module.
+  They check the service, health, web app and service worker, the API's user and capabilities,
+  owners and modes of the data, that the session user cannot read the database or the secrets,
+  that its processes are refused by the API over loopback and over the machine's address, a
+  local project (mirror, session clone) with a session whose Claude Code is a stand-in script
+  recording its environment (no secrets, the system profile and the user's profile on `PATH`)
+  and what it can do, the file helper run as the session user, ending and deleting the session,
+  `claude --version` of the package as the session user, and print `systemd-analyze security`.
+- `eval-*`: configurations the module must refuse (Cloudflare Access without audience,
+  previews without their own audience, a secret file in the store, an undefined login user) and
+  one it must accept.
+
+Not covered by the checks: a real Claude login and turn, Cloudflare Access in front, previews on
+real wildcard host names, GitHub.
