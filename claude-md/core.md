@@ -12,6 +12,15 @@
   merge or rebase `origin/<base>`.
 - A repository may have a setup script (e.g. `npm ci`) that already ran in your clone
   before your first message; its output is shown to the user.
+- If the task needs another repository that is not one of your directories (e.g. a change
+  here also needs a change in a configuration or library repository), ask for it with the
+  tool `add_repository` (`owner/name` of a registered repository, a local project
+  `local/NAME` or a repository of the GitHub App, or a remote clone URL; optional base
+  branch; a short reason). The user approves each call. Its result tells you where the new
+  clone is (on the same session branch); continue there in this conversation. Do not clone
+  repositories yourself, and do not use the tool just to look something up. When the user
+  adds a repository themselves, the session manager tells you its path with your next
+  message.
 
 ## Showing files to the user
 

@@ -320,8 +320,10 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   every window, per-model weekly ones included, with percent, reset time and when they were
   last updated. The session details show the same list.
 - Integrations: each Claude Code process gets a session token and the API URL for the git
-  credential helper, the tools `show_file` (always) and `create_pull_request` (when the
-  session has a GitHub repository; both in the in-process MCP server `crm`), a permission rule
+  credential helper, the tools `show_file` (always), `add_repository` (always, see
+  [Adding repositories to a running session](#adding-repositories-to-a-running-session)) and
+  `create_pull_request` (when the session has a GitHub repository; all in the in-process MCP
+  server `crm`), a permission rule
   that makes `git push` always ask, and the auto-memory directory of its main repository.
 - Session files are read by the API only through `apps/api/src/assets/session-files.cjs`, run
   as the session user: it opens the file, checks the real path of what it opened
@@ -346,7 +348,9 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `GET /api/sessions/:id/permission-requests`,
 `POST /api/sessions/:id/permission-requests/:requestId`, `POST /api/sessions/:id/interrupt`,
 `POST /api/sessions/:id/end`, `POST /api/sessions/:id/pending-message/send`,
-`POST /api/sessions/:id/setup/rerun`, `POST /api/sessions/:id/repositories/:repositoryId/push`,
+`POST /api/sessions/:id/setup/rerun`, `POST /api/sessions/:id/repositories`,
+`POST /api/sessions/:id/repositories/:repositoryId/addition/retry` (and `/accept`, `/remove`),
+`POST /api/sessions/:id/repositories/:repositoryId/push`,
 `POST /api/sessions/:id/repositories/:repositoryId/pull-requests`,
 `POST /api/sessions/:id/pull-requests/refresh`, `GET /api/repositories`,
 `GET /api/repositories/:id`, `POST /api/repositories`, `PATCH /api/repositories/:id`,
@@ -543,7 +547,9 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
 [Authentication](#authentication)).
 
 - Kinds: `tool` (allow once, allow for this session, deny with an optional message to Claude:
-  without a message the turn stops and Claude waits, with one Claude continues with it),
+  without a message the turn stops and Claude waits, with one Claude continues with it;
+  `add_repository` requests carry `repositoryAddition`, see
+  [Adding repositories](#adding-repositories-to-a-running-session)),
   `question` (Claude's `AskUserQuestion`: options, multi-select and own words; the answers go
   back as `answers` keyed by question text, multi-select labels joined with `, `), `plan`
   (`ExitPlanMode` in plan mode: the plan as Markdown; approve into `default` or `acceptEdits`,
@@ -555,7 +561,8 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
   "accept edits" for a file change, are dropped): the mode changes only through the mode control
   and by approving a plan. It is never offered for pushes, pull requests, questions, plans
   or when Claude Code says not to (`suppressAlwaysAllowRule`): each push and each pull request
-  needs its own approval (see [Push and pull requests](#push-and-pull-requests)). Rules and
+  needs its own approval (see [Push and pull requests](#push-and-pull-requests)), and never
+  for `add_repository`. Rules and
   directories allowed for the session are given to every later Claude Code process of the
   session (`allowedTools`, additional directories), so they hold until the session ends.
 - A request never stays pending without a process waiting for it: it is cancelled (resolved
@@ -1006,7 +1013,8 @@ web build runs it first):
   changes, a new session, Settings' Workspace cleanup and Server status) get the whole height
   and a back arrow in their app bar. From 840 px the destinations are a rail on the left. The
   start page lists the sessions grouped into Needs you, Running and Recent with search and
-  filters; each row says what the session needs ("Approve command", "2 questions", "Plan
+  filters; each row says what the session needs ("Approve command", "Approve repository",
+  "2 questions", "Plan
   ready", from `SessionDto.pendingRequests`: kind and count only). "New session" (a floating
   button on phones) opens `/new`. The shell has no Material modules, so the start bundle
   stays small; pages load lazily.
@@ -1091,7 +1099,10 @@ its branches and tags, and points the existing session clones' `origin` there (s
   `branch`, `base_branch`, `base_commit` — the commit the branch started at, the fallback
   comparison point of the session diff — and `setup_status`), `scratch`, or `directory` (sessions from before session
   clones). `state` is `pending`, `ready`, `failed` or `removed`. This table is the only source
-  of a session's directories (the former `sessions.cwd` was migrated into it).
+  of a session's directories (the former `sessions.cwd` was migrated into it). Repositories
+  added while the session ran have `added_at`, `added_by`, `addition_state` (`preparing`,
+  `failed`, `held`, `ready`; only `ready` ones are given to Claude), `addition_error` and
+  `announce` (Claude still has to be told about it).
   `pushed_commit`/`pushed_at`: what was last pushed of the session branch (by button, or seen
   after an approved push by Claude).
 - `pull_requests`: per session clone (session and repository) the pull requests created by
@@ -1139,6 +1150,86 @@ its branches and tags, and points the existing session clones' `origin` there (s
    (`pending.send`), runs the failed scripts again (`setup.rerun`; on success the prompt is
    sent) or ends the session. Ending the session during the preparation stops the setup
    script and does not send the prompt.
+
+### Adding repositories to a running session
+
+A session can get a further repository while it runs, so that Claude continues in the same
+conversation with both (e.g. a change to an app that also needs one in the machine's NixOS
+configuration). Two ways in:
+
+- **By the user**: "Add repository" in the session details (Repositories and pull requests),
+  with the choices of the new-session form: a registered repository or local project, one from
+  GitHub through the GitHub App, one by clone URL, a new local project (the last three are
+  registered first, through the same routes and validation as in the form), and the base
+  branch. `POST /api/sessions/:id/repositories` with `{ repositoryId, baseBranch? }`.
+- **By Claude**: the tool `add_repository` (`repository` as `owner/name`, or `url`; optional
+  `base_branch`; `reason`). It asks the user every time (MCP permission policy `always_ask`,
+  never "Allow for this session", no rule lets later calls through). Before anything is asked,
+  the call is checked as the form would check it
+  (`apps/api/src/app/workspaces/repository-additions.ts`): a registered repository or local
+  project by name, a repository of the GitHub App's installations by name, or a clone URL
+  under the form's rules; local paths and `file://` are refused (Claude names no paths on the
+  machine), as are repositories the session has already ("already part of this session: its
+  clone is …"); refusals go back to Claude without asking. The approval shows the repository,
+  where it comes from (GitHub App, clone URL, local project; whether it is registered yet), the
+  base branch (or the default branch) and Claude's reason as plain text (untrusted, never
+  rendered). It reads "Approve repository" in the session list and status strip, and the
+  notification's Allow and Deny work as for a command. Only an approved call runs, once, with
+  exactly what the approval showed (kept by tool use ID); unregistered repositories are
+  registered only then.
+
+What happens then is the same for both: the repository gets its own clone
+`sessions/<slug>/<owner>/<name>` from its mirror on the session branch `claude/<slug>`
+(clone, ownership and setup script exactly as at session start, also with
+`PROCESS_ISOLATION=separate-users`), shown in the history as one "Add repository" row with
+its fetch, clone and setup steps (`prepare.progress` with step `add`, and an `addition` ID on
+all its events). One repository is added at a time per session; cleanup, archive and delete
+wait for it, and ending the session stops its setup script. Afterwards it is a directory like
+the others: push and pull requests, the session diff, `@` and `#`, PR automation, cleanup,
+archive, delete, search and statistics (a session's usage counts under all its repositories,
+now including the added one).
+
+**How Claude gets it, without a restart.** Claude Code takes its directories at process start,
+but the bundled Claude Code (2.1.322, Agent SDK 0.3.322) also takes further ones while it
+runs: the app sends the flag settings again (`Query.applyFlagSettings`) with
+`permissions.additionalDirectories` listing the added clones (plus the launch settings'
+`permissions`, which that call replaces). Checked with the bundled Claude Code against a local
+fake Messages API: a `Read` of a file in the added directory, which asked before, ran without
+asking afterwards, both between turns and when applied from inside an in-process tool call in
+the middle of a turn, and Claude Code's next request carried a system reminder "Environment
+update – Additional working directories added: <path>". (An allow result with
+`updatedPermissions: addDirectories` behaves the same but exists only in an approval; the
+`register_repo_root` control request accepts only subdirectories of existing directories.)
+So:
+
+- added while no turn runs: the process gets the directory at once; Claude is told the
+  clone's path, branch and base branch with the next message, as a note of the app sent before
+  it (`client_composed`, `shouldQuery: false`, `isSynthetic`, like untrusted context; not shown
+  as a message of the user);
+- added while a turn runs: the same, at once; Claude Code mentions the new directory with its
+  next request in that turn, the app's note comes with the next message;
+- added by Claude's tool: the tool waits until the clone and the setup script are done and
+  tells Claude in its result where the clone is (path, branch, base branch and commit), or
+  that it is not available and why. The turn goes on, so the history reads as one piece of
+  work;
+- no process: the next one starts with the directory and the note.
+
+If a Claude Code (e.g. one set with `CLAUDE_CODE_EXECUTABLE`) cannot add directories, the app
+restarts the process with resume instead: at once when no turn runs, after the turn when one
+runs. For Claude's own call the tool result says so ("end your turn now"), and after the turn
+the app continues the session with a fixed message of its own (`origin: 'app'`) saying that
+the repository is now available at its path; queued messages follow as usual.
+
+**Failures leave the session usable.** If the clone cannot be made (unreachable remote,
+unknown base branch), what was created is removed again (`addition_state` `failed`, nothing on
+disk); if the setup script fails or times out, the clone stays but is not given to Claude
+(`held`). Messages still go to Claude, and Claude's tool result says the repository is not
+available. A banner above the input (like the one for a failed setup at session start) offers
+Retry or "Run setup again", "Use anyway" (held only) and Remove, which removes the clone with
+the usual safe removal and forgets the repository
+(`POST /api/sessions/:id/repositories/:repositoryId/addition/retry|accept|remove`). An addition
+cut off by a server stop is rolled back on the next start and marked failed. Removing a
+repository Claude works in is not supported.
 
 `GET /api/repositories` lists each repository with its session clones from the database and
 from `sessions/<slug>/<owner>/<repo>` on disk. Clones without a session are marked orphaned,
