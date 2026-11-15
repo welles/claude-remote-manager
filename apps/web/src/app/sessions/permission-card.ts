@@ -11,6 +11,7 @@ import {
   type PermissionResponse,
   type SessionDirectoryDto,
   type PlanApprovalMode,
+  type RepositoryAdditionCall,
   type UserQuestion,
 } from '@claude-remote-manager/shared-types';
 import { FileDiffCard } from '../diffs/file-diff-card';
@@ -119,6 +120,19 @@ export class PermissionCard {
   protected readonly complete = computed(() =>
     Object.values(this.answers()).every((answer) => answer.trim() !== ''),
   );
+
+  /** Where a repository Claude wants to add comes from. */
+  protected additionSource(addition: RepositoryAdditionCall): string {
+    const registered = addition.registered ? '' : ', not registered yet';
+    switch (addition.source) {
+      case 'github':
+        return `GitHub, through the app's installation${registered}`;
+      case 'project':
+        return 'Local project';
+      default:
+        return `Clone URL${registered}`;
+    }
+  }
 
   protected isSelected(question: UserQuestion, value: string): boolean {
     return (

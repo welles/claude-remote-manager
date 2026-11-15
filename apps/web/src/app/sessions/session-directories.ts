@@ -1,5 +1,16 @@
 import { Component, computed, input } from '@angular/core';
-import type { SessionDirectoryDto } from '@claude-remote-manager/shared-types';
+import type {
+  RepositoryAdditionState,
+  SessionDirectoryDto,
+} from '@claude-remote-manager/shared-types';
+
+/** Tags of repositories added while the session ran. */
+export const ADDITION_LABELS: Record<RepositoryAdditionState, string> = {
+  preparing: 'adding…',
+  failed: 'not added',
+  held: 'held: setup failed',
+  ready: 'added',
+};
 
 /** Name of a session directory: repository, scratch or the directory. */
 export function directoryName(directory: SessionDirectoryDto): string {
@@ -76,6 +87,7 @@ export function relativePaths(
 export class SessionDirectories {
   readonly directories = input.required<SessionDirectoryDto[]>();
   protected readonly directoryName = directoryName;
+  protected readonly additionLabels = ADDITION_LABELS;
   /** Repository names (or project) for the collapsed list. */
   protected readonly summary = computed(() =>
     this.directories()

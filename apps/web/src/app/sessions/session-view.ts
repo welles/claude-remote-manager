@@ -60,6 +60,8 @@ import { FileViewer } from '../shown-files/file-viewer';
 import { MessageComposer, type ComposedMessage } from './message-composer';
 import { QueuedMessages } from './queued-messages';
 import { SessionDirectories } from './session-directories';
+import { AddRepository } from './add-repository';
+import { AdditionBanners } from './addition-banners';
 import { TodoPanel } from './todo-panel';
 import { todoList } from './todos';
 import { SessionGitPanel } from './session-git-panel';
@@ -74,6 +76,8 @@ import { errorMessage } from '../repositories/repositories-api';
 @Component({
   selector: 'app-session-view',
   imports: [
+    AddRepository,
+    AdditionBanners,
     AppSidePanel,
     SessionConversation,
     LimitWindows,

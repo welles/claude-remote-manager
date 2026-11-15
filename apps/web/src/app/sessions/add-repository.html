@@ -1,0 +1,190 @@
+@if (available()) { @if (!open()) {
+<button
+  matButton
+  type="button"
+  class="open"
+  (click)="show()"
+  [disabled]="!enabled() || adding()"
+  [title]="adding() ? 'A repository is being added' : ''"
+  data-testid="add-repository"
+>
+  <app-icon name="plus" />Add repository
+</button>
+} @else {
+<form class="form" (ngSubmit)="add()" data-testid="add-repository-form">
+  <div class="head">
+    <span class="title">Add a repository</span>
+    <button
+      type="button"
+      class="app-icon-btn"
+      (click)="hide()"
+      aria-label="Close"
+      title="Close"
+      data-testid="add-repository-close"
+    >
+      <app-icon name="close" />
+    </button>
+  </div>
+  <div class="app-chip-group" role="group" aria-label="Where it comes from">
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="source() === 'registered'"
+      [attr.aria-pressed]="source() === 'registered'"
+      (click)="setSource('registered')"
+      data-testid="add-source-registered"
+    >
+      Registered
+    </button>
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="source() === 'github'"
+      [attr.aria-pressed]="source() === 'github'"
+      (click)="setSource('github')"
+      data-testid="add-source-github"
+    >
+      GitHub
+    </button>
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="source() === 'url'"
+      [attr.aria-pressed]="source() === 'url'"
+      (click)="setSource('url')"
+      data-testid="add-source-url"
+    >
+      URL
+    </button>
+    <button
+      type="button"
+      class="app-chip"
+      [class.on]="source() === 'project'"
+      [attr.aria-pressed]="source() === 'project'"
+      (click)="setSource('project')"
+      data-testid="add-source-project"
+    >
+      New project
+    </button>
+  </div>
+
+  @switch (source()) { @case ('github') {
+  <app-github-repository-picker
+    label="Repository on GitHub"
+    (picked)="pickedFromGitHub($event)"
+  />
+  } @case ('url') {
+  <div class="row">
+    <mat-form-field appearance="outline" class="grow" subscriptSizing="dynamic">
+      <mat-label>Clone URL</mat-label>
+      <input
+        matInput
+        name="cloneUrl"
+        [(ngModel)]="cloneUrl"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        data-testid="add-clone-url"
+      />
+    </mat-form-field>
+    <button
+      matButton="outlined"
+      type="button"
+      (click)="register()"
+      [disabled]="!cloneUrl.trim() || busy()"
+      data-testid="add-register"
+    >
+      Register
+    </button>
+  </div>
+  } @case ('project') {
+  <div class="row">
+    <mat-form-field appearance="outline" class="grow" subscriptSizing="dynamic">
+      <mat-label>Project name</mat-label>
+      <input
+        matInput
+        name="projectName"
+        [(ngModel)]="projectName"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        data-testid="add-project-name"
+      />
+    </mat-form-field>
+    <button
+      matButton="outlined"
+      type="button"
+      (click)="register()"
+      [disabled]="!projectValid() || busy()"
+      data-testid="add-register"
+    >
+      Create
+    </button>
+  </div>
+  } @default {
+  <div class="row">
+    <mat-form-field
+      appearance="outline"
+      class="grow repository"
+      subscriptSizing="dynamic"
+    >
+      <mat-label>Repository</mat-label>
+      <mat-select
+        [value]="repositoryId()"
+        (selectionChange)="choose($event.value)"
+        data-testid="add-repository-select"
+      >
+        @for (repository of choices(); track repository.id) {
+        <mat-option [value]="repository.id"
+          >{{ repository.fullName }}@if (repository.local) { (local project)
+          }</mat-option
+        >
+        } @empty {
+        <mat-option disabled value=""
+          >{{ loaded() ? 'No other registered repositories' : 'Loading…'
+          }}</mat-option
+        >
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-form-field
+      appearance="outline"
+      class="branch"
+      subscriptSizing="dynamic"
+    >
+      <mat-label>Base branch</mat-label>
+      <mat-select
+        [value]="baseBranch()"
+        (selectionChange)="baseBranch.set($event.value)"
+        [disabled]="!repositoryId()"
+        data-testid="add-branch-select"
+      >
+        <mat-option value="">{{ defaultLabel() }}</mat-option>
+        @for (branch of branchOptions(); track branch) {
+        <mat-option [value]="branch">{{ branch }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+  </div>
+  } }
+
+  <p class="hint">
+    It gets its own clone on this session's branch, and its setup script runs.
+    Claude can work in it once it is ready, also during a turn.
+  </p>
+  @if (error(); as message) {
+  <p class="app-error" data-testid="add-repository-error">{{ message }}</p>
+  }
+  <div class="actions">
+    <button
+      matButton="filled"
+      type="submit"
+      [disabled]="!repositoryId() || source() !== 'registered' || busy() || !enabled() || adding()"
+      data-testid="add-repository-submit"
+    >
+      Add to session
+    </button>
+    <button matButton type="button" (click)="hide()">Cancel</button>
+  </div>
+</form>
+} }

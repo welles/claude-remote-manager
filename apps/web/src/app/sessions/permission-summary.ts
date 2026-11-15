@@ -117,10 +117,16 @@ export function requestSummary(
       const name = mcpName(request.toolName);
       if (request.pullRequest) {
         action = 'Create a pull request';
+      } else if (request.repositoryAddition) {
+        action = 'Add a repository';
       } else if (name) {
         action = `Use ${name}`;
       }
-      if (!request.pullRequest && Object.keys(input).length > 0) {
+      if (
+        !request.pullRequest &&
+        !request.repositoryAddition &&
+        Object.keys(input).length > 0
+      ) {
         add('Input', JSON.stringify(input, null, 2), true);
       }
     }

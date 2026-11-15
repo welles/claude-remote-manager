@@ -143,6 +143,12 @@
           </button>
         </div>
       </app-banner>
+      } @if (session(); as s) {
+      <app-addition-banners
+        [session]="s"
+        [enabled]="connected()"
+        (changed)="session.set($event)"
+      />
       } @if (error(); as message) {
       <p class="error" data-testid="error">{{ message }}</p>
       }
@@ -197,6 +203,11 @@
       @if (s.directories.length > 0) {
       <app-session-directories [directories]="s.directories" />
       }
+      <app-add-repository
+        [session]="s"
+        [enabled]="connected()"
+        (changed)="session.set($event)"
+      />
       <app-session-git-panel [session]="s" />
     </section>
     @if (s.previews.length > 0) {

@@ -11,7 +11,13 @@
         >
         @if (directory.repository?.local) {
         <span class="tag">local project</span>
-        } @if (directory.state !== 'ready') {
+        } @if (directory.addition; as addition) {
+        <span
+          class="tag tag-addition-{{ addition.state }}"
+          data-testid="addition-state"
+          >{{ additionLabels[addition.state] }}</span
+        >
+        } @else if (directory.state !== 'ready') {
         <span class="tag tag-{{ directory.state }}">{{ directory.state }}</span>
         } @if (directory.setupStatus !== 'none') {
         <span class="tag tag-setup-{{ directory.setupStatus }}"

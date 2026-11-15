@@ -6,10 +6,11 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import type {
-  PullRequestDto,
-  SessionDirectoryDto,
-  SessionDto,
+import {
+  isActiveDirectory,
+  type PullRequestDto,
+  type SessionDirectoryDto,
+  type SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { DiscardCloneDialog } from './discard-clone-dialog';
@@ -67,7 +68,8 @@ export class SessionGitPanel {
     return session.directories.flatMap((directory) =>
       directory.kind === 'clone' &&
       directory.repository &&
-      !directory.repository.local
+      !directory.repository.local &&
+      isActiveDirectory(directory)
         ? [
             {
               repositoryId: directory.repository.id,

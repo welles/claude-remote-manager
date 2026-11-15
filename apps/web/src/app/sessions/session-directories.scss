@@ -49,6 +49,8 @@
 
 .tag-failed,
 .tag-removed,
+.tag-addition-failed,
+.tag-addition-held,
 .tag-setup-failed,
 .tag-setup-timed_out {
   background: var(--mat-sys-error-container);

@@ -52,6 +52,45 @@ describe('PermissionCard', () => {
     expect(answers).toEqual([{ decision: 'allow' }]);
   });
 
+  it('shows which repository Claude wants to add, from where and why, as plain text', async () => {
+    const element = await render(
+      permissionRequest({
+        toolName: 'mcp__crm__add_repository',
+        title: 'Claude wants to use add_repository',
+        input: { repository: 'acme/nixos-config', reason: 'x' },
+        repositoryAddition: {
+          source: 'github',
+          repository: 'acme/nixos-config',
+          url: 'https://github.com/acme/nixos-config.git',
+          registered: false,
+          baseBranch: null,
+          defaultBranch: 'main',
+          reason: 'The module <img src=x onerror=alert(1)> lives **there**',
+        },
+      }),
+    );
+    expect(element.textContent).toContain('Add a repository to this session');
+    expect(
+      element.querySelector('[data-testid="addition-repository"]')?.textContent,
+    ).toBe('acme/nixos-config');
+    expect(
+      element.querySelector('[data-testid="addition-source"]')?.textContent,
+    ).toContain("GitHub, through the app's installation, not registered yet");
+    expect(
+      element.querySelector('[data-testid="addition-base"]')?.textContent,
+    ).toContain('main (default branch)');
+    const reason = element.querySelector('[data-testid="addition-reason"]');
+    expect(reason?.textContent).toBe(
+      'The module <img src=x onerror=alert(1)> lives **there**',
+    );
+    expect(reason?.querySelector('img, strong')).toBeNull();
+    // Only once: never for the whole session, and no raw input dump.
+    expect(element.querySelector('[data-testid="allow-session"]')).toBeNull();
+    expect(element.textContent).not.toContain('Input');
+    await click(element, 'allow');
+    expect(answers).toEqual([{ decision: 'allow' }]);
+  });
+
   it('shows a file change as a diff instead of its raw text', async () => {
     const element = await render(
       permissionRequest({

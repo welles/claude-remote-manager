@@ -57,6 +57,16 @@
   }
 }
 
+.reason {
+  /* Claude's own words: kept as written, never rendered. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+code {
+  overflow-wrap: anywhere;
+}
+
 .content {
   display: flex;
   flex: 1 1 auto;

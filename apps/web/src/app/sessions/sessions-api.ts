@@ -2,6 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 import type {
+  AddSessionRepositoryRequest,
   CleanupChoice,
   CleanupPreview,
   CleanupResult,
@@ -177,6 +178,33 @@ export class SessionsApi {
   ): Observable<CloneLossReport> {
     return this.http.get<CloneLossReport>(
       `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/clone-loss`,
+    );
+  }
+
+  /** Adds a registered repository to the session (prepared in the background). */
+  addRepository(
+    sessionId: string,
+    request: AddSessionRepositoryRequest,
+  ): Observable<SessionDto> {
+    return this.http.post<SessionDto>(
+      `${sessionPath(sessionId)}/repositories`,
+      request,
+    );
+  }
+
+  /**
+   * For a repository whose addition failed or is held: `retry` (clone or
+   * run the setup again), `accept` (use it although its setup failed) or
+   * `remove` (forget it and its clone).
+   */
+  additionAction(
+    sessionId: string,
+    repositoryId: string,
+    action: 'retry' | 'accept' | 'remove',
+  ): Observable<SessionDto> {
+    return this.http.post<SessionDto>(
+      `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/addition/${action}`,
+      {},
     );
   }
 

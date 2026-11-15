@@ -109,7 +109,9 @@
         >
       </mat-radio-button>
     </mat-radio-group>
-    } @default { @if (r.title) {
+    } @default { @if (r.repositoryAddition) {
+    <p class="title">Add a repository to this session</p>
+    } @else if (r.title) {
     <p class="title">{{ r.title }}</p>
     } @else {
     <p class="title">{{ summary().action }}</p>
@@ -157,6 +159,42 @@
       </div>
       }
     </dl>
+    } @if (r.repositoryAddition; as add) {
+    <dl class="fields" data-testid="repository-addition">
+      <div class="field">
+        <dt>Repository</dt>
+        <dd>
+          <code data-testid="addition-repository">{{ add.repository }}</code>
+        </dd>
+      </div>
+      <div class="field">
+        <dt>From</dt>
+        <dd data-testid="addition-source">
+          {{ additionSource(add) }} @if (add.source === 'url' && add.url) {
+          <code>{{ add.url }}</code>
+          }
+        </dd>
+      </div>
+      <div class="field">
+        <dt>Base branch</dt>
+        <dd data-testid="addition-base">
+          @if (add.baseBranch) {
+          <code>{{ add.baseBranch }}</code>
+          } @else if (add.defaultBranch) {
+          <code>{{ add.defaultBranch }}</code> (default branch) } @else {
+          default branch }
+        </dd>
+      </div>
+      <div class="field">
+        <dt>Claude's reason</dt>
+        <dd class="reason" data-testid="addition-reason">{{ add.reason }}</dd>
+      </div>
+    </dl>
+    <p class="hint">
+      Clones it into this session on the session branch and runs its setup
+      script; Claude can then read and change it. Only this repository, only
+      this time.
+    </p>
     } @if (r.gitPushes.length > 0) {
     <div
       class="pushes"

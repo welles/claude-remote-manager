@@ -19,6 +19,7 @@ import {
 } from '@angular/router';
 import {
   canResume,
+  isActiveDirectory,
   needsUser,
   type SessionDto,
 } from '@claude-remote-manager/shared-types';
@@ -305,6 +306,7 @@ export class SessionList implements OnInit {
   /** Repositories of a session, e.g. `acme/app + acme/lib`, or `Scratch`. */
   protected workspaceLabel(session: SessionDto): string {
     return session.directories
+      .filter(isActiveDirectory)
       .map((directory) =>
         directory.kind === 'scratch'
           ? 'Scratch'

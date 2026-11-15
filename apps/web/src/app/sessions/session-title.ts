@@ -11,7 +11,10 @@ import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import type { SessionDto } from '@claude-remote-manager/shared-types';
+import {
+  isActiveDirectory,
+  type SessionDto,
+} from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { AppDialog } from '../ui/dialog';
 import { AppIcon } from '../ui/icon';
@@ -20,6 +23,7 @@ import { SessionsApi } from './sessions-api';
 /** `acme/app + acme/lib · claude/fix-…`, `Scratch`, or empty. */
 export function sessionSubtitle(session: SessionDto): string {
   const names = session.directories
+    .filter(isActiveDirectory)
     .map((directory) =>
       directory.kind === 'scratch'
         ? 'Scratch'
