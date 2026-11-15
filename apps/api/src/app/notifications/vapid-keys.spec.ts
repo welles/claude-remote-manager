@@ -8,7 +8,13 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as webPush from 'web-push';
-import { loadVapidKeys, publicKeyOf, VAPID_KEY_FILE_NAME } from './vapid-keys';
+import { createECDH } from 'node:crypto';
+import {
+  fixedWidthPrivateKey,
+  loadVapidKeys,
+  publicKeyOf,
+  VAPID_KEY_FILE_NAME,
+} from './vapid-keys';
 
 const quiet = { log: () => undefined, warn: () => undefined };
 const noVapid = { publicKey: null, privateKeyFile: null, subject: null };
@@ -45,6 +51,47 @@ describe('VAPID keys', () => {
         'aes128gcm',
       ),
     ).not.toThrow();
+  });
+
+  it('always generate 32-byte private keys (Node drops leading zero bytes)', () => {
+    // About one generated key in 256 starts with a zero byte, which
+    // ECDH.getPrivateKey() leaves out; with 3000 keys a short one comes up
+    // all but certainly (this test failed before the keys were padded).
+    for (let i = 0; i < 3000; i++) {
+      const { keys } = loadVapidKeys(noVapid, ':memory:', {}, quiet);
+      expect(Buffer.from(keys?.privateKey ?? '', 'base64url')).toHaveLength(32);
+    }
+  });
+
+  it('read keys stored without their leading zero bytes', () => {
+    // A private key whose first byte is zero, as earlier versions stored it.
+    const scalar = Buffer.alloc(32, 7);
+    scalar[0] = 0;
+    const ecdh = createECDH('prime256v1');
+    ecdh.setPrivateKey(scalar);
+    const short = ecdh.getPrivateKey();
+    expect(short).toHaveLength(31);
+    const data = join(dir, 'db');
+    loadVapidKeys(noVapid, data, {}, quiet);
+    writeFileSync(
+      join(data, VAPID_KEY_FILE_NAME),
+      JSON.stringify({ privateKey: short.toString('base64url') }),
+      { mode: 0o600 },
+    );
+    const { keys, problem } = loadVapidKeys(noVapid, data, {}, quiet);
+    expect(problem).toBeNull();
+    expect(keys?.privateKey).toBe(scalar.toString('base64url'));
+    expect(keys?.publicKey).toBe(ecdh.getPublicKey().toString('base64url'));
+    expect(() =>
+      webPush.getVapidHeaders(
+        'https://fcm.googleapis.com',
+        'mailto:a@example.org',
+        keys?.publicKey ?? '',
+        keys?.privateKey ?? '',
+        'aes128gcm',
+      ),
+    ).not.toThrow();
+    expect(fixedWidthPrivateKey(scalar)).toBe(scalar);
   });
 
   it('restricts a key file others could read', () => {

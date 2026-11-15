@@ -29,15 +29,40 @@ export interface VapidKeyPair {
   privateKey: string;
 }
 
+/**
+ * A P-256 private key as the 32 bytes VAPID needs. Node's
+ * `ECDH.getPrivateKey()` drops leading zero bytes, so about one key in 256
+ * comes out shorter; the web-push library (and the push services) want the
+ * fixed-width scalar.
+ */
+export function fixedWidthPrivateKey(key: Buffer): Buffer {
+  return key.length < 32
+    ? Buffer.concat([Buffer.alloc(32 - key.length), key])
+    : key;
+}
+
 /** The public key of a P-256 private key, base64url. */
 export function publicKeyOf(privateKey: string): string {
   const key = Buffer.from(privateKey, 'base64url');
-  if (!/^[A-Za-z0-9_-]+$/.test(privateKey) || key.length !== 32) {
+  if (
+    !/^[A-Za-z0-9_-]+$/.test(privateKey) ||
+    // Node writes keys with leading zero bytes left out (see
+    // fixedWidthPrivateKey); more than three missing is not a key.
+    key.length < 29 ||
+    key.length > 32
+  ) {
     throw new Error('not a P-256 private key');
   }
   const ecdh = createECDH('prime256v1');
-  ecdh.setPrivateKey(key);
+  ecdh.setPrivateKey(fixedWidthPrivateKey(key));
   return ecdh.getPublicKey().toString('base64url');
+}
+
+/** A private key in its 32-byte form (keys stored shorter by earlier versions). */
+function normalizedPrivateKey(privateKey: string): string {
+  return fixedWidthPrivateKey(Buffer.from(privateKey, 'base64url')).toString(
+    'base64url',
+  );
 }
 
 function generate(): VapidKeyPair {
@@ -45,7 +70,9 @@ function generate(): VapidKeyPair {
   ecdh.generateKeys();
   return {
     publicKey: ecdh.getPublicKey().toString('base64url'),
-    privateKey: ecdh.getPrivateKey().toString('base64url'),
+    privateKey: fixedWidthPrivateKey(ecdh.getPrivateKey()).toString(
+      'base64url',
+    ),
   };
 }
 
@@ -101,7 +128,10 @@ export function loadVapidKeys(
         problem: 'VAPID_PUBLIC_KEY does not belong to the VAPID private key',
       };
     }
-    return { keys: { publicKey, privateKey: secret.value }, problem: null };
+    return {
+      keys: { publicKey, privateKey: normalizedPrivateKey(secret.value) },
+      problem: null,
+    };
   }
   if (dataDir === ':memory:') {
     return { keys: generate(), problem: null };
@@ -121,7 +151,7 @@ export function loadVapidKeys(
       }
       return {
         keys: {
-          privateKey: stored['privateKey'],
+          privateKey: normalizedPrivateKey(stored['privateKey']),
           publicKey: publicKeyOf(stored['privateKey']),
         },
         problem: null,
