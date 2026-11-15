@@ -30,12 +30,18 @@ describe('FileViewer', () => {
     fixture.detectChanges();
     return fixture.nativeElement as HTMLElement;
   };
-  const settle = async () => {
-    for (let i = 0; i < 5; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      await fixture.whenStable();
-    }
-  };
+
+  /** Waits until the viewer shows highlighted code (or fails after 10 s). */
+  const highlighted = (element: HTMLElement) =>
+    vi.waitFor(
+      () => {
+        fixture.detectChanges();
+        if (!element.querySelector('[data-testid="code"] [class^="hljs-"]')) {
+          throw new Error('not highlighted yet');
+        }
+      },
+      { timeout: 10_000, interval: 10 },
+    );
 
   afterEach(() => http.verify());
 
@@ -59,7 +65,8 @@ describe('FileViewer', () => {
       .flush(
         '# Report\n\n<img src=x onerror="alert(1)"><script>alert(2)</script>',
       );
-    await settle();
+    // Markdown renders synchronously once the text is there.
+    await fixture.whenStable();
     const markdown = element.querySelector('[data-testid="markdown"]');
     expect(markdown?.querySelector('h1')?.textContent).toBe('Report');
     expect(markdown?.querySelector('script')).toBeNull();
@@ -73,12 +80,15 @@ describe('FileViewer', () => {
       shownFile({ kind: 'text', name: 'a.ts', language: 'typescript' }),
     );
     http.expectOne(`/api/shown-files/${ID}/content`).flush('const a = "<b>";');
-    await settle();
+    // highlight.js is imported on first use: how long that takes is not a
+    // number of ticks (the first import loads and transforms the module).
+    // Wait for the highlighted markup itself.
+    await highlighted(element);
     const code = element.querySelector('[data-testid="code"]');
     expect(code?.querySelector('.hljs-keyword')?.textContent).toBe('const');
     expect(code?.textContent).toBe('const a = "<b>";');
     expect(code?.querySelector('b')).toBeNull();
-  });
+  }, 20_000); // longer than the wait for the highlighter
 
   it('embeds PDFs, shows images and offers other files for download', async () => {
     let element = await render(shownFile({ kind: 'pdf', name: 'a.pdf' }));
