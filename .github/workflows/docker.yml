@@ -133,3 +133,30 @@ jobs:
             COMMIT_TIME=${{ steps.commit.outputs.time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # After a green run on main: the owner's NixOS configuration
+  # (welles/nixos-config) updates its flake input claude-remote-manager to this
+  # commit (its workflow update-claude-remote-manager.yml), so the next deploy
+  # brings this version. Needs the secret NIXOS_CONFIG_DISPATCH_TOKEN: a
+  # fine-grained token for welles/nixos-config only, with "Actions: read and
+  # write" (starting a workflow; it cannot change code). Skipped without it.
+  update-nixos-config:
+    needs: [test, nix, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions: {}
+    env:
+      DISPATCH_TOKEN: ${{ secrets.NIXOS_CONFIG_DISPATCH_TOKEN }}
+    steps:
+      - name: Start the flake input update in welles/nixos-config
+        if: env.DISPATCH_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.DISPATCH_TOKEN }}
+          REV: ${{ github.sha }}
+        run: |
+          gh workflow run update-claude-remote-manager.yml \
+            --repo welles/nixos-config --ref main -f rev="$REV"
+
+      - name: Skipped (no token)
+        if: env.DISPATCH_TOKEN == ''
+        run: echo "::notice::NIXOS_CONFIG_DISPATCH_TOKEN is not set; welles/nixos-config is not asked to update."
