@@ -14,4 +14,5 @@ data
 .env.*
 docker-compose.yml
 *.md
-!docker/CLAUDE.md
+!claude-md/container.md
+!claude-md/core.md

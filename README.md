@@ -37,7 +37,8 @@ Nx monorepo with npm:
 | `apps/web`           | Angular app (standalone components, Angular Material, SCSS, Vitest)          |
 | `apps/api`           | NestJS backend (Jest); serves the built web app and the API under `/api`     |
 | `libs/shared-types`  | Types shared by both apps, imported as `@claude-remote-manager/shared-types` |
-| `docker/`            | Files for the image: entrypoint, Nix config, global `CLAUDE.md`              |
+| `docker/`            | Files for the image: entrypoint, Nix config                                  |
+| `claude-md/`         | The global `CLAUDE.md` for sessions: shared part, container and NixOS parts  |
 | `Dockerfile`         | Multi-stage image build                                                      |
 | `docker-compose.yml` | Local container setup with all volumes                                       |
 
@@ -1643,8 +1644,9 @@ image or the compose file in plain text.
 
 ### Global CLAUDE.md
 
-`docker/CLAUDE.md` holds the rules for all sessions in the container (directory layout,
-session clones, Nix, git). The image installs it as the managed policy file
-`/etc/claude-code/CLAUDE.md`, which Claude Code loads in addition to the user's
+`claude-md/container.md` (the container: directory layout, Nix in the image) followed by
+`claude-md/core.md` (shared with the NixOS module: directories, showing files, previews, git)
+hold the rules for all sessions in the container. The image installs them as the managed policy
+file `/etc/claude-code/CLAUDE.md`, which Claude Code loads in addition to the user's
 `/data/claude/CLAUDE.md`. That way it is not hidden by the Claude volume and image updates take
 effect immediately, while personal additions can still go into the volume.

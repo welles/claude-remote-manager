@@ -84,8 +84,12 @@ RUN curl -fsSL "https://releases.nixos.org/nix/nix-${NIX_VERSION}/install" -o /t
 USER root
 RUN mv /tmp/nix-seed /opt/nix-seed && chown -R root:root /opt/nix-seed
 
-# Global instructions for all Claude sessions, outside the Claude volume.
-COPY docker/CLAUDE.md /etc/claude-code/CLAUDE.md
+# Global instructions for all Claude sessions, outside the Claude volume: the
+# container's own part and the part shared with the NixOS module.
+COPY claude-md/container.md claude-md/core.md /tmp/claude-md/
+RUN mkdir -p /etc/claude-code \
+    && { cat /tmp/claude-md/container.md; echo; cat /tmp/claude-md/core.md; } > /etc/claude-code/CLAUDE.md \
+    && rm -rf /tmp/claude-md
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/app-entrypoint
 
 # Data layout, see README.md. The directories are created here so that named
