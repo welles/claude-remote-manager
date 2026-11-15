@@ -24,7 +24,9 @@ async function bootstrap() {
   // to stop sessions and dev servers when the container stops.
   app.enableShutdownHooks();
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  // All interfaces unless LISTEN_ADDRESS names one (the NixOS module sets it).
+  const address = process.env.LISTEN_ADDRESS?.trim();
+  await (address ? app.listen(port, address) : app.listen(port));
   // Set when Nx waits for this server to be ready
   if (process.env.NX_READY_SIGNAL_SOCKET) {
     try {
