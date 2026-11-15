@@ -16,3 +16,7 @@ docker-compose.yml
 *.md
 !claude-md/container.md
 !claude-md/core.md
+# Not needed by the image
+flake.nix
+flake.lock
+nix
