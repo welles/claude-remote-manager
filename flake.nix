@@ -64,6 +64,14 @@
               self.packages.${pkgs.stdenv.hostPlatform.system}.default;
         };
 
+      checks = forAllSystems (
+        system:
+        import ./nix/tests {
+          inherit self nixpkgs system;
+          pkgs = pkgsFor system;
+        }
+      );
+
       devShells = forAllSystems (system: {
         default = (pkgsFor system).mkShell {
           packages = with (pkgsFor system); [
