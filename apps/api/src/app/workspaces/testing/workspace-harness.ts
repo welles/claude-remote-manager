@@ -25,6 +25,7 @@ import {
   waitFor,
 } from '../../sessions/testing/fake-agent';
 import { UsageRepository } from '../../sessions/usage.repository';
+import { RepositoryAdditions } from '../repository-additions';
 import { SessionWorkspaceService } from '../session-workspace.service';
 import type {
   ToolApprovalDecision,
@@ -110,6 +111,7 @@ export class WorkspaceHarness {
   readonly hooks = new SessionAutomationHooks();
   repositories!: RepositoriesService;
   workspaces!: SessionWorkspaceService;
+  additions!: RepositoryAdditions;
   sessionGit!: SessionGitService;
   support!: SessionAgentSupportService;
   service!: SessionsService;
@@ -134,6 +136,7 @@ export class WorkspaceHarness {
       this.settings,
     );
     this.workspaces.onModuleInit();
+    this.additions = new RepositoryAdditions(this.repositories);
     this.sessionGit = new SessionGitService(
       this.sessions,
       this.repositoryRecords,
@@ -174,6 +177,8 @@ export class WorkspaceHarness {
       undefined,
       new MessageContextRepository(this.db),
       this.hooks,
+      undefined,
+      this.additions,
     );
     const service = this.service;
     this.shownFiles.shown$.subscribe(({ sessionId, toolUseId, file }) =>

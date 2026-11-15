@@ -133,7 +133,7 @@
       class="tool-icon"
       [name]="item.failed ? 'alert' : item.done ? 'check' : 'clock'"
     />
-    <span class="tool-name">Prepare</span>
+    <span class="tool-name">{{ item.label }}</span>
     <span class="tool-summary prep-summary">{{ item.summary }}</span>
   </summary>
   <div class="tool-body">

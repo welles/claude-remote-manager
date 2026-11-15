@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, rmdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
@@ -12,6 +13,7 @@ import {
 import type { Subscription } from 'rxjs';
 import type {
   CreateSessionRequest,
+  RepositoryAddedBy,
   SessionEventInput,
   SetupResultEvent,
 } from '@claude-remote-manager/shared-types';
@@ -59,6 +61,15 @@ export interface SetupOutcome {
   /** A setup script failed or timed out (not: was stopped by ending). */
   failed: string[];
 }
+
+/** How preparing an added repository ended. */
+export type AdditionOutcome =
+  | { state: 'ready'; directory: SessionDirectoryRecord }
+  | {
+      state: 'failed' | 'held';
+      error: string;
+      directory: SessionDirectoryRecord | null;
+    };
 
 /** Preparation failed; the session's directories were removed again. */
 export class PreparationError extends Error {
@@ -389,7 +400,299 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Adds a registered repository to a session that exists already: checks
+   * it like the new-session form does (commit identity, the repository,
+   * the base branch, the limit) and that it is not part of the session
+   * yet, then records its clone `sessions/<slug>/<owner>/<name>` on the
+   * session branch as `pending` (addition `preparing`). Nothing is on disk
+   * yet; {@link prepareAddition} makes the clone.
+   */
+  planAddition(
+    sessionId: string,
+    repositoryId: string,
+    baseBranch: string | null,
+    by: RepositoryAddedBy,
+  ): SessionDirectoryRecord {
+    const session = this.sessions.require(sessionId);
+    if (!session.slug) {
+      throw new ConflictException(
+        'This session was created before session clones; start a new session to add repositories',
+      );
+    }
+    if (!isUuid(repositoryId)) {
+      throw new BadRequestException('repositoryId must be a UUID');
+    }
+    if (baseBranch !== null && !isValidBranchName(baseBranch)) {
+      throw new BadRequestException('baseBranch is not a valid branch name');
+    }
+    this.settings.requireGitIdentity();
+    let repository: RepositoryRecord;
+    try {
+      repository = this.repositories.require(repositoryId);
+    } catch {
+      throw new BadRequestException(`Repository ${repositoryId} not found`);
+    }
+    const name = `${repository.owner}/${repository.name}`;
+    const existing = session.directories.find(
+      (directory) => directory.repositoryId === repositoryId,
+    );
+    if (existing) {
+      throw new ConflictException(
+        existing.addition && existing.addition.state !== 'ready'
+          ? `${name} is already being added to this session; retry or remove it in the session details`
+          : `${name} is already part of this session`,
+      );
+    }
+    const clones = session.directories.filter(isClone);
+    if (clones.length >= MAX_SESSION_REPOSITORIES) {
+      throw new BadRequestException(
+        `A session can have at most ${MAX_SESSION_REPOSITORIES} repositories`,
+      );
+    }
+    const path = this.clonePath(repository, session.slug);
+    if (session.directories.some((directory) => directory.path === path)) {
+      throw new ConflictException(
+        `The session has a directory at ${path} already`,
+      );
+    }
+    try {
+      return this.sessions.addDirectory(sessionId, {
+        path,
+        repositoryId,
+        branch: `claude/${session.slug}`,
+        baseBranch,
+        setupStatus: repository.setupScript ? 'pending' : 'none',
+        addedBy: by,
+      });
+    } catch (error) {
+      if (
+        String((error as { code?: unknown }).code).startsWith(
+          'SQLITE_CONSTRAINT',
+        )
+      ) {
+        throw new ConflictException(`${name} is already part of this session`);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Prepares a repository added to a running session like the session's
+   * own: fetches the mirror, makes the clone on the session branch and
+   * runs the repository's setup script. A clone that cannot be made is
+   * removed again (`failed`, nothing left on disk); a setup script that
+   * fails or times out keeps the clone but holds it back from Claude
+   * (`held`). Every event carries `additionId`.
+   */
+  async prepareAddition(
+    sessionId: string,
+    position: number,
+    additionId: string,
+    emit: Emit,
+    signal: AbortSignal,
+  ): Promise<AdditionOutcome> {
+    const tagged = tagAddition(emit, additionId);
+    let session = this.sessions.require(sessionId);
+    let directory = session.directories.find(
+      (entry) => entry.position === position,
+    );
+    if (!directory?.addition) {
+      throw new Error(`No repository is being added at position ${position}`);
+    }
+    if (directory.state !== 'ready') {
+      try {
+        await this.createClone(session, directory, tagged);
+      } catch (error) {
+        const message = errorText(error);
+        await this.removeAddedClone(session, directory);
+        session = this.sessions.updateDirectory(sessionId, position, {
+          state: 'failed',
+          additionState: 'failed',
+          additionError: message,
+          setupStatus: directory.setupStatus === 'none' ? 'none' : 'pending',
+        });
+        return {
+          state: 'failed',
+          error: message,
+          directory: this.directoryAt(session, position),
+        };
+      }
+    }
+    await this.runSetupScripts(
+      sessionId,
+      tagged,
+      signal,
+      (entry) => entry.position === position,
+    );
+    session = this.sessions.require(sessionId);
+    directory = this.directoryAt(session, position);
+    if (
+      directory.setupStatus === 'none' ||
+      directory.setupStatus === 'succeeded'
+    ) {
+      session = this.sessions.updateDirectory(sessionId, position, {
+        additionState: 'ready',
+        additionError: null,
+      });
+      return { state: 'ready', directory: this.directoryAt(session, position) };
+    }
+    const error = signal.aborted
+      ? 'The setup script was stopped because the session was ended'
+      : directory.setupStatus === 'timed_out'
+        ? 'The setup script timed out'
+        : 'The setup script failed';
+    session = this.sessions.updateDirectory(sessionId, position, {
+      additionState: 'held',
+      additionError: error,
+    });
+    return {
+      state: 'held',
+      error,
+      directory: this.directoryAt(session, position),
+    };
+  }
+
+  /**
+   * Marks a failed or held addition as being prepared again (the user
+   * retries): a failed one is cloned again, a held one runs its setup
+   * script again.
+   */
+  beginRetry(sessionId: string, position: number): SessionDirectoryRecord {
+    const directory = this.directoryAt(
+      this.sessions.require(sessionId),
+      position,
+    );
+    const state = directory.addition?.state;
+    if (state !== 'failed' && state !== 'held') {
+      throw new ConflictException(
+        'Only a repository whose addition failed or is held can be retried',
+      );
+    }
+    this.settings.requireGitIdentity();
+    return this.directoryAt(
+      this.sessions.updateDirectory(sessionId, position, {
+        ...(state === 'failed' ? { state: 'pending' as const } : {}),
+        additionState: 'preparing',
+        additionError: null,
+      }),
+      position,
+    );
+  }
+
+  /**
+   * Lets Claude have an added repository whose setup script failed (the
+   * user decided to use it anyway).
+   */
+  acceptHeldAddition(
+    sessionId: string,
+    position: number,
+  ): SessionDirectoryRecord {
+    const directory = this.directoryAt(
+      this.sessions.require(sessionId),
+      position,
+    );
+    if (directory.addition?.state !== 'held' || directory.state !== 'ready') {
+      throw new ConflictException(
+        'Only a repository whose setup script failed can be used anyway',
+      );
+    }
+    return this.directoryAt(
+      this.sessions.updateDirectory(sessionId, position, {
+        additionState: 'ready',
+        additionError: null,
+      }),
+      position,
+    );
+  }
+
+  /**
+   * Removes a repository that was added to the running session but never
+   * became part of it (`failed` or `held`): its clone, the then empty
+   * owner directory, and its row. Removing a repository Claude works in
+   * is not supported.
+   */
+  async removeAddition(sessionId: string, position: number): Promise<void> {
+    const session = this.sessions.require(sessionId);
+    const directory = this.directoryAt(session, position);
+    if (
+      !directory.addition ||
+      (directory.addition.state !== 'failed' &&
+        directory.addition.state !== 'held')
+    ) {
+      throw new ConflictException(
+        'Only a repository whose addition failed or is held can be removed',
+      );
+    }
+    await this.removeAddedClone(session, directory);
+    this.sessions.deleteAddedDirectory(sessionId, position);
+  }
+
+  /**
+   * After a server stop during an addition: its clone is removed again and
+   * the addition is marked failed, so the user can retry or remove it.
+   */
+  async rollbackInterruptedAdditions(
+    emit: (sessionId: string, event: SessionEventInput) => void,
+  ): Promise<void> {
+    for (const { sessionId, position } of this.sessions.preparingAdditions()) {
+      const session = this.sessions.require(sessionId);
+      const directory = this.directoryAt(session, position);
+      const message =
+        'Adding the repository was interrupted because the server stopped';
+      try {
+        await this.removeAddedClone(session, directory);
+      } catch (error) {
+        this.logger.error(
+          `Removing the interrupted clone ${directory.path} failed: ${errorText(error)}`,
+        );
+      }
+      this.sessions.updateDirectory(sessionId, position, {
+        state: 'failed',
+        additionState: 'failed',
+        additionError: message,
+        setupStatus: directory.setupStatus === 'none' ? 'none' : 'pending',
+      });
+      emit(sessionId, {
+        type: 'prepare.progress',
+        step: 'add',
+        state: 'failed',
+        target: directory.repositoryName,
+        path: directory.path,
+        message: `${message}; retry or remove it in the session details.`,
+        addition: randomUUID(),
+      });
+    }
+  }
+
   // -------------------------------------------------------------------------
+
+  private directoryAt(
+    session: SessionRecord,
+    position: number,
+  ): SessionDirectoryRecord {
+    const directory = session.directories.find(
+      (entry) => entry.position === position,
+    );
+    if (!directory) {
+      throw new ConflictException(
+        `The session has no directory at position ${position}`,
+      );
+    }
+    return directory;
+  }
+
+  /** Removes an added repository's clone (if any) and empty parents. */
+  private async removeAddedClone(
+    session: SessionRecord,
+    directory: SessionDirectoryRecord,
+  ): Promise<void> {
+    if (!session.slug || !(await exists(directory.path))) {
+      return;
+    }
+    await this.entries.remove(directory.path, cloneRule(session.slug));
+    await this.removeEmptyParents(directory.path);
+  }
 
   private get entries(): WorkspaceEntries {
     this.workspaceEntries ??= new WorkspaceEntries(
@@ -723,6 +1026,18 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
     }
     return { failed };
   }
+}
+
+/** Marks preparation events as belonging to one addition. */
+function tagAddition(emit: Emit, addition: string): Emit {
+  return (event) =>
+    emit(
+      event.type === 'prepare.progress' ||
+        event.type === 'setup.output' ||
+        event.type === 'setup.result'
+        ? { ...event, addition }
+        : event,
+    );
 }
 
 function progress(

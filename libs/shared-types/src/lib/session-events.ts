@@ -6,6 +6,7 @@ import type {
 } from './github-references';
 import type { AccountLimits } from './limits';
 import type { PreviewDto, PreviewStopper } from './previews';
+import type { RepositoryAdditionCall } from './repository-additions';
 import type { ShownFileDto } from './shown-files';
 import type {
   GitPushAnalysis,
@@ -232,6 +233,12 @@ export interface PermissionRequestEvent extends SessionEventBase {
   /** For `plan`: the plan (Markdown). */
   plan: string | null;
   /**
+   * For the app's `add_repository` tool: which repository Claude wants to
+   * add, from where, on which base branch and why (absent from older
+   * servers). Only ever allowed once: never for the whole session.
+   */
+  repositoryAddition?: RepositoryAdditionCall | null;
+  /**
    * For file changes (`Edit`, `Write`, `NotebookEdit`): the change it would
    * make, against the file's current content where it could be read
    * (absent from older servers).
@@ -365,12 +372,20 @@ export interface ErrorEvent extends SessionEventBase {
  * - `scratch`: create the session's scratch directory;
  * - `rollback`: remove the session's directories again after a failure;
  * - `done`: preparation finished, the first message goes to Claude (not
- *   sent if a setup script failed; a warning `notice` says so instead).
+ *   sent if a setup script failed; a warning `notice` says so instead);
+ * - `add`: a repository is added to the running session (started, then
+ *   succeeded or failed); its `fetch`, `clone` and setup events carry the
+ *   same `addition`.
  */
 export interface PrepareProgressEvent extends SessionEventBase {
   type: 'prepare.progress';
-  step: 'fetch' | 'clone' | 'scratch' | 'rollback' | 'done';
+  step: 'fetch' | 'clone' | 'scratch' | 'rollback' | 'done' | 'add';
   state: 'started' | 'succeeded' | 'failed';
+  /**
+   * ID of one attempt to add a repository to the running session, on all
+   * of its steps; absent for the session's own preparation.
+   */
+  addition?: string;
   /** `owner/name` of the repository. */
   target: string | null;
   /** Directory concerned, e.g. the new clone. */
@@ -388,6 +403,8 @@ export interface SetupOutputEvent extends SessionEventBase {
   /** `owner/name` of the repository. */
   repository: string;
   text: string;
+  /** Set when the script runs for a repository being added (see `prepare.progress`). */
+  addition?: string;
 }
 
 /** A setup script started or ended. */
@@ -396,6 +413,8 @@ export interface SetupResultEvent extends SessionEventBase {
   repository: string;
   /** Session clone the script ran in. */
   path: string;
+  /** Set when the script runs for a repository being added (see `prepare.progress`). */
+  addition?: string;
   state: 'started' | 'succeeded' | 'failed' | 'timed_out' | 'skipped';
   exitCode: number | null;
   /** Signal that ended the script, e.g. after the timeout. */

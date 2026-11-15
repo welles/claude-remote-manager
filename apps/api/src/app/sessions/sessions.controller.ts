@@ -10,6 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import type {
+  AddSessionRepositoryRequest,
   CreateSessionRequest,
   MessageContextResponse,
   MessageReferenceRequest,
@@ -139,6 +140,49 @@ export class SessionsController {
     @Body() body: PermissionResponse,
   ): Promise<PermissionResponseResult> {
     return this.sessions.respondToPermission(id, requestId, body);
+  }
+
+  /**
+   * Adds a registered repository to the session: its clone and setup
+   * script are prepared in the background (see `SessionsService`).
+   */
+  @Post(':id/repositories')
+  @HttpCode(202)
+  addRepository(
+    @Param('id') id: string,
+    @Body() body: AddSessionRepositoryRequest,
+  ): Promise<SessionDto> {
+    return this.sessions.addRepository(id, body);
+  }
+
+  /** Clones a failed addition again, or runs its failed setup again. */
+  @Post(':id/repositories/:repositoryId/addition/retry')
+  @HttpCode(202)
+  retryAddition(
+    @Param('id') id: string,
+    @Param('repositoryId') repositoryId: string,
+  ): Promise<SessionDto> {
+    return this.sessions.retryAddition(id, repositoryId);
+  }
+
+  /** Gives Claude an added repository whose setup script failed. */
+  @Post(':id/repositories/:repositoryId/addition/accept')
+  @HttpCode(200)
+  acceptAddition(
+    @Param('id') id: string,
+    @Param('repositoryId') repositoryId: string,
+  ): Promise<SessionDto> {
+    return this.sessions.acceptAddition(id, repositoryId);
+  }
+
+  /** Removes an addition that failed or is held (and its clone). */
+  @Post(':id/repositories/:repositoryId/addition/remove')
+  @HttpCode(200)
+  removeAddition(
+    @Param('id') id: string,
+    @Param('repositoryId') repositoryId: string,
+  ): Promise<SessionDto> {
+    return this.sessions.removeAddition(id, repositoryId);
   }
 
   /** Removes a queued message before it goes to Claude. */

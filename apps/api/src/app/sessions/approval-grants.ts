@@ -3,6 +3,12 @@ export const APP_MCP_SERVER = 'crm';
 export const CREATE_PULL_REQUEST_TOOL = 'create_pull_request';
 /** The tool's name as Claude Code reports it to `canUseTool`. */
 export const CREATE_PULL_REQUEST_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${CREATE_PULL_REQUEST_TOOL}`;
+/**
+ * The app's tool that adds a repository to the running session: asks the
+ * user every time (never "for this session"), see `RepositoryAdditions`.
+ */
+export const ADD_REPOSITORY_TOOL = 'add_repository';
+export const ADD_REPOSITORY_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${ADD_REPOSITORY_TOOL}`;
 /** The app's tool that shows a file to the user (no approval needed). */
 export const SHOW_FILE_TOOL = 'show_file';
 export const SHOW_FILE_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SHOW_FILE_TOOL}`;

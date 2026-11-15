@@ -106,6 +106,18 @@ export class FakeRun implements AgentRun {
     this.switches.push({ model });
   }
 
+  /** Directories added to the running process, in order. */
+  readonly addedDirectories: string[] = [];
+  /** Set to make adding directories fail (a Claude Code that cannot). */
+  failAddDirectories: Error | null = null;
+
+  async addDirectories(directories: string[]): Promise<void> {
+    if (this.failAddDirectories) {
+      throw this.failAddDirectories;
+    }
+    this.addedDirectories.push(...directories);
+  }
+
   private takeFailure(): void {
     const failure = this.failSwitch;
     this.failSwitch = null;

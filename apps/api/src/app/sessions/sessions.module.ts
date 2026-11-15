@@ -27,6 +27,7 @@ import {
 import { LimitsModule } from '../limits/limits.module';
 import { LimitsService } from '../limits/limits.service';
 import { RepositoriesModule } from '../repositories/repositories.module';
+import { RepositoryAdditions } from '../workspaces/repository-additions';
 import { SessionWorkspaceService } from '../workspaces/session-workspace.service';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { SessionDiffController } from '../diffs/session-diff.controller';
@@ -90,6 +91,7 @@ import { ModelsService } from './models.service';
     { provide: ToolApprover, useValue: new UserToolApprover() },
     ModelsService,
     SessionWorkspaceService,
+    RepositoryAdditions,
     SetupScriptRunner,
     SessionFileAccess,
     SessionDiffService,

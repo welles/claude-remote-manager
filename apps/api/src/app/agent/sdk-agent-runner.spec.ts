@@ -7,6 +7,7 @@ import {
   spawnAsSession,
   toolUseIdOf,
   userContent,
+  zeroTurnMessages,
 } from './sdk-agent-runner';
 
 describe('buildQueryOptions', () => {
@@ -237,6 +238,25 @@ describe('sdkUserMessages', () => {
       uuid: 'm1',
     });
     expect(sdkUserMessages({ id: 'm2', text: 'hi' })).toHaveLength(1);
+  });
+
+  it("sends the app's note before the context, each without a turn of its own", () => {
+    const message = {
+      id: 'm1',
+      text: 'Go on',
+      note: { id: 'n1', text: 'The user added acme/lib' },
+      context: { id: 'c1', text: 'GitHub says' },
+    };
+    const messages = sdkUserMessages(message);
+    expect(messages.map((entry) => entry.uuid)).toEqual(['n1', 'c1', 'm1']);
+    expect(messages[0]).toMatchObject({
+      message: { content: 'The user added acme/lib' },
+      client_composed: true,
+      shouldQuery: false,
+      isSynthetic: true,
+    });
+    expect(zeroTurnMessages(message)).toBe(2);
+    expect(zeroTurnMessages({ id: 'm', text: 'x' })).toBe(0);
   });
 });
 

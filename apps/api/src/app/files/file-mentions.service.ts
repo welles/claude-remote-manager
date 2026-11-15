@@ -17,6 +17,7 @@ import {
 } from '../common/process-isolation';
 import { runGit } from '../git/git-runner';
 import {
+  isActiveDirectory,
   SessionRepository,
   type SessionDirectoryRecord,
 } from '../sessions/session.repository';
@@ -99,8 +100,10 @@ export class FileMentionsService {
     const fragments = query.toLowerCase().split(/\s+/).filter(Boolean);
     const matches: { mention: FileMention; score: number }[] = [];
     let truncated = false;
+    // Repositories being added (or held) are not Claude's yet.
     const directories = record.directories.filter(
-      (directory) => directory.state === 'ready',
+      (directory) =>
+        directory.state === 'ready' && isActiveDirectory(directory),
     );
     for (const directory of directories) {
       const listing = await this.listing(directory);

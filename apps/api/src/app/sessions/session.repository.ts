@@ -14,6 +14,8 @@ import {
 import type {
   PullRequestCreator,
   PullRequestState,
+  RepositoryAddedBy,
+  RepositoryAdditionState,
   SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
@@ -50,6 +52,18 @@ export interface SessionDirectoryRecord {
   setupStatus: SetupStatus;
   pushedCommit: string | null;
   pushedAt: Date | null;
+  /** Set for a repository added while the session ran. */
+  addition: DirectoryAddition | null;
+}
+
+/** How a repository was added to a running session (see the schema). */
+export interface DirectoryAddition {
+  addedAt: Date;
+  by: RepositoryAddedBy;
+  state: RepositoryAdditionState;
+  error: string | null;
+  /** Claude still has to be told about it (with the next message). */
+  announce: boolean;
 }
 
 /** A pull request of a session clone, see `pull_requests`. */
@@ -173,8 +187,27 @@ export type SessionDirectoryPatch = Partial<
     | 'baseCommit'
     | 'pushedCommit'
     | 'pushedAt'
-  >
+  > & {
+    additionState: RepositoryAdditionState;
+    additionError: string | null;
+    announce: boolean;
+  }
 >;
+
+/** A repository added to a running session, before it is prepared. */
+export type NewAddedDirectory = Pick<
+  SessionDirectoryRecord,
+  'path' | 'repositoryId' | 'branch' | 'baseBranch' | 'setupStatus'
+> & { addedBy: RepositoryAddedBy };
+
+/**
+ * Whether Claude works in the directory: every directory the session
+ * started with, and added repositories once they are ready (not while
+ * they are prepared, failed or held after a failed setup script).
+ */
+export function isActiveDirectory(directory: SessionDirectoryRecord): boolean {
+  return !directory.addition || directory.addition.state === 'ready';
+}
 
 /** The working directory: path of the first directory. */
 export function workingDirectory(record: SessionRecord): string {
@@ -185,9 +218,15 @@ export function workingDirectory(record: SessionRecord): string {
   return first.path;
 }
 
-/** Paths of the directories after the first. */
+/**
+ * Paths of the directories after the first that Claude works in (added
+ * repositories only once they are ready, see {@link isActiveDirectory}).
+ */
 export function additionalDirectories(record: SessionRecord): string[] {
-  return record.directories.slice(1).map((directory) => directory.path);
+  return record.directories
+    .slice(1)
+    .filter(isActiveDirectory)
+    .map((directory) => directory.path);
 }
 
 @Injectable()
@@ -335,6 +374,89 @@ export class SessionRepository {
         .run();
     });
     return this.require(sessionId);
+  }
+
+  /**
+   * Adds a repository's clone to a session that exists already, after its
+   * other directories (state `pending`, addition `preparing`). Fails on the
+   * unique index when the repository is part of the session already.
+   */
+  addDirectory(
+    sessionId: string,
+    directory: NewAddedDirectory,
+    now = new Date(),
+  ): SessionDirectoryRecord {
+    let position = 0;
+    this.db.transaction((tx) => {
+      const last = tx
+        .select({ position: sessionDirectories.position })
+        .from(sessionDirectories)
+        .where(eq(sessionDirectories.sessionId, sessionId))
+        .orderBy(desc(sessionDirectories.position))
+        .get();
+      position = (last?.position ?? -1) + 1;
+      tx.insert(sessionDirectories)
+        .values({
+          sessionId,
+          position,
+          path: directory.path,
+          kind: 'clone',
+          repositoryId: directory.repositoryId,
+          branch: directory.branch,
+          baseBranch: directory.baseBranch,
+          state: 'pending',
+          setupStatus: directory.setupStatus,
+          addedAt: now,
+          addedBy: directory.addedBy,
+          additionState: 'preparing',
+        })
+        .run();
+      tx.update(sessions)
+        .set({ updatedAt: now })
+        .where(eq(sessions.id, sessionId))
+        .run();
+    });
+    return this.require(sessionId).directories.find(
+      (entry) => entry.position === position,
+    ) as SessionDirectoryRecord;
+  }
+
+  /**
+   * Forgets a directory that was added to a running session and never
+   * became part of it (its clone is removed first). Only additions.
+   */
+  deleteAddedDirectory(
+    sessionId: string,
+    position: number,
+    now = new Date(),
+  ): void {
+    this.db.transaction((tx) => {
+      tx.delete(sessionDirectories)
+        .where(
+          and(
+            eq(sessionDirectories.sessionId, sessionId),
+            eq(sessionDirectories.position, position),
+            isNotNull(sessionDirectories.addedAt),
+          ),
+        )
+        .run();
+      tx.update(sessions)
+        .set({ updatedAt: now })
+        .where(eq(sessions.id, sessionId))
+        .run();
+    });
+  }
+
+  /** Added directories still being prepared (cut off by a server stop). */
+  preparingAdditions(): { sessionId: string; position: number }[] {
+    return this.db
+      .select({
+        sessionId: sessionDirectories.sessionId,
+        position: sessionDirectories.position,
+      })
+      .from(sessionDirectories)
+      .where(eq(sessionDirectories.additionState, 'preparing'))
+      .all();
   }
 
   /**
@@ -505,6 +627,11 @@ export class SessionRepository {
         setupStatus: sessionDirectories.setupStatus,
         pushedCommit: sessionDirectories.pushedCommit,
         pushedAt: sessionDirectories.pushedAt,
+        addedAt: sessionDirectories.addedAt,
+        addedBy: sessionDirectories.addedBy,
+        additionState: sessionDirectories.additionState,
+        additionError: sessionDirectories.additionError,
+        announce: sessionDirectories.announce,
       })
       .from(sessionDirectories)
       .leftJoin(
@@ -531,6 +658,11 @@ export class SessionRepository {
             name,
             cloneUrl,
             githubRepositoryId,
+            addedAt,
+            addedBy,
+            additionState,
+            additionError,
+            announce,
             ...directory
           }): SessionDirectoryRecord => {
             void sessionId;
@@ -540,6 +672,15 @@ export class SessionRepository {
               repositoryName: known ? `${owner}/${name}` : null,
               repositoryLocal: known && cloneUrl === null,
               repositoryGitHub: known && githubRepositoryId !== null,
+              addition: addedAt
+                ? {
+                    addedAt,
+                    by: addedBy ?? 'user',
+                    state: additionState ?? 'ready',
+                    error: additionError,
+                    announce,
+                  }
+                : null,
             };
           },
         ),

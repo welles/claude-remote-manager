@@ -2,6 +2,7 @@ import type { MessageReferenceRequest } from './github-references';
 import type { PendingRequestSummary } from './pending-requests';
 import type { PullRequestAutomationDto } from './pr-automation';
 import type { PreviewDto } from './previews';
+import type { RepositoryAdditionDto } from './repository-additions';
 /**
  * Lifecycle of a session as shown in the UI. The Claude Code process is an
  * internal detail: it is closed when idle or when the server stops and
@@ -166,6 +167,11 @@ export interface SessionDirectoryDto {
   /** Commit of the session branch last pushed (by button or by Claude). */
   pushedCommit: string | null;
   pushedAt: string | null;
+  /**
+   * Set for a repository added while the session ran; `null` for the
+   * directories the session started with (absent from older servers).
+   */
+  addition?: RepositoryAdditionDto | null;
 }
 
 export type PullRequestState = 'open' | 'closed' | 'merged';
@@ -330,15 +336,30 @@ export interface SessionListResponse {
 export type SessionListFilter = 'exclude' | 'only' | 'include';
 
 /**
+ * Whether Claude works in a directory: those the session started with, and
+ * added repositories once they are ready (not while they are prepared,
+ * failed or held after a failed setup script).
+ */
+export function isActiveDirectory(
+  directory: Pick<SessionDirectoryDto, 'addition'>,
+): boolean {
+  return !directory.addition || directory.addition.state === 'ready';
+}
+
+/**
  * A session can be resumed (sent a message) only while all its
  * directories exist and it is not archived; after its clones were cleaned
- * up its history stays readable.
+ * up its history stays readable. Repositories still being added (or whose
+ * addition failed) do not stand in the way.
  */
 export function canResume(
   session: Pick<SessionDto, 'directories' | 'archivedAt'>,
 ): boolean {
   return (
     session.archivedAt === null &&
-    session.directories.every((directory) => directory.state === 'ready')
+    session.directories.every(
+      (directory) =>
+        !isActiveDirectory(directory) || directory.state === 'ready',
+    )
   );
 }

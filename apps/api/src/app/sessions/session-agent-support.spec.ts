@@ -107,6 +107,8 @@ describe('session integrations (credentials, tool, memory)', () => {
     ).toEqual([
       ['show_file', false],
       ['create_pull_request', true],
+      // Adding a repository asks the user on every call.
+      ['add_repository', true],
     ]);
     // Showing a file never asks.
     expect(options().allowedTools).toContain('mcp__crm__show_file');
@@ -119,10 +121,13 @@ describe('session integrations (credentials, tool, memory)', () => {
     expect(options().settings?.['autoMemoryDirectory']).toBe(memory);
   });
 
-  it('keeps Claude Code’s default memory and only show_file for scratch sessions', async () => {
+  it('keeps Claude Code’s default memory and gives scratch sessions show_file and add_repository', async () => {
     await start(null);
     expect(options().settings).toEqual(SESSION_PERMISSION_SETTINGS);
-    expect(options().tools?.map((entry) => entry.name)).toEqual(['show_file']);
+    expect(options().tools?.map((entry) => entry.name)).toEqual([
+      'show_file',
+      'add_repository',
+    ]);
   });
 
   it('shows files with show_file, without asking, as events of the session', async () => {

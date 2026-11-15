@@ -89,6 +89,7 @@ describe('session preparation', () => {
         setupStatus: 'none',
         pushedCommit: null,
         pushedAt: null,
+        addition: null,
       },
       expect.objectContaining({
         role: 'additional',

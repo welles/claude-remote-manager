@@ -12,6 +12,7 @@ import {
   toolSummary,
   type ConversationItem,
 } from './conversation';
+import { groupPreparation } from './preparation';
 import { fileDiff } from '../diffs/testing/file-diffs';
 import { shownFile } from '../shown-files/testing/shown-file';
 import { preview } from '../previews/testing/preview';
@@ -450,6 +451,83 @@ describe('toolSummary', () => {
     ]);
   });
 
+  it('shows each addition of a repository as a row of its own', () => {
+    const step = (
+      kind: 'add' | 'fetch' | 'clone' | 'done',
+      state: 'started' | 'succeeded' | 'failed',
+      target: string | null,
+      addition?: string,
+      message: string | null = null,
+    ) =>
+      event({
+        type: 'prepare.progress',
+        step: kind,
+        state,
+        target,
+        path: null,
+        message,
+        ...(addition ? { addition } : {}),
+      });
+    const setup = (state: 'started' | 'failed', addition: string) =>
+      event({
+        type: 'setup.result',
+        repository: 'acme/lib',
+        path: '/w/lib',
+        state,
+        exitCode: state === 'failed' ? 1 : null,
+        signal: null,
+        durationMs: null,
+        message: null,
+        outputTail: null,
+        addition,
+      });
+    const shown = groupPreparation(
+      buildConversation([
+        step('fetch', 'succeeded', 'acme/app'),
+        step('done', 'succeeded', null),
+        event({ type: 'user.message', id: 'u1', text: 'Hi' }),
+        step('add', 'started', 'acme/lib', 'a1', 'Added by you'),
+        step('fetch', 'succeeded', 'acme/lib', 'a1'),
+        step('clone', 'succeeded', 'acme/lib', 'a1'),
+        setup('started', 'a1'),
+        setup('failed', 'a1'),
+        step('add', 'failed', 'acme/lib', 'a1', 'The setup script failed: …'),
+        // The retry is a row of its own, after the first.
+        step('add', 'started', 'acme/lib', 'a2', 'Added by you'),
+        setup('started', 'a2'),
+        step('add', 'succeeded', 'acme/lib', 'a2', 'claude/x from main'),
+      ]),
+    );
+    const rows = shown.flatMap((item) =>
+      item.kind === 'prep'
+        ? [`${item.label}|${item.summary}|${item.failed}|${item.steps.length}`]
+        : [item.kind],
+    );
+    expect(rows).toEqual([
+      'Prepare|Ready. The message went to Claude.|false|2',
+      'user',
+      // Later states of a step replace it in place.
+      'Add repository|The setup script failed: …|true|4',
+      'Add repository|Added acme/lib · claude/x from main|false|2',
+    ]);
+  });
+
+  it('summarizes add_repository calls', () => {
+    expect(
+      toolSummary('mcp__crm__add_repository', {
+        repository: 'acme/lib',
+        base_branch: 'dev',
+        reason: 'r',
+      }),
+    ).toBe('acme/lib from dev');
+    expect(
+      toolSummary('mcp__crm__add_repository', {
+        url: 'https://example.com/a/b.git',
+        reason: 'r',
+      }),
+    ).toBe('https://example.com/a/b.git');
+  });
+
   it('collects setup output under its result', () => {
     const result = (
       state: 'started' | 'failed',
@@ -478,6 +556,7 @@ describe('toolSummary', () => {
       {
         kind: 'setup',
         key: 'setup:acme/app',
+        addition: null,
         repository: 'acme/app',
         path: '/w/app',
         state: 'failed',

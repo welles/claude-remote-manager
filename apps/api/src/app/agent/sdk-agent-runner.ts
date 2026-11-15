@@ -207,8 +207,9 @@ export function userContent(
 }
 
 /**
- * The SDK messages for a user message: the message itself, preceded by its
- * untrusted context if any. The context goes as its own message with
+ * The SDK messages for a user message: the message itself, preceded by the
+ * app's note and its untrusted context if any. Each goes as its own
+ * message with
  * - `client_composed: true`: Claude Code delivers the text as written, with
  *   no `@path` file expansion and no slash-command dispatch;
  * - `shouldQuery: false`: it starts no turn; Claude Code merges it into the
@@ -229,21 +230,31 @@ export function sdkUserMessages(
     parent_tool_use_id: null,
     uuid: message.id as Sdk.SDKUserMessage['uuid'],
   };
-  if (!message.context) {
-    return [user];
-  }
+  const before = [message.note, message.context].filter(
+    (entry): entry is { id: string; text: string } => !!entry,
+  );
   return [
-    {
-      type: 'user',
-      message: { role: 'user', content: message.context.text },
-      parent_tool_use_id: null,
-      uuid: message.context.id as Sdk.SDKUserMessage['uuid'],
-      client_composed: true,
-      shouldQuery: false,
-      isSynthetic: true,
-    },
+    ...before.map(
+      (entry): Sdk.SDKUserMessage => ({
+        type: 'user',
+        message: { role: 'user', content: entry.text },
+        parent_tool_use_id: null,
+        uuid: entry.id as Sdk.SDKUserMessage['uuid'],
+        client_composed: true,
+        shouldQuery: false,
+        isSynthetic: true,
+      }),
+    ),
     user,
   ];
+}
+
+/**
+ * Messages that Claude Code answers with a result of zero turns before the
+ * message itself: its note and its untrusted context.
+ */
+export function zeroTurnMessages(message: AgentUserMessage): number {
+  return (message.note ? 1 : 0) + (message.context ? 1 : 0);
 }
 
 /** Builds the SDK options for a session. Exported for tests. */
@@ -341,9 +352,31 @@ export class SdkAgentRunner implements AgentRunner {
       ),
     });
 
+    // Directories added while the process runs. Claude Code takes them as
+    // `permissions.additionalDirectories` of the flag settings, which
+    // replaces the whole `permissions` object set at launch: it is sent
+    // again with them (checked with the bundled Claude Code, see README).
+    const added = new Set<string>();
+    const launchPermissions =
+      typeof options.settings?.['permissions'] === 'object' &&
+      options.settings['permissions'] !== null
+        ? (options.settings['permissions'] as Record<string, unknown>)
+        : {};
     return {
       messages: query,
       send: push,
+      addDirectories: async (directories) => {
+        const next = new Set([...added, ...directories]);
+        await query.applyFlagSettings({
+          permissions: {
+            ...launchPermissions,
+            additionalDirectories: [...next],
+          },
+        });
+        for (const directory of directories) {
+          added.add(directory);
+        }
+      },
       interrupt: async () => {
         await query.interrupt();
       },

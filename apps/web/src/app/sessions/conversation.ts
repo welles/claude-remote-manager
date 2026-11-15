@@ -114,11 +114,15 @@ export type ConversationItem =
       target: string | null;
       path: string | null;
       message: string | null;
+      /** One attempt to add a repository to the running session. */
+      addition: string | null;
     }
   | {
       /** A setup script with its output. */
       kind: 'setup';
       key: string;
+      /** One attempt to add a repository to the running session. */
+      addition: string | null;
       repository: string;
       path: string | null;
       state: SetupResultEvent['state'];
@@ -193,6 +197,12 @@ function specialSummary(
       }`;
     case 'mcp__crm__stop_preview':
       return `port ${String(fields['port'] ?? '?')}`;
+    case 'mcp__crm__add_repository': {
+      const name = fields['repository'] ?? fields['url'];
+      return typeof name === 'string'
+        ? `${name}${typeof fields['base_branch'] === 'string' ? ` from ${fields['base_branch']}` : ''}`
+        : null;
+    }
     default:
       return null;
   }
@@ -516,9 +526,10 @@ export function applyEvent(
       ];
     case 'prepare.progress': {
       const key =
-        event.step === 'rollback'
+        (event.step === 'rollback'
           ? `prepare:rollback:${event.path ?? event.seq}`
-          : `prepare:${event.step}:${event.target ?? ''}`;
+          : `prepare:${event.step}:${event.target ?? ''}`) +
+        (event.addition ? `:${event.addition}` : '');
       const item: ConversationItem = {
         kind: 'progress',
         key,
@@ -527,12 +538,13 @@ export function applyEvent(
         target: event.target,
         path: event.path,
         message: event.message,
+        addition: event.addition ?? null,
       };
       const index = items.findIndex((existing) => existing.key === key);
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
     }
     case 'setup.output': {
-      const key = `setup:${event.repository}`;
+      const key = `setup:${event.repository}${event.addition ? `:${event.addition}` : ''}`;
       const index = items.findIndex((existing) => existing.key === key);
       const existing = items[index];
       if (existing?.kind === 'setup') {
@@ -546,6 +558,7 @@ export function applyEvent(
         {
           kind: 'setup',
           key,
+          addition: event.addition ?? null,
           repository: event.repository,
           path: null,
           state: 'started',
@@ -558,12 +571,13 @@ export function applyEvent(
       ];
     }
     case 'setup.result': {
-      const key = `setup:${event.repository}`;
+      const key = `setup:${event.repository}${event.addition ? `:${event.addition}` : ''}`;
       const index = items.findIndex((existing) => existing.key === key);
       const existing = items[index];
       const item: ConversationItem = {
         kind: 'setup',
         key,
+        addition: event.addition ?? null,
         repository: event.repository,
         path: event.path,
         state: event.state,
@@ -650,6 +664,10 @@ export function progressText(
       return `Removed ${target || item.path || 'the directory'} again`;
     case 'done':
       return 'Ready. The message went to Claude.';
+    case 'add':
+      return item.state === 'started'
+        ? `Adding ${target} to the session${detail}…`
+        : `Added ${target}${detail}`;
   }
 }
 

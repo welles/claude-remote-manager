@@ -91,6 +91,22 @@ export function approvalSummary(
       ),
     };
   }
+  if (request.repositoryAddition) {
+    const addition = request.repositoryAddition;
+    const from =
+      addition.source === 'github'
+        ? 'GitHub'
+        : addition.source === 'project'
+          ? 'local project'
+          : (addition.url ?? 'URL');
+    return {
+      action: 'Add a repository',
+      detail: shortenMiddle(
+        `${addition.repository} (${from})${addition.baseBranch ? ` from ${addition.baseBranch}` : ''}`,
+        DETAIL_LENGTH,
+      ),
+    };
+  }
   switch (request.toolName) {
     case 'Bash':
       return {

@@ -6,6 +6,7 @@ import type { PermissionRequestEvent } from './session-events';
  * session needs.
  * - `command`: a shell command; `push`: one that pushes with git;
  * - `edit`: a file change; `pull-request`: creating a pull request;
+ * - `repository`: adding a repository to the session (`add_repository`);
  * - `tool`: any other tool use;
  * - `question`: Claude asks; `plan`: a plan to approve.
  */
@@ -14,6 +15,7 @@ export type PendingRequestKind =
   | 'push'
   | 'edit'
   | 'pull-request'
+  | 'repository'
   | 'tool'
   | 'question'
   | 'plan';
@@ -33,7 +35,7 @@ const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 export function pendingRequestKind(
   request: Pick<
     PermissionRequestEvent,
-    'kind' | 'toolName' | 'gitPushes' | 'pullRequest'
+    'kind' | 'toolName' | 'gitPushes' | 'pullRequest' | 'repositoryAddition'
   >,
 ): PendingRequestKind {
   if (request.kind === 'question' || request.kind === 'plan') {
@@ -41,6 +43,9 @@ export function pendingRequestKind(
   }
   if (request.pullRequest) {
     return 'pull-request';
+  }
+  if (request.repositoryAddition) {
+    return 'repository';
   }
   if (request.toolName === 'Bash') {
     return request.gitPushes.length > 0 ? 'push' : 'command';
@@ -52,7 +57,12 @@ export function pendingRequestKind(
 export function summarizePendingRequests(
   requests: readonly Pick<
     PermissionRequestEvent,
-    'kind' | 'toolName' | 'gitPushes' | 'pullRequest' | 'questions'
+    | 'kind'
+    | 'toolName'
+    | 'gitPushes'
+    | 'pullRequest'
+    | 'repositoryAddition'
+    | 'questions'
   >[],
 ): PendingRequestSummary | null {
   const first = requests[0];
@@ -84,6 +94,9 @@ export function pendingRequestLabel(summary: PendingRequestSummary): string {
       break;
     case 'pull-request':
       label = 'Approve pull request';
+      break;
+    case 'repository':
+      label = 'Approve repository';
       break;
     case 'question':
       label =

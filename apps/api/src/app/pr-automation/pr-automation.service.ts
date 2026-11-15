@@ -37,6 +37,7 @@ import {
 import { parseAutofixGitCommand } from './autofix-git';
 import { SessionGitService } from '../sessions/session-git.service';
 import {
+  isActiveDirectory,
   SessionRepository,
   workingDirectory,
   type PullRequestRecord,
@@ -718,7 +719,10 @@ export class PrAutomationService
     return (
       dto.status === 'waiting' &&
       dto.waitingFor === 'message' &&
-      session.directories.every((directory) => directory.state === 'ready')
+      session.directories.every(
+        (directory) =>
+          !isActiveDirectory(directory) || directory.state === 'ready',
+      )
     );
   }
 

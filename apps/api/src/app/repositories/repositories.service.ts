@@ -308,6 +308,52 @@ export class RepositoriesService implements OnModuleInit {
     return this.get(record.id);
   }
 
+  /** Whether the GitHub App is configured. */
+  get githubConfigured(): boolean {
+    return this.github.configured;
+  }
+
+  /**
+   * A repository the GitHub App's installations can access, by `owner/name`
+   * (any case). The installations' list is cached for a minute; an unknown
+   * name reads it again at most every 15 seconds.
+   */
+  async findGitHubRepository(fullName: string): Promise<{
+    id: number;
+    fullName: string;
+    defaultBranch: string | null;
+  } | null> {
+    if (!this.github.configured) {
+      return null;
+    }
+    const wanted = fullName.toLowerCase();
+    const find = (listing: Awaited<ReturnType<GitHubService['listing']>>) =>
+      listing.repositories.find(
+        (repository) => repository.fullName.toLowerCase() === wanted,
+      ) ?? null;
+    const found = find(await this.github.listing());
+    if (found || Date.now() - this.listingRefreshedAt < 15_000) {
+      return found;
+    }
+    this.listingRefreshedAt = Date.now();
+    return find(await this.github.listing(true));
+  }
+
+  private listingRefreshedAt = 0;
+
+  /** A registered repository by `owner/name` (any case). */
+  findByName(fullName: string): RepositoryRecord | undefined {
+    const [owner, name, ...rest] = fullName.split('/');
+    return owner && name && rest.length === 0
+      ? this.repositories.findByName(owner, name)
+      : undefined;
+  }
+
+  /** A registered repository by its clone URL. */
+  findByCloneUrl(url: string): RepositoryRecord | undefined {
+    return this.repositories.list().find((record) => record.cloneUrl === url);
+  }
+
   /**
    * Repositories of all installations, filtered by `query` (owner, name or
    * description) and paginated, each with the ID of its registration here.

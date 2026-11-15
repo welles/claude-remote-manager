@@ -32,6 +32,7 @@ import {
   type PermissionRequestEvent,
   type PermissionResponseResult,
   type PullRequestCall,
+  type RepositoryAddedBy,
   type SessionDto,
   type SessionEvent,
   type SessionDirectoryDto,
@@ -66,10 +67,19 @@ import {
   type PermissionResolvedInput,
 } from '../agent/tool-approval';
 import {
+  ADD_REPOSITORY_TOOL,
+  ADD_REPOSITORY_TOOL_NAME,
   APP_MCP_SERVER,
   APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
 } from './approval-grants';
+import type { AgentTool } from '../agent/agent-runner';
+import { zeroTurnMessages } from '../agent/sdk-agent-runner';
+import {
+  AdditionRefused,
+  RepositoryAdditions,
+  type ResolvedAddition,
+} from '../workspaces/repository-additions';
 import { sessionAllows, unresolvedRequests } from './permission-requests';
 import { PreviewsService } from '../previews/previews.service';
 import {
@@ -89,6 +99,7 @@ import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { LimitsService } from '../limits/limits.service';
 import {
   SessionWorkspaceService,
+  type AdditionOutcome,
   type SetupOutcome,
 } from '../workspaces/session-workspace.service';
 import { pullRequestDto } from './pull-request-dto';
@@ -115,8 +126,10 @@ import {
 import { ShownFilesService } from '../shown-files/shown-files.service';
 import {
   additionalDirectories,
+  isActiveDirectory,
   SessionRepository,
   workingDirectory,
+  type SessionDirectoryRecord,
   type SessionRecord,
 } from './session.repository';
 import { EMPTY_USAGE, UsageRepository } from './usage.repository';
@@ -274,6 +287,19 @@ interface LiveSession {
   idleTimer: ReturnType<typeof setTimeout> | null;
   /** Settles when the message loop of the current process has ended. */
   consuming: Promise<void> | null;
+  /** Stops the preparation of a repository being added (ending the session). */
+  addition: AbortController | null;
+  /**
+   * Approved `add_repository` calls by tool use ID: what the user saw and
+   * allowed, used once by the tool.
+   */
+  additionGrants: Map<string, ResolvedAddition>;
+  /**
+   * Set when an added repository could not be given to the running process
+   * (a Claude Code that cannot add directories): the process is restarted
+   * when the turn ends, and continued with this app message if set.
+   */
+  reopen: { continueWith: string | null } | null;
 }
 
 /** How long shutdown waits for Claude Code processes to exit. */
@@ -372,6 +398,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly automation?: SessionAutomationHooks,
     @Optional()
     private readonly previews?: PreviewsService,
+    // Checks Claude's `add_repository` calls; without it sessions do not
+    // get the tool.
+    @Optional()
+    private readonly additions?: RepositoryAdditions,
   ) {}
 
   /**
@@ -380,6 +410,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * cut off are rolled back and their sessions marked failed.
    */
   async onModuleInit(): Promise<void> {
+    await this.workspaces.rollbackInterruptedAdditions((sessionId, event) =>
+      this.storedEvents.add(sessionId, event, { uuid: null, userId: null }),
+    );
     for (const record of this.sessions.listByStatus('preparing')) {
       const anchor = {
         uuid: record.pendingMessage?.id ?? null,
@@ -661,6 +694,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         if (live.starting) {
           await live.starting;
         }
+        if (live.closing && live.consuming) {
+          // The process is being closed (ended, idle, restarted for an
+          // added repository): the message goes to the next one.
+          await live.consuming;
+        }
       } finally {
         live.sending.delete(id);
       }
@@ -691,8 +729,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       this.appendUserMessage(live, message);
       if (live.run) {
-        live.run.send(agent);
-        this.countContext(live, agent);
+        const delivered = this.withNote(live, agent);
+        live.run.send(delivered);
+        this.countContext(live, delivered);
         this.setStatus(live, 'running');
       } else {
         this.setStatus(live, 'running');
@@ -959,6 +998,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     let live = this.live.get(sessionId);
     // Stops setup scripts; clones being created are finished first.
     live?.preparation?.abort();
+    live?.addition?.abort();
+    if (live) {
+      live.reopen = null;
+    }
     if (live?.starting) {
       await live.starting;
     }
@@ -996,6 +1039,110 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
     }
     return this.get(sessionId);
+  }
+
+  /**
+   * Adds a registered repository to the session (the user's control in
+   * the session details): its clone on the session branch is made and its
+   * setup script runs in the background, shown in the history like the
+   * session's own preparation. Once ready, a running Claude Code process
+   * gets it as a working directory right away (also during a turn); Claude
+   * is told its path, branch and base branch with the next message.
+   */
+  async addRepository(
+    sessionId: string,
+    request: unknown,
+  ): Promise<SessionDto> {
+    const body = requireObject(request);
+    const repositoryId = body['repositoryId'];
+    if (typeof repositoryId !== 'string') {
+      throw new BadRequestException('repositoryId must be a UUID');
+    }
+    const baseBranch =
+      optionalString(body, 'baseBranch', { maxLength: 200 })?.trim() || null;
+    const live = await this.addableSession(sessionId);
+    const directory = this.workspaces.planAddition(
+      sessionId,
+      repositoryId,
+      baseBranch,
+      'user',
+    );
+    void this.runAddition(live, directory, 'user').catch((error: unknown) =>
+      this.logger.error(
+        `Adding ${directory.repositoryName} to ${sessionId} failed: ${errorMessage(error)}`,
+      ),
+    );
+    return this.get(sessionId);
+  }
+
+  /**
+   * Prepares a repository whose addition failed (cloned again) or is held
+   * after a failed setup script (the script runs again).
+   */
+  async retryAddition(
+    sessionId: string,
+    repositoryId: string,
+  ): Promise<SessionDto> {
+    const live = await this.addableSession(sessionId, repositoryId);
+    const directory = this.workspaces.beginRetry(
+      sessionId,
+      this.addedDirectory(sessionId, repositoryId).position,
+    );
+    void this.runAddition(
+      live,
+      directory,
+      directory.addition?.by ?? 'user',
+    ).catch((error: unknown) =>
+      this.logger.error(
+        `Retrying ${directory.repositoryName} in ${sessionId} failed: ${errorMessage(error)}`,
+      ),
+    );
+    return this.get(sessionId);
+  }
+
+  /**
+   * Gives Claude an added repository although its setup script failed
+   * (like "Send anyway" for a session's first message).
+   */
+  async acceptAddition(
+    sessionId: string,
+    repositoryId: string,
+  ): Promise<SessionDto> {
+    const live = await this.addableSession(sessionId, repositoryId);
+    const directory = this.workspaces.acceptHeldAddition(
+      sessionId,
+      this.addedDirectory(sessionId, repositoryId).position,
+    );
+    await this.activateAddition(live, directory, 'user');
+    this.append(live, {
+      type: 'prepare.progress',
+      step: 'add',
+      state: 'succeeded',
+      target: directory.repositoryName,
+      path: directory.path,
+      message: `Used without a successful setup script · ${additionDetail(directory)}`,
+      addition: randomUUID(),
+    });
+    return this.publish(sessionId);
+  }
+
+  /**
+   * Removes a repository whose addition failed or is held: its clone and
+   * its place in the session. Repositories Claude works in stay.
+   */
+  async removeAddition(
+    sessionId: string,
+    repositoryId: string,
+  ): Promise<SessionDto> {
+    const live = await this.addableSession(sessionId, repositoryId);
+    const directory = this.addedDirectory(sessionId, repositoryId);
+    await this.workspaces.removeAddition(sessionId, directory.position);
+    this.append(live, {
+      type: 'notice',
+      level: 'info',
+      text: `${directory.repositoryName ?? 'The repository'} was removed from the session again.`,
+    });
+    return this.publish(sessionId);
   }
 
   /**
@@ -1046,6 +1193,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     if (this.live.get(sessionId)?.starting) {
       return 'The session is starting; try again in a moment';
+    }
+    if (this.live.get(sessionId)?.addition) {
+      return 'A repository is being added to the session; wait until it is ready';
     }
     return null;
   }
@@ -1144,6 +1294,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       closing: null,
       idleTimer: null,
       consuming: null,
+      addition: null,
+      additionGrants: new Map(),
+      reopen: null,
     };
   }
 
@@ -1367,7 +1520,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // What the user allowed for the session applies to every process.
       const allowed = sessionAllows(this.storedEvents.list(record.id));
       const directories = additionalDirectories(record);
-      const first = await this.agentMessage(live.id, firstMessage);
+      const first = this.withNote(
+        live,
+        await this.agentMessage(live.id, firstMessage),
+      );
       const run = await this.runner.start(
         {
           cwd: workingDirectory(record),
@@ -1385,7 +1541,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           canUseTool: this.canUseTool(live),
           allowedTools: [...allowed.rules, ...(extras.allowedTools ?? [])],
           env: { ...SESSION_ENV, ...extras.env },
-          tools: extras.tools,
+          tools: this.additions
+            ? [...extras.tools, this.addRepositoryTool(live)]
+            : extras.tools,
           settings: extras.settings,
         },
         first,
@@ -1539,9 +1697,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /** Expects the zero-turn result Claude Code sends for a context message. */
   private countContext(live: LiveSession, message: AgentUserMessage): void {
-    if (message.context) {
-      live.contextResults++;
-    }
+    live.contextResults += zeroTurnMessages(message);
   }
 
   private handleResult(
@@ -1596,6 +1752,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             errors.join('\n') || `The turn ended early (${result.subtype}).`,
         });
       }
+    }
+    if (live.reopen && (result.queued_turn_count ?? 0) === 0) {
+      // An added repository needs a new process: it continues there.
+      this.setStatus(live, 'waiting');
+      this.reopenAfterTurn(live);
+      return;
     }
     const run = live.run;
     // Queued messages go to Claude now (Claude Code may take them as one
@@ -1666,8 +1828,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         reason: null,
       });
       this.appendUserMessage(live, message);
-      run.send(message.agent);
-      this.countContext(live, message.agent);
+      const delivered = this.withNote(live, message.agent);
+      run.send(delivered);
+      this.countContext(live, delivered);
     }
     return messages.length;
   }
@@ -1862,11 +2025,40 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           };
         }
       }
+      let addition: ResolvedAddition | null = null;
+      if (
+        toolName === ADD_REPOSITORY_TOOL_NAME &&
+        (mcpServer === null ||
+          (mcpServer.name === APP_MCP_SERVER && mcpServer.source === 'sdk'))
+      ) {
+        if (!this.additions) {
+          return {
+            behavior: 'deny',
+            message: 'Repositories cannot be added on this server.',
+          };
+        }
+        try {
+          addition = await this.additions.resolve(
+            this.requireRecord(live.id),
+            input,
+          );
+        } catch (error) {
+          if (error instanceof AdditionRefused) {
+            // Nothing the user could allow: Claude is told why at once.
+            return {
+              behavior: 'deny',
+              message: `add_repository was refused (the user was not asked): ${error.message}`,
+            };
+          }
+          throw error;
+        }
+      }
       const decision = await this.approver.decide({
         sessionId: live.id,
         toolName,
         input,
         gitPushes,
+        repositoryAddition: addition?.call ?? null,
         pullRequest:
           toolName === CREATE_PULL_REQUEST_TOOL_NAME &&
           (mcpServer === null || mcpServer.source === 'sdk')
@@ -1902,6 +2094,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         return result;
       }
       const approvedInput = result.updatedInput ?? input;
+      if (addition) {
+        // Exactly what the user saw, used once by the tool.
+        live.additionGrants.set(options.toolUseID, addition);
+      }
       if (
         resolution.mode &&
         resolution.mode !== this.requireRecord(live.id).permissionMode
@@ -2000,6 +2196,368 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       body: text('body'),
       base: text('base') ?? clone?.baseBranch ?? null,
       draft: input['draft'] === true,
+    };
+  }
+
+  // --- Adding repositories ------------------------------------------------
+
+  /**
+   * The session, in memory, if a repository may be added (or an addition
+   * retried, accepted or removed) now: not while it is prepared, archived,
+   * without its directories, holding back its first message, or while
+   * another repository is being added.
+   */
+  private async addableSession(
+    sessionId: string,
+    repositoryId?: string,
+  ): Promise<LiveSession> {
+    const record = this.requireRecord(sessionId);
+    if (repositoryId === undefined || record.status === 'preparing') {
+      this.requireUsable(record);
+    } else if (record.archivedAt) {
+      throw new ConflictException(
+        'The session is archived; unarchive it to continue',
+      );
+    }
+    const live = this.liveSession(sessionId);
+    await this.ensureHistory(live, record);
+    if (live.addition) {
+      throw new ConflictException(
+        'A repository is being added to this session; wait until it is ready',
+      );
+    }
+    return live;
+  }
+
+  /** The added directory of a repository of the session (404 otherwise). */
+  private addedDirectory(
+    sessionId: string,
+    repositoryId: string,
+  ): SessionDirectoryRecord {
+    const directory = this.requireRecord(sessionId).directories.find(
+      (entry) => entry.repositoryId === repositoryId && entry.addition,
+    );
+    if (!directory) {
+      throw new NotFoundException(
+        `Repository ${repositoryId} was not added to session ${sessionId}`,
+      );
+    }
+    return directory;
+  }
+
+  /** Publishes the session and returns it. */
+  private publish(sessionId: string): SessionDto {
+    const dto = this.get(sessionId);
+    this.updates.next(dto);
+    return dto;
+  }
+
+  /**
+   * Prepares an added repository (see `SessionWorkspaceService`) and, once
+   * ready, gives it to Claude. The history shows it as one row like the
+   * session's own preparation: `prepare.progress` with step `add` around
+   * the fetch, clone and setup steps, all with the same `addition` ID.
+   */
+  private async runAddition(
+    live: LiveSession,
+    directory: SessionDirectoryRecord,
+    by: RepositoryAddedBy,
+  ): Promise<AdditionOutcome> {
+    const controller = new AbortController();
+    live.addition = controller;
+    const addition = randomUUID();
+    const name = directory.repositoryName ?? 'the repository';
+    const emit = (event: SessionEventInput) =>
+      this.append(
+        live,
+        event.type === 'prepare.progress' ? { ...event, addition } : event,
+      );
+    this.publish(live.id);
+    try {
+      emit({
+        type: 'prepare.progress',
+        step: 'add',
+        state: 'started',
+        target: directory.repositoryName,
+        path: directory.path,
+        message: by === 'claude' ? 'Requested by Claude' : 'Added by you',
+      });
+      let outcome: AdditionOutcome;
+      try {
+        outcome = await this.workspaces.prepareAddition(
+          live.id,
+          directory.position,
+          addition,
+          (event) => this.append(live, event),
+          controller.signal,
+        );
+      } catch (error) {
+        // Not expected: the workspace reports failures as outcomes.
+        outcome = { state: 'failed', error: errorMessage(error), directory };
+      }
+      if (outcome.state === 'ready') {
+        await this.activateAddition(live, outcome.directory, by);
+        emit({
+          type: 'prepare.progress',
+          step: 'add',
+          state: 'succeeded',
+          target: directory.repositoryName,
+          path: directory.path,
+          message: additionDetail(outcome.directory),
+        });
+      } else {
+        emit({
+          type: 'prepare.progress',
+          step: 'add',
+          state: 'failed',
+          target: directory.repositoryName,
+          path: directory.path,
+          message:
+            outcome.state === 'held'
+              ? `${outcome.error}: ${name} is not given to Claude yet. Run the setup again, use it anyway, or remove it in the session details.`
+              : `Could not add ${name}: ${outcome.error}. Retry or remove it in the session details.`,
+        });
+      }
+      return outcome;
+    } finally {
+      live.addition = null;
+      this.publish(live.id);
+      if (!live.run && !live.starting) {
+        this.releaseIfUnused(live);
+      }
+    }
+  }
+
+  /**
+   * Gives Claude a repository that is ready: a running process gets it as
+   * a working directory right away (Claude Code announces it to Claude with
+   * its next request); otherwise the next process starts with it. The user's
+   * additions are announced with the next message (path, branch, base);
+   * Claude's own learn it from the tool's result. If the running Claude
+   * Code cannot add directories, the process is restarted: at once when no
+   * turn runs, else when the turn ends.
+   */
+  private async activateAddition(
+    live: LiveSession,
+    directory: SessionDirectoryRecord,
+    by: RepositoryAddedBy,
+  ): Promise<void> {
+    if (by === 'user') {
+      this.sessions.updateDirectory(live.id, directory.position, {
+        announce: true,
+      });
+    }
+    const run = live.run;
+    if (!run) {
+      return;
+    }
+    try {
+      await run.addDirectories([directory.path]);
+    } catch (error) {
+      this.logger.warn(
+        `Claude Code of ${live.id} could not add ${directory.path}; restarting it: ${errorMessage(error)}`,
+      );
+      if (this.requireRecord(live.id).status === 'running') {
+        live.reopen ??= { continueWith: null };
+      } else {
+        this.closeForRestart(live);
+      }
+    }
+  }
+
+  /**
+   * Closes the session's process without a status change; the next
+   * message starts a new one (resumed, with the current directories).
+   */
+  private closeForRestart(live: LiveSession): void {
+    const run = live.run;
+    if (!run) {
+      return;
+    }
+    this.clearIdleTimer(live);
+    live.closing = 'idle';
+    run.close();
+  }
+
+  /**
+   * When a turn ends with a restart pending (see {@link activateAddition}):
+   * closes the process and continues the session in a new one, with the
+   * app's message (Claude's addition) or the first queued message. Returns
+   * whether it did.
+   */
+  private reopenAfterTurn(live: LiveSession): boolean {
+    const reopen = live.reopen;
+    const run = live.run;
+    if (!reopen || !run) {
+      return false;
+    }
+    live.reopen = null;
+    this.closeForRestart(live);
+    const next = (live.consuming ?? Promise.resolve()).then(async () => {
+      if (reopen.continueWith) {
+        await this.sendMessage(live.id, {
+          text: reopen.continueWith,
+          origin: 'app',
+        });
+        return;
+      }
+      const first = live.queue.shift();
+      if (first) {
+        this.append(live, {
+          type: 'message.dequeued',
+          id: first.id,
+          outcome: 'sent',
+          reason: null,
+        });
+        this.appendUserMessage(live, first);
+        this.setStatus(live, 'running');
+        this.startRun(live, this.requireRecord(live.id), first);
+      }
+    });
+    next.catch((error: unknown) =>
+      this.logger.error(
+        `Continuing ${live.id} after a restart failed: ${errorMessage(error)}`,
+      ),
+    );
+    return true;
+  }
+
+  /**
+   * The note Claude gets with the next message about repositories the user
+   * added (path, branch, base branch), once; `undefined` without.
+   */
+  private takeNote(sessionId: string): AgentUserMessage['note'] {
+    const record = this.requireRecord(sessionId);
+    const added = record.directories.filter(
+      (directory) =>
+        directory.addition?.announce && isActiveDirectory(directory),
+    );
+    if (added.length === 0) {
+      return undefined;
+    }
+    for (const directory of added) {
+      this.sessions.updateDirectory(sessionId, directory.position, {
+        announce: false,
+      });
+    }
+    return {
+      id: randomUUID(),
+      text: [
+        'Note from the session manager (not written by the user):',
+        ...added.map(
+          (directory) =>
+            `- The user added the repository ${directory.repositoryName} to this session. ` +
+            `Its clone is ${directory.path}, on the session branch ${directory.branch}` +
+            `${directory.baseBranch ? `, created from ${directory.baseBranch}` : ''}` +
+            `${directory.baseCommit ? ` at ${directory.baseCommit.slice(0, 12)}` : ''}. ` +
+            'It is one of your working directories now; work in it like in your other clones.',
+        ),
+      ].join('\n'),
+    };
+  }
+
+  /** A message for Claude Code with the pending note, if any. */
+  private withNote(
+    live: LiveSession,
+    message: AgentUserMessage,
+  ): AgentUserMessage {
+    const note = this.takeNote(live.id);
+    return note ? { ...message, note } : message;
+  }
+
+  /**
+   * The tool `add_repository`: adds a repository to the session after the
+   * user approved exactly this call (see {@link canUseTool}), waits until
+   * its clone is ready and tells Claude truthfully what happened.
+   */
+  private addRepositoryTool(live: LiveSession): AgentTool {
+    return {
+      name: ADD_REPOSITORY_TOOL,
+      description:
+        'Add another repository to this session when the task needs changes (or reading) in a ' +
+        'repository that is not one of your directories yet, so that you can continue in this ' +
+        'conversation. The user approves each call. Name a repository the session manager knows ' +
+        '(owner/name: a registered repository, a local project local/PROJECT, or one its GitHub ' +
+        'App can access) or give a remote clone URL (https or ssh; no local paths). The repository ' +
+        "gets its own clone on the session branch, like the session's other repositories, and its " +
+        'setup script runs; this can take a while. The result says where the clone is. Do not use ' +
+        'it for repositories you only want to look up on the web.',
+      alwaysAsk: true,
+      inputSchema: (z) => ({
+        repository: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            'owner/name of the repository (a local project: local/PROJECT); or use url',
+          ),
+        url: z
+          .string()
+          .max(500)
+          .optional()
+          .describe(
+            'Remote clone URL (https:// or ssh://, git@host:owner/name.git); or use repository',
+          ),
+        base_branch: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            "Branch to start from; default: the repository's default branch",
+          ),
+        reason: z
+          .string()
+          .min(1)
+          .max(1000)
+          .describe(
+            'Why the task needs this repository; shown to the user with the request',
+          ),
+      }),
+      handler: async (input, { toolUseId }) => {
+        const grant = toolUseId
+          ? live.additionGrants.get(toolUseId)
+          : undefined;
+        if (!grant || !toolUseId) {
+          return {
+            isError: true,
+            text: 'This add_repository call was not approved by the user, so no repository was added.',
+          };
+        }
+        live.additionGrants.delete(toolUseId);
+        const name = grant.call.repository;
+        let directory: SessionDirectoryRecord;
+        try {
+          if (live.addition) {
+            throw new ConflictException(
+              'another repository is being added to this session right now; try again when it is ready',
+            );
+          }
+          const repositoryId = await this.additions?.register(grant.target);
+          if (!repositoryId) {
+            throw new Error('repositories cannot be added on this server');
+          }
+          directory = this.workspaces.planAddition(
+            live.id,
+            repositoryId,
+            grant.baseBranch,
+            'claude',
+          );
+        } catch (error) {
+          return {
+            isError: true,
+            text: `${name} was not added: ${httpErrorText(error)}. It is not available in this session.`,
+          };
+        }
+        const outcome = await this.runAddition(live, directory, 'claude');
+        const reopening = outcome.state === 'ready' && live.reopen !== null;
+        if (reopening && live.reopen) {
+          live.reopen.continueWith = continuationText(outcome.directory);
+        }
+        return {
+          text: additionResult(outcome, name, reopening),
+          isError: outcome.state !== 'ready',
+        };
+      },
     };
   }
 
@@ -2322,7 +2880,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         'The session is archived; unarchive it to continue',
       );
     }
-    if (record.directories.some((directory) => directory.state !== 'ready')) {
+    if (
+      record.directories.some(
+        (directory) =>
+          isActiveDirectory(directory) && directory.state !== 'ready',
+      )
+    ) {
       throw new ConflictException(
         "The session's directories are not available (not created or removed); start a new session",
       );
@@ -2392,6 +2955,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           setupStatus: directory.setupStatus,
           pushedCommit: directory.pushedCommit,
           pushedAt: directory.pushedAt?.toISOString() ?? null,
+          addition: directory.addition
+            ? {
+                addedAt: directory.addition.addedAt.toISOString(),
+                by: directory.addition.by,
+                state: directory.addition.state,
+                error: directory.addition.error,
+              }
+            : null,
         }),
       ),
       cwd: workingDirectory(record),
@@ -2480,4 +3051,74 @@ function withContext(
       : {}),
     ...(summary.origin === 'app' ? { origin: 'app' as const } : {}),
   };
+}
+
+/** Where an added clone is: its branch, base branch and base commit. */
+function additionDetail(directory: SessionDirectoryRecord): string {
+  return (
+    `${directory.branch ?? 'the session branch'}` +
+    `${directory.baseBranch ? ` from ${directory.baseBranch}` : ''}` +
+    `${directory.baseCommit ? ` at ${directory.baseCommit.slice(0, 12)}` : ''}` +
+    ' · Claude works in it now'
+  );
+}
+
+/** The message of an error, also of Nest's HTTP exceptions. */
+function httpErrorText(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/[.\s]+$/, '');
+}
+
+/** What the tool `add_repository` tells Claude. */
+export function additionResult(
+  outcome: AdditionOutcome,
+  name: string,
+  reopening: boolean,
+): string {
+  if (outcome.state === 'failed') {
+    return (
+      `${name} was not added: ${outcome.error.replace(/[.\s]+$/, '')}. ` +
+      'The repository is not available in this session: do not try to read or change it. ' +
+      'Tell the user; they can retry or remove it in the session details.'
+    );
+  }
+  const directory = outcome.directory;
+  const where =
+    `Its clone is ${directory?.path}, on the session branch ${directory?.branch}` +
+    `${directory?.baseBranch ? `, created from ${directory.baseBranch}` : ''}` +
+    `${directory?.baseCommit ? ` at ${directory.baseCommit.slice(0, 12)}` : ''}.`;
+  if (outcome.state === 'held') {
+    return (
+      `${name} was cloned, but it is not available to you yet: ${outcome.error.replace(/[.\s]+$/, '')}. ${where} ` +
+      'Do not read or change it until you are told it is available. The user can run the setup ' +
+      'again, use the repository anyway, or remove it in the session details.'
+    );
+  }
+  if (reopening) {
+    return (
+      `${name} was added to this session. ${where} This Claude Code process cannot take ` +
+      'a new directory while it runs, so the session manager restarts it when this turn ends: ' +
+      'end your turn now (say briefly what you will do next). The session manager then continues ' +
+      'this conversation with a message saying that the repository is available.'
+    );
+  }
+  return (
+    `${name} was added to this session. ${where} It is one of your working directories ` +
+    'now: read and change files there as in your other clones, commit on the session branch; ' +
+    'pushes and pull requests work as for the other repositories.'
+  );
+}
+
+/**
+ * The app's message that continues the session after a restart for an
+ * added repository. App text may contain no `@` (see `sendMessage`).
+ */
+function continuationText(directory: SessionDirectoryRecord): string {
+  const path = directory.path.includes('@') ? null : directory.path;
+  return (
+    `The repository ${directory.repositoryName} is now available in this session` +
+    `${path ? ` at ${path}` : ''}, on the session branch ${directory.branch}` +
+    `${directory.baseBranch ? ` (created from ${directory.baseBranch})` : ''}. ` +
+    'Continue with the task.'
+  );
 }

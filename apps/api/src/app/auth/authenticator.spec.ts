@@ -207,6 +207,12 @@ describe('authentication', () => {
       ['GET', '/api/workspace/orphans'],
       ['POST', '/api/workspace/orphans/remove'],
       ['POST', '/api/workspace/missing/forget'],
+      // Adding repositories to a running session (Claude asks through its
+      // tool, which needs the user's approval).
+      ['POST', '/api/sessions/x/repositories'],
+      ['POST', '/api/sessions/x/repositories/y/addition/retry'],
+      ['POST', '/api/sessions/x/repositories/y/addition/accept'],
+      ['POST', '/api/sessions/x/repositories/y/addition/remove'],
     ] as const) {
       const response =
         method === 'GET' || method === 'DELETE'

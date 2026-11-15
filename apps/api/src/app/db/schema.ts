@@ -11,6 +11,8 @@ import type {
   PreviewStopper,
   PullRequestCreator,
   PullRequestState,
+  RepositoryAddedBy,
+  RepositoryAdditionState,
   SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
@@ -172,6 +174,22 @@ export const sessionDirectories = sqliteTable(
     /** Commit of the session branch last pushed by the app (or Claude). */
     pushedCommit: text('pushed_commit'),
     pushedAt: timestamp('pushed_at'),
+    /**
+     * Set for a repository added while the session ran (`null`: the
+     * session started with it), with who added it, where the addition
+     * stands (`addition_state`, see `RepositoryAdditionState`; directories
+     * that are not `ready` there are not given to Claude) and why it
+     * failed or is held.
+     */
+    addedAt: timestamp('added_at'),
+    addedBy: text('added_by').$type<RepositoryAddedBy>(),
+    additionState: text('addition_state').$type<RepositoryAdditionState>(),
+    additionError: text('addition_error'),
+    /**
+     * Claude has not been told about the added repository yet (path,
+     * branch, base branch): the app says so with the next message.
+     */
+    announce: integer('announce', { mode: 'boolean' }).notNull().default(false),
   },
   (table) => [
     uniqueIndex('session_directories_session_position').on(

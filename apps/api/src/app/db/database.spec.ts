@@ -133,6 +133,7 @@ describe('openDatabase', () => {
         setupStatus: 'none',
         pushedCommit: null,
         pushedAt: null,
+        addition: null,
       })),
     );
     expect(sessions.require('b').directories.map((d) => d.path)).toEqual([

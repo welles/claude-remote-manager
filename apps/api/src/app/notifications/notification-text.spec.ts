@@ -186,6 +186,24 @@ describe('notification texts', () => {
         session,
       ),
     ).toEqual({ action: 'Use do (other)', detail: 'Claude wants to do it' });
+    const addition = request({
+      toolName: 'mcp__crm__add_repository',
+      repositoryAddition: {
+        source: 'github',
+        repository: 'acme/nixos-config',
+        url: null,
+        registered: true,
+        baseBranch: 'main',
+        defaultBranch: 'main',
+        reason: 'r',
+      },
+    });
+    expect(approvalSummary(addition, session)).toEqual({
+      action: 'Add a repository',
+      detail: 'acme/nixos-config (GitHub) from main',
+    });
+    // Allow (once) and Deny work as for a command.
+    expect(approvalActions(addition)).toEqual(['allow', 'deny']);
   });
 
   it('offer Allow only for plain tool uses, never for risky pushes', () => {

@@ -93,6 +93,13 @@ export interface AgentUserMessage {
    * transcript.
    */
   context?: { id: string; text: string };
+  /**
+   * A note of the app for Claude (e.g. that the user added a repository to
+   * the session), sent like `context` as a message of its own before it,
+   * delivered as written and without a turn of its own. Trusted text the
+   * app composed; Claude Code marks it as not from the user.
+   */
+  note?: { id: string; text: string };
 }
 
 /**
@@ -114,6 +121,12 @@ export interface AgentRun {
   setPermissionMode(mode: SessionPermissionMode): Promise<void>;
   /** Switches the model for the next requests; `null`: the default. */
   setModel(model: string | null): Promise<void>;
+  /**
+   * Makes further directories working directories of the running process
+   * (also in the middle of a turn); Claude Code tells Claude about them
+   * with its next request. Rejects when this Claude Code cannot do it.
+   */
+  addDirectories(directories: string[]): Promise<void>;
   /** Ends the input and terminates the process. */
   close(): void;
   /** The last lines Claude Code wrote to stderr, for error messages. */

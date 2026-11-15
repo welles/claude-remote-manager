@@ -9,6 +9,7 @@ import type {
   PermissionResolutionCause,
   PermissionResolvedEvent,
   PullRequestCall,
+  RepositoryAdditionCall,
 } from '@claude-remote-manager/shared-types';
 
 /** A `permission.request` event before the log assigns `seq` and `at`. */
@@ -43,6 +44,8 @@ export interface ToolApprovalRequest {
   gitPushes: GitPushAnalysis[];
   /** For the app's `create_pull_request` tool: the pull request. */
   pullRequest: PullRequestCall | null;
+  /** For the app's `add_repository` tool: what it would add (checked). */
+  repositoryAddition?: RepositoryAdditionCall | null;
   /** For file changes: the change it would make. */
   diff?: FileDiff | null;
   /** Claude Code's suggestions for not asking again (`canUseTool`). */
