@@ -241,6 +241,7 @@ export function loadAppConfig(
     isolation: loadIsolation(
       value('PROCESS_ISOLATION'),
       value('SESSION_USER'),
+      value('SESSION_PATH'),
       passwd,
     ),
     auth,
@@ -485,6 +486,7 @@ function loadAuth(value: (name: string) => string | undefined): AuthConfig {
 function loadIsolation(
   mode: string | undefined,
   sessionUser: string | undefined,
+  sessionPath: string | undefined,
   passwd?: string,
 ): ProcessIsolation {
   if (mode === 'single-user') {
@@ -494,6 +496,7 @@ function loadIsolation(
     return {
       mode,
       sessionUser: lookupUser(sessionUser ?? 'claude', passwd),
+      ...(sessionPath ? { sessionPath } : {}),
     };
   }
   throw new Error(

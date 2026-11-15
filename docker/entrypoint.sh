@@ -154,6 +154,13 @@ check_secret_file NTFY_TOKEN_FILE
 check_secret_file VAPID_PRIVATE_KEY_FILE
 
 # --- Start the API -----------------------------------------------------------
+# Session processes keep the image's PATH, which starts with the session
+# user's Nix profile. The API's own PATH holds only root-owned directories:
+# it resolves the commands it runs (setpriv with its capabilities, git on the
+# mirrors) there, so nothing the session user installs can run as the API.
+export SESSION_PATH="${SESSION_PATH:-$PATH}"
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # As crm with the capabilities in its ambient set: they survive the exec into
 # node, and the API drops them for every process it starts.
 export HOME="/home/$API_USER" USER="$API_USER" LOGNAME="$API_USER"

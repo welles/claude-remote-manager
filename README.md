@@ -113,6 +113,7 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `CF_ACCESS_ALLOWED_EMAILS`          | none (everyone Access lets in)                                                                   | Optional comma-separated email allowlist                                                                 |
 | `PROCESS_ISOLATION`                 | none, required (image: `separate-users`)                                                         | `separate-users` or `single-user`, see [Users](#users-and-what-sessions-can-reach)                       |
 | `SESSION_USER`                      | `claude`                                                                                         | OS user of session processes with `separate-users`                                                       |
+| `SESSION_PATH`                      | the API's `PATH`                                                                                 | `PATH` of session processes with `separate-users` (may hold directories the session user can write)      |
 | `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API                                          |
 | `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                                                          |
 | `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                                                         |
@@ -1530,6 +1531,13 @@ capabilities dropped and `no_new_privs`, and with an environment built from an a
 (`SESSION_ENV_ALLOWLIST` in `apps/api/src/app/common/process-isolation.ts`); its own git
 commands on the mirrors run without capabilities too. It refuses to start as root or without
 the capabilities.
+
+Sessions get the image's `PATH`, which starts with the session user's Nix profile
+(`SESSION_PATH`, set by the entrypoint). The API's own `PATH` holds only root-owned
+directories, and it resolves `setpriv` there once at startup: a command name is otherwise
+looked up in the `PATH` of the child's environment, so a `setpriv` or `git` the session user
+installed into its profile would have run with the API's capabilities or as the API user.
+Images before this change gave the API the session user's profile on its `PATH`.
 
 Session clones still hardlink the mirrors' objects: the API makes the clone (with
 `fs.protected_hardlinks` only the owner may link the mirror's read-only object files) and

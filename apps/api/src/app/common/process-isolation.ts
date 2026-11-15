@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { accessSync, constants, readFileSync, statSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { childEnvironment, CLAUDE_CODE_SECRETS } from './child-environment';
 
 /**
@@ -15,7 +16,8 @@ import { childEnvironment, CLAUDE_CODE_SECRETS } from './child-environment';
  *   API's files (database, GitHub App key) or its process environment.
  *
  * In `separate-users` mode the API process needs these capabilities (the
- * entrypoint gives them as ambient capabilities while dropping root):
+ * image entrypoint or the NixOS module's systemd unit give them as ambient
+ * capabilities while dropping root):
  * SETUID/SETGID (start processes as the session user), KILL (signal them),
  * CHOWN (hand session clones and directories to the session user) and
  * DAC_OVERRIDE (read transcripts, remove session directories). Its own
@@ -23,7 +25,17 @@ import { childEnvironment, CLAUDE_CODE_SECRETS } from './child-environment';
  */
 export type ProcessIsolation =
   | { mode: 'single-user' }
-  | { mode: 'separate-users'; sessionUser: SessionUser };
+  | {
+      mode: 'separate-users';
+      sessionUser: SessionUser;
+      /**
+       * PATH of session processes (`SESSION_PATH`); without it they get the
+       * API's PATH. Lets sessions have directories on their PATH that the
+       * session user can write (its Nix profile), which the API's own PATH
+       * must never contain: the API runs commands from it.
+       */
+      sessionPath?: string;
+    };
 
 export interface SessionUser {
   name: string;
@@ -50,6 +62,8 @@ export const SESSION_ENV_ALLOWLIST: readonly string[] = [
   'LC_CTYPE',
   'TZ',
   'TERM',
+  // glibc's locale data on NixOS
+  'LOCALE_ARCHIVE',
   'COLORTERM',
   'SHELL',
   'TMPDIR',
@@ -74,6 +88,34 @@ export const REQUIRED_CAPABILITIES: Record<string, number> = {
   CAP_SETGID: 6,
   CAP_SETUID: 7,
 };
+
+/**
+ * Absolute path of `name` in the directories of `path` (by default the
+ * API's own PATH), or `null`. Commands the API starts with capabilities
+ * must be resolved here: a bare name would be looked up in the PATH of the
+ * child's environment, which for session processes may hold directories
+ * the session user can write.
+ */
+export function findExecutable(
+  name: string,
+  path: string = process.env['PATH'] ?? '',
+): string | null {
+  for (const dir of path.split(':')) {
+    if (!dir || !isAbsolute(dir)) {
+      continue;
+    }
+    const candidate = join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      if (statSync(candidate).isFile()) {
+        return candidate;
+      }
+    } catch {
+      // not here
+    }
+  }
+  return null;
+}
 
 /** The session user from `/etc/passwd`. */
 export function lookupUser(
@@ -106,13 +148,19 @@ export function checkSeparateUsers(
   isolation: ProcessIsolation,
   uid = process.getuid?.() ?? -1,
   capabilities = effectiveCapabilities(),
+  setpriv = findExecutable('setpriv'),
 ): void {
   if (isolation.mode !== 'separate-users') {
     return;
   }
   if (uid === 0) {
     throw new Error(
-      'PROCESS_ISOLATION=separate-users: the API must not run as root; start it through the image entrypoint',
+      'PROCESS_ISOLATION=separate-users: the API must not run as root; start it through the image entrypoint or the NixOS module',
+    );
+  }
+  if (setpriv === null) {
+    throw new Error(
+      "PROCESS_ISOLATION=separate-users: setpriv (util-linux) is not on the API's PATH",
     );
   }
   if (uid === isolation.sessionUser.uid) {
@@ -125,7 +173,7 @@ export function checkSeparateUsers(
     .map(([name]) => name);
   if (missing.length > 0) {
     throw new Error(
-      `PROCESS_ISOLATION=separate-users: the API lacks ${missing.join(', ')}; start it through the image entrypoint (and do not drop these capabilities from the container)`,
+      `PROCESS_ISOLATION=separate-users: the API lacks ${missing.join(', ')}; start it through the image entrypoint (and do not drop these capabilities from the container) or the NixOS module`,
     );
   }
 }
@@ -135,7 +183,16 @@ export function checkSeparateUsers(
  * {@link ProcessIsolation}.
  */
 export class ProcessLauncher {
-  constructor(readonly isolation: ProcessIsolation) {}
+  /**
+   * `setpriv`, resolved once in the API's own PATH, so that the session
+   * environment's PATH never decides which program gets the API's
+   * capabilities.
+   */
+  readonly setpriv: string;
+
+  constructor(readonly isolation: ProcessIsolation) {
+    this.setpriv = findExecutable('setpriv') ?? 'setpriv';
+  }
 
   get separated(): boolean {
     return this.isolation.mode === 'separate-users';
@@ -163,11 +220,11 @@ export class ProcessLauncher {
     }
     const drop = ['--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs'];
     if (role === 'api') {
-      return { command: 'setpriv', args: [...drop, '--', command, ...args] };
+      return { command: this.setpriv, args: [...drop, '--', command, ...args] };
     }
     const { uid, gid } = this.isolation.sessionUser;
     return {
-      command: 'setpriv',
+      command: this.setpriv,
       args: [
         `--reuid=${uid}`,
         `--regid=${gid}`,
@@ -205,6 +262,9 @@ export class ProcessLauncher {
       if (value !== undefined) {
         env[name] = value;
       }
+    }
+    if (this.isolation.sessionPath) {
+      env['PATH'] = this.isolation.sessionPath;
     }
     return {
       ...env,

@@ -29,6 +29,19 @@ describe('loadAppConfig', () => {
     ).toThrow('session user nobody2 does not exist');
   });
 
+  it('reads the session PATH for separate users', () => {
+    const env = { ...DEV, PROCESS_ISOLATION: 'separate-users' };
+    expect(
+      loadAppConfig(
+        { ...env, SESSION_PATH: '/home/claude/.nix-profile/bin:/bin' },
+        PASSWD,
+      ).isolation,
+    ).toMatchObject({ sessionPath: '/home/claude/.nix-profile/bin:/bin' });
+    expect(loadAppConfig(env, PASSWD).isolation).not.toHaveProperty(
+      'sessionPath',
+    );
+  });
+
   it('uses development defaults outside the image', () => {
     const devData = join(homedir(), '.local/share/claude-remote-manager');
     expect(loadAppConfig(DEV)).toEqual({

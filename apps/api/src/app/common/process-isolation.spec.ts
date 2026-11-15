@@ -1,6 +1,16 @@
 import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
   checkSeparateUsers,
   effectiveCapabilities,
+  findExecutable,
   lookupUser,
   ProcessLauncher,
   SINGLE_USER,
@@ -32,7 +42,7 @@ describe('ProcessLauncher', () => {
   it('starts session processes as the session user without capabilities', () => {
     const launcher = new ProcessLauncher(separated);
     expect(launcher.command('session', 'git', ['status'])).toEqual({
-      command: 'setpriv',
+      command: launcher.setpriv,
       args: [
         '--reuid=1001',
         '--regid=1001',
@@ -47,7 +57,7 @@ describe('ProcessLauncher', () => {
     });
     // The API's own processes only lose the capabilities.
     expect(launcher.command('api', 'git', ['fetch'])).toEqual({
-      command: 'setpriv',
+      command: launcher.setpriv,
       args: [
         '--inh-caps=-all',
         '--ambient-caps=-all',
@@ -56,6 +66,28 @@ describe('ProcessLauncher', () => {
         'git',
         'fetch',
       ],
+    });
+  });
+
+  it('resolves setpriv in its own PATH, not in the child environment', () => {
+    const launcher = new ProcessLauncher(separated);
+    const found = findExecutable('setpriv');
+    expect(launcher.setpriv).toBe(found ?? 'setpriv');
+  });
+
+  it('gives session processes the session PATH when configured', () => {
+    const launcher = new ProcessLauncher({
+      ...separated,
+      sessionPath: '/home/claude/.nix-profile/bin:/bin',
+    } as ProcessIsolation);
+    const base = { PATH: '/bin', LOCALE_ARCHIVE: '/locale' };
+    expect(launcher.environment('session', {}, { base })).toMatchObject({
+      PATH: '/home/claude/.nix-profile/bin:/bin',
+      LOCALE_ARCHIVE: '/locale',
+    });
+    // The API's own processes keep the API's PATH.
+    expect(launcher.environment('api', {}, { base })).toMatchObject({
+      PATH: '/bin',
     });
   });
 
@@ -99,23 +131,51 @@ describe('ProcessLauncher', () => {
 describe('separate-users checks', () => {
   const all = (1n << 0n) | (1n << 1n) | (1n << 5n) | (1n << 6n) | (1n << 7n);
 
+  const setpriv = '/usr/bin/setpriv';
+
   it('accepts the API user with the capabilities', () => {
-    expect(() => checkSeparateUsers(separated, 1000, all)).not.toThrow();
+    expect(() =>
+      checkSeparateUsers(separated, 1000, all, setpriv),
+    ).not.toThrow();
     expect(() =>
       checkSeparateUsers({ mode: 'single-user' }, 0, 0n),
     ).not.toThrow();
   });
 
   it('refuses root, the session user and missing capabilities', () => {
-    expect(() => checkSeparateUsers(separated, 0, all)).toThrow(
+    expect(() => checkSeparateUsers(separated, 0, all, setpriv)).toThrow(
       'not run as root',
     );
-    expect(() => checkSeparateUsers(separated, 1001, all)).toThrow(
+    expect(() => checkSeparateUsers(separated, 1001, all, setpriv)).toThrow(
       'runs as the session user',
     );
     expect(() =>
-      checkSeparateUsers(separated, 1000, all & ~(1n << 7n)),
+      checkSeparateUsers(separated, 1000, all & ~(1n << 7n), setpriv),
     ).toThrow('lacks CAP_SETUID');
+    expect(() => checkSeparateUsers(separated, 1000, all, null)).toThrow(
+      'setpriv (util-linux) is not on',
+    );
+  });
+
+  it('finds executables only in absolute PATH directories', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crm-path-'));
+    try {
+      mkdirSync(join(dir, 'bin'));
+      mkdirSync(join(dir, 'dir', 'tool'), { recursive: true });
+      writeFileSync(join(dir, 'bin', 'tool'), '#!/bin/sh\n');
+      chmodSync(join(dir, 'bin', 'tool'), 0o755);
+      writeFileSync(join(dir, 'bin', 'plain'), '');
+      expect(
+        findExecutable(
+          'tool',
+          `relative:${join(dir, 'dir')}:${join(dir, 'bin')}`,
+        ),
+      ).toBe(join(dir, 'bin', 'tool'));
+      expect(findExecutable('plain', join(dir, 'bin'))).toBeNull();
+      expect(findExecutable('tool', '')).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('reads capabilities and users', () => {
