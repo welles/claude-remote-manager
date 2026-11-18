@@ -42,7 +42,7 @@
       [context]="context()"
       [todos]="todos()"
       [model]="modelName()"
-      [mode]="modeInfo[s.permissionMode].label"
+      [mode]="modeName()"
       (opened)="openPanel($event)"
     />
     }
@@ -252,7 +252,14 @@
           >
           }
         </mat-select>
+        @if (s.permissionModeOverride; as override) {
+        <mat-hint class="mode-override" data-testid="mode-override"
+          >In effect: {{ modeInfo[override.mode].label }}. {{
+          overrideInfo[override.reason].description }}</mat-hint
+        >
+        } @else {
         <mat-hint>{{ modeInfo[s.permissionMode].description }}</mat-hint>
+        }
       </mat-form-field>
     </section>
     <section class="panel-section" id="details-usage">

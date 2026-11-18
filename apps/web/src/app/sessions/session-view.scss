@@ -90,6 +90,11 @@
   margin: 0;
 }
 
+/* The process runs in another mode than the chosen one. */
+.mode-override {
+  color: var(--app-status-attention);
+}
+
 .small {
   margin: 0;
 }
