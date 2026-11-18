@@ -539,6 +539,56 @@ describe('adding repositories to a running session', () => {
       const message = harness.eventsOfType(session.id, 'user.message').at(-1);
       expect(message).toMatchObject({ origin: 'app' });
     });
+    it('keeps an Autofix run held in default across the restart', async () => {
+      const main = await harness.addRepository('acme', 'app');
+      const session = await harness.service.create({
+        prompt: 'Do the work',
+        permissionMode: 'auto',
+        repositories: [{ repositoryId: main.id }],
+      });
+      await harness.prepared(session.id);
+      const run = harness.runner.last;
+      run.emit(resultMessage(5, 0.01));
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'message',
+      );
+      await harness.service.sendMessage(session.id, {
+        text: 'Fix the failing checks',
+        origin: 'app',
+        holdAutoMode: true,
+      });
+      expect(run.switches).toEqual([{ permissionMode: 'default' }]);
+
+      run.failAddDirectories = new Error('unknown control request');
+      await harness.addRepository('acme', 'lib');
+      const decision = call(run, { repository: 'acme/lib', reason: 'r' });
+      await harness.service.respondToPermission(
+        session.id,
+        (await pending(session.id)).requestId,
+        { decision: 'allow' },
+      );
+      await decision;
+      await tool(run).handler(
+        { repository: 'acme/lib', reason: 'r' },
+        { toolUseId: 'tool-add' },
+      );
+      run.emit(resultMessage(10, 0.01));
+      await waitFor(() => harness.runner.runs.length === 2);
+      const next = harness.runner.last;
+      // The old process never returned to auto; the new one starts held.
+      expect(run.switches).toEqual([{ permissionMode: 'default' }]);
+      expect(next.options.permissionMode).toBe('default');
+      expect(harness.service.get(session.id)).toMatchObject({
+        permissionMode: 'auto',
+        permissionModeOverride: { mode: 'default', reason: 'autofix' },
+      });
+
+      // The continuation's turn ends the run: back to auto.
+      next.emit(resultMessage(15, 0.01));
+      await waitFor(() => next.switches.length > 0);
+      expect(next.switches).toEqual([{ permissionMode: 'auto' }]);
+      expect(harness.service.get(session.id).permissionModeOverride).toBeNull();
+    });
   });
 
   it('keeps cleanup away while adding; ending the session stops the setup script', async () => {

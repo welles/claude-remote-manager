@@ -1807,8 +1807,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         });
       }
     }
-    if (live.autoHold?.delivered && (result.queued_turn_count ?? 0) === 0) {
-      // The held turn (Autofix run) is over: back to `auto`.
+    if (
+      live.autoHold?.delivered &&
+      !live.reopen &&
+      (result.queued_turn_count ?? 0) === 0
+    ) {
+      // The held turn (Autofix run) is over: back to `auto`. With a reopen
+      // pending, the hold goes on with the new process (reopenAfterTurn).
       this.releaseAutoHold(live);
     }
     if (live.reopen && (result.queued_turn_count ?? 0) === 0) {
@@ -2577,12 +2582,24 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     live.reopen = null;
+    // The end of the process ends the hold; it carries over to the new one.
+    const hold = live.autoHold;
     this.closeForRestart(live);
     const next = (live.consuming ?? Promise.resolve()).then(async () => {
+      if (
+        hold &&
+        !hold.delivered &&
+        live.queue.some((queued) => queued.id === hold.messageId)
+      ) {
+        // The held message still waits in the queue: still held.
+        live.autoHold = hold;
+      }
       if (reopen.continueWith) {
         await this.sendMessage(live.id, {
           text: reopen.continueWith,
           origin: 'app',
+          // The continuation of a held turn (Autofix run) is held as well.
+          holdAutoMode: hold?.delivered === true,
         });
         return;
       }
