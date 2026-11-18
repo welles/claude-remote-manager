@@ -303,7 +303,7 @@ pkgs.testers.runNixOSTest {
       with subtest("ending and deleting the session removes its clone"):
           status, text = api("POST", f"/api/sessions/{sid}/end", {})
           assert status in (200, 201, 204), (status, text)
-          machine.wait_until_succeeds("! pgrep -f fake-claude", timeout=60)
+          machine.wait_until_succeeds(f"! pgrep -u {USER} -f fake-claude", timeout=60)
           status, text = api("POST", f"/api/sessions/{sid}/delete", {"confirm": True, "acceptLoss": True})
           assert status in (200, 201, 204), (status, text)
           machine.wait_until_succeeds(f"! test -e {clone}", timeout=60)
