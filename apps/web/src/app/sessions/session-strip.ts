@@ -1,7 +1,8 @@
 import { Component, computed, input, output } from '@angular/core';
-import type {
-  ContextUsage,
-  SessionDto,
+import {
+  DANGEROUS_PERMISSION_MODES,
+  type ContextUsage,
+  type SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { AppIcon } from '../ui/icon';
 import { StatusDot, STATUS_KIND_CLASS, statusKind } from '../ui/status-badge';
@@ -92,6 +93,7 @@ export type DetailSection =
     <button
       type="button"
       class="chip"
+      [class.danger]="dangerous()"
       (click)="opened.emit('settings')"
       data-testid="strip-settings"
     >
@@ -153,6 +155,12 @@ export type DetailSection =
       background: var(--app-status-failed-container);
       color: var(--app-status-on-failed-container);
     }
+    /* Tool uses run without asking (bypass permissions). */
+    .chip.danger {
+      background: var(--app-status-attention-container);
+      color: var(--app-status-on-attention-container);
+      font-weight: 600;
+    }
     .meter {
       position: relative;
       width: 24px;
@@ -200,6 +208,14 @@ export class SessionStrip {
   readonly opened = output<DetailSection | 'dock'>();
 
   protected readonly kind = computed(() => statusKind(this.session()));
+  /** The process runs in a mode that asks nobody (no override in effect). */
+  protected readonly dangerous = computed(() => {
+    const s = this.session();
+    return (
+      DANGEROUS_PERMISSION_MODES.includes(s.permissionMode) &&
+      !s.permissionModeOverride
+    );
+  });
   protected readonly kindClass = computed(() => STATUS_KIND_CLASS[this.kind()]);
   protected readonly label = computed(() => needLabel(this.session()));
   protected readonly percent = computed(() =>

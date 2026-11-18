@@ -30,6 +30,7 @@ import {
   canResume,
   PERMISSION_MODE_INFO,
   PERMISSION_MODE_OVERRIDE_INFO,
+  DANGEROUS_PERMISSION_MODES,
   SESSION_PERMISSION_MODES,
   type ContextUsage,
   type LogPosition,
@@ -119,6 +120,7 @@ export class SessionView implements OnInit {
   private readonly host = inject(ElementRef);
 
   protected readonly modes = SESSION_PERMISSION_MODES;
+  protected readonly dangerousModes = DANGEROUS_PERMISSION_MODES;
   protected readonly modeInfo = PERMISSION_MODE_INFO;
   protected readonly overrideInfo = PERMISSION_MODE_OVERRIDE_INFO;
   protected readonly formatCost = formatCost;

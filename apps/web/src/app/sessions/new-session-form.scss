@@ -78,6 +78,11 @@
   max-width: 360px;
 }
 
+/* A mode that asks nobody (bypass permissions). */
+.mode-danger {
+  color: var(--app-status-attention);
+}
+
 .error {
   color: var(--mat-sys-error);
   overflow-wrap: anywhere;

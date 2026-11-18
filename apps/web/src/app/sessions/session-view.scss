@@ -90,8 +90,10 @@
   margin: 0;
 }
 
-/* The process runs in another mode than the chosen one. */
-.mode-override {
+/* The process runs in another mode than the chosen one; or a mode that
+   asks nobody (bypass permissions) is chosen. */
+.mode-override,
+.mode-danger {
   color: var(--app-status-attention);
 }
 
