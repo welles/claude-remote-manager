@@ -39,6 +39,68 @@ describe('ProcessLauncher', () => {
     ).toEqual({ PATH: '/bin', OTHER: 'o', X: '1' });
   });
 
+  it('keeps the environment of the user for sessions in single-user mode', () => {
+    const launcher = new ProcessLauncher(
+      {
+        mode: 'single-user',
+        sessionPath: '/run/wrappers/bin:/home/u/.nix-profile/bin',
+      },
+      { GIT_CONFIG_GLOBAL: '/var/lib/crm/git/gitconfig' },
+    );
+    const base = {
+      PATH: '/nix/store/x-git/bin',
+      HOME: '/home/u',
+      SSH_AUTH_SOCK: '/run/user/1000/ssh-agent',
+      GH_CONFIG_DIR: '/home/u/.config/gh',
+      CRM_SECRET_X: 'secret',
+    };
+    expect(launcher.environment('session', { X: '1' }, { base })).toEqual({
+      PATH: '/run/wrappers/bin:/home/u/.nix-profile/bin',
+      HOME: '/home/u',
+      SSH_AUTH_SOCK: '/run/user/1000/ssh-agent',
+      GH_CONFIG_DIR: '/home/u/.config/gh',
+      X: '1',
+    });
+    // Only the API's own processes (git on mirrors) get its git configuration.
+    expect(launcher.environment('api', {}, { base })).toEqual({
+      PATH: '/nix/store/x-git/bin',
+      HOME: '/home/u',
+      SSH_AUTH_SOCK: '/run/user/1000/ssh-agent',
+      GH_CONFIG_DIR: '/home/u/.config/gh',
+      GIT_CONFIG_GLOBAL: '/var/lib/crm/git/gitconfig',
+    });
+  });
+
+  it("keeps the API's own configuration from sessions in single-user mode", () => {
+    const launcher = new ProcessLauncher({ mode: 'single-user' });
+    const base = {
+      HOME: '/home/u',
+      NODE_ENV: 'production',
+      PORT: '8080',
+      DB_DIR: '/var/lib/crm/db',
+      WORKSPACE_DIR: '/var/lib/crm/workspace',
+      GITHUB_APP_ID: '1',
+      GITHUB_APP_PRIVATE_KEY_FILE: '/run/credentials/x/github-app-key',
+      CREDENTIALS_DIRECTORY: '/run/credentials/x',
+      WEB_ROOT: '/nix/store/x-web',
+      CLAUDE_CODE_OAUTH_TOKEN: 'token',
+      // The user's own variables stay, also file pointers.
+      SSL_CERT_FILE: '/etc/ssl/certs/ca-certificates.crt',
+      SOPS_AGE_KEY_FILE: '/home/u/.config/sops/age/keys.txt',
+    };
+    expect(
+      launcher.environment('session', {}, {
+        base,
+        keep: ['CLAUDE_CODE_OAUTH_TOKEN'],
+      }),
+    ).toEqual({
+      HOME: '/home/u',
+      CLAUDE_CODE_OAUTH_TOKEN: 'token',
+      SSL_CERT_FILE: '/etc/ssl/certs/ca-certificates.crt',
+      SOPS_AGE_KEY_FILE: '/home/u/.config/sops/age/keys.txt',
+    });
+  });
+
   it('starts session processes as the session user without capabilities', () => {
     const launcher = new ProcessLauncher(separated);
     expect(launcher.command('session', 'git', ['status'])).toEqual({

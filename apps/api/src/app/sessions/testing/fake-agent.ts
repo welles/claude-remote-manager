@@ -106,6 +106,13 @@ export class FakeRun implements AgentRun {
     this.switches.push({ model });
   }
 
+  /** Tasks the app stopped. */
+  readonly stoppedTasks: string[] = [];
+
+  async stopTask(taskId: string): Promise<void> {
+    this.stoppedTasks.push(taskId);
+  }
+
   /** Directories added to the running process, in order. */
   readonly addedDirectories: string[] = [];
   /** Set to make adding directories fail (a Claude Code that cannot). */

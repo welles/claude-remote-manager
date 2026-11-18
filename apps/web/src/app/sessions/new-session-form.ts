@@ -21,6 +21,7 @@ import { RouterLink } from '@angular/router';
 import {
   ATTACHMENT_MEDIA_TYPES,
   PERMISSION_MODE_INFO,
+  DANGEROUS_PERMISSION_MODES,
   SESSION_PERMISSION_MODES,
   type CreateSessionRequest,
   type RepositoryBranchesResponse,
@@ -51,6 +52,7 @@ import { SessionsApi } from './sessions-api';
 export const PERMISSION_MODE_OPTIONS = SESSION_PERMISSION_MODES.map((mode) => ({
   value: mode,
   ...PERMISSION_MODE_INFO[mode],
+  dangerous: DANGEROUS_PERMISSION_MODES.includes(mode),
 }));
 
 /** Same rule as the API: letters, digits, `.`, `_`, `-`. */
@@ -125,6 +127,7 @@ export class NewSessionForm implements OnInit {
   );
   protected readonly modeOptions = PERMISSION_MODE_OPTIONS;
   protected readonly modeInfo = PERMISSION_MODE_INFO;
+  protected readonly dangerousModes = DANGEROUS_PERMISSION_MODES;
   protected readonly repositories = signal<RepositoryDto[]>([]);
   protected readonly repositoriesLoaded = signal(false);
   protected readonly branches = signal(

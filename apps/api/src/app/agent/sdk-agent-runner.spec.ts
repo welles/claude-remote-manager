@@ -1,16 +1,75 @@
 import type { AgentStartOptions } from './agent-runner';
 import { AsyncQueue } from './async-queue';
 import { ProcessLauncher, type ProcessRole } from '../common/process-isolation';
-import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
 import {
-  alwaysAskHooks,
   buildQueryOptions,
+  gateHooks,
   sdkUserMessages,
   spawnAsSession,
   toolUseIdOf,
   userContent,
   zeroTurnMessages,
 } from './sdk-agent-runner';
+
+describe('gateHooks', () => {
+  const run = async (
+    gate: Parameters<typeof gateHooks>[0],
+    input: Record<string, unknown>,
+  ) => {
+    const matcher = gateHooks(gate).PreToolUse?.[0];
+    expect(matcher?.onFailure).toBe('block');
+    const hook = matcher?.hooks[0];
+    if (!hook) {
+      throw new Error('no hook');
+    }
+    return hook(
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: input,
+        tool_use_id: 'tool-1',
+        session_id: 's',
+        transcript_path: '/t',
+        cwd: '/c',
+      } as never,
+      'tool-1',
+      { signal: new AbortController().signal },
+    );
+  };
+
+  it('passes the call and maps the decision', async () => {
+    const seen: unknown[] = [];
+    await expect(
+      run((call) => {
+        seen.push(call);
+        return null;
+      }, { command: 'ls' }),
+    ).resolves.toEqual({});
+    expect(seen).toEqual([
+      {
+        toolName: 'Bash',
+        input: { command: 'ls' },
+        toolUseId: 'tool-1',
+        agentId: null,
+        mcpServer: null,
+      },
+    ]);
+    await expect(
+      run(() => ({ decision: 'ask', reason: 'why' }), {}),
+    ).resolves.toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'ask',
+        permissionDecisionReason: 'why',
+      },
+    });
+    await expect(
+      run(() => ({ decision: 'deny', reason: 'no' }), {}),
+    ).resolves.toMatchObject({
+      hookSpecificOutput: { permissionDecision: 'deny' },
+    });
+  });
+});
 
 describe('buildQueryOptions', () => {
   const canUseTool: AgentStartOptions['canUseTool'] = async () => ({
@@ -44,7 +103,8 @@ describe('buildQueryOptions', () => {
       permissionMode: 'default',
       canUseTool,
       sessionId: 'new-id',
-      strictMcpConfig: true,
+      strictMcpConfig: false,
+      allowDangerouslySkipPermissions: true,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,
@@ -85,81 +145,39 @@ describe('buildQueryOptions', () => {
     });
   });
 
-  it('never bypasses permissions', () => {
-    const options = buildQueryOptions(base, { claudeExecutable: null }, stderr);
-    expect(options.allowDangerouslySkipPermissions).toBeUndefined();
-    expect(options.permissionMode).not.toBe('bypassPermissions');
-  });
-
-  it("registers the PreToolUse hook for the app's limits", () => {
-    expect(
-      buildQueryOptions(base, { claudeExecutable: null }, stderr).hooks,
-    ).toBeUndefined();
+  it('makes bypassPermissions available, also for a switch at run time', () => {
     const options = buildQueryOptions(
-      { ...base, permissionMode: 'auto', alwaysAsk: () => null },
+      { ...base, permissionMode: 'bypassPermissions' },
       { claudeExecutable: null },
       stderr,
     );
-    expect(options.permissionMode).toBe('auto');
-    expect(options.hooks?.PreToolUse).toEqual([
-      { onFailure: 'block', hooks: [expect.any(Function)] },
-    ]);
+    expect(options.permissionMode).toBe('bypassPermissions');
+    expect(options.allowDangerouslySkipPermissions).toBe(true);
+    expect(
+      buildQueryOptions(base, { claudeExecutable: null }, stderr)
+        .allowDangerouslySkipPermissions,
+    ).toBe(true);
   });
-});
 
-describe('alwaysAskHooks', () => {
-  const call = (
-    toolName: string,
-    toolInput: unknown,
-    extra: Partial<HookInput> = {},
-  ) => {
-    const calls: unknown[] = [];
-    const hooks = alwaysAskHooks((entry) => {
-      calls.push(entry);
-      return entry.toolName === 'Bash' ? 'every push asks' : null;
-    });
-    const hook = hooks.PreToolUse?.[0].hooks[0];
-    if (!hook) {
-      throw new Error('no hook');
-    }
-    const output = hook(
-      {
-        hook_event_name: 'PreToolUse',
-        session_id: 's',
-        transcript_path: '/t',
-        cwd: '/work',
-        permission_mode: 'auto',
-        tool_name: toolName,
-        tool_input: toolInput,
-        tool_use_id: 'toolu_1',
-        ...extra,
-      } as HookInput,
-      'toolu_1',
-      { signal: new AbortController().signal },
-    );
-    return { output, calls };
-  };
+  it('loads MCP servers like a terminal session and adds no hooks', () => {
+    const options = buildQueryOptions(base, { claudeExecutable: null }, stderr);
+    expect(options.strictMcpConfig).toBe(false);
+    expect(options.hooks).toBeUndefined();
+    expect(options.settings).toBeUndefined();
+  });
 
-  it('answers ask with the reason, and nothing for other calls', async () => {
-    const asked = call('Bash', { command: 'git push' }, { agent_id: 'a1' });
-    await expect(asked.output).resolves.toEqual({
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'ask',
-        permissionDecisionReason: 'every push asks',
-      },
+  it("appends the machine's session instructions to the system prompt", () => {
+    expect(
+      buildQueryOptions(
+        { ...base, instructions: '# This machine' },
+        { claudeExecutable: null },
+        stderr,
+      ).systemPrompt,
+    ).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: '# This machine',
     });
-    expect(asked.calls).toEqual([
-      {
-        toolName: 'Bash',
-        input: { command: 'git push' },
-        toolUseId: 'toolu_1',
-        agentId: 'a1',
-      },
-    ]);
-    // Never allows anything: other calls get no decision.
-    await expect(call('Read', { file_path: '/x' }).output).resolves.toEqual({});
-    await expect(call('Read', 'not an object').output).resolves.toEqual({});
   });
 });
 

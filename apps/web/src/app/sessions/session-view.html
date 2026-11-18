@@ -247,7 +247,10 @@
           data-testid="mode-select"
         >
           @for (mode of modes; track mode) {
-          <mat-option [value]="mode" [title]="modeInfo[mode].description"
+          <mat-option
+            [value]="mode"
+            [title]="modeInfo[mode].description"
+            [class.mode-danger]="dangerousModes.includes(mode)"
             >{{ modeInfo[mode].label }}</mat-option
           >
           }
@@ -258,7 +261,11 @@
           overrideInfo[override.reason].description }}</mat-hint
         >
         } @else {
-        <mat-hint>{{ modeInfo[s.permissionMode].description }}</mat-hint>
+        <mat-hint
+          [class.mode-danger]="dangerousModes.includes(s.permissionMode)"
+          data-testid="mode-hint"
+          >{{ modeInfo[s.permissionMode].description }}</mat-hint
+        >
         }
       </mat-form-field>
     </section>

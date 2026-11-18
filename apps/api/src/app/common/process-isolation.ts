@@ -1,13 +1,19 @@
 import { accessSync, constants, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { childEnvironment, CLAUDE_CODE_SECRETS } from './child-environment';
+import {
+  childEnvironment,
+  CLAUDE_CODE_SECRETS,
+  isAppConfigVariable,
+} from './child-environment';
 
 /**
  * Who runs what. Two modes, chosen explicitly (`PROCESS_ISOLATION`):
  *
- * - `single-user` (local development): the API and everything a session
- *   runs share the OS user. Child processes inherit the API's environment
- *   without the app's secrets.
+ * - `single-user` (the NixOS module, local development): the API and
+ *   everything a session runs share the OS user, so sessions can do what
+ *   that user can do in a terminal. Child processes inherit the API's
+ *   environment without the app's secrets; `SESSION_PATH` replaces the
+ *   PATH of session processes (the user's profiles).
  * - `separate-users` (the container image): the API runs as its own user
  *   and starts everything a session runs (Claude Code, setup scripts, git
  *   commands in session clones) as the session user, through `setpriv`
@@ -24,7 +30,11 @@ import { childEnvironment, CLAUDE_CODE_SECRETS } from './child-environment';
  * child processes (git on mirrors) get none of them.
  */
 export type ProcessIsolation =
-  | { mode: 'single-user' }
+  | {
+      mode: 'single-user';
+      /** PATH of session processes (`SESSION_PATH`); without it the API's. */
+      sessionPath?: string;
+    }
   | {
       mode: 'separate-users';
       sessionUser: SessionUser;
@@ -190,7 +200,14 @@ export class ProcessLauncher {
    */
   readonly setpriv: string;
 
-  constructor(readonly isolation: ProcessIsolation) {
+  /**
+   * @param apiEnv variables only the API's own processes get, e.g.
+   * `GIT_CONFIG_GLOBAL` for its git commands on mirrors.
+   */
+  constructor(
+    readonly isolation: ProcessIsolation,
+    private readonly apiEnv: Record<string, string> = {},
+  ) {
     this.setpriv = findExecutable('setpriv') ?? 'setpriv';
   }
 
@@ -238,11 +255,13 @@ export class ProcessLauncher {
   }
 
   /**
-   * Environment of a process: for the API's own processes and in
-   * `single-user` mode the API's environment without secrets; for session
-   * processes in `separate-users` mode only the allowlisted variables and
-   * the session user's identity. `keep` names secrets to pass anyway
-   * (Claude Code's login), `extra` is added last.
+   * Environment of a process: for the API's own processes the API's
+   * environment without secrets, plus the API-only variables; for session
+   * processes in `single-user` mode the API's environment without secrets
+   * and without the API's own configuration (`isAppConfigVariable`), with
+   * `SESSION_PATH` as `PATH`, in `separate-users` mode only the allowlisted
+   * variables and the session user's identity. `keep` names secrets to
+   * pass anyway (Claude Code's login), `extra` is added last.
    */
   environment(
     role: ProcessRole,
@@ -252,8 +271,22 @@ export class ProcessLauncher {
       base = process.env,
     }: { keep?: readonly string[]; base?: NodeJS.ProcessEnv } = {},
   ): Record<string, string> {
-    if (this.isolation.mode === 'single-user' || role === 'api') {
-      return childEnvironment(extra, { keep, base });
+    if (role === 'api') {
+      return childEnvironment({ ...this.apiEnv, ...extra }, { keep, base });
+    }
+    if (this.isolation.mode === 'single-user') {
+      const own = Object.fromEntries(
+        Object.entries(base).filter(([name]) => !isAppConfigVariable(name)),
+      );
+      return childEnvironment(
+        {
+          ...(this.isolation.sessionPath
+            ? { PATH: this.isolation.sessionPath }
+            : {}),
+          ...extra,
+        },
+        { keep, base: own },
+      );
     }
     const user = this.isolation.sessionUser;
     const env: Record<string, string> = {};

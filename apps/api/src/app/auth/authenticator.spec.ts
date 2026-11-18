@@ -37,11 +37,8 @@ describe('authentication', () => {
           builder
             .overrideProvider(Authenticator)
             .useValue(
-              new Authenticator(
-                auth,
-                isolation,
-                access.verifier(),
-                () => peerUid,
+              new Authenticator(auth, isolation, access.verifier(), () =>
+                peerUid === null ? null : { uid: peerUid, inode: 1 },
               ),
             ),
       },
@@ -103,18 +100,18 @@ describe('authentication', () => {
     );
   });
 
-  it('exempts the health check and the credential endpoint only', async () => {
+  it('exempts the health check only', async () => {
     expect((await get('/api/health')).status).toBe(200);
-    const credentials = await postJson(app.port, '/api/git/credentials', {
-      protocol: 'https',
-      host: 'github.com',
-      path: 'a/b',
-    });
-    // Reaches the endpoint, which wants a session token.
-    expect(credentials.status).toBe(401);
-    expect(credentials.json<{ message: string }>().message).toContain(
-      'session token',
-    );
+    // The credential endpoint of earlier versions is gone, not exempt.
+    expect(
+      (
+        await postJson(app.port, '/api/git/credentials', {
+          protocol: 'https',
+          host: 'github.com',
+          path: 'a/b',
+        })
+      ).status,
+    ).toBe(401);
     expect((await postJson(app.port, '/api/git/other', {})).status).toBe(401);
     expect((await rawRequest(app.port, 'POST', '/api/health')).status).toBe(
       401,
@@ -231,15 +228,6 @@ describe('authentication', () => {
     }
     // What sessions need stays reachable.
     expect((await get('/api/health')).status).toBe(200);
-    expect(
-      (
-        await postJson(app.port, '/api/git/credentials', {
-          protocol: 'https',
-          host: 'github.com',
-          path: 'a/b',
-        })
-      ).json<{ message: string }>().message,
-    ).toContain('session token');
     // Other local users (e.g. the API's own) are not affected.
     peerUid = 1000;
     expect(

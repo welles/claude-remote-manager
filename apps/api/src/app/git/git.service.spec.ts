@@ -527,7 +527,6 @@ describe('GitService', () => {
       const path = await addSession('who');
       await service.configureClone(path, {
         identity: { name: 'Ada', email: 'ada@example.com' },
-        credentialHelper: null,
       });
       await commitFile(path, 'a.txt', 'a');
       expect(await git(path, 'log', '-1', '--format=%an <%ae>')).toBe(
@@ -539,25 +538,43 @@ describe('GitService', () => {
       await expect(commitFile(path, 'b.txt', 'b')).rejects.toThrow();
     });
 
-    it('replaces all credential helpers with the given one', async () => {
+    it("uses the user's credential helpers and removes the app's old one", async () => {
       const path = await addSession('helper');
-      const marker = join(sandbox.dir, 'global-helper-called');
       await git(
         sandbox.dir,
         'config',
         '--global',
         '--add',
         'credential.https://example.com.helper',
-        `!touch ${marker}; echo password=global`,
+        '!f() { echo username=u; echo password=global; }; f',
       );
-      await service.configureClone(path, {
-        identity: null,
-        credentialHelper:
-          '!f() { echo username=u; echo password=from-clone; }; f',
-      });
-      const output = await runCredentialFill(path, 'https', 'example.com');
-      expect(output).toContain('password=from-clone');
-      expect(existsSync(marker)).toBe(false);
+      await service.configureClone(path, { identity: null });
+      expect(await runCredentialFill(path, 'https', 'example.com')).toContain(
+        'password=global',
+      );
+      // A clone of an earlier version: its helper list hid the user's.
+      await git(path, 'config', '--add', 'credential.helper', '');
+      await git(
+        path,
+        'config',
+        '--add',
+        'credential.helper',
+        "!'/nix/store/x-node/bin/node' '/nix/store/x/assets/git-credential-crm.cjs'",
+      );
+      await git(path, 'config', 'credential.useHttpPath', 'true');
+      expect(await service.removeAppCredentialHelper(path)).toBe(true);
+      expect(await runCredentialFill(path, 'https', 'example.com')).toContain(
+        'password=global',
+      );
+      await expect(
+        git(path, 'config', '--local', '--get', 'credential.useHttpPath'),
+      ).rejects.toThrow();
+      // Helpers the user configured in a clone stay.
+      await git(path, 'config', 'credential.helper', 'store');
+      expect(await service.removeAppCredentialHelper(path)).toBe(false);
+      expect(await git(path, 'config', '--local', 'credential.helper')).toBe(
+        'store',
+      );
     });
 
     it('pushes the session branch through the mirror and sets it as upstream', async () => {

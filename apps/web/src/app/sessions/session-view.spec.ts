@@ -891,6 +891,39 @@ describe('SessionView', () => {
     expect(text('strip-settings')).not.toContain('(');
     expect(element.querySelector('[data-testid="mode-override"]')).toBeNull();
   });
+
+  it('marks bypassing permissions as dangerous, unless an Autofix run holds it', async () => {
+    const { harness, socket, element, text } = await open();
+    history(
+      socket,
+      sessionDto({
+        status: 'waiting',
+        permissionMode: 'bypassPermissions',
+        permissionModeOverride: null,
+      }),
+    );
+    await harness.fixture.whenStable();
+    const chip = () =>
+      element.querySelector('[data-testid="strip-settings"]') as HTMLElement;
+    expect(text('strip-settings')).toContain('Bypass (dangerous)');
+    expect(chip().classList).toContain('danger');
+    const hint = element.querySelector('[data-testid="mode-hint"]');
+    expect(hint?.classList).toContain('mode-danger');
+    expect(hint?.textContent).toContain('without asking');
+
+    socket.receive({
+      type: 'session.updated',
+      session: sessionDto({
+        status: 'running',
+        waitingFor: null,
+        permissionMode: 'bypassPermissions',
+        permissionModeOverride: { mode: 'default', reason: 'autofix' },
+      }),
+    });
+    await harness.fixture.whenStable();
+    expect(text('strip-settings')).toContain('Ask (Autofix run)');
+    expect(chip().classList).not.toContain('danger');
+  });
 });
 
 function permissionResolvedEvent(): SessionEvent {

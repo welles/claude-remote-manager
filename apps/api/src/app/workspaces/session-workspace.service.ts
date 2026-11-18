@@ -29,10 +29,8 @@ import {
   type GitPushAnalysis,
 } from '../agent/git-push-analysis';
 import { handOverToSession } from '../common/ownership';
-import { isGitPushCommand } from '../sessions/approval-grants';
-import { credentialHelperCommand } from '../git/credential-helper';
+import { isGitPushCommand } from '../sessions/app-tools';
 import { GitService, isValidBranchName } from '../git/git.service';
-import { isGitHubRepository } from '../repositories/repository-credentials';
 import { newSlug } from '../git/slug';
 import { RepositoriesService } from '../repositories/repositories.service';
 import type { RepositoryRecord } from '../repositories/repository.repository';
@@ -853,13 +851,10 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
         branch,
         baseCommit,
       });
+      // Credentials for origin are the user's own (git configuration,
+      // credential helpers, SSH keys), as in a terminal.
       await this.git.configureClone(directory.path, {
         identity: this.settings.gitIdentity(),
-        // GitHub clones get their credentials from the session manager,
-        // read-only unless the user approved a push.
-        credentialHelper: isGitHubRepository(repository)
-          ? credentialHelperCommand()
-          : null,
       });
       this.sessions.updateDirectory(session.id, directory.position, {
         state: 'ready',

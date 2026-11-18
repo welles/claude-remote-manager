@@ -6,6 +6,7 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
+import { spawn } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
 import type {
@@ -529,8 +530,26 @@ describe('previews of dev servers', () => {
     expect(events[1]).toMatchObject({ by: 'claude', toolUseId: 'tool-2' });
     expect(events[3]).toMatchObject({ by: 'session_end' });
     sessions.unsubscribe('s-1');
-    // Single user: the dev server is not killed (it could be anything of the developer's).
+    // Single user: only processes the API started are stopped; this dev
+    // server runs in the API's (the test's) own process.
     expect(dev.server.listening).toBe(true);
+  });
+
+  it('stops dev servers the API started when the session ends', async () => {
+    const port = await freePort();
+    const child = spawn(process.execPath, [
+      '-e',
+      `require('http').createServer((q, r) => r.end('child')).listen(${port}, '127.0.0.1')`,
+    ]);
+    const exited = new Promise((resolve) => child.on('exit', resolve));
+    try {
+      await waitFor(() => expose(port).state === 'running', 5000);
+      await app.app.get(SessionsService).end('s-1');
+      await exited;
+      expect(child.exitCode ?? child.signalCode).toBe('SIGTERM');
+    } finally {
+      child.kill('SIGKILL');
+    }
   });
 
   it('gives Claude expose_port and stop_preview without approval', async () => {
@@ -554,7 +573,6 @@ describe('previews of dev servers', () => {
       }
       return found;
     };
-    expect(tool('expose_port').alwaysAsk).toBe(false);
     const result = await tool('expose_port').handler(
       { port: dev.port, name: 'Web app' },
       { toolUseId: 'toolu_1' },
@@ -677,11 +695,8 @@ describe('previews behind Cloudflare Access', () => {
           builder
             .overrideProvider(Authenticator)
             .useValue(
-              new Authenticator(
-                auth,
-                isolation,
-                access.verifier(),
-                () => peerUid,
+              new Authenticator(auth, isolation, access.verifier(), () =>
+                peerUid === null ? null : { uid: peerUid, inode: 1 },
               ),
             )
             .overrideProvider(PreviewAccess)
@@ -694,7 +709,7 @@ describe('previews behind Cloudflare Access', () => {
                   { ...access.config, audiences: [PREVIEW_AUD] },
                   access.jwks,
                 ),
-                () => peerUid,
+                () => (peerUid === null ? null : { uid: peerUid, inode: 1 }),
               ),
             ),
       },

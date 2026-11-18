@@ -3,10 +3,44 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app/app.module';
 import { checkSeparateUsers } from './app/common/process-isolation';
-import { APP_CONFIG, type AppConfig } from './app/config/app-config';
+import {
+  APP_CONFIG,
+  loadAppConfig,
+  type AppConfig,
+} from './app/config/app-config';
+import { migrateLegacyTranscripts } from './app/sessions/legacy-transcripts';
+import { claudeConfigDir } from './app/sessions/session-management.service';
 import { configureApp } from './app/configure-app';
 
+/**
+ * Copies transcripts from the configuration directory of an earlier
+ * version before anything resumes a session (see
+ * `migrateLegacyTranscripts`). A failure is logged; the API starts anyway.
+ */
+async function migrateLegacyClaudeData(config: AppConfig): Promise<void> {
+  if (!config.legacyClaudeConfigDir) {
+    return;
+  }
+  try {
+    const result = await migrateLegacyTranscripts(
+      config.legacyClaudeConfigDir,
+      claudeConfigDir(),
+      config.memoryDir,
+    );
+    if (result) {
+      Logger.log(
+        `Copied ${result.copied} transcript entries from ${config.legacyClaudeConfigDir} to ${claudeConfigDir()} (${result.skipped} existed already)${result.memoryMoved ? `; repository memory moved to ${config.memoryDir}` : ''}`,
+      );
+    }
+  } catch (error) {
+    Logger.error(
+      `Could not copy the transcripts of ${config.legacyClaudeConfigDir}: ${error instanceof Error ? error.message : String(error)}; sessions created before cannot be resumed until this succeeds`,
+    );
+  }
+}
+
 async function bootstrap() {
+  await migrateLegacyClaudeData(loadAppConfig());
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
@@ -17,7 +51,7 @@ async function bootstrap() {
   Logger.log(
     config.isolation.mode === 'separate-users'
       ? `Session processes run as ${config.isolation.sessionUser.name}`
-      : 'PROCESS_ISOLATION=single-user: session processes run as the API user (local development only)',
+      : 'PROCESS_ISOLATION=single-user: session processes run as the API user, with its rights',
   );
   configureApp(app);
   // Run onModuleDestroy/onApplicationShutdown hooks on SIGTERM/SIGINT, e.g.

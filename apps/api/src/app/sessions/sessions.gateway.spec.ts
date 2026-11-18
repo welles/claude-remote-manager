@@ -373,7 +373,7 @@ describe('SessionsGateway', () => {
         await fetch(`${url}/api/sessions/${session.id}`, {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ permissionMode: 'bypassPermissions' }),
+          body: JSON.stringify({ permissionMode: 'yolo' }),
         })
       ).status,
     ).toBe(400);

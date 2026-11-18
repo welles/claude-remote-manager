@@ -1,9 +1,9 @@
 /**
  * What a `git push` command (as Claude writes it for the Bash tool) would
- * update, for the approval dialog: the approval of a push lets the
- * credential helper hand out a write token for the whole repository, so
- * the user must see when a command pushes to something else than the
- * session branch, forces, deletes or pushes everything.
+ * update, for the approval dialog: the push runs with the user's own
+ * credentials, which can write the whole repository, so the user should
+ * see when a command pushes to something else than the session branch,
+ * forces, deletes or pushes everything.
  *
  * This reads the command text; it cannot know shell aliases, git aliases
  * or the remote's configuration. Anything it cannot place is reported as

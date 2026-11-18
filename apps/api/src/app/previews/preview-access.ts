@@ -4,9 +4,12 @@ import {
   accessToken,
   fromSessionProcess,
   type AuthConfig,
+  type PeerLookup,
   type PeerSocket,
+  type SessionSocketCheck,
 } from '../auth/authenticator';
-import { loopbackPeerUid } from '../auth/peer-credentials';
+import { loopbackPeer } from '../auth/peer-credentials';
+import { heldByApiChild } from '../auth/session-processes';
 import type { ProcessIsolation } from '../common/process-isolation';
 import type { PreviewConfig } from '../config/app-config';
 
@@ -16,7 +19,7 @@ export type PreviewAccessVerdict =
 
 /**
  * Who may open a preview:
- * - never a session process (separate users), like the management API:
+ * - never a session process, like the management API:
  *   sessions reach their dev servers directly;
  * - with `AUTH_MODE=cloudflare-access`, only requests with a valid Access
  *   token of the preview hosts' own Access application (audience
@@ -33,7 +36,8 @@ export class PreviewAccess {
     previews: PreviewConfig,
     private readonly isolation: ProcessIsolation,
     verifier?: AccessJwtVerifier | null,
-    private readonly peerUid: typeof loopbackPeerUid = loopbackPeerUid,
+    private readonly peer: PeerLookup = loopbackPeer,
+    private readonly startedByApi: SessionSocketCheck = heldByApiChild,
   ) {
     this.verifier =
       verifier !== undefined
@@ -50,7 +54,9 @@ export class PreviewAccess {
     headers: IncomingHttpHeaders,
     socket: PeerSocket,
   ): Promise<PreviewAccessVerdict> {
-    if (fromSessionProcess(this.isolation, socket, this.peerUid)) {
+    if (
+      fromSessionProcess(this.isolation, socket, this.peer, this.startedByApi)
+    ) {
       return {
         ok: false,
         status: 403,

@@ -7,14 +7,10 @@ import { PreviewsService } from '../previews/previews.service';
 import { ShownFilesModule } from '../shown-files/shown-files.module';
 import { ShownFilesService } from '../shown-files/shown-files.service';
 import { ToolApprover } from '../agent/tool-approval';
-import { ApprovalGrants } from './approval-grants';
-import { GitCredentialsController } from './git-credentials.controller';
-import { GitCredentialsService } from './git-credentials.service';
 import {
   SessionAgentSupport,
   SessionAgentSupportService,
 } from './session-agent-support';
-import { SessionCredentials } from './session-credentials';
 import { SessionAutomationHooks } from './session-automation-hooks';
 import { SessionGitController } from './session-git.controller';
 import { SessionGitService } from './session-git.service';
@@ -66,7 +62,6 @@ import { ModelsService } from './models.service';
     SessionGitController,
     SessionDiffController,
     SessionFilesController,
-    GitCredentialsController,
     ModelsController,
   ],
   providers: [
@@ -80,9 +75,6 @@ import { ModelsService } from './models.service';
     SessionsGateway,
     { provide: ViewerPresence, useValue: new ViewerPresence() },
     SessionGitService,
-    GitCredentialsService,
-    { provide: SessionCredentials, useValue: new SessionCredentials() },
-    { provide: ApprovalGrants, useValue: new ApprovalGrants() },
     {
       provide: SessionAutomationHooks,
       useValue: new SessionAutomationHooks(),

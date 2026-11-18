@@ -227,12 +227,19 @@
         data-testid="permission-mode"
       >
         @for (option of modeOptions; track option.value) {
-        <mat-option [value]="option.value" [title]="option.description"
+        <mat-option
+          [value]="option.value"
+          [title]="option.description"
+          [class.mode-danger]="option.dangerous"
           >{{ option.label }}</mat-option
         >
         }
       </mat-select>
-      <mat-hint>{{ modeInfo[permissionMode].description }}</mat-hint>
+      <mat-hint
+        [class.mode-danger]="dangerousModes.includes(permissionMode)"
+        data-testid="permission-mode-hint"
+        >{{ modeInfo[permissionMode].description }}</mat-hint
+      >
     </mat-form-field>
     <button
       matButton="filled"

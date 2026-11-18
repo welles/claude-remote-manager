@@ -27,7 +27,6 @@ import {
   requireObject,
   requireString,
 } from '../common/validation';
-import { credentialHelperCommand } from '../git/credential-helper';
 import { githubTokenAuth } from '../git/git-auth';
 import { GitHubApiError } from '../github/github-errors';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
@@ -408,7 +407,7 @@ export class RepositoriesService implements OnModuleInit {
    * existing empty one the app can access (`attach`), pushes the mirror's
    * branches and tags there, and makes the project a normal GitHub
    * repository. No data moves: the mirror stays where it is, existing
-   * session clones get the new `origin` and the credential helper.
+   * session clones get the new `origin`.
    */
   async connectGitHub(
     id: string,
@@ -483,11 +482,9 @@ export class RepositoriesService implements OnModuleInit {
       githubInstallationId: target.installationId,
       lastError: null,
     });
-    const helper = credentialHelperCommand();
     for (const link of this.repositories.cloneLinks([id]).get(id) ?? []) {
       try {
         await this.git.setOrigin(link.path, url);
-        await this.git.setCredentialHelper(link.path, helper);
       } catch (error) {
         this.logger.warn(
           `Could not point ${link.path} to ${url}: ${errorText(error)}`,

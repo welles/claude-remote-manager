@@ -72,7 +72,6 @@ describe('who runs which git command', () => {
     launcher.calls.length = 0;
     await service.configureClone(path, {
       identity: { name: 'A', email: 'a@example.com' },
-      credentialHelper: '!true',
     });
     expect(new Set(launcher.calls.map((call) => call.role))).toEqual(
       new Set(['session']),

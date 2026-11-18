@@ -29,11 +29,6 @@ export interface AgentTool {
   description: string;
   /** Input schema as Zod raw shape, built with the Zod the SDK uses. */
   inputSchema: (z: typeof Zod) => Record<string, Zod.ZodType>;
-  /**
-   * Ask `canUseTool` before every call, even where a permission rule
-   * allows the tool (MCP tool permission policy `always_ask`).
-   */
-  alwaysAsk: boolean;
   /** The tool only reads (MCP annotation `readOnlyHint`). */
   readOnly?: boolean;
   handler: (
@@ -46,9 +41,18 @@ export interface AgentTool {
 export interface AgentToolCall {
   toolName: string;
   input: Record<string, unknown>;
-  toolUseId: string | null;
+  toolUseId: string;
   /** Set when a subagent makes the call. */
   agentId: string | null;
+  /** For MCP tools: the server and where it is defined. */
+  mcpServer: { name: string; source: string } | null;
+}
+
+/** What `AgentStartOptions.gate` makes of a tool call. */
+export interface AgentGateDecision {
+  decision: 'ask' | 'deny';
+  /** Shown in the approval dialog, or told Claude when refused. */
+  reason: string;
 }
 
 /** What a Claude Code process is started with. */
@@ -65,12 +69,12 @@ export interface AgentStartOptions {
   /** Decides tool uses that need the user's approval. */
   canUseTool: CanUseTool;
   /**
-   * Tool calls that must reach `canUseTool` whatever the permission mode
-   * (also where `auto` mode's classifier would decide them): returns the
-   * reason shown in the approval dialog, `null` for other calls. Claude
-   * Code learns it through a PreToolUse hook answering `ask`.
+   * Looks at a tool call before Claude Code's own permission check: `ask`
+   * sends it to `canUseTool` whatever allow rules and the mode say, `deny`
+   * refuses it with the reason, `null` leaves it to Claude Code. Claude
+   * Code learns it through a PreToolUse hook; used for Autofix runs.
    */
-  alwaysAsk?: (call: AgentToolCall) => string | null;
+  gate?: (call: AgentToolCall) => AgentGateDecision | null;
   /**
    * Permission rules allowed for this process (in memory, like rules the
    * user allowed for the session; never written to settings files).
@@ -85,6 +89,11 @@ export interface AgentStartOptions {
    * Code's flag settings), e.g. the auto-memory directory.
    */
   settings?: Record<string, unknown>;
+  /**
+   * Text appended to Claude Code's system prompt: instructions for the
+   * sessions of this machine (`SESSION_INSTRUCTIONS_FILE`).
+   */
+  instructions?: string;
 }
 
 /** An image of a user message (base64). */
@@ -137,6 +146,8 @@ export interface AgentRun {
   setPermissionMode(mode: SessionPermissionMode): Promise<void>;
   /** Switches the model for the next requests; `null`: the default. */
   setModel(model: string | null): Promise<void>;
+  /** Stops a task of the process (a subagent or background command). */
+  stopTask(taskId: string): Promise<void>;
   /**
    * Makes further directories working directories of the running process
    * (also in the middle of a turn); Claude Code tells Claude about them

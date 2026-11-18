@@ -1,7 +1,10 @@
-# NixOS VM test of the module as deployed: secrets as root-only files (as
-# sops-nix provides them), separate users, a session started through the API
-# with a stand-in for Claude Code that records what a session process sees
-# and can do. No network and no Claude account are needed.
+# NixOS VM test of the module as deployed: the service runs as the login
+# user `alice`, secrets as root-only files (as sops-nix provides them), a
+# session started through the API with a stand-in for Claude Code that
+# records what a session process sees and can do. `upgrade` starts from the
+# data directory of an earlier version of the module (other owners, Claude
+# Code's own configuration directory in the data directory). No network
+# and no Claude account are needed.
 {
   self,
   pkgs,
@@ -9,40 +12,44 @@
 }:
 {
   name,
-  # false: the module creates the session user `claude`; true: sessions run
-  # as the login user `alice`, defined outside the module.
-  existingUser,
+  upgrade,
 }:
 let
   dataDir = "/var/lib/claude-remote-manager";
-  apiUser = "claude-remote-manager";
-  sessionUser = if existingUser then "alice" else "claude";
-  sessionHome = if existingUser then "/home/alice" else "${dataDir}/home";
+  user = "alice";
+  home = "/home/alice";
   credentials = "/run/credentials/claude-remote-manager.service";
   machineAddress = "192.168.1.2";
+  # A transcript of a session created by the earlier version.
+  oldProject = "-var-lib-claude-remote-manager-workspace-sessions-old-acme-app";
+  oldTranscript = "0d6f6b8e-3f43-4a77-9d0e-1c2b3a4d5e6f.jsonl";
 
-  # Stands in for Claude Code: the API starts it as the session user, with a
-  # session's environment, in the service's sandbox. It writes what it sees
-  # into the session user's home and stays alive like a Claude Code process.
+  # Stands in for Claude Code: the API starts it with a session's
+  # environment. It writes what it sees into the user's home and stays
+  # alive like a Claude Code process.
   fakeClaude = pkgs.writeShellScript "fake-claude" ''
     out="$HOME/fake-claude"
     mkdir -p "$out"
     n="$$"
+    # The SDK's initialize request (system prompt, settings) on stdin.
+    cat > "$out/$n.stdin" <&0 &
+    printf '%s\n' "$@" > "$out/$n.args"
     { id -u; id -un; } > "$out/$n.id"
     env > "$out/$n.env"
-    { tr '\0' '\n' < /proc/self/environ; echo "exit $?"; } > "$out/$n.environ" 2>&1
-    for tool in figlet cowsay git nix node bash curl hello; do
+    for tool in figlet cowsay git nix node bash curl sudo hello; do
       command -v "$tool" || echo "missing $tool"
     done > "$out/$n.which"
-    cat /etc/claude-code/CLAUDE.md > "$out/$n.claude-md" 2>&1
     curl -s -w '\n%{http_code}\n' http://127.0.0.1:8080/api/sessions > "$out/$n.api-loopback" 2>&1
     curl -s -w '\n%{http_code}\n' -H 'Host: localhost' http://${machineAddress}:8080/api/sessions \
       > "$out/$n.api-own-address" 2>&1
-    { cat ${credentials}/ntfy-token; echo "exit $?"; } > "$out/$n.credential" 2>&1
-    { cat /run/secrets/crm/ntfy-token; echo "exit $?"; } > "$out/$n.secret" 2>&1
+    # A process that left the API's process tree is still in its cgroup.
+    setsid sh -c "curl -s -w '\n%{http_code}\n' http://127.0.0.1:8080/api/sessions > '$out/$n.api-detached' 2>&1" < /dev/null &
+    { sudo -n cat /etc/shadow > /dev/null; echo "exit $?"; } > "$out/$n.sudo" 2>&1
+    { test -b /dev/vda; echo "exit $?"; } > "$out/$n.device" 2>&1
     { cat ${dataDir}/db/claude-remote-manager.sqlite > /dev/null; echo "exit $?"; } > "$out/$n.db" 2>&1
-    { sudo -n true; echo "exit $?"; } > "$out/$n.sudo" 2>&1
-    { setpriv --reuid=0 true; echo "exit $?"; } > "$out/$n.setuid" 2>&1
+    echo "from-session" > "/tmp/crm-session-$n"
+    printf 'protocol=https\nhost=github.com\n\n' | git credential fill > "$out/$n.credential" 2>&1
+    git config --show-origin --get-all credential.helper > "$out/$n.helpers" 2>&1
     touch "$out/$n.done"
     exec sleep 3600
   '';
@@ -77,18 +84,20 @@ pkgs.testers.runNixOSTest {
         pkgs.jq
       ];
 
-      users.users = lib.mkIf existingUser {
-        alice = {
-          isNormalUser = true;
-          extraGroups = [ "users" ];
-          # A tool from the user's own profile.
-          packages = [ pkgs.cowsay ];
-        };
+      users.users.alice = {
+        isNormalUser = true;
+        extraGroups = [ "wheel" ];
+        # A tool from the user's own profile.
+        packages = [ pkgs.cowsay ];
       };
+      security.sudo.wheelNeedsPassword = false;
 
-      # Secrets as sops-nix puts them: files owned by root, mode 0400.
-      systemd.services.fake-sops = {
+      # Secrets as sops-nix puts them: files owned by root, mode 0400. The
+      # user's git configuration with a credential helper; for `upgrade`,
+      # the data directory as the earlier module left it.
+      systemd.services.prepare = {
         wantedBy = [ "multi-user.target" ];
+        after = [ "systemd-tmpfiles-setup.service" ];
         before = [ "claude-remote-manager.service" ];
         requiredBy = [ "claude-remote-manager.service" ];
         serviceConfig = {
@@ -98,15 +107,46 @@ pkgs.testers.runNixOSTest {
         path = [ pkgs.openssl ];
         script = ''
           install -d -m 0755 /run/secrets/crm
-          umask 0377
-          openssl genrsa -out /run/secrets/crm/github-app-key 2048
-          echo "webhook-secret-0123456789abcdef" > /run/secrets/crm/github-webhook-secret
-          echo "ntfy-token-SECRET-1f2e3d4c" > /run/secrets/crm/ntfy-token
+          (
+            umask 0377
+            openssl genrsa -out /run/secrets/crm/github-app-key 2048
+            echo "webhook-secret-0123456789abcdef" > /run/secrets/crm/github-webhook-secret
+            echo "ntfy-token-SECRET-1f2e3d4c" > /run/secrets/crm/ntfy-token
+          )
+          cat > ${home}/.gitconfig <<'EOF'
+          [credential]
+          	helper = "!f() { echo username=alice; echo password=from-alice-gitconfig; }; f"
+          EOF
+          chown alice:users ${home}/.gitconfig
+        ''
+        + lib.optionalString upgrade ''
+          # Owners of the earlier version: the API user and the session user.
+          old=${dataDir}
+          install -d -o 990 -g 990 -m 0700 $old/claude $old/claude/projects/${oldProject} \
+            $old/claude/repository-memory/repo-1
+          echo '{"type":"user"}' > $old/claude/projects/${oldProject}/${oldTranscript}
+          echo remember > $old/claude/repository-memory/repo-1/MEMORY.md
+          echo '{}' > $old/claude/.credentials.json
+          chown -R 990:990 $old/claude
+          chmod 0600 $old/claude/.credentials.json
+          install -d -o 990 -g 990 -m 0755 $old/workspace/sessions/old/acme/app
+          echo work > $old/workspace/sessions/old/acme/app/file
+          chown 990:990 $old/workspace/sessions/old/acme/app/file
+          echo old > $old/db/old-file
+          chown 991:991 $old/db/old-file
+          chmod 0600 $old/db/old-file
+          install -d -o 991 -g 991 -m 0700 $old/git/ssh
+          # An old symlink to a file of root's: the take-over must change
+          # the link, never what it points to.
+          install -m 0600 /dev/null /root/canary
+          ln -s /root/canary $old/db/link
+          chown -h 991:991 $old/db/link
         '';
       };
 
       services.claude-remote-manager = {
         enable = true;
+        user = "alice";
         auth.mode = "none";
         # Reachable on the machine's own address too, to test refusals there.
         listenAddress = "0.0.0.0";
@@ -120,17 +160,7 @@ pkgs.testers.runNixOSTest {
           topic = "crm-test";
           tokenFile = "/run/secrets/crm/ntfy-token";
         };
-        sessionUser =
-          if existingUser then
-            {
-              name = "alice";
-              create = false;
-            }
-          else
-            {
-              packages = [ pkgs.cowsay ];
-              extraGroups = [ "dialout" ];
-            };
+        packages = [ pkgs.hello ];
         environment = {
           CLAUDE_CODE_EXECUTABLE = "${fakeClaude}";
           SESSION_IDLE_TIMEOUT_MINUTES = "0";
@@ -152,10 +182,10 @@ pkgs.testers.runNixOSTest {
       import json, shlex
 
       DATA = "${dataDir}"
-      USER = "${sessionUser}"
-      HOME = "${sessionHome}"
+      USER = "${user}"
+      HOME = "${home}"
       API = "http://127.0.0.1:8080"
-      AS_SESSION = f"setpriv --reuid={USER} --regid=$(id -g {USER}) --init-groups --"
+      AS_USER = f"su - {USER} -c"
 
       def api(method, path, body=None):
           data = f"-H 'Content-Type: application/json' -d {shlex.quote(json.dumps(body))}" if body is not None else ""
@@ -175,140 +205,117 @@ pkgs.testers.runNixOSTest {
           machine.succeed(f"curl -sf {API}/sw.js -o /dev/null")
           machine.succeed(f"curl -sf {API}/manifest.webmanifest -o /dev/null")
 
-      with subtest("users, capabilities and hardening of the service"):
+      with subtest("the service runs as the user, without sandbox"):
           pid = machine.succeed("systemctl show -p MainPID --value claude-remote-manager").strip()
           status = machine.succeed(f"cat /proc/{pid}/status")
           print(status)
-          uid = machine.succeed("id -u ${apiUser}").strip()
-          assert f"Uid:\t{uid}\t{uid}\t{uid}\t{uid}" in status, "the API does not run as its own user"
-          # CHOWN, DAC_OVERRIDE, KILL, SETGID, SETUID and nothing else
-          for field in ("CapEff", "CapPrm", "CapAmb", "CapBnd"):
-              assert f"{field}:\t00000000000000e3" in status, f"{field} is not exactly the five capabilities"
-          assert "NoNewPrivs:\t1" in status, "NoNewPrivs"
-          assert "Seccomp:\t2" in status, "Seccomp"
-          print(machine.succeed("systemd-analyze security claude-remote-manager.service || true"))
+          uid = machine.succeed(f"id -u {USER}").strip()
+          assert f"Uid:\t{uid}\t{uid}\t{uid}\t{uid}" in status, "the service does not run as the user"
+          assert "CapEff:\t0000000000000000" in status, "CapEff"
+          assert "NoNewPrivs:\t0" in status, "NoNewPrivs"
+          assert "Seccomp:\t0" in status, "Seccomp"
+          # The machine's mount namespace: no private /tmp, nothing hidden.
+          assert machine.succeed(f"readlink /proc/{pid}/ns/mnt") == machine.succeed("readlink /proc/1/ns/mnt")
 
-      with subtest("database and the API's files are the API user's"):
-          machine.succeed(f"test \"$(stat -c %U:%a {DATA}/db)\" = ${apiUser}:700")
-          machine.succeed(f"test \"$(stat -c %U:%a {DATA}/git)\" = ${apiUser}:700")
-          machine.succeed(f"test \"$(stat -c %U {DATA}/db/claude-remote-manager.sqlite)\" = ${apiUser}")
-          machine.succeed(f"test \"$(stat -c %U:%a {DATA}/claude)\" = {USER}:700")
-          machine.fail(f"{AS_SESSION} cat {DATA}/db/claude-remote-manager.sqlite")
-          machine.fail(f"{AS_SESSION} ls {DATA}/db")
-          machine.fail(f"{AS_SESSION} cat {DATA}/git/gitconfig")
-          machine.fail(f"{AS_SESSION} cat {DATA}/db/vapid-keys.json")
+      with subtest("the data directory is the user's"):
+          machine.succeed(f"test \"$(stat -c %U:%a {DATA})\" = {USER}:700")
+          machine.succeed(f"test -z \"$(find {DATA} ! -group $(id -gn {USER}) -print -quit)\"")
+          machine.succeed(f"test \"$(stat -c %U {DATA}/db/claude-remote-manager.sqlite)\" = {USER}")
+          # The stamp is root's (a user's stamp could be a symlink root writes through).
+          machine.succeed(f"test \"$(cat /var/lib/claude-remote-manager-owner/*)\" = {USER}")
+          machine.succeed("test \"$(stat -c %U:%a /var/lib/claude-remote-manager-owner)\" = root:700")
+          machine.succeed(f"test -z \"$(find {DATA} ! -user {USER} -print -quit)\"")
 
-      with subtest("secret files are unreadable for the session user"):
-          for name in ("github-app-key", "github-webhook-secret", "ntfy-token"):
-              machine.fail(f"{AS_SESSION} cat /run/secrets/crm/{name}")
-              machine.fail(f"{AS_SESSION} cat ${credentials}/{name}")
-          # The copies systemd hands the service are readable by the API user.
-          print(machine.succeed("stat -c '%U:%G %a %n' ${credentials} ${credentials}/*; getfacl -p ${credentials} ${credentials}/ntfy-token 2>/dev/null || true"))
-          machine.succeed("setpriv --reuid=${apiUser} --regid=${apiUser} --init-groups -- cat ${credentials}/ntfy-token | grep -q ntfy-token-SECRET")
+      with subtest("secrets arrive as credentials readable by the user"):
+          machine.succeed(f"{AS_USER} 'cat ${credentials}/ntfy-token' | grep -q ntfy-token-SECRET")
+          machine.fail(f"{AS_USER} 'cat /run/secrets/crm/ntfy-token'")
 
-      with subtest("session user processes are refused by the management API"):
+      with subtest("processes the service started are refused by the management API, the user's own are not"):
           for url, host in ((API, ""), ("http://${machineAddress}:8080", "-H 'Host: localhost'")):
-              out = machine.succeed(f"{AS_SESSION} curl -s {host} -w '\\n%{{http_code}}' {url}/api/sessions")
-              assert out.endswith("\n403") and "session_process_refused" in out, out
-              # Other users are not refused (AUTH_MODE=none in this test).
+              out = machine.succeed(f"{AS_USER} \"curl -s {host} -o /dev/null -w '%{{http_code}}' {url}/api/sessions\"")
+              assert out == "200", out
               out = machine.succeed(f"curl -s {host} -o /dev/null -w '%{{http_code}}' {url}/api/sessions")
               assert out == "200", out
-          # The health check stays open for sessions.
-          machine.succeed(f"{AS_SESSION} curl -sf {API}/api/health")
 
-      with subtest("the Claude Code binary of the package runs as the session user"):
-          version = machine.succeed(
-              f"{AS_SESSION} env -i HOME={HOME} PATH=/run/current-system/sw/bin "
-              "${package}/libexec/claude-remote-manager/claude --version"
-          )
+      with subtest("the Claude Code binary of the package runs as the user"):
+          version = machine.succeed(f"{AS_USER} '${package}/libexec/claude-remote-manager/claude --version'")
           print(version)
           assert "Claude Code" in version, version
-          print(machine.succeed("claude-remote-manager-claude --version"))
-          machine.succeed(f"test \"$(stat -c %U {DATA}/claude)\" = {USER}")
 
       with subtest("a local project: mirror, session clone, session process"):
           status, text = api("PUT", "/api/settings", {"gitAuthorName": "Test Owner", "gitAuthorEmail": "owner@example.com"})
           assert status == 200, text
-          status, text = api("POST", "/api/sessions", {"prompt": "hello", "newProject": {"name": "demo"}})
+          status, text = api("POST", "/api/sessions", {"prompt": "hello", "newProject": {"name": "demo"}, "permissionMode": "bypassPermissions"})
           assert status in (200, 201, 204), (status, text)
           session = json.loads(text)
           sid = session["id"]
+          assert session["permissionMode"] == "bypassPermissions", session
           machine.wait_until_succeeds(f"ls {HOME}/fake-claude/*.done", timeout=120)
           mirror = f"{DATA}/workspace/repos/local/demo"
-          machine.succeed(f"test \"$(stat -c %U {mirror})\" = ${apiUser}")
           clone = machine.succeed(f"ls -d {DATA}/workspace/sessions/*/local/demo").strip()
-          machine.succeed(f"test \"$(stat -c %U {clone})\" = {USER}")
-          machine.succeed(f"test \"$(git -C {mirror} rev-parse main)\" = \"$({AS_SESSION} git -C {clone} rev-parse HEAD)\"")
+          for path in (mirror, clone):
+              machine.succeed(f"test \"$(stat -c %U {path})\" = {USER}")
+          machine.succeed(f"test \"$(git -C {mirror} rev-parse main)\" = \"$({AS_USER} 'git -C {clone} rev-parse HEAD')\"")
 
-      with subtest("what the session process saw"):
+      with subtest("what the session process saw and could do"):
           print(machine.succeed(f"ls -la {HOME}/fake-claude; tail -n +1 {HOME}/fake-claude/*"))
           prefix = machine.succeed(f"ls {HOME}/fake-claude/*.done | head -n 1").strip()[: -len(".done")]
           def seen(kind):
               return machine.succeed(f"cat {prefix}.{kind}")
           ident = seen("id").split()
-          print(ident)
           assert ident[-1] == USER, ident
           env = seen("env")
-          print(env)
           names = {line.split("=", 1)[0] for line in env.splitlines() if "=" in line}
-          for forbidden in ("CRM_SECRET_", "GITHUB_APP_PRIVATE_KEY_FILE", "GITHUB_WEBHOOK_SECRET_FILE",
-                            "NTFY_TOKEN_FILE", "CREDENTIALS_DIRECTORY", "DB_DIR", "GIT_CONFIG_GLOBAL"):
+          # The user's own configuration: no CLAUDE_CONFIG_DIR, no global
+          # git configuration of the app, no app secrets.
+          for forbidden in ("CLAUDE_CONFIG_DIR", "GIT_CONFIG_GLOBAL", "CRM_SECRET_"):
               assert not any(n.startswith(forbidden) for n in names), f"{forbidden} reached the session"
-          assert "ntfy-token-SECRET" not in env and "webhook-secret-0123" not in env, "a secret value reached the session"
+          assert "ntfy-token-SECRET" not in env, "a secret value reached the session"
+          # Nor the API's own configuration (npm, dev servers, a dev API).
+          for forbidden in ("NODE_ENV", "PORT", "DB_DIR", "WORKSPACE_DIR", "CREDENTIALS_DIRECTORY", "GITHUB_APP_ID"):
+              assert forbidden not in names, f"{forbidden} reached the session"
+          assert "SSL_CERT_FILE" in names, "the CA bundle is missing in the session"
           assert f"HOME={HOME}" in env and f"USER={USER}" in env, "HOME or USER"
-          print(seen("environ"))
           path = next(line for line in env.splitlines() if line.startswith("PATH="))
+          assert path.startswith("PATH=/run/wrappers/bin:"), path
           assert "/run/current-system/sw/bin" in path and f"/etc/profiles/per-user/{USER}/bin" in path, path
-          assert "LOCALE_ARCHIVE=" in env and f"CLAUDE_CONFIG_DIR={DATA}/claude" in env, "LOCALE_ARCHIVE or CLAUDE_CONFIG_DIR"
           which = seen("which")
           print(which)
-          assert "/run/current-system/sw/bin/figlet" in which, which
-          assert "missing" not in which.replace("missing hello", ""), which
-          if USER == "alice":
-              assert "/etc/profiles/per-user/alice/bin/cowsay" in which, which
+          assert "missing" not in which, which
+          assert "/run/wrappers/bin/sudo" in which and "/etc/profiles/per-user/alice/bin/cowsay" in which, which
+          args = seen("args")
+          print(args)
+          assert "--allow-dangerously-skip-permissions" in args and "bypassPermissions" in args, args
+          assert "--strict-mcp-config" not in args, args
+          machine.wait_until_succeeds(f"grep -q MARKER-EXTRA-INSTRUCTIONS {prefix}.stdin", timeout=30)
+          stdin = seen("stdin")
+          assert "NixOS machine" in stdin and "## Git and GitHub" in stdin, stdin[:2000]
+          # Session processes are refused by the API, also detached ones.
           for kind in ("api-loopback", "api-own-address"):
               out = seen(kind)
               assert "session_process_refused" in out and out.strip().endswith("403"), (kind, out)
-          for kind in ("credential", "secret", "db", "sudo", "setuid"):
+          machine.wait_until_succeeds(f"grep -q 403 {prefix}.api-detached", timeout=30)
+          # What the user can do in a terminal, sessions can do.
+          for kind in ("sudo", "device", "db"):
               out = seen(kind)
-              assert "exit 0" not in out, (kind, out)
-          claude_md = seen("claude-md")
-          assert "NixOS machine" in claude_md and "MARKER-EXTRA-INSTRUCTIONS" in claude_md, claude_md
-          assert "## Git and GitHub" in claude_md and f"`{USER}`" in claude_md, claude_md
-          # The machine's /etc/claude-code is untouched; the file exists inside the service only.
+              assert "exit 0" in out, (kind, out)
+          machine.succeed(f"grep -q from-session /tmp/crm-session-{prefix.rsplit('/', 1)[1]}")
+          # Git in the session clone uses the user's credential helper.
+          assert "password=from-alice-gitconfig" in seen("credential"), seen("credential")
+          assert f"{HOME}/.gitconfig" in seen("helpers"), seen("helpers")
           machine.fail("test -e /etc/claude-code/CLAUDE.md")
 
-      with subtest("the API runs the file helper as the session user"):
-          machine.succeed(f"{AS_SESSION} sh -c 'echo note-content > {clone}/note.txt'")
+      with subtest("the API reads files in the clone"):
+          machine.succeed(f"{AS_USER} 'echo note-content > {clone}/note.txt'")
           status, text = api("GET", f"/api/sessions/{sid}/files?query=note")
           assert status == 200 and "note.txt" in text, text
           status, text = api("GET", f"/api/sessions/{sid}/diff")
           assert status == 200 and "note.txt" in text, text
-          # A file the session user cannot read is not served through the helper.
-          machine.succeed(f"echo private > {clone}/private.txt && chown root:root {clone}/private.txt && chmod 600 {clone}/private.txt")
-          status, text = api("GET", f"/api/sessions/{sid}/files?query=private")
-          assert status == 200, text
-
-      with subtest("the service's namespace bounds the API's DAC_OVERRIDE"):
-          ns = f"nsenter -t {pid} -m --"
-          machine.fail(f"{ns} cat /run/secrets/crm/ntfy-token")
-          # Hidden files are replaced by an empty inaccessible inode (root, as
-          # here, may open it, but there is nothing in it).
-          machine.succeed("test -s /etc/shadow")
-          machine.succeed(f"{ns} test ! -s /etc/shadow")
-          machine.fail(f"{ns} touch /etc/crm-test")
-          machine.fail(f"{ns} touch /var/lib/crm-test")
-          machine.succeed(f"{ns} touch {DATA}/workspace/.crm-test && rm {DATA}/workspace/.crm-test")
-          machine.succeed(f"{ns} touch {HOME}/.crm-test && rm {HOME}/.crm-test")
-          if USER != "alice":
-              machine.succeed("useradd -m bob && echo hi > /home/bob/file")
-              machine.fail(f"{ns} cat /home/bob/file")
 
       with subtest("ending and deleting the session removes its clone"):
           status, text = api("POST", f"/api/sessions/{sid}/end", {})
           assert status in (200, 201, 204), (status, text)
           machine.wait_until_succeeds(f"! pgrep -u {USER} -f fake-claude", timeout=60)
-          machine.succeed(f"rm -f {clone}/private.txt")
           status, text = api("POST", f"/api/sessions/{sid}/delete", {"confirm": True, "acceptLoss": True})
           assert status in (200, 201, 204), (status, text)
           machine.wait_until_succeeds(f"! test -e {clone}", timeout=60)
@@ -318,11 +325,26 @@ pkgs.testers.runNixOSTest {
           machine.succeed("systemctl is-active claude-remote-manager.service")
           print(machine.succeed("journalctl -u claude-remote-manager.service --no-pager | tail -n 40"))
     ''
-    + lib.optionalString existingUser ''
+    + lib.optionalString upgrade ''
 
-      with subtest("the login user and its home are left as they are"):
-          machine.succeed("test \"$(stat -c %U:%a /home/alice)\" = alice:700")
-          machine.succeed("getent passwd alice | grep -q ':/home/alice:'")
-          machine.fail("getent passwd claude")
+      with subtest("an earlier version's data was taken over"):
+          transcript = f"{HOME}/.claude/projects/${oldProject}/${oldTranscript}"
+          machine.succeed(f"test \"$(stat -c %U {transcript})\" = {USER}")
+          machine.succeed(f"grep -q user {transcript}")
+          # Copied, not moved; a marker keeps it from running again.
+          machine.succeed(f"test -f {DATA}/claude/projects/${oldProject}/${oldTranscript}")
+          machine.succeed(f"test -f {DATA}/claude/COPIED-TO-CLAUDE-CONFIG.txt")
+          machine.succeed(f"grep -q remember {DATA}/memory/repo-1/MEMORY.md")
+          machine.succeed(f"test \"$(stat -c %U {DATA}/workspace/sessions/old/acme/app/file)\" = {USER}")
+          machine.succeed(f"{AS_USER} 'cat {DATA}/db/old-file'")
+          machine.succeed(f"test \"$(stat -c %U {DATA}/db/link)\" = {USER}")
+          machine.succeed("test \"$(stat -c %U:%G /root/canary)\" = root:root")
+          # A second start leaves the files alone (the stamp says so).
+          machine.succeed("systemctl restart claude-remote-manager")
+          machine.wait_until_succeeds(f"curl -sf {API}/api/health")
+          machine.succeed("test \"$(stat -c %U:%G /root/canary)\" = root:root")
+          # The old login is not taken over: the user's own ~/.claude counts.
+          machine.fail(f"test -e {HOME}/.claude/.credentials.json")
+          print(machine.succeed("journalctl -u claude-remote-manager.service --no-pager | grep -i -e 'giving' -e 'copied'"))
     '';
 }

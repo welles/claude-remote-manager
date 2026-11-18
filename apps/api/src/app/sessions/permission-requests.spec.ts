@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { ToolApprovalRequest } from '../agent/tool-approval';
-import { CREATE_PULL_REQUEST_TOOL_NAME } from './approval-grants';
+import { CREATE_PULL_REQUEST_TOOL_NAME } from './app-tools';
 import {
   cancellation,
   describeRequest,
@@ -118,11 +118,19 @@ describe('sessionAllowOffer', () => {
       { toolName: 'Bash', ruleContent: '*' },
       { toolName: 'mcp__crm__create_pull_request' },
     );
-    expect(offer('Bash', { command: 'ls' }, [pushRules])).toBeNull();
-    // Pushes, pull requests, questions and plans: never.
+    // Pushes and the app's tools like any other; never all Bash commands.
+    expect(offer('Bash', { command: 'ls' }, [pushRules])?.offer.rules).toEqual([
+      'Bash(git push:*)',
+      'Bash(git:*)',
+      'Bash(git *)',
+      'mcp__crm__create_pull_request',
+    ]);
     const any = [allowRules({ toolName: 'Bash', ruleContent: 'ls:*' })];
-    expect(offer('Bash', { command: 'git push origin HEAD' }, any)).toBeNull();
-    expect(offer(CREATE_PULL_REQUEST_TOOL_NAME, {}, any)).toBeNull();
+    expect(
+      offer('Bash', { command: 'git push origin HEAD' }, any),
+    ).not.toBeNull();
+    expect(offer(CREATE_PULL_REQUEST_TOOL_NAME, {}, any)).not.toBeNull();
+    // Questions and plans: never.
     expect(offer('AskUserQuestion', {}, any)).toBeNull();
     expect(offer('ExitPlanMode', {}, any)).toBeNull();
     // Claude Code says not to offer it.

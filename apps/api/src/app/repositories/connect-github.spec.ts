@@ -81,9 +81,10 @@ describe('local project to GitHub', () => {
     expect(await git(session.cwd, 'config', 'remote.origin.url')).toBe(
       'https://github.com/acme/tool.git',
     );
-    expect(
-      await git(session.cwd, 'config', '--get-all', 'credential.helper'),
-    ).toContain('git-credential-crm');
+    // Pushing from it uses the user's own credentials, no helper of the app.
+    await expect(
+      git(session.cwd, 'config', '--local', '--get-all', 'credential.helper'),
+    ).rejects.toThrow();
     const listed = await harness.repositories.list();
     expect(listed.repositories[0].clones).toEqual([
       expect.objectContaining({

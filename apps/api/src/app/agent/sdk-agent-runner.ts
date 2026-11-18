@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type * as Sdk from '@anthropic-ai/claude-agent-sdk';
 import type * as Zod from 'zod';
-import { APP_MCP_SERVER } from '../sessions/approval-grants';
+import { APP_MCP_SERVER } from '../sessions/app-tools';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { CLAUDE_CODE_SECRETS } from '../common/child-environment';
@@ -63,9 +63,8 @@ export function toolUseIdOf(extra: unknown): string | null {
 }
 
 /**
- * The app's tools as an in-process MCP server (`createSdkMcpServer`), with
- * the permission policy `always_ask` for tools that need the user's
- * approval on every call.
+ * The app's tools as an in-process MCP server (`createSdkMcpServer`). They
+ * ask like any tool, as the session's permission mode and rules say.
  */
 export async function appMcpServers(
   tools: AgentTool[] | undefined,
@@ -112,23 +111,15 @@ export async function appMcpServers(
       ),
     ),
   });
-  return {
-    [APP_MCP_SERVER]: {
-      ...server,
-      tools: tools
-        .filter((definition) => definition.alwaysAsk)
-        .map((definition) => ({
-          name: definition.name,
-          permission_policy: 'always_ask' as const,
-        })),
-    },
-  };
+  return { [APP_MCP_SERVER]: server };
 }
 
 /**
- * Settings that every session gets: the user's settings and CLAUDE.md from
- * CLAUDE_CONFIG_DIR, the project's settings and CLAUDE.md files from the
- * working directory (and its parents), and local settings. Managed policy
+ * Settings that every session gets, as in a terminal: the user's settings,
+ * CLAUDE.md, skills, plugins and MCP servers from the user's configuration
+ * directory (`~/.claude`, or `CLAUDE_CONFIG_DIR` where set, as in the
+ * image), the project's settings and CLAUDE.md files from the working
+ * directory (and its parents), and local settings. Managed policy
  * settings, such as /etc/claude-code/CLAUDE.md in the image, are always
  * loaded by Claude Code regardless of this list.
  */
@@ -139,15 +130,21 @@ export const SETTING_SOURCES: Sdk.SettingSource[] = [
 ];
 
 /**
- * Sessions get Claude Code's built-in tools and the app's own tools only:
- * MCP servers come only from the `mcpServers` option (the app's in-process
- * server), never from the user's or a project's configuration (`.mcp.json`
- * of a repository), plugins or the Claude account's claude.ai connectors
- * (mail, drive, calendar, ...). `strictMcpConfig` is what keeps them out
- * (`--strict-mcp-config`); `disableClaudeAiConnectors` in the session's
- * settings keeps the connectors from being fetched at all.
+ * Sessions get the MCP servers a terminal session would get (the user's,
+ * a project's `.mcp.json` as approved there, plugins, the Claude account's
+ * claude.ai connectors) plus the app's own in-process server `crm`.
  */
-export const STRICT_MCP_CONFIG = true;
+export const STRICT_MCP_CONFIG = false;
+
+/**
+ * Auxiliary queries of the app (the model list and plan usage, see
+ * {@link SdkAgentRunner.probe}) make no model request and use no tools:
+ * they start no MCP server and fetch no connectors.
+ */
+export const PROBE_SETTINGS = {
+  strictMcpConfig: true,
+  settings: { disableClaudeAiConnectors: true },
+} as const;
 
 /** Lines of Claude Code's stderr kept for error messages. */
 const STDERR_LINES = 5;
@@ -258,14 +255,15 @@ export function zeroTurnMessages(message: AgentUserMessage): number {
 }
 
 /**
- * The PreToolUse hook that sends the calls `alwaysAsk` names to the user:
- * `permissionDecision: 'ask'` makes Claude Code ask through `canUseTool`
- * even in `auto` mode, where its classifier would otherwise decide (in
- * `dontAsk` the call is denied, as every ask is). It never allows
- * anything, and a failure blocks the call (`onFailure: 'block'`).
+ * The PreToolUse hook through which `gate` looks at tool calls before
+ * Claude Code's own permission check. `ask` is not left to allow rules or
+ * the mode: Claude Code then calls `canUseTool` once (with its title,
+ * reason and suggestions; deny rules and its safety checks still apply).
+ * `deny` refuses the call with the reason. The hook only answers, it never
+ * waits; a failure blocks the call (`onFailure: 'block'`).
  */
-export function alwaysAskHooks(
-  alwaysAsk: NonNullable<AgentStartOptions['alwaysAsk']>,
+export function gateHooks(
+  gate: NonNullable<AgentStartOptions['gate']>,
 ): NonNullable<Sdk.Options['hooks']> {
   return {
     PreToolUse: [
@@ -280,20 +278,21 @@ export function alwaysAskHooks(
               typeof input.tool_input === 'object' && input.tool_input !== null
                 ? (input.tool_input as Record<string, unknown>)
                 : {};
-            const reason = alwaysAsk({
+            const verdict = gate({
               toolName: input.tool_name,
               input: toolInput,
-              toolUseId: input.tool_use_id || null,
+              toolUseId: input.tool_use_id,
               agentId: input.agent_id ?? null,
+              mcpServer: input.mcp_server ?? null,
             });
-            if (reason === null) {
+            if (verdict === null) {
               return {};
             }
             return {
               hookSpecificOutput: {
                 hookEventName: 'PreToolUse',
-                permissionDecision: 'ask',
-                permissionDecisionReason: reason,
+                permissionDecision: verdict.decision,
+                permissionDecisionReason: verdict.reason,
               },
             };
           },
@@ -322,8 +321,10 @@ export function buildQueryOptions(
     ...(mcpServers && Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
     strictMcpConfig: STRICT_MCP_CONFIG,
     ...(options.settings ? { settings: options.settings } : {}),
-    // Replaces the inherited environment: no app secrets except Claude
-    // Code's own login (with separate users: only allowlisted variables).
+    // Replaces the inherited environment: the API's environment (the
+    // user's, where sessions run as the API's user) without the app's own
+    // secrets, except Claude Code's login (with separate users: only
+    // allowlisted variables).
     env: launcher.environment('session', options.env, {
       keep: CLAUDE_CODE_SECRETS,
       base: baseEnv,
@@ -335,8 +336,12 @@ export function buildQueryOptions(
       : {}),
     ...(options.model ? { model: options.model } : {}),
     permissionMode: options.permissionMode,
+    // Makes `bypassPermissions` available, also for a switch while the
+    // process runs (`setPermissionMode`); the mode itself is the session's
+    // choice. As `--allow-dangerously-skip-permissions`.
+    allowDangerouslySkipPermissions: true,
     canUseTool: options.canUseTool,
-    ...(options.alwaysAsk ? { hooks: alwaysAskHooks(options.alwaysAsk) } : {}),
+    ...(options.gate ? { hooks: gateHooks(options.gate) } : {}),
     ...(options.resume
       ? { resume: options.resume }
       : options.sessionId
@@ -344,7 +349,11 @@ export function buildQueryOptions(
         : {}),
     // Without this the SDK uses a minimal system prompt instead of Claude
     // Code's own (see the Agent SDK docs on modifying system prompts).
-    systemPrompt: { type: 'preset', preset: 'claude_code' },
+    systemPrompt: {
+      type: 'preset',
+      preset: 'claude_code',
+      ...(options.instructions ? { append: options.instructions } : {}),
+    },
     settingSources: SETTING_SOURCES,
     includePartialMessages: true,
     ...(config.claudeExecutable
@@ -434,6 +443,7 @@ export class SdkAgentRunner implements AgentRunner {
         }),
       setPermissionMode: (mode) => query.setPermissionMode(mode),
       setModel: (model) => query.setModel(model ?? undefined),
+      stopTask: (taskId) => query.stopTask(taskId),
       close: () => {
         input.close();
         query.close();
@@ -464,8 +474,7 @@ export class SdkAgentRunner implements AgentRunner {
         // Readable for the session user; nothing is written there.
         cwd: tmpdir(),
         settingSources: ['user'],
-        strictMcpConfig: STRICT_MCP_CONFIG,
-        settings: { disableClaudeAiConnectors: true },
+        ...PROBE_SETTINGS,
         permissionMode: 'default',
         ...(this.config.claudeExecutable
           ? { pathToClaudeCodeExecutable: this.config.claudeExecutable }
