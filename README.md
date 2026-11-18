@@ -1987,6 +1987,9 @@ upgrade:
   `<dataDir>/memory`. Nothing is overwritten or deleted; a marker file
   (`COPIED-TO-CLAUDE-CONFIG.txt`) keeps it from running again. Remove `<dataDir>/claude` (and
   `<dataDir>/home` of a created session user) once the old sessions resume fine.
+- **A `claudeConfigDir` elsewhere**: only `<dataDir>/claude` is copied from. If the removed
+  option pointed elsewhere, move that directory to `<dataDir>/claude` before the first start;
+  the start step then gives it to the user with the rest.
 - **The login**: the old directory's login is not taken over; sessions use the user's own.
 - **Session clones**: the app's old credential helper is removed from all session clones when
   the API starts (and again before a session's Claude Code starts), so the user's credentials

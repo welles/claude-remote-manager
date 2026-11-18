@@ -280,7 +280,7 @@ in
     (removed [ "hiddenPaths" ] "Nothing is hidden from sessions any more.")
     (removed [
       "claudeConfigDir"
-    ] "Sessions use the user's ~/.claude; old transcripts are copied there at startup.")
+    ] "Sessions use the user's ~/.claude; old transcripts are copied there at startup from <dataDir>/claude only. If you had set claudeConfigDir elsewhere, move that directory to <dataDir>/claude before the first start (the start step gives it to the user).")
   ];
 
   options.services.claude-remote-manager = {
