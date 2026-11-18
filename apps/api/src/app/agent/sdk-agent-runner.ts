@@ -443,6 +443,7 @@ export class SdkAgentRunner implements AgentRunner {
         }),
       setPermissionMode: (mode) => query.setPermissionMode(mode),
       setModel: (model) => query.setModel(model ?? undefined),
+      stopTask: (taskId) => query.stopTask(taskId),
       close: () => {
         input.close();
         query.close();

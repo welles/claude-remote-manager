@@ -146,6 +146,8 @@ export interface AgentRun {
   setPermissionMode(mode: SessionPermissionMode): Promise<void>;
   /** Switches the model for the next requests; `null`: the default. */
   setModel(model: string | null): Promise<void>;
+  /** Stops a task of the process (a subagent or background command). */
+  stopTask(taskId: string): Promise<void>;
   /**
    * Makes further directories working directories of the running process
    * (also in the middle of a turn); Claude Code tells Claude about them

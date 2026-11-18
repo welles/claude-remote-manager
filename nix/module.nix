@@ -138,7 +138,10 @@ let
   # - the stamp lives in a directory only root writes (a stamp in the data
   #   directory could be a symlink to any file);
   # - the data directory must not be a symlink and its parents must be
-  #   root's, so it cannot be pointed elsewhere;
+  #   root's and writable by root only (or sticky), so it cannot be
+  #   pointed elsewhere;
+  # - hard links to other users' files cannot be planted in it
+  #   (`fs.protected_hardlinks`, checked);
   # - `chown -R` walks with directory file descriptors and never follows
   #   symlinks (`--no-dereference`, `-P`), so swapping a directory for a
   #   symlink during the walk does not lead it out of the tree.
@@ -157,10 +160,20 @@ let
       echo "$dir is a symlink; refusing to give it to ${cfg.user}" >&2
       exit 1
     fi
+    if [ "$(${pkgs.coreutils}/bin/cat /proc/sys/fs/protected_hardlinks)" != 1 ]; then
+      echo "fs.protected_hardlinks is off; refusing to give $dir to ${cfg.user}" >&2
+      exit 1
+    fi
     parent=$(${pkgs.coreutils}/bin/dirname "$dir")
     while :; do
       if [ -L "$parent" ] || [ "$(${pkgs.coreutils}/bin/stat -c %u "$parent")" != 0 ]; then
         echo "$parent is not root's directory; refusing to give $dir to ${cfg.user}" >&2
+        exit 1
+      fi
+      # Others may write to it only with the sticky bit (as in /tmp).
+      mode=$(${pkgs.coreutils}/bin/stat -c %a "$parent")
+      if [ $(( 0$mode & 01000 )) = 0 ] && [ $(( 0$mode & 022 )) != 0 ]; then
+        echo "$parent is writable by others; refusing to give $dir to ${cfg.user}" >&2
         exit 1
       fi
       [ "$parent" = / ] && break

@@ -1253,9 +1253,32 @@ describe('SessionsService', () => {
       expect(
         call('Bash', { command: 'sleep 1', run_in_background: true }),
       ).toMatchObject({ decision: 'deny' });
+      // Subagents may run in the background whatever the call says.
       expect(
         call('Agent', { prompt: 'x', run_in_background: false }),
-      ).toMatchObject({ decision: 'ask' });
+      ).toMatchObject({ decision: 'deny' });
+      expect(call('CronCreate', { prompt: 'x' })).toMatchObject({
+        decision: 'deny',
+      });
+      // A task the run started (e.g. a command moved to the background at
+      // its timeout) is stopped when the run ends; a settled one is not.
+      runner.last.emit({
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-1',
+        description: 'npm test',
+      } as never);
+      runner.last.emit({
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-2',
+        description: 'lint',
+      } as never);
+      runner.last.emit({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'task-2',
+      } as never);
       // The dialog does not offer to allow it for the session.
       const decision = runner.last.options.canUseTool(
         'Bash',
@@ -1287,6 +1310,7 @@ describe('SessionsService', () => {
       runner.last.emit(resultMessage(1, 0));
       await flush();
       expect(call('Bash', { command: 'git push' })).toBeNull();
+      expect(runner.last.stoppedTasks).toEqual(['task-1']);
     });
 
     it('holds bypassPermissions for an Autofix turn the same way', async () => {

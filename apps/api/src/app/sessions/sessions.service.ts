@@ -233,17 +233,30 @@ export const AUTOFIX_ASK_REASON =
   'Autofix run on GitHub content: every action but reading is confirmed, whatever allow rules say';
 
 /**
- * Whether a call starts work that goes on after its turn: a subagent
- * (backgrounded unless `run_in_background: false`) or a backgrounded
- * command.
+ * Whether a call asks to run in the background (Claude Code also accepts
+ * the string).
  */
 function runsInBackground(call: AgentToolCall): boolean {
   const background = call.input['run_in_background'];
-  if (call.toolName === 'Agent' || call.toolName === 'Task') {
-    return background !== false;
-  }
-  return background === true;
+  return background === true || background === 'true';
 }
+
+/**
+ * Tools whose work goes on after their call (subagents, which may run in
+ * the background whatever the call says; monitors, schedules, workflows,
+ * teammates): refused during an Autofix run.
+ */
+const LATER_WORK_TOOLS: ReadonlySet<string> = new Set([
+  'Agent',
+  'Task',
+  'Monitor',
+  'CronCreate',
+  'ScheduleWakeup',
+  'Workflow',
+  'RemoteTrigger',
+  'TeamCreate',
+  'SendMessage',
+]);
 
 /** Error text, completed with Claude Code's last stderr line if any. */
 function errorMessage(error: unknown, run?: AgentRun): string {
@@ -344,6 +357,12 @@ interface LiveSession {
    * `auto` or `bypassPermissions` runs in `default` meanwhile.
    */
   autoHold: { messageId: string; delivered: boolean } | null;
+  /**
+   * Tasks (subagents, background commands) started during an Autofix run
+   * and not settled yet: stopped when the run ends, so nothing it started
+   * goes on unheld.
+   */
+  heldTasks: Set<string>;
   /**
    * The mode the current process last reported (`init`/`status`), or that
    * it accepted; `null` without process.
@@ -1375,6 +1394,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       additionGrants: new Map(),
       reopen: null,
       autoHold: null,
+      heldTasks: new Set(),
       reportedMode: null,
       modeRequests: 0,
       publishedOverride: 'null',
@@ -1696,6 +1716,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.consuming = null;
     // A held turn is over with its process.
     live.autoHold = null;
+    live.heldTasks.clear();
     live.reportedMode = null;
     this.clearIdleTimer(live);
     live.log.clearDrafts();
@@ -1747,6 +1768,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         this.syncPermissionMode(live, message.permissionMode);
       }
       return;
+    }
+    if (message.type === 'system' && message.subtype === 'task_started') {
+      if (live.autoHold?.delivered) {
+        live.heldTasks.add(message.task_id);
+      }
+    }
+    if (message.type === 'system' && message.subtype === 'task_notification') {
+      live.heldTasks.delete(message.task_id);
     }
     if (
       message.type === 'system' &&
@@ -2091,6 +2120,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private releaseAutoHold(live: LiveSession): void {
     live.autoHold = null;
     const run = live.run;
+    // What the run started and is still going (a command moved to the
+    // background at its timeout, a subagent) stops with it.
+    const tasks = [...live.heldTasks];
+    live.heldTasks.clear();
+    for (const taskId of tasks) {
+      void run?.stopTask(taskId).catch((error: unknown) =>
+        this.logger.warn(
+          `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
+        ),
+      );
+    }
     const mode = this.requireRecord(live.id).permissionMode;
     if (run && heldForUntrusted(mode)) {
       void this.requestMode(live, run, mode).catch((error: unknown) =>
@@ -2227,11 +2267,24 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (!live.autoHold?.delivered || READ_ONLY_TOOLS.has(call.toolName)) {
       return null;
     }
+    if (LATER_WORK_TOOLS.has(call.toolName)) {
+      return {
+        decision: 'deny',
+        reason: `${call.toolName} is not available during an Autofix run: what it starts would go on after the run.`,
+      };
+    }
+    if (this.requireRecord(live.id).permissionMode === 'dontAsk') {
+      // The session's mode asks nobody: refused, as Claude Code would.
+      return {
+        decision: 'deny',
+        reason: 'Not pre-approved, and this session does not ask (dontAsk).',
+      };
+    }
     if (runsInBackground(call)) {
       return {
         decision: 'deny',
         reason:
-          'Not during an Autofix run: background work would go on after the run. Run it in the foreground (run_in_background: false).',
+          'Not during an Autofix run: background work would go on after the run. Run it in the foreground.',
       };
     }
     return { decision: 'ask', reason: AUTOFIX_ASK_REASON };
@@ -2851,6 +2904,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private failRun(live: LiveSession, error: unknown, run?: AgentRun): void {
     live.run = null;
     live.autoHold = null;
+    live.heldTasks.clear();
     live.reportedMode = null;
     this.approver.cancelSession(live.id, 'process_exit');
     this.withdrawQueue(live, QUEUE_WITHDRAWN.failed);

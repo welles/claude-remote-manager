@@ -138,7 +138,8 @@ pkgs.testers.runNixOSTest {
           install -d -o 991 -g 991 -m 0700 $old/git/ssh
           # An old symlink to a file of root's: the take-over must change
           # the link, never what it points to.
-          ln -s /etc/hostname $old/db/link
+          install -m 0600 /dev/null /root/canary
+          ln -s /root/canary $old/db/link
           chown -h 991:991 $old/db/link
         '';
       };
@@ -337,11 +338,11 @@ pkgs.testers.runNixOSTest {
           machine.succeed(f"test \"$(stat -c %U {DATA}/workspace/sessions/old/acme/app/file)\" = {USER}")
           machine.succeed(f"{AS_USER} 'cat {DATA}/db/old-file'")
           machine.succeed(f"test \"$(stat -c %U {DATA}/db/link)\" = {USER}")
-          machine.succeed("test \"$(stat -L -c %U:%G /etc/hostname)\" = root:root")
+          machine.succeed("test \"$(stat -c %U:%G /root/canary)\" = root:root")
           # A second start leaves the files alone (the stamp says so).
           machine.succeed("systemctl restart claude-remote-manager")
           machine.wait_until_succeeds(f"curl -sf {API}/api/health")
-          machine.succeed("test \"$(stat -L -c %U:%G /etc/hostname)\" = root:root")
+          machine.succeed("test \"$(stat -c %U:%G /root/canary)\" = root:root")
           # The old login is not taken over: the user's own ~/.claude counts.
           machine.fail(f"test -e {HOME}/.claude/.credentials.json")
           print(machine.succeed("journalctl -u claude-remote-manager.service --no-pager | grep -i -e 'giving' -e 'copied'"))

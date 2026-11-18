@@ -332,9 +332,13 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   (`Read`, `Glob`, `Grep`, `LSP`, `ToolSearch`, to-dos and task lists) goes to the user, in any
   mode and whatever allow rules say (the user's own, the project's, "Allow for this
   session"): a PreToolUse hook answers `ask`, which Claude Code does not leave to allow rules,
-  and the dialog does not offer to allow it for the session. Background work (a subagent not
-  run with `run_in_background: false`, a backgrounded command) is refused: it would go on
-  unheld after the run and start a turn of its own with what it found. Injected text in a CI
+  and the dialog does not offer to allow it for the session (in `dontAsk` it is refused).
+  Work that would go on unheld after the run and start a turn of its own is refused:
+  subagents, backgrounded commands, monitors, schedules, workflows and teammates; a task the
+  run started anyway (a command moved to the background at its timeout) is stopped when the
+  run ends. Still unasked: the app's own tools that never ask (showing a file, previews).
+  Not covered: a `PermissionRequest` hook in the user's or the project's Claude Code settings
+  that approves requests itself. Injected text in a CI
   log or comment cannot push elsewhere with the user's credentials. The app's narrow
   `git add`/`commit`/`push` allowance for Autofix stays (see
   [git during autofix](#git-during-autofix)); what Claude may read unasked could still end up
