@@ -765,6 +765,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         this.startRun(live, this.requireRecord(sessionId), { id, text });
       }
     } finally {
+      // Not sent, not queued (a duplicate, or an error): no turn to hold.
+      if (!live.queue.some((queued) => queued.id === id)) {
+        this.dropHeld(live, id);
+      }
       release();
     }
   }
@@ -836,6 +840,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
     }
     live.queue.splice(index, 1);
+    this.dropHeld(live, messageId);
     this.append(live, {
       type: 'message.dequeued',
       id: messageId,
@@ -1892,6 +1897,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   /** Drops the queued messages; the user sees them as not sent. */
   private withdrawQueue(live: LiveSession, reason: string): void {
     for (const message of live.queue.splice(0)) {
+      this.dropHeld(live, message.id);
       this.append(live, {
         type: 'message.dequeued',
         id: message.id,
@@ -2026,6 +2032,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private markDelivered(live: LiveSession, id: string): void {
     if (live.autoHold?.messageId === id) {
       live.autoHold.delivered = true;
+    }
+  }
+
+  /**
+   * The held message `id` will never reach Claude Code (withdrawn,
+   * removed from the queue, not sent): its hold ends, the process returns
+   * to `auto`.
+   */
+  private dropHeld(live: LiveSession, id: string): void {
+    if (live.autoHold?.messageId === id && !live.autoHold.delivered) {
+      this.releaseAutoHold(live);
     }
   }
 
@@ -2578,6 +2595,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           reason: null,
         });
         this.appendUserMessage(live, first);
+        this.markDelivered(live, first.id);
         this.setStatus(live, 'running');
         this.startRun(live, this.requireRecord(live.id), first);
       }

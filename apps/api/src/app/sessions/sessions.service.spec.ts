@@ -1214,6 +1214,47 @@ describe('SessionsService', () => {
       expect(service.get(session.id).permissionModeOverride).toBeNull();
     });
 
+    it('ends the hold when the queued Autofix message never reaches Claude', async () => {
+      const session = await startSession({ permissionMode: 'auto' });
+      const hold = (id: string) =>
+        service.sendMessage(session.id, {
+          id,
+          text: 'Fix the failing checks',
+          origin: 'app',
+          holdAutoMode: true,
+        });
+      // Queued behind the running turn, then removed by the user.
+      await hold(MSG_2);
+      expect(lastEvent('message.queued')).toMatchObject({ id: MSG_2 });
+      expect(service.get(session.id).permissionModeOverride).toMatchObject({
+        reason: 'autofix',
+      });
+      await service.unqueue(session.id, MSG_2);
+      expect(runner.last.switches).toEqual([
+        { permissionMode: 'default' },
+        { permissionMode: 'auto' },
+      ]);
+      expect(service.get(session.id).permissionModeOverride).toBeNull();
+
+      // Queued again, then withdrawn by Stop.
+      await hold(MSG_3);
+      await service.interrupt(session.id);
+      expect(lastEvent('message.dequeued')).toMatchObject({
+        id: MSG_3,
+        outcome: 'withdrawn',
+      });
+      expect(runner.last.switches.at(-1)).toEqual({ permissionMode: 'auto' });
+      expect(service.get(session.id).permissionModeOverride).toBeNull();
+
+      // The chosen mode applies again at once.
+      await service.update(session.id, { permissionMode: 'acceptEdits' });
+      await service.update(session.id, { permissionMode: 'auto' });
+      expect(runner.last.switches.slice(-2)).toEqual([
+        { permissionMode: 'acceptEdits' },
+        { permissionMode: 'auto' },
+      ]);
+    });
+
     it('starts the process of an Autofix run in default', async () => {
       const session = await startSession({ permissionMode: 'auto' });
       runner.last.emit(resultMessage(1, 0));
