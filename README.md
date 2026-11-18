@@ -292,12 +292,29 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   away (`setModel`, `setPermissionMode`), otherwise the next process starts with it. The models
   are the list Claude Code reports for the account (`GET /api/models`, read through a
   short-lived Claude Code process without prompt, cached for an hour; the aliases default,
-  opus, sonnet and haiku if that fails). Modes offered: `default` (ask), `acceptEdits`, `plan`
-  and `dontAsk`; `bypassPermissions` and `auto` are never offered or accepted, and every
-  session's flag settings disable both (`disableBypassPermissionsMode`, `disableAutoMode`, and
-  `useAutoModeDuringPlan: false`), so approvals come from the user and not from a classifier.
-  Mode changes Claude Code makes itself (entering plan mode, approving a plan) are taken over
-  from its `status`/`init` messages. Changes are logged as `settings.changed` events.
+  opus, sonnet and haiku if that fails). Modes offered: `default` (ask), `acceptEdits`, `auto`,
+  `plan` and `dontAsk`; `bypassPermissions` is never offered or accepted, and every session's
+  flag settings disable it (`disableBypassPermissionsMode`). Mode changes Claude Code makes
+  itself (entering plan mode, approving a plan) are taken over from its `status`/`init`
+  messages. Changes are logged as `settings.changed` events.
+- Auto mode (`auto`): Claude Code's classifier approves or blocks each tool use and asks the
+  user through `canUseTool` only when it cannot decide; plan mode stays without it
+  (`useAutoModeDuringPlan: false`). What the classifier approves never reaches `canUseTool`, so
+  the app's limits always go to the user, whatever the mode: every `git push` (in any form the
+  push analysis recognizes, also `git -C dir push`; its approval is what hands out the write
+  token), `create_pull_request` and `add_repository`. A PreToolUse hook of every process
+  (`apps/api/src/app/sessions/approval-limits.ts`) answers `ask` for them, which Claude Code
+  does not leave to the classifier (checked with the bundled Claude Code; the ask rule
+  `Bash(git push:*)` would reach the user as well, but covers plain `git push` only, and the
+  MCP policy `always_ask` is left to the classifier in auto mode). An Autofix run (untrusted
+  GitHub content) runs in `default`: the process switches before the run's message and back to
+  `auto` when its turn ends. Where auto mode is not available (plan, model, settings), Claude
+  Code starts in or falls back to `default` and reports it (`status`/`init`); the chosen mode
+  stays `auto`, and the session's `permissionModeOverride` (`{ mode, reason }`, reason
+  `auto_unavailable` or `autofix`) says which mode is in effect while the process runs. The
+  view shows it in the strip ("Ask (auto unavailable)") and under the mode control. Switching a
+  running process to `auto` fails with Claude Code's reason when it cannot use it; after a model
+  change the app asks for `auto` again (Claude Code does not return to it by itself).
 - Queued messages: a message sent while a turn runs (also while it waits for an approval) is
   queued by the app (`message.queued`), not handed to Claude Code, and goes to Claude when the
   turn ends (all queued messages at once; Claude Code may take them as one turn). Until then it
@@ -1371,8 +1388,10 @@ Approval: every tool use that needs approval goes through `canUseTool` and the u
 (see [Approval requests](#approval-requests)); "allow for this session" is never offered for
 these two. Approvals are what unlock them, not Claude Code's own decision: `git push` has an `ask` permission rule in every session (it wins
 over allow rules, e.g. from a repository's `.claude/settings.json`), the tool has the MCP
-permission policy `always_ask`, and if anything still skipped `canUseTool` (a permission mode,
-an allow rule) no grant is recorded, so the helper stays read-only and the tool refuses.
+permission policy `always_ask`, a PreToolUse hook answers `ask` for both in every permission
+mode (so `auto` mode's classifier never decides them, see the session lifecycle above), and if
+anything still skipped `canUseTool` (a permission mode, an allow rule) no grant is recorded, so
+the helper stays read-only and the tool refuses.
 
 The approval request carries, for every `git push` in a Bash command, what it would update
 (`gitPushes`: remote, destinations, force, deletes, all branches or tags, and whether it pushes
@@ -1543,8 +1562,10 @@ it changes nothing); CI checks the result.
 report (`printf … | base64 -d`, failing with exit status 1 when a step failed), so Claude gets
 the real output of every step and a failure never looks like success. The history shows the
 tool call as "done by the app" or "failed" with what the app did ("Staged; Committed; pushed
-… at …"), from a stored `tool.by_app` event that survives reloads and restarts. The
-permission mode is never changed by the automation, and bypass modes stay unavailable.
+… at …"), from a stored `tool.by_app` event that survives reloads and restarts. The chosen
+permission mode is never changed by the automation, and bypass modes stay unavailable; a
+session in `auto` runs an Autofix run in `default` (no classifier approvals while Claude works
+on GitHub content) and returns to `auto` when the run's turn ends.
 
 ### Merge and close
 
