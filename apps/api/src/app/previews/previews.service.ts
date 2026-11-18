@@ -41,7 +41,12 @@ import {
   type Closable,
   type PreviewUpstream,
 } from './preview-proxy';
-import { readSocketTables, type SocketTables } from './socket-table';
+import {
+  listenersOn,
+  readSocketTables,
+  type SocketTables,
+} from './socket-table';
+import { apiChildrenHolding } from '../auth/session-processes';
 import {
   checkListener,
   portPolicy,
@@ -331,8 +336,10 @@ export class PreviewsService
     for (const row of rows) {
       this.stopRow(row, 'session_end', null);
     }
-    if (ports.length > 0 && this.launcher.separated) {
-      await this.stopListeners(ports);
+    if (ports.length > 0) {
+      await (this.launcher.separated
+        ? this.stopListeners(ports)
+        : this.stopOwnListeners(ports));
     }
   }
 
@@ -508,6 +515,52 @@ export class PreviewsService
       );
     }
     return this.config.previews;
+  }
+
+  /**
+   * Stops the processes listening on the ports when sessions run as the
+   * API's own user: only those the API started (sessions' dev servers),
+   * never other programs of the user that listen there.
+   */
+  private async stopOwnListeners(ports: number[]): Promise<void> {
+    const uid = process.getuid?.() ?? -1;
+    const inodes = ports.flatMap((port) =>
+      listenersOn(port, this.tables)
+        .filter((entry) => entry.uid === uid)
+        .map((entry) => entry.inode),
+    );
+    const pids = apiChildrenHolding(inodes);
+    const signal = (pid: number, name: NodeJS.Signals) => {
+      try {
+        process.kill(pid, name);
+        return true;
+      } catch {
+        return false; // gone
+      }
+    };
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const running = pids.filter((pid) => signal(pid, 'SIGTERM'));
+    const deadline = Date.now() + STOP_GRACE_MS;
+    while (running.some(alive) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (running.length > 0) {
+      for (const pid of running) {
+        if (alive(pid)) {
+          signal(pid, 'SIGKILL');
+        }
+      }
+    }
+    this.logger.log(
+      `Stopped dev servers on ports ${ports.join(', ')}: ${JSON.stringify(pids)}`,
+    );
   }
 
   /** Stops the session user's processes listening on the ports. */

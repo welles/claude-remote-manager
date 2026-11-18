@@ -88,10 +88,24 @@ export function heldByApiChild(
   proc: ProcReader = PROC,
   self: number = process.pid,
 ): boolean {
-  if (!inode) {
-    return false;
+  return inode > 0 && apiChildrenHolding([inode], proc, self, true).length > 0;
+}
+
+/**
+ * The processes the API started (see {@link heldByApiChild}) that hold one
+ * of the sockets `inodes`; with `first`, it stops at the first one.
+ */
+export function apiChildrenHolding(
+  inodes: readonly number[],
+  proc: ProcReader = PROC,
+  self: number = process.pid,
+  first = false,
+): number[] {
+  const targets = new Set(inodes.map((inode) => `socket:[${inode}]`));
+  const found: number[] = [];
+  if (targets.size === 0) {
+    return found;
   }
-  const target = `socket:[${inode}]`;
   const ownCgroup = proc.cgroup(self);
   const serviceCgroup = ownCgroup?.endsWith('.service') ? ownCgroup : null;
   const parents = new Map<number, number | null>();
@@ -130,9 +144,12 @@ export function heldByApiChild(
     if (!descendsFromApi(pid) && !inServiceCgroup(pid)) {
       continue;
     }
-    if (proc.descriptors(pid).includes(target)) {
-      return true;
+    if (proc.descriptors(pid).some((target) => targets.has(target))) {
+      found.push(pid);
+      if (first) {
+        break;
+      }
     }
   }
-  return false;
+  return found;
 }
