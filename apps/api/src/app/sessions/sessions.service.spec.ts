@@ -1211,6 +1211,52 @@ describe('SessionsService', () => {
       expect(service.get(session.id).permissionModeOverride).toBeNull();
     });
 
+    it('sends every call but reading of an Autofix turn to the user', async () => {
+      const session = await startSession({ permissionMode: 'auto' });
+      const gate = runner.last.options.gate;
+      if (!gate) {
+        throw new Error('no gate');
+      }
+      const call = (toolName: string, input: Record<string, unknown>) =>
+        gate(
+          {
+            toolName,
+            input,
+            toolUseId: 'tool-9',
+            agentId: null,
+            mcpServer: null,
+          },
+          new AbortController().signal,
+        );
+      // Outside an Autofix run Claude Code decides (rules, mode).
+      await expect(call('Bash', { command: 'git push' })).resolves.toBeNull();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+
+      await service.sendMessage(session.id, {
+        id: MSG_2,
+        text: 'Fix the failing checks',
+        origin: 'app',
+        holdAutoMode: true,
+      });
+      await expect(call('Read', { file_path: 'README.md' })).resolves.toBeNull();
+      // Whatever allow rules say: the user is asked, without "for the session".
+      const decision = call('Bash', { command: 'git push other main' });
+      await waitFor(() => service.pendingPermissions(session.id).length > 0);
+      const request = service.pendingPermissions(session.id)[0];
+      expect(request).toMatchObject({ toolName: 'Bash', sessionAllow: null });
+      await service.respondToPermission(session.id, request.requestId, {
+        decision: 'deny',
+        message: 'no',
+      });
+      await expect(decision).resolves.toMatchObject({ behavior: 'deny' });
+
+      // After the run, Claude Code decides again.
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      await expect(call('Bash', { command: 'git push' })).resolves.toBeNull();
+    });
+
     it('holds bypassPermissions for an Autofix turn the same way', async () => {
       const session = await startSession({
         permissionMode: 'bypassPermissions',

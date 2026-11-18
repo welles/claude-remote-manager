@@ -13,6 +13,7 @@ import {
 import { Subject } from 'rxjs';
 import type {
   CanUseTool,
+  PermissionResult,
   PermissionMode,
   SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -47,6 +48,7 @@ import {
 import {
   AgentRunner,
   type AgentRun,
+  type AgentToolCall,
   type AgentUserMessage,
 } from '../agent/agent-runner';
 import { AttachmentStore } from '../attachments/attachment.store';
@@ -73,6 +75,7 @@ import {
   APP_MCP_SERVER,
   APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
+  READ_ONLY_TOOLS,
 } from './app-tools';
 import type { AgentTool } from '../agent/agent-runner';
 import { zeroTurnMessages } from '../agent/sdk-agent-runner';
@@ -1601,6 +1604,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           permissionMode: this.processMode(live, record.permissionMode),
           ...(await this.resumeTarget(record)),
           canUseTool: this.canUseTool(live),
+          gate: (call, signal) => this.autofixGate(live, call, signal),
           allowedTools: [...allowed.rules, ...(extras.allowedTools ?? [])],
           env: { ...SESSION_ENV, ...extras.env },
           tools: this.additions
@@ -2189,6 +2193,34 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * meanwhile. Calls the permission mode or an allow rule lets through
    * never get here.
    */
+  /**
+   * During an Autofix run (its turn, `autoHold` delivered) every tool call
+   * but reading goes to the user through the approval flow (`canUseTool`,
+   * with Autofix's own git add, commit and push), whatever allow rules of
+   * the user or "Allow for this session" say: the run works on untrusted
+   * GitHub content, which could make Claude push elsewhere with the user's
+   * credentials. Outside a run Claude Code decides (`null`).
+   */
+  private async autofixGate(
+    live: LiveSession,
+    call: AgentToolCall,
+    signal: AbortSignal,
+  ): Promise<PermissionResult | null> {
+    if (!live.autoHold?.delivered || READ_ONLY_TOOLS.has(call.toolName)) {
+      return null;
+    }
+    return this.canUseTool(live)(call.toolName, call.input, {
+      signal,
+      toolUseID: call.toolUseId,
+      // Not a control request of Claude Code's: nothing to echo.
+      requestId: `gate-${call.toolUseId}`,
+      ...(call.agentId ? { agentID: call.agentId } : {}),
+      ...(call.mcpServer ? { mcpServer: call.mcpServer } : {}),
+      // Allowing for the session would not change the next call of the run.
+      suppressAlwaysAllowRule: true,
+    });
+  }
+
   private canUseTool(live: LiveSession): CanUseTool {
     return async (toolName, input, options) => {
       if (

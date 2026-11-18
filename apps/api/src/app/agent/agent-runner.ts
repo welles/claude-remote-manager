@@ -1,6 +1,7 @@
 import type {
   CanUseTool,
   ModelInfo,
+  PermissionResult,
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
   SDKMessage,
@@ -37,6 +38,17 @@ export interface AgentTool {
   ) => Promise<AgentToolResult>;
 }
 
+/** A tool call as Claude Code announces it before deciding about it. */
+export interface AgentToolCall {
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId: string;
+  /** Set when a subagent makes the call. */
+  agentId: string | null;
+  /** For MCP tools: the server and where it is defined. */
+  mcpServer: { name: string; source: string } | null;
+}
+
 /** What a Claude Code process is started with. */
 export interface AgentStartOptions {
   cwd: string;
@@ -50,6 +62,16 @@ export interface AgentStartOptions {
   sessionId: string | null;
   /** Decides tool uses that need the user's approval. */
   canUseTool: CanUseTool;
+  /**
+   * Decides a tool call before Claude Code's own permission check (rules,
+   * mode), or `null` to leave it to that check. Claude Code learns it
+   * through a PreToolUse hook; used to make every call of an Autofix run
+   * reach the user, whatever allow rules say.
+   */
+  gate?: (
+    call: AgentToolCall,
+    signal: AbortSignal,
+  ) => Promise<PermissionResult | null>;
   /**
    * Permission rules allowed for this process (in memory, like rules the
    * user allowed for the session; never written to settings files).

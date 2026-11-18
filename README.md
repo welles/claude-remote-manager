@@ -328,9 +328,13 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   permission rules (the user's, the project's and those allowed for the session).
 - Autofix hold: an Autofix run (untrusted GitHub content) of a session in `auto` or
   `bypassPermissions` runs in `default`: the process switches before the run's message and back
-  to the chosen mode when its turn ends, so nothing runs without the user while Claude works
-  on that content (the app's narrow `git add`/`commit`/`push` allowance for Autofix stays, see
-  [git during autofix](#git-during-autofix)). Where auto mode is not available (plan, model,
+  to the chosen mode when its turn ends. During that turn every tool call except reading
+  (`Read`, `Glob`, `Grep`, `LS`, `NotebookRead`, to-dos and subagents) goes to the user, in
+  any mode and whatever allow rules say (the user's own, the project's, "Allow for this
+  session"): a PreToolUse hook sends it through the app's approval flow, without the offer to
+  allow it for the session. Injected text in a CI log or comment cannot push elsewhere with
+  the user's credentials. The app's narrow `git add`/`commit`/`push` allowance for Autofix
+  stays (see [git during autofix](#git-during-autofix)). Where auto mode is not available (plan, model,
   settings), Claude Code starts in or falls back to `default` and reports it (`status`/`init`);
   the chosen mode stays, and the session's `permissionModeOverride` (`{ mode, reason }`, reason
   `auto_unavailable`, `bypass_unavailable` or `autofix`) says which mode is in effect while the
@@ -1580,8 +1584,9 @@ the real output of every step and a failure never looks like success. The histor
 tool call as "done by the app" or "failed" with what the app did ("Staged; Committed; pushed
 … at …"), from a stored `tool.by_app` event that survives reloads and restarts. The chosen
 permission mode is never changed by the automation; a session in `auto` or
-`bypassPermissions` runs an Autofix run in `default` (nothing runs without the owner while
-Claude works on GitHub content, apart from the git commands above) and returns to its mode
+`bypassPermissions` runs an Autofix run in `default`, and in every mode each call of the run
+but reading asks the owner, also where allow rules would let it through (nothing runs without
+the owner while Claude works on GitHub content, apart from the git commands above) and returns to its mode
 when the run's turn ends; the view says so ("Ask (Autofix run)").
 
 ### Merge and close

@@ -254,6 +254,72 @@ export function zeroTurnMessages(message: AgentUserMessage): number {
   return (message.note ? 1 : 0) + (message.context ? 1 : 0);
 }
 
+/**
+ * How long Claude Code waits for the gate (seconds): it may wait for the
+ * user's answer, as long as an approval request may wait.
+ */
+const GATE_TIMEOUT_SECONDS = 365 * 24 * 60 * 60;
+
+/**
+ * The PreToolUse hook through which `gate` decides tool calls before
+ * Claude Code's own permission check: `allow` and `deny` are final (allow
+ * rules and modes do not matter), `null` leaves the call to Claude Code.
+ * A failure of the hook blocks the call (`onFailure: 'block'`).
+ */
+export function gateHooks(
+  gate: NonNullable<AgentStartOptions['gate']>,
+): NonNullable<Sdk.Options['hooks']> {
+  return {
+    PreToolUse: [
+      {
+        onFailure: 'block',
+        timeout: GATE_TIMEOUT_SECONDS,
+        hooks: [
+          async (input, _toolUseId, { signal }) => {
+            if (input.hook_event_name !== 'PreToolUse') {
+              return {};
+            }
+            const toolInput =
+              typeof input.tool_input === 'object' && input.tool_input !== null
+                ? (input.tool_input as Record<string, unknown>)
+                : {};
+            const decision = await gate(
+              {
+                toolName: input.tool_name,
+                input: toolInput,
+                toolUseId: input.tool_use_id,
+                agentId: input.agent_id ?? null,
+                mcpServer: input.mcp_server ?? null,
+              },
+              signal,
+            );
+            if (decision === null) {
+              return {};
+            }
+            return decision.behavior === 'allow'
+              ? {
+                  hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'allow',
+                    ...(decision.updatedInput
+                      ? { updatedInput: decision.updatedInput }
+                      : {}),
+                  },
+                }
+              : {
+                  hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'deny',
+                    permissionDecisionReason: decision.message,
+                  },
+                };
+          },
+        ],
+      },
+    ],
+  };
+}
+
 /** Builds the SDK options for a session. Exported for tests. */
 export function buildQueryOptions(
   options: AgentStartOptions,
@@ -293,6 +359,7 @@ export function buildQueryOptions(
     // choice. As `--allow-dangerously-skip-permissions`.
     allowDangerouslySkipPermissions: true,
     canUseTool: options.canUseTool,
+    ...(options.gate ? { hooks: gateHooks(options.gate) } : {}),
     ...(options.resume
       ? { resume: options.resume }
       : options.sessionId
