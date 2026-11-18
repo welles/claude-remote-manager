@@ -215,7 +215,9 @@ pkgs.testers.runNixOSTest {
       with subtest("the data directory is the user's"):
           machine.succeed(f"test \"$(stat -c %U:%a {DATA})\" = {USER}:700")
           machine.succeed(f"test \"$(stat -c %U {DATA}/db/claude-remote-manager.sqlite)\" = {USER}")
-          machine.succeed(f"test \"$(cat {DATA}/.owner)\" = {USER}")
+          # The stamp is root's (a user's stamp could be a symlink root writes through).
+          machine.succeed(f"test \"$(cat /var/lib/claude-remote-manager-owner/*)\" = {USER}")
+          machine.succeed("test \"$(stat -c %U:%a /var/lib/claude-remote-manager-owner)\" = root:700")
           machine.succeed(f"test -z \"$(find {DATA} ! -user {USER} -print -quit)\"")
 
       with subtest("secrets arrive as credentials readable by the user"):
@@ -263,6 +265,9 @@ pkgs.testers.runNixOSTest {
           for forbidden in ("CLAUDE_CONFIG_DIR", "GIT_CONFIG_GLOBAL", "CRM_SECRET_"):
               assert not any(n.startswith(forbidden) for n in names), f"{forbidden} reached the session"
           assert "ntfy-token-SECRET" not in env, "a secret value reached the session"
+          # Nor the API's own configuration (npm, dev servers, a dev API).
+          for forbidden in ("NODE_ENV", "PORT", "DB_DIR", "WORKSPACE_DIR", "CREDENTIALS_DIRECTORY", "GITHUB_APP_ID"):
+              assert forbidden not in names, f"{forbidden} reached the session"
           assert f"HOME={HOME}" in env and f"USER={USER}" in env, "HOME or USER"
           path = next(line for line in env.splitlines() if line.startswith("PATH="))
           assert path.startswith("PATH=/run/wrappers/bin:"), path

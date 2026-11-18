@@ -71,6 +71,27 @@ describe('ProcessLauncher', () => {
     });
   });
 
+  it("keeps the API's own configuration from sessions in single-user mode", () => {
+    const launcher = new ProcessLauncher({ mode: 'single-user' });
+    const base = {
+      HOME: '/home/u',
+      NODE_ENV: 'production',
+      PORT: '8080',
+      DB_DIR: '/var/lib/crm/db',
+      WORKSPACE_DIR: '/var/lib/crm/workspace',
+      GITHUB_APP_ID: '1',
+      GITHUB_APP_PRIVATE_KEY_FILE: '/run/credentials/x/github-app-key',
+      CREDENTIALS_DIRECTORY: '/run/credentials/x',
+      CLAUDE_CODE_OAUTH_TOKEN: 'token',
+    };
+    expect(
+      launcher.environment('session', {}, {
+        base,
+        keep: ['CLAUDE_CODE_OAUTH_TOKEN'],
+      }),
+    ).toEqual({ HOME: '/home/u', CLAUDE_CODE_OAUTH_TOKEN: 'token' });
+  });
+
   it('starts session processes as the session user without capabilities', () => {
     const launcher = new ProcessLauncher(separated);
     expect(launcher.command('session', 'git', ['status'])).toEqual({

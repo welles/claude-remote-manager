@@ -199,7 +199,8 @@ another host, Docker's port publishing) have none there and are never refused.
   server's proxy in development) are not refused.
 
 This is a guard against a session using the API by accident or on a whim, not a boundary: with
-the user's rights a session can leave the cgroup (`systemd-run --user`), or read the database
+the user's rights a session can leave the cgroup (`systemd-run --user`), call the API as
+another user (`sudo curl …`), or read the database
 and the app's secrets. Still open with `AUTH_MODE=none`: every other process that can reach the
 port.
 
@@ -1283,8 +1284,9 @@ hold and removed on the Workspace cleanup page (see [Managing sessions](#managin
 
 Repositories registered from GitHub are cloned and fetched with installation tokens (see
 [GitHub](#github)). Repositories registered by clone URL use whatever git credentials the
-API's environment has (on the NixOS service the user's SSH keys and credential helpers, with
-the API's own `API_GIT_CONFIG_GLOBAL`), so public HTTPS URLs and local paths work out of the
+API's environment has (on the NixOS service the user's SSH keys and agent and the system's
+git configuration; the API's own `API_GIT_CONFIG_GLOBAL` replaces `~/.gitconfig`, so the
+user's credential helpers such as `gh auth setup-git` do not apply to mirrors), so public HTTPS URLs and local paths work out of the
 box. Clone URLs are validated (https, ssh, scp-like `git@host:owner/repo` or an
 absolute local path; no credentials in the URL, no other transports); git always runs with
 argument arrays and `--` before user values, without prompts and without repository hooks.
@@ -1960,8 +1962,9 @@ configuration directory of their own (`<dataDir>/claude`). On the first start af
 upgrade:
 
 - **Ownership**: a start step of the service (as root) gives the whole data directory to
-  `user` (`chown -R`, once: `<dataDir>/.owner` records to whom; a change of `user` repeats
-  it). The old users are no longer defined; NixOS removes them.
+  `user` (once: a stamp in `/var/lib/claude-remote-manager-owner`, writable by root only,
+  records to whom; a change of `user` repeats it). Only files of other owners change, never
+  through a symlink; the walk may take a while for many clones (no start timeout). The old users are no longer defined; NixOS removes them.
 - **Transcripts**: Claude Code resumes a session only from its transcript in the current
   configuration directory, which is now the user's `~/.claude`. The API copies every entry of
   `<dataDir>/claude/projects/*/` (transcripts, subagent transcripts, memory of scratch
@@ -1972,8 +1975,13 @@ upgrade:
   (`COPIED-TO-CLAUDE-CONFIG.txt`) keeps it from running again. Remove `<dataDir>/claude` (and
   `<dataDir>/home` of a created session user) once the old sessions resume fine.
 - **The login**: the old directory's login is not taken over; sessions use the user's own.
-- **Session clones**: the app's old credential helper is removed from a clone when its
-  session's next Claude Code process starts, so the user's credentials apply.
+- **Session clones**: the app's old credential helper is removed from all session clones when
+  the API starts (and again before a session's Claude Code starts), so the user's credentials
+  apply, also to a push from a terminal in an old clone.
+- **The API's SSH identity**: the API's home used to be `<dataDir>/git`; a deploy key or
+  `known_hosts` in `<dataDir>/git/ssh` (for repositories registered by an SSH clone URL) is no
+  longer used, mirror fetches now use the user's `~/.ssh`. Move the key there, or set
+  `core.sshCommand` in `<dataDir>/git/gitconfig` (the API's `API_GIT_CONFIG_GLOBAL`).
 - **Configuration**: replace `sessionUser = { name = "alice"; create = false; }` by
   `user = "alice";`, move `sessionUser.packages` to `packages`, and drop the removed options.
 
@@ -2020,8 +2028,11 @@ Sessions get the service's environment (that of `user`; systemd sets `HOME`, `US
   findutils, grep, sed, awk, tar, gzip, xz, zstd, which, ps, less, git, ssh, curl, ripgrep,
   Node.js, the machine's Nix, and `packages`. The API's own `PATH` holds store paths only.
 - `LANG` and `LOCALE_ARCHIVE` from `i18n`, `TZ` from `time.timeZone`, `SSL_CERT_FILE` and
-  `NIX_SSL_CERT_FILE` (the system's CA bundle), `DISABLE_AUTOUPDATER`, the app's own variables,
-  and whatever `environment` adds. No `CLAUDE_CONFIG_DIR` and no `GIT_CONFIG_GLOBAL`: Claude
+  `NIX_SSL_CERT_FILE` (the system's CA bundle), `DISABLE_AUTOUPDATER`, and whatever
+  `environment` adds. Not the app's own configuration (`NODE_ENV`, `PORT`, the data
+  directories, `GITHUB_APP_ID`, `*_FILE`, `CREDENTIALS_DIRECTORY`, …): a session's `npm ci`
+  would skip devDependencies, its dev servers would take the API's port, and a development
+  API started in a session would open the service's database. No `CLAUDE_CONFIG_DIR` and no `GIT_CONFIG_GLOBAL`: Claude
   Code and git use `~/.claude` and `~/.gitconfig`.
 - A systemd service has no login session: variables a login shell would set (an SSH agent's
   `SSH_AUTH_SOCK`, `XDG_RUNTIME_DIR`) are missing unless the user's configuration provides

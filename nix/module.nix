@@ -133,16 +133,24 @@ let
 
   # Earlier versions of this module ran the API and the sessions as two
   # other users. Their files in the data directory are given to the user
-  # once (a stamp file says to whom the directory was given last), so the
-  # API can use them; nothing else changes.
+  # once; a stamp says to whom the directory was given last. The stamp
+  # lives in a directory only root can write (this runs as root, and the
+  # data directory belongs to the user: a stamp there could be a symlink
+  # to any file). Only files of other owners are changed, never through a
+  # symlink (`chown -h`, `find` does not follow links below the start).
   takeOverDataDir = pkgs.writeShellScript "claude-remote-manager-take-over-data-dir" ''
     set -eu
-    stamp=${lib.escapeShellArg "${cfg.dataDir}/.owner"}
+    stamps=/var/lib/claude-remote-manager-owner
+    stamp="$stamps/${builtins.hashString "sha256" cfg.dataDir}"
+    ${pkgs.coreutils}/bin/mkdir -p -m 0700 "$stamps"
+    ${pkgs.coreutils}/bin/chown root:root "$stamps"
+    ${pkgs.coreutils}/bin/chmod 0700 "$stamps"
     if [ "$(${pkgs.coreutils}/bin/cat "$stamp" 2>/dev/null || true)" != ${lib.escapeShellArg cfg.user} ]; then
-      echo "Giving ${cfg.dataDir} to ${cfg.user} ..."
-      ${pkgs.coreutils}/bin/chown -R --no-dereference ${lib.escapeShellArg "${cfg.user}:${cfg.group}"} ${lib.escapeShellArg cfg.dataDir}
+      dir=$(${pkgs.coreutils}/bin/realpath -e ${lib.escapeShellArg cfg.dataDir})
+      echo "Giving $dir to ${cfg.user} ..."
+      ${pkgs.findutils}/bin/find "$dir" \( ! -user ${lib.escapeShellArg cfg.user} -o ! -group ${lib.escapeShellArg cfg.group} \) \
+        -exec ${pkgs.coreutils}/bin/chown -h ${lib.escapeShellArg "${cfg.user}:${cfg.group}"} {} +
       echo ${lib.escapeShellArg cfg.user} > "$stamp"
-      ${pkgs.coreutils}/bin/chown ${lib.escapeShellArg "${cfg.user}:${cfg.group}"} "$stamp"
     fi
   '';
 
@@ -633,6 +641,8 @@ in
         RestartSec = 5;
         # The API stops its Claude Code processes on SIGTERM (up to 5 s).
         TimeoutStopSec = 30;
+        # The one-time take-over of an old data directory walks all clones.
+        TimeoutStartSec = "infinity";
         LoadCredential = lib.mapAttrsToList (name: v: "${name}:${v.file}") secrets;
         EnvironmentFile = cfg.environmentFiles;
       };

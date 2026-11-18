@@ -1,6 +1,10 @@
 import { accessSync, constants, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { childEnvironment, CLAUDE_CODE_SECRETS } from './child-environment';
+import {
+  childEnvironment,
+  CLAUDE_CODE_SECRETS,
+  isAppConfigVariable,
+} from './child-environment';
 
 /**
  * Who runs what. Two modes, chosen explicitly (`PROCESS_ISOLATION`):
@@ -254,7 +258,8 @@ export class ProcessLauncher {
    * Environment of a process: for the API's own processes the API's
    * environment without secrets, plus the API-only variables; for session
    * processes in `single-user` mode the API's environment without secrets
-   * (and `SESSION_PATH`), in `separate-users` mode only the allowlisted
+   * and without the API's own configuration (`isAppConfigVariable`), with
+   * `SESSION_PATH` as `PATH`, in `separate-users` mode only the allowlisted
    * variables and the session user's identity. `keep` names secrets to
    * pass anyway (Claude Code's login), `extra` is added last.
    */
@@ -270,6 +275,9 @@ export class ProcessLauncher {
       return childEnvironment({ ...this.apiEnv, ...extra }, { keep, base });
     }
     if (this.isolation.mode === 'single-user') {
+      const own = Object.fromEntries(
+        Object.entries(base).filter(([name]) => !isAppConfigVariable(name)),
+      );
       return childEnvironment(
         {
           ...(this.isolation.sessionPath
@@ -277,7 +285,7 @@ export class ProcessLauncher {
             : {}),
           ...extra,
         },
-        { keep, base },
+        { keep, base: own },
       );
     }
     const user = this.isolation.sessionUser;

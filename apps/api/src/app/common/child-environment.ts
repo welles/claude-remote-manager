@@ -53,3 +53,54 @@ export function childEnvironment(
   }
   return { ...env, ...extra };
 }
+
+/**
+ * The API's own configuration (see `loadAppConfig`, `main.ts` and the
+ * NixOS module). Session processes running as the API's user do not get
+ * it: a session's `npm ci` would skip devDependencies under
+ * `NODE_ENV=production`, its dev servers would take the API's `PORT`, and
+ * a development API started in a session would open the production
+ * database and act as the GitHub App.
+ */
+export const APP_CONFIG_VARIABLES: ReadonlySet<string> = new Set([
+  'NODE_ENV',
+  'PORT',
+  'LISTEN_ADDRESS',
+  'DATA_DIR',
+  'DB_DIR',
+  'FILES_DIR',
+  'WORKSPACE_DIR',
+  'MEMORY_DIR',
+  'PROCESS_ISOLATION',
+  'SESSION_USER',
+  'SESSION_PATH',
+  'SESSION_IDLE_TIMEOUT_MINUTES',
+  'SESSION_STALL_MINUTES',
+  'SESSION_INSTRUCTIONS_FILE',
+  'SETUP_SCRIPT_TIMEOUT_MINUTES',
+  'PR_POLL_INTERVAL_SECONDS',
+  'AUTH_MODE',
+  'CF_ACCESS_AUD',
+  'CF_ACCESS_TEAM_DOMAIN',
+  'CF_ACCESS_ALLOWED_EMAILS',
+  'PREVIEW_ACCESS_AUD',
+  'PREVIEW_URL',
+  'PUBLIC_URL',
+  'INTERNAL_API_URL',
+  'ALLOWED_HOSTS',
+  'ALLOWED_ORIGINS',
+  'GITHUB_APP_ID',
+  'NTFY_URL',
+  'NTFY_TOPIC',
+  'VAPID_PUBLIC_KEY',
+  'VAPID_SUBJECT',
+  'CLAUDE_CODE_EXECUTABLE',
+  'API_GIT_CONFIG_GLOBAL',
+  'LEGACY_CLAUDE_CONFIG_DIR',
+  'CREDENTIALS_DIRECTORY',
+]);
+
+/** Whether a variable is the API's configuration (not for sessions). */
+export function isAppConfigVariable(name: string): boolean {
+  return APP_CONFIG_VARIABLES.has(name) || /_FILE$/.test(name);
+}

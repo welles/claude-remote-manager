@@ -67,6 +67,15 @@ export abstract class SessionAgentSupport {
   abstract toolFinished(sessionId: string, toolUseId: string): void;
   /** The session's process ended. */
   abstract released(sessionId: string): void;
+  /**
+   * Removes the credential helper earlier versions put into session clones
+   * (it hid the user's own credentials), once at startup for all sessions,
+   * so also a push from a terminal in an old clone works.
+   */
+  cleanUpClones(records: SessionRecord[]): Promise<void> {
+    void records;
+    return Promise.resolve();
+  }
 }
 
 /** Without integrations (tests of the session lifecycle). */
@@ -129,12 +138,20 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     super();
   }
 
-  async prepare(record: SessionRecord): Promise<LaunchExtras> {
-    const clones = record.directories.filter(
-      (directory) => directory.kind === 'clone' && directory.state === 'ready',
+  override async cleanUpClones(records: SessionRecord[]): Promise<void> {
+    await this.removeOldCredentialHelpers(
+      records.flatMap((record) =>
+        record.directories.filter(
+          (directory) =>
+            directory.kind === 'clone' && directory.state === 'ready',
+        ),
+      ),
     );
-    // Clones made by earlier versions still name the app's credential
-    // helper, which hid the user's own.
+  }
+
+  private async removeOldCredentialHelpers(
+    clones: SessionRecord['directories'],
+  ): Promise<void> {
     for (const directory of clones) {
       try {
         if (await this.git.removeAppCredentialHelper(directory.path)) {
@@ -148,6 +165,15 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         );
       }
     }
+  }
+
+  async prepare(record: SessionRecord): Promise<LaunchExtras> {
+    const clones = record.directories.filter(
+      (directory) => directory.kind === 'clone' && directory.state === 'ready',
+    );
+    // Clones made by earlier versions still name the app's credential
+    // helper, which hid the user's own (also removed at startup).
+    await this.removeOldCredentialHelpers(clones);
     const githubClones = clones.filter(
       (directory) => directory.repositoryGitHub,
     );

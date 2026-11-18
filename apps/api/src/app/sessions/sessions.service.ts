@@ -216,7 +216,6 @@ interface QueuedMessage extends UserMessage {
   agent: AgentUserMessage;
 }
 
-/** Error text, completed with Claude Code's last stderr line if any. */
 /**
  * Modes in which tool calls run without the user (a classifier or nothing
  * decides): an Autofix run, which works on untrusted GitHub content, runs
@@ -226,6 +225,7 @@ export function heldForUntrusted(mode: SessionPermissionMode): boolean {
   return mode === 'auto' || mode === 'bypassPermissions';
 }
 
+/** Error text, completed with Claude Code's last stderr line if any. */
 function errorMessage(error: unknown, run?: AgentRun): string {
   const message = error instanceof Error ? error.message : String(error);
   const detail = run?.stderrTail().at(-1);
@@ -465,6 +465,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       });
       this.logger.warn(`The preparation of ${record.id} was interrupted`);
     }
+    // Not awaited: a missing clone only logs a warning.
+    void this.support.cleanUpClones(this.sessions.list());
     const ids = this.sessions.stopRunningSessions();
     for (const id of ids) {
       // Where in the conversation is unknown: placed at the end.

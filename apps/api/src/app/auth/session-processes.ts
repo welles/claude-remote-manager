@@ -81,7 +81,9 @@ export const PROC: ProcReader = {
  * This keeps a session from calling the management API by accident or on
  * a whim (e.g. approving its own requests); it is no boundary against a
  * session that tries hard: with the user's rights it can leave the
- * service's cgroup (`systemd-run --user`) or read the API's files.
+ * service's cgroup (`systemd-run --user`), call the API as another user
+ * (`sudo curl …`: only sockets of the API's user are checked) or read the
+ * API's files.
  */
 export function heldByApiChild(
   inode: number,

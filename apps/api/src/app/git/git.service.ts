@@ -94,7 +94,6 @@ const PLAIN_CLONE_CONFIG: readonly RegExp[] = [
   /^remote\.origin\.(url|fetch)$/,
   /^branch\.[^\n]+\.(remote|merge)$/,
   /^user\.(name|email|useconfigonly)$/,
-  /^credential\.(helper|usehttppath)$/,
 ];
 const FETCH_OPTIONS = ['--prune', '--tags', '--force', '--quiet'];
 
