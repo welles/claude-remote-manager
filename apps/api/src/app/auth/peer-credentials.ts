@@ -8,17 +8,24 @@ export interface PeerAddresses {
   server: string;
 }
 
+/** The client socket of a connection: owner and inode. */
+export interface PeerSocketEntry {
+  uid: number;
+  /** Inode of the client socket (to find the process that holds it). */
+  inode: number;
+}
+
 /**
- * User ID of the process on the other end of a TCP connection made inside
- * this network namespace, from the kernel's socket tables (`/proc/net/tcp`,
- * `tcp6`): the client socket is the entry whose local port is the client's
- * port and whose remote port is ours, and, when `addresses` are given,
- * whose local and remote addresses are the client's and ours. That covers
- * loopback and the container's own addresses (e.g. its `eth0` address).
- * `null` when the peer is not in this network namespace (e.g. connections
- * through Docker's port publishing or a tunnel).
+ * The client socket of a TCP connection made inside this network
+ * namespace, from the kernel's socket tables (`/proc/net/tcp`, `tcp6`):
+ * the entry whose local port is the client's port and whose remote port is
+ * ours, and, when `addresses` are given, whose local and remote addresses
+ * are the client's and ours. That covers loopback and the machine's (or
+ * container's) own addresses. `null` when the peer is not in this network
+ * namespace (e.g. connections through Docker's port publishing or a tunnel
+ * from another host).
  */
-export function loopbackPeerUid(
+export function loopbackPeer(
   clientPort: number,
   serverPort: number,
   addresses?: PeerAddresses,
@@ -30,7 +37,7 @@ export function loopbackPeerUid(
         return '';
       }
     }),
-): number | null {
+): PeerSocketEntry | null {
   const port = (address: string) => parseInt(address.split(':')[1] ?? '', 16);
   const host = (address: string) => tableAddress(address.split(':')[0] ?? '');
   for (const table of tables()) {
@@ -39,7 +46,7 @@ export function loopbackPeerUid(
       if (fields.length < 8) {
         continue;
       }
-      const [, local, remote, state, , , , uid] = fields;
+      const [, local, remote, state, , , , uid, , inode] = fields;
       // 01 = ESTABLISHED
       if (
         state === '01' &&
@@ -49,11 +56,21 @@ export function loopbackPeerUid(
           (sameAddress(host(local), addresses.client) &&
             sameAddress(host(remote), addresses.server)))
       ) {
-        return Number(uid);
+        return { uid: Number(uid), inode: Number(inode ?? 0) };
       }
     }
   }
   return null;
+}
+
+/** User ID of the client of a connection inside this network namespace, see {@link loopbackPeer}. */
+export function loopbackPeerUid(
+  clientPort: number,
+  serverPort: number,
+  addresses?: PeerAddresses,
+  tables?: () => string[],
+): number | null {
+  return loopbackPeer(clientPort, serverPort, addresses, tables)?.uid ?? null;
 }
 
 export function isLoopback(address: string | undefined): boolean {

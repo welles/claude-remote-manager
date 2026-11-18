@@ -20,9 +20,9 @@ export interface GitPushTarget {
 }
 
 /**
- * What a `git push` in a Bash command would update. The approval of a push
- * lets the credential helper hand out a write token for the whole
- * repository, so the dialog warns when it is more than the session branch.
+ * What a `git push` in a Bash command would update. The push runs with the
+ * user's own credentials, which can write the whole repository, so the
+ * dialog warns when it is more than the session branch.
  */
 export interface GitPushAnalysis {
   /** The `git push` part of the command, as written. */
@@ -154,7 +154,7 @@ export const PERMISSION_MODE_INFO: Record<
   auto: {
     label: 'Auto',
     description:
-      'A classifier approves or blocks each action and asks only when unsure; git push, pull requests and added repositories always ask.',
+      'A classifier approves or blocks each action and asks only when unsure.',
   },
   plan: {
     label: 'Plan',
@@ -165,6 +165,11 @@ export const PERMISSION_MODE_INFO: Record<
     label: "Don't ask",
     description:
       'Nothing that needs approval runs: such actions are denied instead of asking (for unattended work).',
+  },
+  bypassPermissions: {
+    label: 'Bypass (dangerous)',
+    description:
+      'Everything runs without asking: commands, file changes, pushes, pull requests, sudo, with all your rights on this machine. Only for work you trust.',
   },
 };
 
@@ -177,6 +182,11 @@ export const PERMISSION_MODE_OVERRIDE_INFO: Record<
     label: 'auto unavailable',
     description:
       'Auto is not available for this account, model or settings right now, so Claude asks as in Ask.',
+  },
+  bypass_unavailable: {
+    label: 'bypass unavailable',
+    description:
+      'Claude Code refused to bypass permissions (disabled in the settings), so Claude asks as in Ask.',
   },
   autofix: {
     label: 'Autofix run',

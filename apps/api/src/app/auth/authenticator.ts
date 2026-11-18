@@ -8,7 +8,8 @@ import {
   type AccessConfig,
   type AccessFailure,
 } from './access-jwt';
-import { loopbackPeerUid } from './peer-credentials';
+import { loopbackPeer } from './peer-credentials';
+import { heldByApiChild } from './session-processes';
 
 /**
  * How the API authenticates requests (`AUTH_MODE`, no default):
@@ -26,10 +27,9 @@ export const AUTH_MODES = ['cloudflare-access', 'none'] as const;
 /**
  * Routes without Access token, each with its own protection:
  * - the health check (container health probe, no data);
- * - the credential endpoint of session clones (session process token);
- * - the GitHub webhook (signature over the body with a secret sessions
- *   never get; see `pr-automation/webhook.controller.ts`). Sessions may not
- *   call it: they have no reason to, and nothing they send is trusted.
+ * - the GitHub webhook (signature over the body with the webhook secret;
+ *   see `pr-automation/webhook.controller.ts`). Sessions may not call it:
+ *   they have no reason to.
  * `sessions`: processes of sessions may call it.
  */
 export const AUTH_EXEMPT_ROUTES: readonly {
@@ -38,7 +38,6 @@ export const AUTH_EXEMPT_ROUTES: readonly {
   sessions: boolean;
 }[] = [
   { method: 'GET', path: '/api/health', sessions: true },
-  { method: 'POST', path: '/api/git/credentials', sessions: true },
   { method: 'POST', path: '/api/github/webhook', sessions: false },
 ];
 
@@ -77,31 +76,48 @@ export type PeerSocket = Pick<
 > &
   Partial<Pick<Socket, 'localAddress'>>;
 
+/** Finds the client socket of a connection, see {@link loopbackPeer}. */
+export type PeerLookup = typeof loopbackPeer;
+
+/** Whether a socket (by inode) belongs to a process the API started. */
+export type SessionSocketCheck = (inode: number) => boolean;
+
 /**
- * Whether a connection comes from a process of the session user (only with
- * separate users; in `single-user` mode sessions run as the API's user and
- * cannot be told apart). Any connection made inside the container counts,
- * over loopback or to one of the container's own addresses (its `eth0`
- * address reaches the API's port too); connections from outside the
- * network namespace have no client socket in its tables.
+ * Whether a connection comes from a session process. Only connections
+ * made on this machine (inside the container) can: loopback or one of its
+ * own addresses (its `eth0` address reaches the API's port too);
+ * connections from elsewhere (a tunnel on another host, Docker's port
+ * publishing) have no client socket in its tables.
+ * - `separate-users`: the client socket belongs to the session user.
+ * - `single-user`: sessions run as the API's user, so the client socket
+ *   must belong to that user and to a process the API started (see
+ *   {@link heldByApiChild}); the user's other programs on this machine
+ *   (a browser, the dev server's proxy) are not refused.
  */
 export function fromSessionProcess(
   isolation: ProcessIsolation,
   socket: PeerSocket,
-  peerUid: typeof loopbackPeerUid = loopbackPeerUid,
+  peer: PeerLookup = loopbackPeer,
+  startedByApi: SessionSocketCheck = heldByApiChild,
+  apiUid: number = process.getuid?.() ?? -1,
 ): boolean {
-  return (
-    isolation.mode === 'separate-users' &&
-    socket.remotePort !== undefined &&
-    socket.localPort !== undefined &&
-    peerUid(
-      socket.remotePort,
-      socket.localPort,
-      socket.remoteAddress && socket.localAddress
-        ? { client: socket.remoteAddress, server: socket.localAddress }
-        : undefined,
-    ) === isolation.sessionUser.uid
+  if (socket.remotePort === undefined || socket.localPort === undefined) {
+    return false;
+  }
+  const entry = peer(
+    socket.remotePort,
+    socket.localPort,
+    socket.remoteAddress && socket.localAddress
+      ? { client: socket.remoteAddress, server: socket.localAddress }
+      : undefined,
   );
+  if (!entry) {
+    return false;
+  }
+  if (isolation.mode === 'separate-users') {
+    return entry.uid === isolation.sessionUser.uid;
+  }
+  return entry.uid === apiUid && startedByApi(entry.inode);
 }
 
 /** The Access token of a request: header, else the cookie. */
@@ -115,11 +131,10 @@ export function accessToken(headers: IncomingHttpHeaders): string | null {
 /**
  * Decides whether a request (or WebSocket upgrade) may reach the API:
  *
- * 1. With separate users, connections from a process of the session user
- *    (inside the container, over loopback or the container's own address)
- *    are refused, except for the routes sessions need (the
- *    credential endpoint). Sessions cannot call the management API, e.g.
- *    push without the user's approval, whatever the auth mode.
+ * 1. Connections from session processes (see {@link fromSessionProcess})
+ *    are refused, except for the routes sessions may use (the health
+ *    check). Sessions do not call the management API, e.g. to answer
+ *    their own approval requests, whatever the auth mode.
  * 2. Exempt routes need no Access token.
  * 3. `cloudflare-access`: a valid Access token is required.
  */
@@ -133,7 +148,8 @@ export class Authenticator {
     'cloudflare-access'
       ? new AccessJwtVerifier(config.access)
       : null,
-    private readonly peerUid: typeof loopbackPeerUid = loopbackPeerUid,
+    private readonly peer: PeerLookup = loopbackPeer,
+    private readonly startedByApi: SessionSocketCheck = heldByApiChild,
   ) {}
 
   async check(
@@ -149,7 +165,7 @@ export class Authenticator {
     );
     if (
       !exempt?.sessions &&
-      fromSessionProcess(this.isolation, socket, this.peerUid)
+      fromSessionProcess(this.isolation, socket, this.peer, this.startedByApi)
     ) {
       this.logger.warn(`Refused ${method} ${path} from a session process`);
       return {

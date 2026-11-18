@@ -39,6 +39,38 @@ describe('ProcessLauncher', () => {
     ).toEqual({ PATH: '/bin', OTHER: 'o', X: '1' });
   });
 
+  it('keeps the environment of the user for sessions in single-user mode', () => {
+    const launcher = new ProcessLauncher(
+      {
+        mode: 'single-user',
+        sessionPath: '/run/wrappers/bin:/home/u/.nix-profile/bin',
+      },
+      { GIT_CONFIG_GLOBAL: '/var/lib/crm/git/gitconfig' },
+    );
+    const base = {
+      PATH: '/nix/store/x-git/bin',
+      HOME: '/home/u',
+      SSH_AUTH_SOCK: '/run/user/1000/ssh-agent',
+      GH_CONFIG_DIR: '/home/u/.config/gh',
+      CRM_SECRET_X: 'secret',
+    };
+    expect(launcher.environment('session', { X: '1' }, { base })).toEqual({
+      PATH: '/run/wrappers/bin:/home/u/.nix-profile/bin',
+      HOME: '/home/u',
+      SSH_AUTH_SOCK: '/run/user/1000/ssh-agent',
+      GH_CONFIG_DIR: '/home/u/.config/gh',
+      X: '1',
+    });
+    // Only the API's own processes (git on mirrors) get its git configuration.
+    expect(launcher.environment('api', {}, { base })).toEqual({
+      PATH: '/nix/store/x-git/bin',
+      HOME: '/home/u',
+      SSH_AUTH_SOCK: '/run/user/1000/ssh-agent',
+      GH_CONFIG_DIR: '/home/u/.config/gh',
+      GIT_CONFIG_GLOBAL: '/var/lib/crm/git/gitconfig',
+    });
+  });
+
   it('starts session processes as the session user without capabilities', () => {
     const launcher = new ProcessLauncher(separated);
     expect(launcher.command('session', 'git', ['status'])).toEqual({

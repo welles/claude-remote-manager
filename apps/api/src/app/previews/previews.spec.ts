@@ -554,7 +554,6 @@ describe('previews of dev servers', () => {
       }
       return found;
     };
-    expect(tool('expose_port').alwaysAsk).toBe(false);
     const result = await tool('expose_port').handler(
       { port: dev.port, name: 'Web app' },
       { toolUseId: 'toolu_1' },
@@ -677,11 +676,8 @@ describe('previews behind Cloudflare Access', () => {
           builder
             .overrideProvider(Authenticator)
             .useValue(
-              new Authenticator(
-                auth,
-                isolation,
-                access.verifier(),
-                () => peerUid,
+              new Authenticator(auth, isolation, access.verifier(), () =>
+                peerUid === null ? null : { uid: peerUid, inode: 1 },
               ),
             )
             .overrideProvider(PreviewAccess)
@@ -694,7 +690,7 @@ describe('previews behind Cloudflare Access', () => {
                   { ...access.config, audiences: [PREVIEW_AUD] },
                   access.jwks,
                 ),
-                () => peerUid,
+                () => (peerUid === null ? null : { uid: peerUid, inode: 1 }),
               ),
             ),
       },

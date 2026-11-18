@@ -9,7 +9,13 @@ import { APP_CONFIG, loadAppConfig, type AppConfig } from './app-config';
     {
       provide: PROCESS_LAUNCHER,
       inject: [APP_CONFIG],
-      useFactory: (config: AppConfig) => new ProcessLauncher(config.isolation),
+      useFactory: (config: AppConfig) =>
+        new ProcessLauncher(
+          config.isolation,
+          config.apiGitConfigGlobal
+            ? { GIT_CONFIG_GLOBAL: config.apiGitConfigGlobal }
+            : {},
+        ),
     },
   ],
   exports: [APP_CONFIG, PROCESS_LAUNCHER],

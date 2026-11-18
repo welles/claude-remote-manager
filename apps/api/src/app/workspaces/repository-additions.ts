@@ -45,8 +45,8 @@ const text = (input: Record<string, unknown>, name: string): string | null =>
  * URL under the form's rules (https, ssh, scp-like). Local paths and
  * `file://` URLs are refused: Claude names no paths on this machine. A
  * repository that is part of the session already is refused with a clear
- * message. Nothing is registered or cloned here; that happens only after
- * the user approved the call.
+ * message. Nothing is registered or cloned here; that happens when the
+ * tool runs (after the user approved the call, where Claude Code asked).
  */
 @Injectable()
 export class RepositoryAdditions {

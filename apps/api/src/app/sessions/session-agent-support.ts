@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   HttpException,
@@ -11,14 +11,11 @@ import { MAX_PREVIEW_NAME_LENGTH } from '@claude-remote-manager/shared-types';
 import type { AgentTool } from '../agent/agent-runner';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { handOverToSession } from '../common/ownership';
-import { credentialHelperCommand } from '../git/credential-helper';
 import { GitService } from '../git/git.service';
-import { InstallationTokens } from '../github/installation-tokens';
 import { FileAccessError } from '../files/session-file-access';
 import { ShownFilesService } from '../shown-files/shown-files.service';
 import { PreviewsService } from '../previews/previews.service';
 import {
-  ApprovalGrants,
   CREATE_PULL_REQUEST_TOOL,
   EXPOSE_PORT_TOOL,
   EXPOSE_PORT_TOOL_NAME,
@@ -26,8 +23,8 @@ import {
   SHOW_FILE_TOOL_NAME,
   STOP_PREVIEW_TOOL,
   STOP_PREVIEW_TOOL_NAME,
-} from './approval-grants';
-import { SessionCredentials } from './session-credentials';
+  isGitPushCommand,
+} from './app-tools';
 import { SessionGitService } from './session-git.service';
 import type { SessionRecord } from './session.repository';
 
@@ -38,43 +35,33 @@ export interface LaunchExtras {
   settings?: Record<string, unknown>;
   /** Permission rules that allow tools without asking. */
   allowedTools?: string[];
+  /** Appended to the system prompt, see `AgentStartOptions.instructions`. */
+  instructions?: string;
 }
 
 /**
- * Permission settings every session gets on top of the user's and
- * project's settings:
- * - `git push` always asks (an ask rule wins over allow rules, e.g. from a
- *   repository's `.claude/settings.json`), so the user's approval is what
- *   lets a push through (see {@link ApprovalGrants});
- * - no bypass mode; auto mode only when the session chose it (its
- *   classifier never decides the app's limits, see `approvalLimit`), and
- *   not during plan mode (plan mode keeps asking the user);
+ * Settings every session gets on top of the user's, project's and local
+ * settings (which apply as in a terminal):
+ * - auto mode only when the session chose it, not during plan mode (plan
+ *   mode keeps asking the user);
  * - approval requests do not expire while the user is away (the app
- *   cancels them itself when the turn, session or process ends);
- * - the Claude account's claude.ai connectors are not fetched (sessions get
- *   no MCP servers but the app's own, see `STRICT_MCP_CONFIG`).
+ *   cancels them itself when the turn, session or process ends).
  */
-export const SESSION_PERMISSION_SETTINGS = {
-  permissions: {
-    ask: ['Bash(git push:*)'],
-    disableBypassPermissionsMode: 'disable',
-  },
+export const SESSION_SETTINGS = {
   useAutoModeDuringPlan: false,
   dialogExpiry: 'never',
-  disableClaudeAiConnectors: true,
 };
 
 /** Hooks of the sessions service for the app's integrations. */
 export abstract class SessionAgentSupport {
   /** Environment, tools and settings for a process about to start. */
   abstract prepare(record: SessionRecord): Promise<LaunchExtras>;
-  /** The user approved a tool use (through `canUseTool`). */
-  abstract approved(
+  /** Claude Code called a tool (whether or not it asked the user). */
+  abstract toolCalled(
     sessionId: string,
     toolName: string,
-    input: Record<string, unknown>,
+    input: unknown,
     toolUseId: string,
-    mcpServer: { name: string; source: string } | null,
   ): void;
   /** Claude Code reported the result of a tool use. */
   abstract toolFinished(sessionId: string, toolUseId: string): void;
@@ -87,7 +74,7 @@ export class NoSessionAgentSupport extends SessionAgentSupport {
   async prepare(): Promise<LaunchExtras> {
     return { env: {}, tools: [] };
   }
-  approved(): void {
+  toolCalled(): void {
     // nothing
   }
   toolFinished(): void {
@@ -113,27 +100,28 @@ function errorText(error: unknown): string {
 
 /**
  * The session's integrations with git and GitHub:
- * - a process token and the API URL in the environment, for the git
- *   credential helper configured in every GitHub clone;
- * - the tool `create_pull_request` (runs only for approved calls);
+ * - the tool `create_pull_request`;
  * - auto-memory per repository: Claude Code keeps its memory per working
  *   directory, i.e. per session clone; all sessions of a repository share
  *   `<memoryDir>/<repository id>` instead (scratch sessions keep Claude
  *   Code's default);
- * - grants for approved pushes, ended (and their write tokens revoked)
- *   when the command finished or the process ended.
+ * - after a `git push` of Claude's, what reached the remote is recorded.
+ *
+ * Git in session clones uses the user's own credentials (git
+ * configuration, credential helpers such as `gh`, SSH keys), as in a
+ * terminal; pushes need whatever approval the session's permission mode
+ * asks for, like any command.
  */
 @Injectable()
 export class SessionAgentSupportService extends SessionAgentSupport {
   private readonly logger = new Logger(SessionAgentSupportService.name);
+  /** Running `git push` commands of Claude's, by session. */
+  private readonly pushes = new Map<string, Set<string>>();
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
-    private readonly sessionCredentials: SessionCredentials,
-    private readonly grants: ApprovalGrants,
     private readonly sessionGit: SessionGitService,
     private readonly git: GitService,
-    private readonly tokens: InstallationTokens,
     private readonly shownFiles: ShownFilesService,
     @Optional()
     private readonly previews?: PreviewsService,
@@ -142,29 +130,28 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   }
 
   async prepare(record: SessionRecord): Promise<LaunchExtras> {
-    const githubClones = record.directories.filter(
-      (directory) =>
-        directory.kind === 'clone' &&
-        directory.state === 'ready' &&
-        directory.repositoryGitHub,
+    const clones = record.directories.filter(
+      (directory) => directory.kind === 'clone' && directory.state === 'ready',
     );
-    // Clones made before, or by another build (paths of node and the
-    // helper), get the current helper.
-    for (const directory of githubClones) {
+    // Clones made by earlier versions still name the app's credential
+    // helper, which hid the user's own.
+    for (const directory of clones) {
       try {
-        await this.git.setCredentialHelper(
-          directory.path,
-          credentialHelperCommand(),
-        );
+        if (await this.git.removeAppCredentialHelper(directory.path)) {
+          this.logger.log(
+            `Removed the old credential helper of ${directory.path}`,
+          );
+        }
       } catch (error) {
         this.logger.warn(
-          `Could not configure the credential helper in ${directory.path}: ${errorText(error)}`,
+          `Could not remove the old credential helper of ${directory.path}: ${errorText(error)}`,
         );
       }
     }
-    const settings: Record<string, unknown> = {
-      ...SESSION_PERMISSION_SETTINGS,
-    };
+    const githubClones = clones.filter(
+      (directory) => directory.repositoryGitHub,
+    );
+    const settings: Record<string, unknown> = { ...SESSION_SETTINGS };
     const main = record.directories[0];
     if (main?.kind === 'clone' && main.repositoryId) {
       const memory = join(this.config.memoryDir, main.repositoryId);
@@ -174,11 +161,10 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       settings['autoMemoryDirectory'] = memory;
     }
     const previews = this.previews?.enabled ? this.previews : null;
+    const instructions = await this.instructions();
     return {
-      env: {
-        CRM_API_URL: this.config.internalApiUrl,
-        CRM_SESSION_TOKEN: this.sessionCredentials.issue(record.id),
-      },
+      ...(instructions ? { instructions } : {}),
+      env: {},
       tools: [
         this.showFileTool(record.id),
         ...(githubClones.length > 0
@@ -201,30 +187,42 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     };
   }
 
-  approved(
+  toolCalled(
     sessionId: string,
     toolName: string,
-    input: Record<string, unknown>,
+    input: unknown,
     toolUseId: string,
-    mcpServer: { name: string; source: string } | null,
   ): void {
-    this.grants.approved(sessionId, toolName, input, toolUseId, mcpServer);
+    const command =
+      typeof input === 'object' && input !== null
+        ? (input as Record<string, unknown>)['command']
+        : undefined;
+    if (
+      toolName === 'Bash' &&
+      typeof command === 'string' &&
+      isGitPushCommand(command)
+    ) {
+      let pushes = this.pushes.get(sessionId);
+      if (!pushes) {
+        pushes = new Set();
+        this.pushes.set(sessionId, pushes);
+      }
+      pushes.add(toolUseId);
+    }
   }
 
   toolFinished(sessionId: string, toolUseId: string): void {
-    const { pushEnded, tokens } = this.grants.toolFinished(
-      sessionId,
-      toolUseId,
-    );
-    this.revoke(tokens);
-    if (pushEnded) {
+    const pushes = this.pushes.get(sessionId);
+    if (pushes?.delete(toolUseId)) {
+      if (pushes.size === 0) {
+        this.pushes.delete(sessionId);
+      }
       void this.notePushes(sessionId);
     }
   }
 
   released(sessionId: string): void {
-    this.sessionCredentials.revoke(sessionId);
-    this.revoke(this.grants.clear(sessionId));
+    this.pushes.delete(sessionId);
   }
 
   /**
@@ -244,7 +242,6 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         'report, an HTML page or a PDF. Do not use it for every file you read or change: the ' +
         "user sees your file changes as diffs anyway. Only files inside this session's " +
         'directories (working directory and additional directories).',
-      alwaysAsk: false,
       readOnly: true,
       inputSchema: (z) => ({
         path: z
@@ -305,7 +302,6 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         'http://localhost:<port> (Host and Origin), so no allowed-hosts configuration is ' +
         'needed. Returns the preview URL. Exposing a port again only renames the preview. ' +
         'Use stop_preview when it is no longer needed; the user can stop it as well.',
-      alwaysAsk: false,
       inputSchema: (z) => ({
         port: z
           .number()
@@ -351,7 +347,6 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       description:
         'Stop the preview of a port that expose_port made: its host name stops forwarding. ' +
         'The dev server itself keeps running until you stop it.',
-      alwaysAsk: false,
       inputSchema: (z) => ({
         port: z.number().int().min(1).max(65535).describe('The exposed port'),
       }),
@@ -381,10 +376,9 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       name: CREATE_PULL_REQUEST_TOOL,
       description:
         'Create a GitHub pull request from the session branch of one of this ' +
-        "session's repositories. Push the branch first (git push); the user " +
-        'approves each call. Returns the URL of the pull request (or of the open ' +
-        'one that exists for the branch already).',
-      alwaysAsk: true,
+        "session's repositories. Push the branch first (git push). Returns the " +
+        'URL of the pull request (or of the open one that exists for the ' +
+        'branch already).',
       inputSchema: (z) => ({
         repository: z
           .string()
@@ -409,12 +403,6 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         draft: z.boolean().optional().describe('Open as draft'),
       }),
       handler: async (input) => {
-        if (!this.grants.consumePullRequestGrant(sessionId, input)) {
-          return {
-            isError: true,
-            text: 'This create_pull_request call was not approved by the user in this session, so no pull request was created.',
-          };
-        }
         const repositoryId = this.repositoryOf(
           sessionId,
           typeof input['repository'] === 'string' ? input['repository'] : null,
@@ -467,7 +455,26 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     return matches[0].repositoryId as string;
   }
 
-  /** After an approved push: note what reached the remote. */
+  /**
+   * The machine's instructions for sessions (`SESSION_INSTRUCTIONS_FILE`),
+   * read for every process so that a change applies without a restart.
+   */
+  private async instructions(): Promise<string | null> {
+    const file = this.config.sessionInstructionsFile;
+    if (!file) {
+      return null;
+    }
+    try {
+      return (await readFile(file, 'utf8')).trim() || null;
+    } catch (error) {
+      this.logger.warn(
+        `Could not read the session instructions ${file}: ${errorText(error)}`,
+      );
+      return null;
+    }
+  }
+
+  /** After a push: note what reached the remote. */
   private async notePushes(sessionId: string): Promise<void> {
     try {
       const record = this.sessionGit.sessionRecord(sessionId);
@@ -483,16 +490,6 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       this.logger.warn(
         `Could not check the pushes of ${sessionId}: ${errorText(error)}`,
       );
-    }
-  }
-
-  private revoke(tokens: string[]): void {
-    for (const token of tokens) {
-      this.tokens
-        .revoke(token)
-        .catch((error: unknown) =>
-          this.logger.warn(`Could not revoke a token: ${errorText(error)}`),
-        );
     }
   }
 }

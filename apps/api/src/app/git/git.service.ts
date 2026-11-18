@@ -51,12 +51,13 @@ export interface MirrorUpdateOptions {
 export interface CloneConfiguration {
   /** Commit identity; `null` leaves it unset, so git refuses to commit. */
   identity: GitIdentity | null;
-  /**
-   * Credential helper command for `origin` (`!<command>`); `null` keeps
-   * git's defaults.
-   */
-  credentialHelper: string | null;
 }
+
+/**
+ * Marks the credential helper earlier versions configured in session clones
+ * (a script of the app that handed out GitHub App tokens).
+ */
+const APP_CREDENTIAL_HELPER = 'git-credential-crm';
 
 /** Commit message of the first commit of a local project. */
 export const INITIAL_COMMIT_MESSAGE = 'Initial commit';
@@ -410,33 +411,47 @@ export class GitService {
   /**
    * Settings of a session clone: the commit identity (with
    * `user.useConfigOnly`, so git never falls back to a guessed or the
-   * machine's global identity) and the credential helper for `origin`.
-   * The helper list is reset first, so no other helper of the user's or
-   * system configuration is asked for (or stores) credentials.
+   * machine's global identity). Credentials are git's own: the user's
+   * configuration, credential helpers and SSH keys, as in a terminal.
    */
   async configureClone(
     path: string,
     configuration: CloneConfiguration,
   ): Promise<void> {
     await this.setIdentity(path, configuration.identity);
-    if (configuration.credentialHelper !== null) {
-      await this.setCredentialHelper(path, configuration.credentialHelper);
-    }
   }
 
   /**
-   * Makes `helper` the only credential helper of a clone (the list is reset
-   * first, so no helper of the user's or system configuration is asked or
-   * stores anything), with the repository path in the request.
+   * Removes the app's credential helper that earlier versions put into a
+   * clone (it reset the helper list, hiding the user's own helpers, and
+   * its script no longer exists), so the user's credentials apply.
+   * Returns whether there was one; other helpers are left alone.
    */
-  async setCredentialHelper(path: string, helper: string): Promise<void> {
+  async removeAppCredentialHelper(path: string): Promise<boolean> {
     const inClone = (args: string[]) => this.inClone(path, args);
-    await inClone(['config', '--unset-all', 'credential.helper']).catch(
-      () => undefined,
-    );
-    await inClone(['config', '--add', '--', 'credential.helper', '']);
-    await inClone(['config', '--add', '--', 'credential.helper', helper]);
-    await inClone(['config', '--', 'credential.useHttpPath', 'true']);
+    let helpers: string;
+    try {
+      helpers = await inClone([
+        'config',
+        '--local',
+        '--get-all',
+        'credential.helper',
+      ]);
+    } catch {
+      // none configured
+      return false;
+    }
+    if (!helpers.includes(APP_CREDENTIAL_HELPER)) {
+      return false;
+    }
+    await inClone(['config', '--local', '--unset-all', 'credential.helper']);
+    await inClone([
+      'config',
+      '--local',
+      '--unset-all',
+      'credential.useHttpPath',
+    ]).catch(() => undefined);
+    return true;
   }
 
   /**

@@ -38,8 +38,8 @@ export interface ToolApprovalRequest {
   mcpServer: { name: string; source: string } | null;
   /**
    * For Bash commands that run `git push`: what each push would update,
-   * with warnings for anything beyond the session branch (the approval
-   * lets the credential helper write to the whole repository).
+   * with warnings for anything beyond the session branch (the push runs
+   * with the user's credentials, which can write the whole repository).
    */
   gitPushes: GitPushAnalysis[];
   /** For the app's `create_pull_request` tool: the pull request. */
@@ -65,11 +65,9 @@ export type ToolApprovalDecision = PermissionResult & {
 };
 
 /**
- * Decides tool uses that need the user's approval. Every such decision of
- * a session goes through here, so the app knows what the user approved
- * (an approved `git push` lets the credential helper hand out a write
- * token; an approved `create_pull_request` call lets the tool run).
- * An abstract class to serve as Nest token.
+ * Decides tool uses that need the user's approval (those Claude Code asks
+ * about in the session's permission mode). An abstract class to serve as
+ * Nest token.
  */
 export abstract class ToolApprover {
   /** Waits for the user's decision (or the request's cancellation). */

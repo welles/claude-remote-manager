@@ -39,10 +39,31 @@ export interface AppConfig {
   /** Host names besides the loopback names the server answers to. */
   allowedHosts: string[];
   /**
-   * URL under which processes on this machine reach the API (the git
-   * credential helper of session clones).
+   * URL under which processes on this machine reach the API; its port is
+   * never forwarded as a preview.
    */
   internalApiUrl: string;
+  /**
+   * File whose text is appended to Claude Code's system prompt in every
+   * session (`SESSION_INSTRUCTIONS_FILE`, the NixOS module's description of
+   * the machine); `null` for none.
+   */
+  sessionInstructionsFile: string | null;
+  /**
+   * Claude Code configuration directory of an earlier version of the
+   * NixOS module (`LEGACY_CLAUDE_CONFIG_DIR`): transcripts of sessions
+   * created back then are copied from there into the current one at
+   * startup, see `migrateLegacyTranscripts`. `null` for none.
+   */
+  legacyClaudeConfigDir: string | null;
+  /**
+   * `GIT_CONFIG_GLOBAL` of the API's own git commands on mirrors
+   * (`API_GIT_CONFIG_GLOBAL`), so that the user's global settings (URL
+   * rewrites, signing, credential helpers) do not change them while
+   * sessions and git in session clones use the user's own configuration;
+   * `null`: the environment's.
+   */
+  apiGitConfigGlobal: string | null;
   /**
    * Claude Code auto-memory per repository: `<memoryDir>/<owner>/<name>`,
    * shared by all sessions of a repository.
@@ -224,6 +245,15 @@ export function loadAppConfig(
     internalApiUrl: (
       value('INTERNAL_API_URL') ?? `http://127.0.0.1:${port}`
     ).replace(/\/+$/, ''),
+    sessionInstructionsFile: value('SESSION_INSTRUCTIONS_FILE')
+      ? resolve(value('SESSION_INSTRUCTIONS_FILE') as string)
+      : null,
+    legacyClaudeConfigDir: value('LEGACY_CLAUDE_CONFIG_DIR')
+      ? resolve(value('LEGACY_CLAUDE_CONFIG_DIR') as string)
+      : null,
+    apiGitConfigGlobal: value('API_GIT_CONFIG_GLOBAL')
+      ? resolve(value('API_GIT_CONFIG_GLOBAL') as string)
+      : null,
     memoryDir: resolve(
       value('MEMORY_DIR') ??
         (claudeConfigDir
@@ -480,8 +510,9 @@ function loadAuth(value: (name: string) => string | undefined): AuthConfig {
 }
 
 /**
- * `PROCESS_ISOLATION` has no default: the image sets `separate-users`,
- * local development has to choose `single-user` explicitly.
+ * `PROCESS_ISOLATION` has no default: the image sets `separate-users`, the
+ * NixOS module `single-user`, local development has to choose
+ * `single-user` explicitly.
  */
 function loadIsolation(
   mode: string | undefined,
@@ -490,7 +521,7 @@ function loadIsolation(
   passwd?: string,
 ): ProcessIsolation {
   if (mode === 'single-user') {
-    return { mode };
+    return { mode, ...(sessionPath ? { sessionPath } : {}) };
   }
   if (mode === 'separate-users') {
     return {
@@ -500,7 +531,7 @@ function loadIsolation(
     };
   }
   throw new Error(
-    `PROCESS_ISOLATION must be set to ${ISOLATION_MODES.join(' or ')} (single-user only for local development)`,
+    `PROCESS_ISOLATION must be set to ${ISOLATION_MODES.join(' or ')}`,
   );
 }
 
@@ -519,6 +550,9 @@ export function testAppConfig(
     allowedOrigins: [],
     allowedHosts: [],
     internalApiUrl: 'http://127.0.0.1:3000',
+    sessionInstructionsFile: null,
+    legacyClaudeConfigDir: null,
+    apiGitConfigGlobal: null,
     memoryDir: join(dir, 'memory'),
     github: null,
     isolation: { mode: 'single-user' },

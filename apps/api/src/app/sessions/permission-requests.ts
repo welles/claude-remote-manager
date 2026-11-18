@@ -22,11 +22,6 @@ import {
   requireObject,
 } from '../common/validation';
 import type { StoredEvent } from './session-event.repository';
-import {
-  APP_MCP_SERVER,
-  CREATE_PULL_REQUEST_TOOL_NAME,
-  isGitPushCommand,
-} from './approval-grants';
 
 /** Claude Code's question tool and the tools of plan mode. */
 export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion';
@@ -99,16 +94,12 @@ export function ruleString(rule: PermissionRuleValue): string {
 }
 
 /**
- * Whether a session-wide allow rule is acceptable. Never for the app's own
- * tools (each pull request needs its approval), Claude's questions and
- * plans, all Bash commands at once, or Bash prefixes that cover
- * `git push` (each push needs its approval; the `ask` rule would win over
- * such a rule anyway, this keeps it from being offered).
+ * Whether a session-wide allow rule is acceptable. Never for Claude's
+ * questions and plans, or for all Bash commands at once.
  */
 function acceptableRule(rule: PermissionRuleValue): boolean {
   const tool = rule.toolName;
   if (
-    tool.startsWith(`mcp__${APP_MCP_SERVER}__`) ||
     tool === ASK_USER_QUESTION_TOOL ||
     tool === EXIT_PLAN_MODE_TOOL ||
     tool === ENTER_PLAN_MODE_TOOL
@@ -119,14 +110,7 @@ function acceptableRule(rule: PermissionRuleValue): boolean {
     return true;
   }
   const content = rule.ruleContent?.trim();
-  if (!content || content === '*') {
-    return false;
-  }
-  const prefix = content
-    .replace(/(:\*|\s\*|\*)$/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return !isGitPushCommand(content) && !'git push'.startsWith(prefix);
+  return !!content && content !== '*';
 }
 
 /**
@@ -135,27 +119,19 @@ function acceptableRule(rule: PermissionRuleValue): boolean {
  * (never to settings files). Never a permission mode switch (`setMode`
  * suggestions are dropped): the user changes the mode only through the
  * mode control (and by approving a plan). `null` when nothing sound
- * remains, and always for pushes, pull requests, questions and plans: each
- * of those needs its own approval. `offer.mode` is always `null`.
+ * remains, and always for questions and plans. `offer.mode` is always
+ * `null`.
  */
 export function sessionAllowOffer(
   request: Pick<
     ToolApprovalRequest,
-    'toolName' | 'input' | 'gitPushes' | 'suggestions' | 'suppressAlwaysAllow'
+    'toolName' | 'suggestions' | 'suppressAlwaysAllow'
   >,
 ): { offer: SessionAllowOffer; updates: PermissionUpdate[] } | null {
-  const command =
-    request.toolName === 'Bash' && typeof request.input['command'] === 'string'
-      ? request.input['command']
-      : null;
   if (
     request.suppressAlwaysAllow ||
     requestKind(request.toolName) !== 'tool' ||
-    request.toolName === ENTER_PLAN_MODE_TOOL ||
-    request.toolName === CREATE_PULL_REQUEST_TOOL_NAME ||
-    request.toolName.startsWith(`mcp__${APP_MCP_SERVER}__`) ||
-    request.gitPushes.length > 0 ||
-    (command !== null && isGitPushCommand(command))
+    request.toolName === ENTER_PLAN_MODE_TOOL
   ) {
     return null;
   }
@@ -199,7 +175,7 @@ export function describeRequest(
     gitPushes: request.gitPushes,
     pullRequest: request.pullRequest,
     repositoryAddition: request.repositoryAddition ?? null,
-    sessionAllow: request.repositoryAddition ? null : offer,
+    sessionAllow: offer,
     questions: kind === 'question' ? parseQuestions(request.input) : null,
     plan: kind === 'plan' ? planText(request.input) : null,
     diff: request.diff ?? null,

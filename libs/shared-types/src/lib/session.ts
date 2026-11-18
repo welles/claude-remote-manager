@@ -62,10 +62,10 @@ export function needsUser(
 }
 
 /**
- * Permission modes a session may use. Mirrors the Agent SDK's modes without
- * `bypassPermissions`, which this app never uses. In `auto` a model
- * classifier of Claude Code approves or denies tool uses and asks the user
- * only when it cannot decide; some calls always ask the user (see
+ * Permission modes a session may use: the Agent SDK's modes. In `auto` a
+ * model classifier of Claude Code approves or denies tool uses and asks the
+ * user only when it cannot decide; `bypassPermissions` runs everything
+ * without asking. An Autofix run holds both in `default` (see
  * `PermissionModeOverride` and the README).
  */
 export type SessionPermissionMode =
@@ -73,7 +73,8 @@ export type SessionPermissionMode =
   | 'acceptEdits'
   | 'auto'
   | 'plan'
-  | 'dontAsk';
+  | 'dontAsk'
+  | 'bypassPermissions';
 
 export const SESSION_PERMISSION_MODES: readonly SessionPermissionMode[] = [
   'default',
@@ -81,20 +82,28 @@ export const SESSION_PERMISSION_MODES: readonly SessionPermissionMode[] = [
   'auto',
   'plan',
   'dontAsk',
+  'bypassPermissions',
+];
+
+/** Modes in which tool uses run without asking anyone: shown as dangerous. */
+export const DANGEROUS_PERMISSION_MODES: readonly SessionPermissionMode[] = [
+  'bypassPermissions',
 ];
 
 /**
  * The session's Claude Code process runs in another mode than the chosen
- * one (`SessionDto.permissionMode` is `auto`):
+ * one (`SessionDto.permissionMode` is `auto` or `bypassPermissions`):
  * - `auto_unavailable`: Claude Code cannot use auto mode here (plan,
  *   model or settings) and fell back to `default`;
+ * - `bypass_unavailable`: Claude Code refused `bypassPermissions` (e.g.
+ *   `disableBypassPermissionsMode` in the settings) and runs in `default`;
  * - `autofix`: an Autofix run is going; it works on untrusted GitHub
  *   content and therefore runs in `default` until its turn ends.
  */
 export interface PermissionModeOverride {
   /** The mode in effect. */
   mode: SessionPermissionMode;
-  reason: 'auto_unavailable' | 'autofix';
+  reason: 'auto_unavailable' | 'bypass_unavailable' | 'autofix';
 }
 
 /** Token counts and theoretical API cost (USD), summed over requests. */

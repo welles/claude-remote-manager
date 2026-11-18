@@ -9,12 +9,12 @@ import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import {
   CREATE_PULL_REQUEST_TOOL_NAME,
   SHOW_FILE_TOOL_NAME,
-} from './approval-grants';
-import { SESSION_PERMISSION_SETTINGS } from './session-agent-support';
+} from './app-tools';
+import { SESSION_SETTINGS } from './session-agent-support';
 import { pngImage } from '../attachments/testing/images';
-import { flush, waitFor } from './testing/fake-agent';
+import { waitFor } from './testing/fake-agent';
 
-describe('session integrations (credentials, tool, memory)', () => {
+describe('session integrations (tools, memory, pushes)', () => {
   let harness: WorkspaceHarness;
 
   beforeEach(async () => {
@@ -79,54 +79,54 @@ describe('session integrations (credentials, tool, memory)', () => {
       ...(mcpServer ? { mcpServer } : {}),
     });
 
-  it('gives the process a session token, the push ask rule and the repository’s memory', async () => {
+  it("gives the process the repository's memory and the user's own git credentials", async () => {
     const repository = await githubRepository();
     const session = await start(repository.id);
 
-    const env = options().env ?? {};
-    expect(env['CRM_API_URL']).toBe(harness.config.internalApiUrl);
-    expect(harness.sessionCredentials.resolve(env['CRM_SESSION_TOKEN'])).toBe(
-      session.id,
+    // No credentials of the app: git uses the user's own.
+    expect(Object.keys(options().env ?? {})).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^CRM_/)]),
     );
     const memory = join(harness.config.memoryDir, repository.id);
     expect(options().settings).toEqual({
-      ...SESSION_PERMISSION_SETTINGS,
+      ...SESSION_SETTINGS,
       autoMemoryDirectory: memory,
     });
-    expect(SESSION_PERMISSION_SETTINGS.permissions).toMatchObject({
-      ask: ['Bash(git push:*)'],
-      disableBypassPermissionsMode: 'disable',
-    });
-    // Auto mode is the session's choice (its limits: approval-limits.ts).
-    expect(SESSION_PERMISSION_SETTINGS.permissions).not.toHaveProperty(
-      'disableAutoMode',
-    );
-    // No claude.ai connectors of the account (with strictMcpConfig, see
-    // sdk-agent-runner).
-    expect(SESSION_PERMISSION_SETTINGS.disableClaudeAiConnectors).toBe(true);
+    // Nothing of the user's settings is overridden: bypass mode, MCP
+    // servers and claude.ai connectors are as in a terminal.
+    expect(SESSION_SETTINGS).not.toHaveProperty('permissions');
+    expect(SESSION_SETTINGS).not.toHaveProperty('disableClaudeAiConnectors');
     expect(existsSync(memory)).toBe(true);
-    expect(
-      options().tools?.map((entry) => [entry.name, entry.alwaysAsk]),
-    ).toEqual([
-      ['show_file', false],
-      ['create_pull_request', true],
-      // Adding a repository asks the user on every call.
-      ['add_repository', true],
+    expect(options().tools?.map((entry) => entry.name)).toEqual([
+      'show_file',
+      'create_pull_request',
+      'add_repository',
     ]);
     // Showing a file never asks.
     expect(options().allowedTools).toContain('mcp__crm__show_file');
-    expect(
-      await git(session.cwd, 'config', '--get-all', 'credential.helper'),
-    ).toMatch(/^\n?.*git-credential-crm\.cjs'$/);
+    await expect(
+      git(session.cwd, 'config', '--local', '--get-all', 'credential.helper'),
+    ).rejects.toThrow();
 
     // A second session of the repository shares the memory directory.
     await start(repository.id);
     expect(options().settings?.['autoMemoryDirectory']).toBe(memory);
   });
 
+  it('appends the session instructions of the machine to the system prompt', async () => {
+    const file = join(harness.config.memoryDir, '..', 'instructions.md');
+    writeFileSync(file, '# This machine\n\nMARKER\n');
+    harness.config.sessionInstructionsFile = file;
+    await start(null);
+    expect(options().instructions).toBe('# This machine\n\nMARKER');
+    harness.config.sessionInstructionsFile = join(file, 'missing');
+    await start(null);
+    expect(options().instructions).toBeUndefined();
+  });
+
   it('keeps Claude Code’s default memory and gives scratch sessions show_file and add_repository', async () => {
     await start(null);
-    expect(options().settings).toEqual(SESSION_PERMISSION_SETTINGS);
+    expect(options().settings).toEqual(SESSION_SETTINGS);
     expect(options().tools?.map((entry) => entry.name)).toEqual([
       'show_file',
       'add_repository',
@@ -254,51 +254,21 @@ describe('session integrations (credentials, tool, memory)', () => {
     ]);
   });
 
-  it('revokes the session token when the process ends', async () => {
-    const repository = await githubRepository();
-    const session = await start(repository.id);
-    const token = options().env?.['CRM_SESSION_TOKEN'];
-    await harness.service.end(session.id);
-    await waitFor(() => harness.sessionCredentials.resolve(token) === null);
-  });
-
-  it('runs create_pull_request only after the user approved that call', async () => {
+  it('runs create_pull_request as the permission mode says, like any tool', async () => {
     const repository = await githubRepository();
     const session = await start(repository.id);
     await commitFile(session.cwd, 'work.txt', 'w');
     const input = { title: 'Add work', body: 'Done' };
     const sdk = { name: 'crm', source: 'sdk' };
 
-    // Denied by the user: the tool refuses to run.
+    // When Claude Code asks, the request shows the pull request with the
+    // defaults the tool uses.
     harness.approver.autoAnswer = { decision: 'deny', message: 'Not yet' };
     await expect(
       ask(CREATE_PULL_REQUEST_TOOL_NAME, input, 'tu-1', sdk),
     ).resolves.toMatchObject({
       behavior: 'deny',
       message: expect.stringContaining('Not yet'),
-    });
-    const denied = await tool('create_pull_request').handler(input, {
-      toolUseId: null,
-    });
-    expect(denied).toMatchObject({ isError: true });
-    expect(denied.text).toContain('not approved');
-    expect(harness.github.pulls).toHaveLength(0);
-    expect(
-      harness.eventsOfType(session.id, 'permission.resolved').at(-1),
-    ).toMatchObject({ decision: 'deny', cause: 'user', message: 'Not yet' });
-
-    // Approved, after Claude pushed the branch. The request shows the pull
-    // request with the defaults the tool uses, and offers no session allow.
-    harness.approver.autoAnswer = { decision: 'allow' };
-    await harness.sessionGit.push(session.id, repository.id);
-    await expect(
-      ask(CREATE_PULL_REQUEST_TOOL_NAME, input, 'tu-2', sdk),
-    ).resolves.toEqual({ behavior: 'allow', updatedInput: input });
-    expect(harness.approver.requests.at(-1)).toMatchObject({
-      sessionId: session.id,
-      toolName: CREATE_PULL_REQUEST_TOOL_NAME,
-      toolUseId: 'tu-2',
-      mcpServer: sdk,
     });
     expect(
       harness.eventsOfType(session.id, 'permission.request').at(-1),
@@ -311,30 +281,19 @@ describe('session integrations (credentials, tool, memory)', () => {
         base: 'main',
         draft: false,
       },
-      sessionAllow: null,
     });
-    await expect(
-      harness.service.respondToPermission(
-        session.id,
-        harness.eventsOfType(session.id, 'permission.request').at(-1)
-          ?.requestId ?? '',
-        { decision: 'allow', scope: 'session' },
-      ),
-    ).resolves.toMatchObject({ alreadyResolved: true });
+    expect(harness.github.pulls).toHaveLength(0);
+
+    // A call the permission mode let through (nothing asked) runs.
+    await harness.sessionGit.push(session.id, repository.id);
     const created = await tool('create_pull_request').handler(input, {
-      toolUseId: null,
+      toolUseId: 'tu-2',
     });
     expect(created.isError).toBeUndefined();
     expect(created.text).toContain('https://github.com/alice/app/pull/1');
     expect(harness.service.get(session.id).pullRequests).toEqual([
       expect.objectContaining({ createdBy: 'claude', title: 'Add work' }),
     ]);
-
-    // One approval, one call.
-    expect(
-      (await tool('create_pull_request').handler(input, { toolUseId: null }))
-        .isError,
-    ).toBe(true);
   });
 
   it('names the repository when the call is ambiguous or foreign', async () => {
@@ -359,20 +318,14 @@ describe('session integrations (credentials, tool, memory)', () => {
     );
   });
 
-  it('grants a push from its approval until Claude Code reports its result', async () => {
+  it('shows what a push targets when Claude Code asks for it', async () => {
     const repository = await githubRepository();
     const session = await start(repository.id);
     harness.approver.autoAnswer = { decision: 'allow' };
     await ask('Bash', { command: 'git push -u origin HEAD' }, 'push-1');
-    expect(harness.grants.hasPushGrant(session.id)).toBe(true);
-    // The approval request says what the push targets.
     expect(harness.approver.requests.at(-1)?.gitPushes).toEqual([
       expect.objectContaining({ sessionBranchOnly: true, warnings: [] }),
     ]);
-    // Each push needs its own approval: no "allow for this session".
-    expect(
-      harness.eventsOfType(session.id, 'permission.request').at(-1),
-    ).toMatchObject({ gitPushes: [expect.anything()], sessionAllow: null });
     await ask(
       'Bash',
       { command: 'git push --force origin HEAD:main' },
@@ -384,38 +337,15 @@ describe('session integrations (credentials, tool, memory)', () => {
     ]);
     await ask('Bash', { command: 'npm test' }, 'other');
     expect(harness.approver.requests.at(-1)?.gitPushes).toEqual([]);
-
-    harness.runner.last.emit({
-      type: 'user',
-      parent_tool_use_id: null,
-      message: {
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: 'push-1',
-            content: 'ok',
-            is_error: false,
-          },
-          {
-            type: 'tool_result',
-            tool_use_id: 'push-x',
-            content: 'denied',
-            is_error: true,
-          },
-        ],
-      },
-    });
-    await flush();
-    await waitFor(() => !harness.grants.hasPushGrant(session.id));
+    expect(harness.eventsOfType(session.id, 'permission.request')).toHaveLength(
+      3,
+    );
   });
 
-  it('records a push Claude made from the remote-tracking branch', async () => {
+  it('records a push Claude made, asked or not, from the remote-tracking branch', async () => {
     const repository = await githubRepository();
     const session = await start(repository.id);
     const commit = await commitFile(session.cwd, 'work.txt', 'w');
-    harness.approver.autoAnswer = { decision: 'allow' };
-    await ask('Bash', { command: 'git push' }, 'push-1');
     // What Claude's push does (here without credentials: a local remote).
     await git(
       session.cwd,
@@ -425,7 +355,34 @@ describe('session integrations (credentials, tool, memory)', () => {
       `HEAD:refs/heads/claude/${session.slug}`,
     );
     await git(session.cwd, 'fetch', '--quiet', 'origin');
-    harness.support.toolFinished(session.id, 'push-1');
+    harness.runner.last.emit(
+      {
+        type: 'assistant',
+        message: {
+          id: 'm-push',
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'push-1',
+              name: 'Bash',
+              input: { command: 'git push -u origin HEAD' },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'push-1', content: 'ok' },
+          ],
+        },
+        parent_tool_use_id: null,
+      },
+    );
     await waitFor(
       () =>
         harness.service.get(session.id).directories[0].pushedCommit === commit,

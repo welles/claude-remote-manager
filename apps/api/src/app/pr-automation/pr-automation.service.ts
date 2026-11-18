@@ -656,8 +656,9 @@ export class PrAutomationService
         text,
         origin: 'app',
         untrusted,
-        // The run works on untrusted GitHub content: no classifier
-        // approvals (`auto` runs as `default` until the turn ends).
+        // The run works on untrusted GitHub content: nothing runs without
+        // the user (`auto` and `bypassPermissions` run as `default` until
+        // the turn ends).
         holdAutoMode: true,
       });
     } catch (error) {

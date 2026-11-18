@@ -292,11 +292,17 @@ export class SessionManagementService {
       }
       await this.removeEmptyParents(record);
       const ids = new Set([record.id, record.sdkSessionId].filter(Boolean));
+      // Also the copy in an earlier version's configuration directory.
+      const configDirs = [
+        claudeConfigDir(),
+        ...(this.config.legacyClaudeConfigDir
+          ? [this.config.legacyClaudeConfigDir]
+          : []),
+      ];
       for (const id of ids) {
-        await this.entries.removeClaudeSessionData(
-          claudeConfigDir(),
-          id as string,
-        );
+        for (const configDir of configDirs) {
+          await this.entries.removeClaudeSessionData(configDir, id as string);
+        }
       }
       await this.attachmentStore?.removeSession(sessionId);
       await this.shownFileStore?.removeSession(sessionId);

@@ -33,9 +33,7 @@ import type {
 } from '../../agent/tool-approval';
 import { UserToolApprover } from '../../sessions/user-tool-approver';
 import { FakeGitHub } from '../../github/testing/fake-github';
-import { ApprovalGrants } from '../../sessions/approval-grants';
 import { SessionAgentSupportService } from '../../sessions/session-agent-support';
-import { SessionCredentials } from '../../sessions/session-credentials';
 import { SessionAutomationHooks } from '../../sessions/session-automation-hooks';
 import { MessageContextRepository } from '../../sessions/message-context.repository';
 import { SessionGitService } from '../../sessions/session-git.service';
@@ -104,8 +102,6 @@ export class WorkspaceHarness {
   );
   readonly events: SessionEventEnvelope[] = [];
   readonly config: AppConfig = testAppConfig(this.dir);
-  readonly sessionCredentials = new SessionCredentials();
-  readonly grants = new ApprovalGrants();
   readonly approver = new RecordingApprover();
   /** Hooks for the PR automation (set by its tests). */
   readonly hooks = new SessionAutomationHooks();
@@ -153,11 +149,8 @@ export class WorkspaceHarness {
     await this.shownFiles.onModuleInit();
     this.support = new SessionAgentSupportService(
       this.config,
-      this.sessionCredentials,
-      this.grants,
       this.sessionGit,
       this.git,
-      this.github.installationTokens,
       this.shownFiles,
     );
     this.service = new SessionsService(

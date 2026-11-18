@@ -73,7 +73,7 @@ import {
   APP_MCP_SERVER,
   APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
-} from './approval-grants';
+} from './app-tools';
 import type { AgentTool } from '../agent/agent-runner';
 import { zeroTurnMessages } from '../agent/sdk-agent-runner';
 import {
@@ -82,7 +82,6 @@ import {
   type ResolvedAddition,
 } from '../workspaces/repository-additions';
 import { sessionAllows, unresolvedRequests } from './permission-requests';
-import { approvalLimit } from './approval-limits';
 import { PreviewsService } from '../previews/previews.service';
 import {
   SessionAutomationHooks,
@@ -198,8 +197,9 @@ export interface SessionMessageInput {
   untrusted?: UntrustedContext;
   /**
    * The turn this message starts runs in `default` where the session uses
-   * `auto` (an Autofix run, which works on untrusted GitHub content): the
-   * classifier approves nothing until that turn ends.
+   * `auto` or `bypassPermissions` (an Autofix run, which works on untrusted
+   * GitHub content): nothing runs without the user's approval until that
+   * turn ends.
    */
   holdAutoMode?: boolean;
 }
@@ -217,6 +217,15 @@ interface QueuedMessage extends UserMessage {
 }
 
 /** Error text, completed with Claude Code's last stderr line if any. */
+/**
+ * Modes in which tool calls run without the user (a classifier or nothing
+ * decides): an Autofix run, which works on untrusted GitHub content, runs
+ * in `default` instead until its turn ends.
+ */
+export function heldForUntrusted(mode: SessionPermissionMode): boolean {
+  return mode === 'auto' || mode === 'bypassPermissions';
+}
+
 function errorMessage(error: unknown, run?: AgentRun): string {
   const message = error instanceof Error ? error.message : String(error);
   const detail = run?.stderrTail().at(-1);
@@ -298,8 +307,9 @@ interface LiveSession {
   /** Stops the preparation of a repository being added (ending the session). */
   addition: AbortController | null;
   /**
-   * Approved `add_repository` calls by tool use ID: what the user saw and
-   * allowed, used once by the tool.
+   * `add_repository` calls the user approved, by tool use ID: what the
+   * user saw and allowed, used once by the tool (calls that did not ask
+   * are resolved by the tool itself).
    */
   additionGrants: Map<string, ResolvedAddition>;
   /**
@@ -311,7 +321,7 @@ interface LiveSession {
   /**
    * Set from sending a message with `holdAutoMode` until the end of the
    * turn it started (`delivered`: it reached Claude Code): a session in
-   * `auto` runs in `default` meanwhile.
+   * `auto` or `bypassPermissions` runs in `default` meanwhile.
    */
   autoHold: { messageId: string; delivered: boolean } | null;
   /**
@@ -1589,13 +1599,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           permissionMode: this.processMode(live, record.permissionMode),
           ...(await this.resumeTarget(record)),
           canUseTool: this.canUseTool(live),
-          alwaysAsk: approvalLimit,
           allowedTools: [...allowed.rules, ...(extras.allowedTools ?? [])],
           env: { ...SESSION_ENV, ...extras.env },
           tools: this.additions
             ? [...extras.tools, this.addRepositoryTool(live)]
             : extras.tools,
           settings: extras.settings,
+          ...(extras.instructions ? { instructions: extras.instructions } : {}),
         },
         first,
       );
@@ -1955,9 +1965,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Records a mode Claude Code reports, if it is one this app uses. While
-   * the session is in `auto`, `default` is not a change of the chosen
-   * mode: Claude Code could not use auto mode (plan, model, settings), or
-   * the app holds it for an Autofix run; the override shows it.
+   * the session is in `auto` or `bypassPermissions`, `default` is not a
+   * change of the chosen mode: Claude Code could not use that mode (plan,
+   * model, settings), or the app holds it for an Autofix run; the override
+   * shows it.
    */
   private syncPermissionMode(live: LiveSession, mode: PermissionMode): void {
     live.reportedMode = mode;
@@ -1970,7 +1981,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     if (
       mode === record.permissionMode ||
-      (record.permissionMode === 'auto' && mode === 'default')
+      (heldForUntrusted(record.permissionMode) && mode === 'default')
     ) {
       this.publishOverride(live);
       return;
@@ -1984,13 +1995,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * The mode the session's process should run in: the chosen one, except
-   * `default` for `auto` while a turn is held (Autofix run).
+   * `default` for `auto` and `bypassPermissions` while a turn is held
+   * (Autofix run).
    */
   private processMode(
     live: LiveSession,
     mode: SessionPermissionMode,
   ): SessionPermissionMode {
-    return mode === 'auto' && live.autoHold ? 'default' : mode;
+    return heldForUntrusted(mode) && live.autoHold ? 'default' : mode;
   }
 
   /** Switches the running process's mode; rejects if Claude Code refuses. */
@@ -2012,21 +2024,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Holds `auto` for the turn of message `id` (an Autofix run): the
-   * process switches to `default` before the message reaches it, or starts
-   * in it. Throws (and releases the hold) if Claude Code refuses.
+   * Holds `auto` or `bypassPermissions` for the turn of message `id` (an
+   * Autofix run): the process switches to `default` before the message
+   * reaches it, or starts in it. Throws (and releases the hold) if Claude
+   * Code refuses.
    */
   private async holdAutoMode(live: LiveSession, id: string): Promise<void> {
     live.autoHold = { messageId: id, delivered: false };
     const run = live.run;
-    if (run && this.requireRecord(live.id).permissionMode === 'auto') {
+    if (run && heldForUntrusted(this.requireRecord(live.id).permissionMode)) {
       try {
         await this.requestMode(live, run, 'default');
       } catch (error) {
         live.autoHold = null;
         this.publishOverride(live);
         throw new Error(
-          `Claude Code did not leave auto mode for the run: ${errorMessage(error)}`,
+          `Claude Code did not leave ${this.requireRecord(live.id).permissionMode} mode for the run: ${errorMessage(error)}`,
         );
       }
     }
@@ -2043,7 +2056,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   /**
    * The held message `id` will never reach Claude Code (withdrawn,
    * removed from the queue, not sent): its hold ends, the process returns
-   * to `auto`.
+   * to the chosen mode.
    */
   private dropHeld(live: LiveSession, id: string): void {
     if (live.autoHold?.messageId === id && !live.autoHold.delivered) {
@@ -2051,26 +2064,30 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** The held turn ended: the process returns to `auto`. */
+  /** The held turn ended: the process returns to the chosen mode. */
   private releaseAutoHold(live: LiveSession): void {
     live.autoHold = null;
     const run = live.run;
-    if (run && this.requireRecord(live.id).permissionMode === 'auto') {
-      void this.requestMode(live, run, 'auto').catch((error: unknown) =>
+    const mode = this.requireRecord(live.id).permissionMode;
+    if (run && heldForUntrusted(mode)) {
+      void this.requestMode(live, run, mode).catch((error: unknown) =>
         this.logger.warn(
-          `Claude Code of ${live.id} did not return to auto mode: ${errorMessage(error)}`,
+          `Claude Code of ${live.id} did not return to ${mode} mode: ${errorMessage(error)}`,
         ),
       );
     }
     this.publishOverride(live);
   }
 
-  /** The mode the process runs in instead of the chosen `auto`, if any. */
+  /**
+   * The mode the process runs in instead of the chosen `auto` or
+   * `bypassPermissions`, if any.
+   */
   private permissionModeOverride(
     record: SessionRecord,
   ): PermissionModeOverride | null {
     const live = this.live.get(record.id);
-    if (record.permissionMode !== 'auto' || !live) {
+    if (!heldForUntrusted(record.permissionMode) || !live) {
       return null;
     }
     if (live.autoHold) {
@@ -2081,7 +2098,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       live.modeRequests === 0 &&
       live.reportedMode === 'default'
     ) {
-      return { mode: 'default', reason: 'auto_unavailable' };
+      return {
+        mode: 'default',
+        reason:
+          record.permissionMode === 'auto'
+            ? 'auto_unavailable'
+            : 'bypass_unavailable',
+      };
     }
     return null;
   }
@@ -2161,8 +2184,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   /**
    * Tool uses that need approval become approval requests the user
    * answers (see {@link ToolApprover}); the session waits for the user
-   * meanwhile. Approved uses are reported to the integrations: an approved
-   * `git push` or `create_pull_request` call is what lets those through.
+   * meanwhile. Calls the permission mode or an allow rule lets through
+   * never get here.
    */
   private canUseTool(live: LiveSession): CanUseTool {
     return async (toolName, input, options) => {
@@ -2300,13 +2323,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           'plan',
         );
       }
-      this.support.approved(
-        live.id,
-        toolName,
-        approvedInput,
-        options.toolUseID,
-        mcpServer,
-      );
       return { ...result, updatedInput: approvedInput };
     };
   }
@@ -2669,9 +2685,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * The tool `add_repository`: adds a repository to the session after the
-   * user approved exactly this call (see {@link canUseTool}), waits until
-   * its clone is ready and tells Claude truthfully what happened.
+   * The tool `add_repository`: adds a repository to the session, waits
+   * until its clone is ready and tells Claude truthfully what happened. It
+   * asks like any tool, as the session's permission mode says; when the
+   * user was asked, exactly what they approved is added (see
+   * {@link canUseTool}).
    */
   private addRepositoryTool(live: LiveSession): AgentTool {
     return {
@@ -2679,13 +2697,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       description:
         'Add another repository to this session when the task needs changes (or reading) in a ' +
         'repository that is not one of your directories yet, so that you can continue in this ' +
-        'conversation. The user approves each call. Name a repository the session manager knows ' +
+        'conversation. Name a repository the session manager knows ' +
         '(owner/name: a registered repository, a local project local/PROJECT, or one its GitHub ' +
         'App can access) or give a remote clone URL (https or ssh; no local paths). The repository ' +
         "gets its own clone on the session branch, like the session's other repositories, and its " +
         'setup script runs; this can take a while. The result says where the clone is. Do not use ' +
         'it for repositories you only want to look up on the web.',
-      alwaysAsk: true,
       inputSchema: (z) => ({
         repository: z
           .string()
@@ -2717,16 +2734,30 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           ),
       }),
       handler: async (input, { toolUseId }) => {
-        const grant = toolUseId
-          ? live.additionGrants.get(toolUseId)
-          : undefined;
-        if (!grant || !toolUseId) {
-          return {
-            isError: true,
-            text: 'This add_repository call was not approved by the user, so no repository was added.',
-          };
+        let grant = toolUseId ? live.additionGrants.get(toolUseId) : undefined;
+        if (toolUseId) {
+          live.additionGrants.delete(toolUseId);
         }
-        live.additionGrants.delete(toolUseId);
+        if (!grant) {
+          // Not asked (the permission mode or an allow rule let it run).
+          if (!this.additions) {
+            return {
+              isError: true,
+              text: 'Repositories cannot be added on this server.',
+            };
+          }
+          try {
+            grant = await this.additions.resolve(
+              this.requireRecord(live.id),
+              input,
+            );
+          } catch (error) {
+            return {
+              isError: true,
+              text: `No repository was added: ${httpErrorText(error)}.`,
+            };
+          }
+        }
         const name = grant.call.repository;
         let directory: SessionDirectoryRecord;
         try {
@@ -2925,7 +2956,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (store && STORED_EVENT_TYPES.has(input.type)) {
       this.storedEvents.add(live.id, input, live.anchor);
     }
-    if (input.type === 'tool.result') {
+    if (input.type === 'tool.call') {
+      this.support.toolCalled(
+        live.id,
+        input.name,
+        input.input,
+        input.toolUseId,
+      );
+    } else if (input.type === 'tool.result') {
       this.support.toolFinished(live.id, input.toolUseId);
     }
     this.events.next({ sessionId: live.id, event });

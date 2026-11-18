@@ -53,8 +53,8 @@ function errorText(error: unknown): string {
 /**
  * Pushing session branches and creating pull requests, for one repository
  * of a session at a time. Used by the session view's buttons (the user's
- * click is the approval) and by Claude's `create_pull_request` tool (after
- * the user approved that call). Pushes and pull requests of GitHub
+ * click is the approval) and by Claude's `create_pull_request` tool (asked
+ * as the session's permission mode says). Pushes and pull requests of GitHub
  * repositories use installation tokens for exactly that repository;
  * repositories registered by clone URL push with the server's own git
  * credentials; local projects have no remote to push to.
@@ -189,8 +189,8 @@ export class SessionGitService {
   /**
    * Creates a pull request from the session branch of one clone. By the
    * user (button), the branch is pushed first if GitHub does not have its
-   * latest commit. By Claude (tool), it is not: Claude pushes itself, with
-   * its own approval, and gets an error naming that if the branch is
+   * latest commit. By Claude (tool), it is not: Claude pushes itself (with
+   * the user's credentials), and gets an error naming that if the branch is
    * missing on GitHub. An open pull request for the branch is returned
    * instead of a new one.
    */

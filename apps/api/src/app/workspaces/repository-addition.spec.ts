@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionDto } from '@claude-remote-manager/shared-types';
 import { git } from '../git/testing/git-fixtures';
-import { ADD_REPOSITORY_TOOL_NAME } from '../sessions/approval-grants';
+import { ADD_REPOSITORY_TOOL_NAME } from '../sessions/app-tools';
 import { SessionEventRepository } from '../sessions/session-event.repository';
 import { additionResult } from '../sessions/sessions.service';
 import {
@@ -340,9 +340,8 @@ describe('adding repositories to a running session', () => {
       return { session, run: harness.runner.last };
     }
 
-    it('asks the user with what it adds, once only; then Claude works in the clone', async () => {
+    it('asks the user with what it adds; then Claude works in the clone', async () => {
       const { session, run } = await runningSession();
-      expect(tool(run).alwaysAsk).toBe(true);
       const lib = await harness.addRepository('acme', 'lib');
       const decision = call(run, {
         repository: 'acme/lib',
@@ -367,7 +366,7 @@ describe('adding repositories to a running session', () => {
         waitingFor: 'permission',
         pendingRequests: { kind: 'repository', count: 1 },
       });
-      // Never for the whole session.
+      // Claude Code suggested no rule for the session.
       await expect(
         harness.service.respondToPermission(session.id, request.requestId, {
           decision: 'allow',
@@ -398,16 +397,16 @@ describe('adding repositories to a running session', () => {
         harness.sessions.require(session.id).directories.at(-1)?.addition
           ?.announce,
       ).toBe(false);
-      // The approval is used up.
+      // The approval is used up: a repeated call is checked again.
       const again = await tool(run).handler(
         { repository: 'acme/lib', reason: 'x' },
         { toolUseId: 'tool-add' },
       );
       expect(again).toMatchObject({ isError: true });
-      expect(again.text).toContain('not approved');
+      expect(again.text).toContain('already part of this session');
     });
 
-    it('adds nothing when the user denies or the call was never approved', async () => {
+    it('adds nothing when the user denies', async () => {
       const { session, run } = await runningSession();
       await harness.addRepository('acme', 'lib');
       const decision = call(run, { repository: 'acme/lib', reason: 'r' });
@@ -417,12 +416,32 @@ describe('adding repositories to a running session', () => {
         message: 'Not that one',
       });
       expect(await decision).toMatchObject({ behavior: 'deny' });
+      expect(added(session.id)).toBeUndefined();
+    });
+
+    it('adds a repository without asking where the permission mode lets the call through', async () => {
+      const { session, run } = await runningSession();
+      await harness.addRepository('acme', 'lib');
+      // Claude Code ran the tool without asking (e.g. bypassPermissions).
+      const refused = await tool(run).handler(
+        { repository: 'nobody/else', reason: 'r' },
+        { toolUseId: 'tool-x' },
+      );
+      expect(refused).toMatchObject({ isError: true });
+      expect(refused.text).toContain('neither registered');
       const result = await tool(run).handler(
         { repository: 'acme/lib', reason: 'r' },
         { toolUseId: 'tool-add' },
       );
-      expect(result).toMatchObject({ isError: true });
-      expect(added(session.id)).toBeUndefined();
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain(
+        `Its clone is ${clonePath(session, 'acme', 'lib')}`,
+      );
+      expect(harness.approver.requests).toHaveLength(0);
+      expect(added(session.id)?.addition).toMatchObject({
+        by: 'claude',
+        state: 'ready',
+      });
     });
 
     it('refuses without asking what the form would not allow', async () => {

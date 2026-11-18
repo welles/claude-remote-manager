@@ -29,26 +29,12 @@ export interface AgentTool {
   description: string;
   /** Input schema as Zod raw shape, built with the Zod the SDK uses. */
   inputSchema: (z: typeof Zod) => Record<string, Zod.ZodType>;
-  /**
-   * Ask `canUseTool` before every call, even where a permission rule
-   * allows the tool (MCP tool permission policy `always_ask`).
-   */
-  alwaysAsk: boolean;
   /** The tool only reads (MCP annotation `readOnlyHint`). */
   readOnly?: boolean;
   handler: (
     input: Record<string, unknown>,
     context: AgentToolContext,
   ) => Promise<AgentToolResult>;
-}
-
-/** A tool call as Claude Code announces it before deciding about it. */
-export interface AgentToolCall {
-  toolName: string;
-  input: Record<string, unknown>;
-  toolUseId: string | null;
-  /** Set when a subagent makes the call. */
-  agentId: string | null;
 }
 
 /** What a Claude Code process is started with. */
@@ -65,13 +51,6 @@ export interface AgentStartOptions {
   /** Decides tool uses that need the user's approval. */
   canUseTool: CanUseTool;
   /**
-   * Tool calls that must reach `canUseTool` whatever the permission mode
-   * (also where `auto` mode's classifier would decide them): returns the
-   * reason shown in the approval dialog, `null` for other calls. Claude
-   * Code learns it through a PreToolUse hook answering `ask`.
-   */
-  alwaysAsk?: (call: AgentToolCall) => string | null;
-  /**
    * Permission rules allowed for this process (in memory, like rules the
    * user allowed for the session; never written to settings files).
    */
@@ -85,6 +64,11 @@ export interface AgentStartOptions {
    * Code's flag settings), e.g. the auto-memory directory.
    */
   settings?: Record<string, unknown>;
+  /**
+   * Text appended to Claude Code's system prompt: instructions for the
+   * sessions of this machine (`SESSION_INSTRUCTIONS_FILE`).
+   */
+  instructions?: string;
 }
 
 /** An image of a user message (base64). */

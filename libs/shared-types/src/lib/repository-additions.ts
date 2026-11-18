@@ -1,7 +1,7 @@
 /**
  * Adding a repository to a session that already runs: by the user (the
  * control in the session details) or by Claude (the tool `add_repository`,
- * which needs the user's approval every time). The added repository gets
+ * asked like any tool in the session's permission mode). The added repository gets
  * its own clone on the session branch, like the repositories the session
  * started with.
  */
