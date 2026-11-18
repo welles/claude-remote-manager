@@ -13,7 +13,6 @@ import {
 import { Subject } from 'rxjs';
 import type {
   CanUseTool,
-  PermissionResult,
   PermissionMode,
   SDKMessage,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -48,6 +47,7 @@ import {
 import {
   AgentRunner,
   type AgentRun,
+  type AgentGateDecision,
   type AgentToolCall,
   type AgentUserMessage,
 } from '../agent/agent-runner';
@@ -226,6 +226,23 @@ interface QueuedMessage extends UserMessage {
  */
 export function heldForUntrusted(mode: SessionPermissionMode): boolean {
   return mode === 'auto' || mode === 'bypassPermissions';
+}
+
+/** Shown in the approval dialog for the calls of an Autofix run. */
+export const AUTOFIX_ASK_REASON =
+  'Autofix run on GitHub content: every action but reading is confirmed, whatever allow rules say';
+
+/**
+ * Whether a call starts work that goes on after its turn: a subagent
+ * (backgrounded unless `run_in_background: false`) or a backgrounded
+ * command.
+ */
+function runsInBackground(call: AgentToolCall): boolean {
+  const background = call.input['run_in_background'];
+  if (call.toolName === 'Agent' || call.toolName === 'Task') {
+    return background !== false;
+  }
+  return background === true;
 }
 
 /** Error text, completed with Claude Code's last stderr line if any. */
@@ -1604,7 +1621,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           permissionMode: this.processMode(live, record.permissionMode),
           ...(await this.resumeTarget(record)),
           canUseTool: this.canUseTool(live),
-          gate: (call, signal) => this.autofixGate(live, call, signal),
+          gate: (call) => this.autofixGate(live, call),
           allowedTools: [...allowed.rules, ...(extras.allowedTools ?? [])],
           env: { ...SESSION_ENV, ...extras.env },
           tools: this.additions
@@ -2195,30 +2212,29 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   /**
    * During an Autofix run (its turn, `autoHold` delivered) every tool call
-   * but reading goes to the user through the approval flow (`canUseTool`,
-   * with Autofix's own git add, commit and push), whatever allow rules of
-   * the user or "Allow for this session" say: the run works on untrusted
-   * GitHub content, which could make Claude push elsewhere with the user's
-   * credentials. Outside a run Claude Code decides (`null`).
+   * but reading goes to the user (`canUseTool`, with Autofix's own git add,
+   * commit and push), whatever allow rules of the user, the project or
+   * "Allow for this session" say: the run works on untrusted GitHub
+   * content, which could make Claude push elsewhere with the user's
+   * credentials. Background work is refused: it would go on after the run
+   * (unheld) and start a turn of its own with what it found. Outside a run
+   * Claude Code decides (`null`).
    */
-  private async autofixGate(
+  private autofixGate(
     live: LiveSession,
     call: AgentToolCall,
-    signal: AbortSignal,
-  ): Promise<PermissionResult | null> {
+  ): AgentGateDecision | null {
     if (!live.autoHold?.delivered || READ_ONLY_TOOLS.has(call.toolName)) {
       return null;
     }
-    return this.canUseTool(live)(call.toolName, call.input, {
-      signal,
-      toolUseID: call.toolUseId,
-      // Not a control request of Claude Code's: nothing to echo.
-      requestId: `gate-${call.toolUseId}`,
-      ...(call.agentId ? { agentID: call.agentId } : {}),
-      ...(call.mcpServer ? { mcpServer: call.mcpServer } : {}),
-      // Allowing for the session would not change the next call of the run.
-      suppressAlwaysAllowRule: true,
-    });
+    if (runsInBackground(call)) {
+      return {
+        decision: 'deny',
+        reason:
+          'Not during an Autofix run: background work would go on after the run. Run it in the foreground (run_in_background: false).',
+      };
+    }
+    return { decision: 'ask', reason: AUTOFIX_ASK_REASON };
   }
 
   private canUseTool(live: LiveSession): CanUseTool {
@@ -2321,7 +2337,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         agentId: options.agentID ?? null,
         mcpServer,
         suggestions: options.suggestions ?? [],
-        suppressAlwaysAllow: options.suppressAlwaysAllowRule === true,
+        // During an Autofix run every call asks anyway (`autofixGate`).
+        suppressAlwaysAllow:
+          options.suppressAlwaysAllowRule === true ||
+          live.autoHold?.delivered === true,
         signal: options.signal,
         onRequest: (event) => {
           this.append(live, event);

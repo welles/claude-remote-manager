@@ -255,16 +255,12 @@ export function zeroTurnMessages(message: AgentUserMessage): number {
 }
 
 /**
- * How long Claude Code waits for the gate (seconds): it may wait for the
- * user's answer, as long as an approval request may wait.
- */
-const GATE_TIMEOUT_SECONDS = 365 * 24 * 60 * 60;
-
-/**
- * The PreToolUse hook through which `gate` decides tool calls before
- * Claude Code's own permission check: `allow` and `deny` are final (allow
- * rules and modes do not matter), `null` leaves the call to Claude Code.
- * A failure of the hook blocks the call (`onFailure: 'block'`).
+ * The PreToolUse hook through which `gate` looks at tool calls before
+ * Claude Code's own permission check. `ask` is not left to allow rules or
+ * the mode: Claude Code then calls `canUseTool` once (with its title,
+ * reason and suggestions; deny rules and its safety checks still apply).
+ * `deny` refuses the call with the reason. The hook only answers, it never
+ * waits; a failure blocks the call (`onFailure: 'block'`).
  */
 export function gateHooks(
   gate: NonNullable<AgentStartOptions['gate']>,
@@ -273,9 +269,8 @@ export function gateHooks(
     PreToolUse: [
       {
         onFailure: 'block',
-        timeout: GATE_TIMEOUT_SECONDS,
         hooks: [
-          async (input, _toolUseId, { signal }) => {
+          async (input) => {
             if (input.hook_event_name !== 'PreToolUse') {
               return {};
             }
@@ -283,36 +278,23 @@ export function gateHooks(
               typeof input.tool_input === 'object' && input.tool_input !== null
                 ? (input.tool_input as Record<string, unknown>)
                 : {};
-            const decision = await gate(
-              {
-                toolName: input.tool_name,
-                input: toolInput,
-                toolUseId: input.tool_use_id,
-                agentId: input.agent_id ?? null,
-                mcpServer: input.mcp_server ?? null,
-              },
-              signal,
-            );
-            if (decision === null) {
+            const verdict = gate({
+              toolName: input.tool_name,
+              input: toolInput,
+              toolUseId: input.tool_use_id,
+              agentId: input.agent_id ?? null,
+              mcpServer: input.mcp_server ?? null,
+            });
+            if (verdict === null) {
               return {};
             }
-            return decision.behavior === 'allow'
-              ? {
-                  hookSpecificOutput: {
-                    hookEventName: 'PreToolUse',
-                    permissionDecision: 'allow',
-                    ...(decision.updatedInput
-                      ? { updatedInput: decision.updatedInput }
-                      : {}),
-                  },
-                }
-              : {
-                  hookSpecificOutput: {
-                    hookEventName: 'PreToolUse',
-                    permissionDecision: 'deny',
-                    permissionDecisionReason: decision.message,
-                  },
-                };
+            return {
+              hookSpecificOutput: {
+                hookEventName: 'PreToolUse',
+                permissionDecision: verdict.decision,
+                permissionDecisionReason: verdict.reason,
+              },
+            };
           },
         ],
       },

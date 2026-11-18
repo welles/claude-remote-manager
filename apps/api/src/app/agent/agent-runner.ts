@@ -1,7 +1,6 @@
 import type {
   CanUseTool,
   ModelInfo,
-  PermissionResult,
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
   SDKMessage,
@@ -49,6 +48,13 @@ export interface AgentToolCall {
   mcpServer: { name: string; source: string } | null;
 }
 
+/** What `AgentStartOptions.gate` makes of a tool call. */
+export interface AgentGateDecision {
+  decision: 'ask' | 'deny';
+  /** Shown in the approval dialog, or told Claude when refused. */
+  reason: string;
+}
+
 /** What a Claude Code process is started with. */
 export interface AgentStartOptions {
   cwd: string;
@@ -63,15 +69,12 @@ export interface AgentStartOptions {
   /** Decides tool uses that need the user's approval. */
   canUseTool: CanUseTool;
   /**
-   * Decides a tool call before Claude Code's own permission check (rules,
-   * mode), or `null` to leave it to that check. Claude Code learns it
-   * through a PreToolUse hook; used to make every call of an Autofix run
-   * reach the user, whatever allow rules say.
+   * Looks at a tool call before Claude Code's own permission check: `ask`
+   * sends it to `canUseTool` whatever allow rules and the mode say, `deny`
+   * refuses it with the reason, `null` leaves it to Claude Code. Claude
+   * Code learns it through a PreToolUse hook; used for Autofix runs.
    */
-  gate?: (
-    call: AgentToolCall,
-    signal: AbortSignal,
-  ) => Promise<PermissionResult | null>;
+  gate?: (call: AgentToolCall) => AgentGateDecision | null;
   /**
    * Permission rules allowed for this process (in memory, like rules the
    * user allowed for the session; never written to settings files).

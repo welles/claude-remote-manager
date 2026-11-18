@@ -32,18 +32,19 @@ export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
 /**
  * Claude Code's tools that only read the session's files or keep its own
  * bookkeeping: they run unasked also during an Autofix run. Everything
- * else asks there (also web access, which could send content away).
+ * else asks there (also web access, which could send content away, and
+ * subagents).
  */
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'Read',
   'Glob',
   'Grep',
-  'LS',
-  'NotebookRead',
+  'LSP',
   'TodoWrite',
-  'Task',
-  'Agent',
-  'TaskOutput',
+  'ToolSearch',
+  'TaskGet',
+  'TaskList',
+  'ListAgents',
 ]);
 
 /** Commands that run the command after them. */

@@ -3,12 +3,73 @@ import { AsyncQueue } from './async-queue';
 import { ProcessLauncher, type ProcessRole } from '../common/process-isolation';
 import {
   buildQueryOptions,
+  gateHooks,
   sdkUserMessages,
   spawnAsSession,
   toolUseIdOf,
   userContent,
   zeroTurnMessages,
 } from './sdk-agent-runner';
+
+describe('gateHooks', () => {
+  const run = async (
+    gate: Parameters<typeof gateHooks>[0],
+    input: Record<string, unknown>,
+  ) => {
+    const matcher = gateHooks(gate).PreToolUse?.[0];
+    expect(matcher?.onFailure).toBe('block');
+    const hook = matcher?.hooks[0];
+    if (!hook) {
+      throw new Error('no hook');
+    }
+    return hook(
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Bash',
+        tool_input: input,
+        tool_use_id: 'tool-1',
+        session_id: 's',
+        transcript_path: '/t',
+        cwd: '/c',
+      } as never,
+      'tool-1',
+      { signal: new AbortController().signal },
+    );
+  };
+
+  it('passes the call and maps the decision', async () => {
+    const seen: unknown[] = [];
+    await expect(
+      run((call) => {
+        seen.push(call);
+        return null;
+      }, { command: 'ls' }),
+    ).resolves.toEqual({});
+    expect(seen).toEqual([
+      {
+        toolName: 'Bash',
+        input: { command: 'ls' },
+        toolUseId: 'tool-1',
+        agentId: null,
+        mcpServer: null,
+      },
+    ]);
+    await expect(
+      run(() => ({ decision: 'ask', reason: 'why' }), {}),
+    ).resolves.toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'ask',
+        permissionDecisionReason: 'why',
+      },
+    });
+    await expect(
+      run(() => ({ decision: 'deny', reason: 'no' }), {}),
+    ).resolves.toMatchObject({
+      hookSpecificOutput: { permissionDecision: 'deny' },
+    });
+  });
+});
 
 describe('buildQueryOptions', () => {
   const canUseTool: AgentStartOptions['canUseTool'] = async () => ({

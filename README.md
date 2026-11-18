@@ -329,12 +329,16 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 - Autofix hold: an Autofix run (untrusted GitHub content) of a session in `auto` or
   `bypassPermissions` runs in `default`: the process switches before the run's message and back
   to the chosen mode when its turn ends. During that turn every tool call except reading
-  (`Read`, `Glob`, `Grep`, `LS`, `NotebookRead`, to-dos and subagents) goes to the user, in
-  any mode and whatever allow rules say (the user's own, the project's, "Allow for this
-  session"): a PreToolUse hook sends it through the app's approval flow, without the offer to
-  allow it for the session. Injected text in a CI log or comment cannot push elsewhere with
-  the user's credentials. The app's narrow `git add`/`commit`/`push` allowance for Autofix
-  stays (see [git during autofix](#git-during-autofix)). Where auto mode is not available (plan, model,
+  (`Read`, `Glob`, `Grep`, `LSP`, `ToolSearch`, to-dos and task lists) goes to the user, in any
+  mode and whatever allow rules say (the user's own, the project's, "Allow for this
+  session"): a PreToolUse hook answers `ask`, which Claude Code does not leave to allow rules,
+  and the dialog does not offer to allow it for the session. Background work (a subagent not
+  run with `run_in_background: false`, a backgrounded command) is refused: it would go on
+  unheld after the run and start a turn of its own with what it found. Injected text in a CI
+  log or comment cannot push elsewhere with the user's credentials. The app's narrow
+  `git add`/`commit`/`push` allowance for Autofix stays (see
+  [git during autofix](#git-during-autofix)); what Claude may read unasked could still end up
+  in a commit message pushed to the pull request. Where auto mode is not available (plan, model,
   settings), Claude Code starts in or falls back to `default` and reports it (`status`/`init`);
   the chosen mode stays, and the session's `permissionModeOverride` (`{ mode, reason }`, reason
   `auto_unavailable`, `bypass_unavailable` or `autofix`) says which mode is in effect while the
@@ -2035,7 +2039,8 @@ Sessions get the service's environment (that of `user`; systemd sets `HOME`, `US
 - `LANG` and `LOCALE_ARCHIVE` from `i18n`, `TZ` from `time.timeZone`, `SSL_CERT_FILE` and
   `NIX_SSL_CERT_FILE` (the system's CA bundle), `DISABLE_AUTOUPDATER`, and whatever
   `environment` adds. Not the app's own configuration (`NODE_ENV`, `PORT`, the data
-  directories, `GITHUB_APP_ID`, `*_FILE`, `CREDENTIALS_DIRECTORY`, …): a session's `npm ci`
+  directories, `GITHUB_APP_ID`, the pointers to its secrets, `CREDENTIALS_DIRECTORY`,
+  `WEB_ROOT`, …): a session's `npm ci`
   would skip devDependencies, its dev servers would take the API's port, and a development
   API started in a session would open the service's database. No `CLAUDE_CONFIG_DIR` and no `GIT_CONFIG_GLOBAL`: Claude
   Code and git use `~/.claude` and `~/.gitconfig`.

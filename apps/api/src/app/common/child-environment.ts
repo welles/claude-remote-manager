@@ -98,9 +98,19 @@ export const APP_CONFIG_VARIABLES: ReadonlySet<string> = new Set([
   'API_GIT_CONFIG_GLOBAL',
   'LEGACY_CLAUDE_CONFIG_DIR',
   'CREDENTIALS_DIRECTORY',
+  // Pointers to the app's secrets (the secrets themselves are filtered).
+  'GITHUB_APP_PRIVATE_KEY_FILE',
+  'GITHUB_WEBHOOK_SECRET_FILE',
+  'NTFY_TOKEN_FILE',
+  'VAPID_PRIVATE_KEY_FILE',
+  // Set by the package's wrapper.
+  'WEB_ROOT',
+  'APP_VERSION',
+  'APP_COMMIT',
+  'APP_COMMIT_TIME',
 ]);
 
 /** Whether a variable is the API's configuration (not for sessions). */
 export function isAppConfigVariable(name: string): boolean {
-  return APP_CONFIG_VARIABLES.has(name) || /_FILE$/.test(name);
+  return APP_CONFIG_VARIABLES.has(name);
 }

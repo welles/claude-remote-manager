@@ -82,14 +82,23 @@ describe('ProcessLauncher', () => {
       GITHUB_APP_ID: '1',
       GITHUB_APP_PRIVATE_KEY_FILE: '/run/credentials/x/github-app-key',
       CREDENTIALS_DIRECTORY: '/run/credentials/x',
+      WEB_ROOT: '/nix/store/x-web',
       CLAUDE_CODE_OAUTH_TOKEN: 'token',
+      // The user's own variables stay, also file pointers.
+      SSL_CERT_FILE: '/etc/ssl/certs/ca-certificates.crt',
+      SOPS_AGE_KEY_FILE: '/home/u/.config/sops/age/keys.txt',
     };
     expect(
       launcher.environment('session', {}, {
         base,
         keep: ['CLAUDE_CODE_OAUTH_TOKEN'],
       }),
-    ).toEqual({ HOME: '/home/u', CLAUDE_CODE_OAUTH_TOKEN: 'token' });
+    ).toEqual({
+      HOME: '/home/u',
+      CLAUDE_CODE_OAUTH_TOKEN: 'token',
+      SSL_CERT_FILE: '/etc/ssl/certs/ca-certificates.crt',
+      SOPS_AGE_KEY_FILE: '/home/u/.config/sops/age/keys.txt',
+    });
   });
 
   it('starts session processes as the session user without capabilities', () => {

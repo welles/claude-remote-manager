@@ -133,25 +133,42 @@ let
 
   # Earlier versions of this module ran the API and the sessions as two
   # other users. Their files in the data directory are given to the user
-  # once; a stamp says to whom the directory was given last. The stamp
-  # lives in a directory only root can write (this runs as root, and the
-  # data directory belongs to the user: a stamp there could be a symlink
-  # to any file). Only files of other owners are changed, never through a
-  # symlink (`chown -h`, `find` does not follow links below the start).
+  # once; a stamp says to whom the directory was given last. This runs as
+  # root on a tree the user can change meanwhile:
+  # - the stamp lives in a directory only root writes (a stamp in the data
+  #   directory could be a symlink to any file);
+  # - the data directory must not be a symlink and its parents must be
+  #   root's, so it cannot be pointed elsewhere;
+  # - `chown -R` walks with directory file descriptors and never follows
+  #   symlinks (`--no-dereference`, `-P`), so swapping a directory for a
+  #   symlink during the walk does not lead it out of the tree.
   takeOverDataDir = pkgs.writeShellScript "claude-remote-manager-take-over-data-dir" ''
     set -eu
+    dir=${lib.escapeShellArg cfg.dataDir}
     stamps=/var/lib/claude-remote-manager-owner
     stamp="$stamps/${builtins.hashString "sha256" cfg.dataDir}"
     ${pkgs.coreutils}/bin/mkdir -p -m 0700 "$stamps"
     ${pkgs.coreutils}/bin/chown root:root "$stamps"
     ${pkgs.coreutils}/bin/chmod 0700 "$stamps"
-    if [ "$(${pkgs.coreutils}/bin/cat "$stamp" 2>/dev/null || true)" != ${lib.escapeShellArg cfg.user} ]; then
-      dir=$(${pkgs.coreutils}/bin/realpath -e ${lib.escapeShellArg cfg.dataDir})
-      echo "Giving $dir to ${cfg.user} ..."
-      ${pkgs.findutils}/bin/find "$dir" \( ! -user ${lib.escapeShellArg cfg.user} -o ! -group ${lib.escapeShellArg cfg.group} \) \
-        -exec ${pkgs.coreutils}/bin/chown -h ${lib.escapeShellArg "${cfg.user}:${cfg.group}"} {} +
-      echo ${lib.escapeShellArg cfg.user} > "$stamp"
+    if [ "$(${pkgs.coreutils}/bin/cat "$stamp" 2>/dev/null || true)" = ${lib.escapeShellArg cfg.user} ]; then
+      exit 0
     fi
+    if [ -L "$dir" ]; then
+      echo "$dir is a symlink; refusing to give it to ${cfg.user}" >&2
+      exit 1
+    fi
+    parent=$(${pkgs.coreutils}/bin/dirname "$dir")
+    while :; do
+      if [ -L "$parent" ] || [ "$(${pkgs.coreutils}/bin/stat -c %u "$parent")" != 0 ]; then
+        echo "$parent is not root's directory; refusing to give $dir to ${cfg.user}" >&2
+        exit 1
+      fi
+      [ "$parent" = / ] && break
+      parent=$(${pkgs.coreutils}/bin/dirname "$parent")
+    done
+    echo "Giving $dir to ${cfg.user} ..."
+    ${pkgs.coreutils}/bin/chown -R --no-dereference -P ${lib.escapeShellArg "${cfg.user}:${cfg.group}"} "$dir"
+    echo ${lib.escapeShellArg cfg.user} > "$stamp"
   '';
 
   list = concatStringsSep ",";

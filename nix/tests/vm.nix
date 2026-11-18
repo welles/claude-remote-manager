@@ -136,6 +136,10 @@ pkgs.testers.runNixOSTest {
           chown 991:991 $old/db/old-file
           chmod 0600 $old/db/old-file
           install -d -o 991 -g 991 -m 0700 $old/git/ssh
+          # An old symlink to a file of root's: the take-over must change
+          # the link, never what it points to.
+          ln -s /etc/hostname $old/db/link
+          chown -h 991:991 $old/db/link
         '';
       };
 
@@ -214,6 +218,7 @@ pkgs.testers.runNixOSTest {
 
       with subtest("the data directory is the user's"):
           machine.succeed(f"test \"$(stat -c %U:%a {DATA})\" = {USER}:700")
+          machine.succeed(f"test -z \"$(find {DATA} ! -group $(id -gn {USER}) -print -quit)\"")
           machine.succeed(f"test \"$(stat -c %U {DATA}/db/claude-remote-manager.sqlite)\" = {USER}")
           # The stamp is root's (a user's stamp could be a symlink root writes through).
           machine.succeed(f"test \"$(cat /var/lib/claude-remote-manager-owner/*)\" = {USER}")
@@ -268,6 +273,7 @@ pkgs.testers.runNixOSTest {
           # Nor the API's own configuration (npm, dev servers, a dev API).
           for forbidden in ("NODE_ENV", "PORT", "DB_DIR", "WORKSPACE_DIR", "CREDENTIALS_DIRECTORY", "GITHUB_APP_ID"):
               assert forbidden not in names, f"{forbidden} reached the session"
+          assert "SSL_CERT_FILE" in names, "the CA bundle is missing in the session"
           assert f"HOME={HOME}" in env and f"USER={USER}" in env, "HOME or USER"
           path = next(line for line in env.splitlines() if line.startswith("PATH="))
           assert path.startswith("PATH=/run/wrappers/bin:"), path
@@ -330,6 +336,12 @@ pkgs.testers.runNixOSTest {
           machine.succeed(f"grep -q remember {DATA}/memory/repo-1/MEMORY.md")
           machine.succeed(f"test \"$(stat -c %U {DATA}/workspace/sessions/old/acme/app/file)\" = {USER}")
           machine.succeed(f"{AS_USER} 'cat {DATA}/db/old-file'")
+          machine.succeed(f"test \"$(stat -c %U {DATA}/db/link)\" = {USER}")
+          machine.succeed("test \"$(stat -L -c %U:%G /etc/hostname)\" = root:root")
+          # A second start leaves the files alone (the stamp says so).
+          machine.succeed("systemctl restart claude-remote-manager")
+          machine.wait_until_succeeds(f"curl -sf {API}/api/health")
+          machine.succeed("test \"$(stat -L -c %U:%G /etc/hostname)\" = root:root")
           # The old login is not taken over: the user's own ~/.claude counts.
           machine.fail(f"test -e {HOME}/.claude/.credentials.json")
           print(machine.succeed("journalctl -u claude-remote-manager.service --no-pager | grep -i -e 'giving' -e 'copied'"))

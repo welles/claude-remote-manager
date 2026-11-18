@@ -27,6 +27,7 @@ import { DENIED_STOP_MESSAGE } from './permission-requests';
 import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
 import {
+  AUTOFIX_ASK_REASON,
   QUEUE_WITHDRAWN,
   RESTART_NOTICE,
   SessionsService,
@@ -1218,18 +1219,15 @@ describe('SessionsService', () => {
         throw new Error('no gate');
       }
       const call = (toolName: string, input: Record<string, unknown>) =>
-        gate(
-          {
-            toolName,
-            input,
-            toolUseId: 'tool-9',
-            agentId: null,
-            mcpServer: null,
-          },
-          new AbortController().signal,
-        );
+        gate({
+          toolName,
+          input,
+          toolUseId: 'tool-9',
+          agentId: null,
+          mcpServer: null,
+        });
       // Outside an Autofix run Claude Code decides (rules, mode).
-      await expect(call('Bash', { command: 'git push' })).resolves.toBeNull();
+      expect(call('Bash', { command: 'git push' })).toBeNull();
       runner.last.emit(resultMessage(1, 0));
       await flush();
 
@@ -1239,9 +1237,43 @@ describe('SessionsService', () => {
         origin: 'app',
         holdAutoMode: true,
       });
-      await expect(call('Read', { file_path: 'README.md' })).resolves.toBeNull();
-      // Whatever allow rules say: the user is asked, without "for the session".
-      const decision = call('Bash', { command: 'git push other main' });
+      expect(call('Read', { file_path: 'README.md' })).toBeNull();
+      // Whatever allow rules say: Claude Code asks (canUseTool).
+      expect(call('Bash', { command: 'git push other main' })).toEqual({
+        decision: 'ask',
+        reason: AUTOFIX_ASK_REASON,
+      });
+      expect(call('WebFetch', { url: 'https://example.com' })).toMatchObject({
+        decision: 'ask',
+      });
+      // Background work would outlive the run: refused.
+      expect(call('Agent', { prompt: 'x' })).toMatchObject({
+        decision: 'deny',
+      });
+      expect(
+        call('Bash', { command: 'sleep 1', run_in_background: true }),
+      ).toMatchObject({ decision: 'deny' });
+      expect(
+        call('Agent', { prompt: 'x', run_in_background: false }),
+      ).toMatchObject({ decision: 'ask' });
+      // The dialog does not offer to allow it for the session.
+      const decision = runner.last.options.canUseTool(
+        'Bash',
+        { command: 'git push other main' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'tool-9',
+          requestId: 'r9',
+          suggestions: [
+            {
+              type: 'addRules',
+              rules: [{ toolName: 'Bash', ruleContent: 'git push:*' }],
+              behavior: 'allow',
+              destination: 'session',
+            },
+          ],
+        },
+      );
       await waitFor(() => service.pendingPermissions(session.id).length > 0);
       const request = service.pendingPermissions(session.id)[0];
       expect(request).toMatchObject({ toolName: 'Bash', sessionAllow: null });
@@ -1254,7 +1286,7 @@ describe('SessionsService', () => {
       // After the run, Claude Code decides again.
       runner.last.emit(resultMessage(1, 0));
       await flush();
-      await expect(call('Bash', { command: 'git push' })).resolves.toBeNull();
+      expect(call('Bash', { command: 'git push' })).toBeNull();
     });
 
     it('holds bypassPermissions for an Autofix turn the same way', async () => {

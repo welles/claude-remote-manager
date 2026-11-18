@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -153,6 +154,10 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     clones: SessionRecord['directories'],
   ): Promise<void> {
     for (const directory of clones) {
+      if (!existsSync(join(directory.path, '.git'))) {
+        // Removed from disk meanwhile: nothing to clean up.
+        continue;
+      }
       try {
         if (await this.git.removeAppCredentialHelper(directory.path)) {
           this.logger.log(
