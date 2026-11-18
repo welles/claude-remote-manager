@@ -1,7 +1,9 @@
 import type { AgentStartOptions } from './agent-runner';
 import { AsyncQueue } from './async-queue';
 import { ProcessLauncher, type ProcessRole } from '../common/process-isolation';
+import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
 import {
+  alwaysAskHooks,
   buildQueryOptions,
   sdkUserMessages,
   spawnAsSession,
@@ -87,6 +89,77 @@ describe('buildQueryOptions', () => {
     const options = buildQueryOptions(base, { claudeExecutable: null }, stderr);
     expect(options.allowDangerouslySkipPermissions).toBeUndefined();
     expect(options.permissionMode).not.toBe('bypassPermissions');
+  });
+
+  it("registers the PreToolUse hook for the app's limits", () => {
+    expect(
+      buildQueryOptions(base, { claudeExecutable: null }, stderr).hooks,
+    ).toBeUndefined();
+    const options = buildQueryOptions(
+      { ...base, permissionMode: 'auto', alwaysAsk: () => null },
+      { claudeExecutable: null },
+      stderr,
+    );
+    expect(options.permissionMode).toBe('auto');
+    expect(options.hooks?.PreToolUse).toEqual([
+      { onFailure: 'block', hooks: [expect.any(Function)] },
+    ]);
+  });
+});
+
+describe('alwaysAskHooks', () => {
+  const call = (
+    toolName: string,
+    toolInput: unknown,
+    extra: Partial<HookInput> = {},
+  ) => {
+    const calls: unknown[] = [];
+    const hooks = alwaysAskHooks((entry) => {
+      calls.push(entry);
+      return entry.toolName === 'Bash' ? 'every push asks' : null;
+    });
+    const hook = hooks.PreToolUse?.[0].hooks[0];
+    if (!hook) {
+      throw new Error('no hook');
+    }
+    const output = hook(
+      {
+        hook_event_name: 'PreToolUse',
+        session_id: 's',
+        transcript_path: '/t',
+        cwd: '/work',
+        permission_mode: 'auto',
+        tool_name: toolName,
+        tool_input: toolInput,
+        tool_use_id: 'toolu_1',
+        ...extra,
+      } as HookInput,
+      'toolu_1',
+      { signal: new AbortController().signal },
+    );
+    return { output, calls };
+  };
+
+  it('answers ask with the reason, and nothing for other calls', async () => {
+    const asked = call('Bash', { command: 'git push' }, { agent_id: 'a1' });
+    await expect(asked.output).resolves.toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'ask',
+        permissionDecisionReason: 'every push asks',
+      },
+    });
+    expect(asked.calls).toEqual([
+      {
+        toolName: 'Bash',
+        input: { command: 'git push' },
+        toolUseId: 'toolu_1',
+        agentId: 'a1',
+      },
+    ]);
+    // Never allows anything: other calls get no decision.
+    await expect(call('Read', { file_path: '/x' }).output).resolves.toEqual({});
+    await expect(call('Read', 'not an object').output).resolves.toEqual({});
   });
 });
 

@@ -1,4 +1,4 @@
-import type { SessionPermissionMode } from './session';
+import type { PermissionModeOverride, SessionPermissionMode } from './session';
 
 /**
  * Approval requests: what Claude wants to do when a tool use needs the
@@ -151,6 +151,11 @@ export const PERMISSION_MODE_INFO: Record<
     description:
       "File changes and file commands (mkdir, mv, rm, …) in the session's directories run without asking; other commands still ask.",
   },
+  auto: {
+    label: 'Auto',
+    description:
+      'A classifier approves or blocks each action and asks only when unsure; git push, pull requests and added repositories always ask.',
+  },
   plan: {
     label: 'Plan',
     description:
@@ -160,6 +165,23 @@ export const PERMISSION_MODE_INFO: Record<
     label: "Don't ask",
     description:
       'Nothing that needs approval runs: such actions are denied instead of asking (for unattended work).',
+  },
+};
+
+/** Why a session runs in another mode than the chosen one, for the UI. */
+export const PERMISSION_MODE_OVERRIDE_INFO: Record<
+  PermissionModeOverride['reason'],
+  { label: string; description: string }
+> = {
+  auto_unavailable: {
+    label: 'auto unavailable',
+    description:
+      'Auto is not available for this account, model or settings right now, so Claude asks as in Ask.',
+  },
+  autofix: {
+    label: 'Autofix run',
+    description:
+      'An Autofix run is going: it works on untrusted GitHub content, so it runs as Ask until its turn ends.',
   },
 };
 

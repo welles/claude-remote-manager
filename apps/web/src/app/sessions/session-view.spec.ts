@@ -848,6 +848,49 @@ describe('SessionView', () => {
     });
     expect(socket.sent.at(-1)).not.toHaveProperty('model');
   });
+
+  it('shows the permission mode in effect when it is not the chosen one', async () => {
+    const { harness, socket, element, text } = await open();
+    history(
+      socket,
+      sessionDto({
+        status: 'running',
+        waitingFor: null,
+        permissionMode: 'auto',
+        permissionModeOverride: { mode: 'default', reason: 'auto_unavailable' },
+      }),
+    );
+    await harness.fixture.whenStable();
+    expect(text('strip-settings')).toContain('Ask (auto unavailable)');
+    expect(text('mode-override')).toContain('In effect: Ask.');
+    expect(text('mode-override')).toContain('not available');
+
+    socket.receive({
+      type: 'session.updated',
+      session: sessionDto({
+        status: 'running',
+        waitingFor: null,
+        permissionMode: 'auto',
+        permissionModeOverride: { mode: 'default', reason: 'autofix' },
+      }),
+    });
+    await harness.fixture.whenStable();
+    expect(text('strip-settings')).toContain('Ask (Autofix run)');
+    expect(text('mode-override')).toContain('untrusted GitHub content');
+
+    socket.receive({
+      type: 'session.updated',
+      session: sessionDto({
+        status: 'waiting',
+        permissionMode: 'auto',
+        permissionModeOverride: null,
+      }),
+    });
+    await harness.fixture.whenStable();
+    expect(text('strip-settings')).toContain('Auto');
+    expect(text('strip-settings')).not.toContain('(');
+    expect(element.querySelector('[data-testid="mode-override"]')).toBeNull();
+  });
 });
 
 function permissionResolvedEvent(): SessionEvent {

@@ -42,6 +42,15 @@ export interface AgentTool {
   ) => Promise<AgentToolResult>;
 }
 
+/** A tool call as Claude Code announces it before deciding about it. */
+export interface AgentToolCall {
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId: string | null;
+  /** Set when a subagent makes the call. */
+  agentId: string | null;
+}
+
 /** What a Claude Code process is started with. */
 export interface AgentStartOptions {
   cwd: string;
@@ -55,6 +64,13 @@ export interface AgentStartOptions {
   sessionId: string | null;
   /** Decides tool uses that need the user's approval. */
   canUseTool: CanUseTool;
+  /**
+   * Tool calls that must reach `canUseTool` whatever the permission mode
+   * (also where `auto` mode's classifier would decide them): returns the
+   * reason shown in the approval dialog, `null` for other calls. Claude
+   * Code learns it through a PreToolUse hook answering `ask`.
+   */
+  alwaysAsk?: (call: AgentToolCall) => string | null;
   /**
    * Permission rules allowed for this process (in memory, like rules the
    * user allowed for the session; never written to settings files).

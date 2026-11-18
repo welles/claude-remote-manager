@@ -46,8 +46,9 @@ export interface LaunchExtras {
  * - `git push` always asks (an ask rule wins over allow rules, e.g. from a
  *   repository's `.claude/settings.json`), so the user's approval is what
  *   lets a push through (see {@link ApprovalGrants});
- * - no bypass mode, and no auto mode: approvals come from the user, not
- *   from a classifier (also not during plan mode);
+ * - no bypass mode; auto mode only when the session chose it (its
+ *   classifier never decides the app's limits, see `approvalLimit`), and
+ *   not during plan mode (plan mode keeps asking the user);
  * - approval requests do not expire while the user is away (the app
  *   cancels them itself when the turn, session or process ends);
  * - the Claude account's claude.ai connectors are not fetched (sessions get
@@ -57,7 +58,6 @@ export const SESSION_PERMISSION_SETTINGS = {
   permissions: {
     ask: ['Bash(git push:*)'],
     disableBypassPermissionsMode: 'disable',
-    disableAutoMode: 'disable',
   },
   useAutoModeDuringPlan: false,
   dialogExpiry: 'never',

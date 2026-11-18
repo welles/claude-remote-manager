@@ -656,6 +656,9 @@ export class PrAutomationService
         text,
         origin: 'app',
         untrusted,
+        // The run works on untrusted GitHub content: no classifier
+        // approvals (`auto` runs as `default` until the turn ends).
+        holdAutoMode: true,
       });
     } catch (error) {
       // The run did not start: it does not count.

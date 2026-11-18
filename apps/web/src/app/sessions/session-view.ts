@@ -29,6 +29,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
   canResume,
   PERMISSION_MODE_INFO,
+  PERMISSION_MODE_OVERRIDE_INFO,
   SESSION_PERMISSION_MODES,
   type ContextUsage,
   type LogPosition,
@@ -119,6 +120,7 @@ export class SessionView implements OnInit {
 
   protected readonly modes = SESSION_PERMISSION_MODES;
   protected readonly modeInfo = PERMISSION_MODE_INFO;
+  protected readonly overrideInfo = PERMISSION_MODE_OVERRIDE_INFO;
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;
@@ -175,6 +177,20 @@ export class SessionView implements OnInit {
       model ??
       'Default';
     return label.replace(/\s*\(.*\)$/, '');
+  });
+  /**
+   * The permission mode in effect, for the strip: the chosen one, or the
+   * one the process runs in instead (e.g. "Ask (auto unavailable)").
+   */
+  protected readonly modeName = computed(() => {
+    const session = this.session();
+    if (!session) {
+      return '';
+    }
+    const override = session.permissionModeOverride;
+    return override
+      ? `${this.modeInfo[override.mode].label} (${this.overrideInfo[override.reason].label})`
+      : this.modeInfo[session.permissionMode].label;
   });
   /** Claude's task list. */
   protected readonly todos = computed(() => todoList(this.items()));

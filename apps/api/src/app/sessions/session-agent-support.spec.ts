@@ -96,8 +96,11 @@ describe('session integrations (credentials, tool, memory)', () => {
     expect(SESSION_PERMISSION_SETTINGS.permissions).toMatchObject({
       ask: ['Bash(git push:*)'],
       disableBypassPermissionsMode: 'disable',
-      disableAutoMode: 'disable',
     });
+    // Auto mode is the session's choice (its limits: approval-limits.ts).
+    expect(SESSION_PERMISSION_SETTINGS.permissions).not.toHaveProperty(
+      'disableAutoMode',
+    );
     // No claude.ai connectors of the account (with strictMcpConfig, see
     // sdk-agent-runner).
     expect(SESSION_PERMISSION_SETTINGS.disableClaudeAiConnectors).toBe(true);
