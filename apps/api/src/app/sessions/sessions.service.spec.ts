@@ -1071,7 +1071,6 @@ describe('SessionsService', () => {
       const session = await startSession();
       for (const body of [
         { permissionMode: 'bypassPermissions' },
-        { permissionMode: 'auto' },
         { model: 'no spaces allowed' },
       ]) {
         await expect(service.update(session.id, body as never)).rejects.toThrow(
@@ -1108,6 +1107,167 @@ describe('SessionsService', () => {
       });
       await flush();
       expect(service.get(session.id).permissionMode).toBe('plan');
+    });
+  });
+
+  describe('auto mode', () => {
+    const status = (permissionMode: string) => ({
+      type: 'system',
+      subtype: 'status',
+      status: null,
+      permissionMode,
+    });
+
+    it("starts in auto with the app's limits and shows when Claude Code falls back", async () => {
+      const session = await startSession({ permissionMode: 'auto' });
+      const options = runner.last.options;
+      expect(options.permissionMode).toBe('auto');
+      expect(
+        options.alwaysAsk?.({
+          toolName: 'Bash',
+          input: { command: 'git -C x push origin main' },
+          toolUseId: 't',
+          agentId: null,
+        }),
+      ).toEqual(expect.stringContaining('git push'));
+      expect(service.get(session.id).permissionModeOverride).toBeNull();
+
+      // Auto mode unavailable (plan, model, settings): Claude Code asks
+      // instead; the chosen mode stays.
+      const settingsEvents = () =>
+        events.filter(({ event }) => event.type === 'settings.changed').length;
+      const before = settingsEvents();
+      runner.last.emit(status('default'));
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        permissionMode: 'auto',
+        permissionModeOverride: { mode: 'default', reason: 'auto_unavailable' },
+      });
+      expect(updates.at(-1)?.permissionModeOverride).toEqual({
+        mode: 'default',
+        reason: 'auto_unavailable',
+      });
+      expect(settingsEvents()).toBe(before);
+
+      // Another model: auto is asked for again.
+      await service.update(session.id, { model: 'sonnet' });
+      expect(runner.last.switches).toEqual([
+        { model: 'sonnet' },
+        { permissionMode: 'auto' },
+      ]);
+      await flush();
+      expect(service.get(session.id).permissionModeOverride).toBeNull();
+
+      // Claude Code's own changes are still taken over.
+      runner.last.emit(status('plan'));
+      await flush();
+      expect(service.get(session.id).permissionMode).toBe('plan');
+    });
+
+    it('refuses the switch to auto when Claude Code cannot use it', async () => {
+      const session = await startSession();
+      runner.last.failSwitch = new Error(
+        'Cannot set permission mode to auto: auto mode unavailable for this model',
+      );
+      await expect(
+        service.update(session.id, { permissionMode: 'auto' }),
+      ).rejects.toThrow(ConflictException);
+      expect(service.get(session.id).permissionMode).toBe('default');
+    });
+
+    it('runs an Autofix turn in default and returns to auto afterwards', async () => {
+      const session = await startSession({ permissionMode: 'auto' });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).status).toBe('waiting');
+
+      await service.sendMessage(session.id, {
+        id: MSG_2,
+        text: 'Fix the failing checks',
+        origin: 'app',
+        holdAutoMode: true,
+      });
+      // Switched before the message went to Claude Code.
+      expect(runner.last.switches).toEqual([{ permissionMode: 'default' }]);
+      expect(runner.last.sent.at(-1)?.id).toBe(MSG_2);
+      expect(service.get(session.id)).toMatchObject({
+        permissionMode: 'auto',
+        permissionModeOverride: { mode: 'default', reason: 'autofix' },
+      });
+      runner.last.emit(status('default'));
+      await flush();
+      expect(service.get(session.id).permissionMode).toBe('auto');
+
+      // A user message during the run waits for the end of its turn.
+      await service.send(session.id, { id: MSG_3, text: 'And then?' });
+      expect(service.get(session.id).permissionModeOverride).toMatchObject({
+        reason: 'autofix',
+      });
+
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.switches).toEqual([
+        { permissionMode: 'default' },
+        { permissionMode: 'auto' },
+      ]);
+      expect(runner.last.sent.at(-1)?.id).toBe(MSG_3);
+      expect(service.get(session.id).permissionModeOverride).toBeNull();
+    });
+
+    it('starts the process of an Autofix run in default', async () => {
+      const session = await startSession({ permissionMode: 'auto' });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      runner.last.close();
+      await flush();
+      const runsBefore = runner.runs.length;
+      await service.sendMessage(session.id, {
+        id: MSG_2,
+        text: 'Fix the failing checks',
+        origin: 'app',
+        holdAutoMode: true,
+      });
+      await waitFor(() => runner.runs.length > runsBefore);
+      expect(runner.last.options.permissionMode).toBe('default');
+      expect(service.get(session.id).permissionModeOverride).toEqual({
+        mode: 'default',
+        reason: 'autofix',
+      });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.switches).toEqual([{ permissionMode: 'auto' }]);
+      expect(service.get(session.id).permissionModeOverride).toBeNull();
+    });
+
+    it('leaves other modes alone and does not start a run it cannot hold', async () => {
+      const session = await startSession({ permissionMode: 'acceptEdits' });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      await service.sendMessage(session.id, {
+        id: MSG_2,
+        text: 'Fix the failing checks',
+        origin: 'app',
+        holdAutoMode: true,
+      });
+      expect(runner.last.switches).toEqual([]);
+      expect(service.get(session.id).permissionModeOverride).toBeNull();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.switches).toEqual([]);
+
+      await service.update(session.id, { permissionMode: 'auto' });
+      runner.last.failSwitch = new Error('closed');
+      const sent = runner.last.sent.length;
+      await expect(
+        service.sendMessage(session.id, {
+          id: MSG_3,
+          text: 'Fix the failing checks',
+          origin: 'app',
+          holdAutoMode: true,
+        }),
+      ).rejects.toThrow('did not leave auto mode');
+      expect(runner.last.sent).toHaveLength(sent);
+      expect(service.get(session.id).permissionModeOverride).toBeNull();
     });
   });
 

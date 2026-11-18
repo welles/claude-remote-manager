@@ -269,6 +269,37 @@ describe('PrAutomationService', () => {
       expect(appMessages()).toHaveLength(1);
     });
 
+    it('runs a session in auto mode as default during the run', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      await harness.service.update(session.id, { permissionMode: 'auto' });
+      const run = harness.runner.last;
+      expect(run.switches).toEqual([{ permissionMode: 'auto' }]);
+      harness.github.checkRuns.set(fakePull(pull.number).headSha, [
+        {
+          id: 11,
+          name: 'test',
+          status: 'completed',
+          conclusion: 'failure',
+          app: 'github-actions',
+        },
+      ]);
+      enableAutofix(session.id, pull);
+
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(1);
+      // No classifier approvals while Claude works on GitHub content.
+      expect(run.switches.at(-1)).toEqual({ permissionMode: 'default' });
+      expect(harness.service.get(session.id)).toMatchObject({
+        permissionMode: 'auto',
+        permissionModeOverride: { mode: 'default', reason: 'autofix' },
+      });
+
+      run.emit(resultMessage(20, 0.02));
+      await waitFor(() => !record(pull).autofixRunning);
+      expect(run.switches.at(-1)).toEqual({ permissionMode: 'auto' });
+      expect(harness.service.get(session.id).permissionModeOverride).toBeNull();
+    });
+
     it('ignores failures of an older commit (stale) and checks that still run', async () => {
       const { session, pull } = await sessionWithPullRequest();
       const head = fakePull(pull.number).headSha;

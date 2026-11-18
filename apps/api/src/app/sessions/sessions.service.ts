@@ -29,6 +29,7 @@ import {
   type MessageReference,
   type MessageReferenceRequest,
   type PendingRequestSummary,
+  type PermissionModeOverride,
   type PermissionRequestEvent,
   type PermissionResponseResult,
   type PullRequestCall,
@@ -81,6 +82,7 @@ import {
   type ResolvedAddition,
 } from '../workspaces/repository-additions';
 import { sessionAllows, unresolvedRequests } from './permission-requests';
+import { approvalLimit } from './approval-limits';
 import { PreviewsService } from '../previews/previews.service';
 import {
   SessionAutomationHooks,
@@ -194,6 +196,12 @@ export interface SessionMessageInput {
    * data, never expanded or run.
    */
   untrusted?: UntrustedContext;
+  /**
+   * The turn this message starts runs in `default` where the session uses
+   * `auto` (an Autofix run, which works on untrusted GitHub content): the
+   * classifier approves nothing until that turn ends.
+   */
+  holdAutoMode?: boolean;
 }
 
 /** What a message's references and untrusted content became. */
@@ -300,6 +308,21 @@ interface LiveSession {
    * when the turn ends, and continued with this app message if set.
    */
   reopen: { continueWith: string | null } | null;
+  /**
+   * Set from sending a message with `holdAutoMode` until the end of the
+   * turn it started (`delivered`: it reached Claude Code): a session in
+   * `auto` runs in `default` meanwhile.
+   */
+  autoHold: { messageId: string; delivered: boolean } | null;
+  /**
+   * The mode the current process last reported (`init`/`status`), or that
+   * it accepted; `null` without process.
+   */
+  reportedMode: PermissionMode | null;
+  /** Mode switches of the app in flight (`setPermissionMode`). */
+  modeRequests: number;
+  /** The permission mode override last published (JSON). */
+  publishedOverride: string;
 }
 
 /** How long shutdown waits for Claude Code processes to exit. */
@@ -699,6 +722,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           // added repository): the message goes to the next one.
           await live.consuming;
         }
+        if (input.holdAutoMode) {
+          await this.holdAutoMode(live, id);
+        }
       } finally {
         live.sending.delete(id);
       }
@@ -728,6 +754,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         return;
       }
       this.appendUserMessage(live, message);
+      this.markDelivered(live, id);
       if (live.run) {
         const delivered = this.withNote(live, agent);
         live.run.send(delivered);
@@ -948,10 +975,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       await live.starting;
     }
     const run = live?.run;
-    if (run) {
+    if (run && live) {
       try {
         if (changes.permissionMode) {
-          await run.setPermissionMode(changes.permissionMode);
+          await this.requestMode(
+            live,
+            run,
+            this.processMode(live, changes.permissionMode),
+          );
         }
         if (changes.model !== undefined) {
           await run.setModel(changes.model);
@@ -965,6 +996,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.applySettings(sessionId, changes, 'user');
     if (run && live && changes.model !== undefined) {
       void this.refreshContext(live, run, { force: true });
+      // Claude Code leaves `auto` for a model without auto mode and does
+      // not return by itself: ask again (fails for such a model).
+      if (
+        this.processMode(live, this.requireRecord(sessionId).permissionMode) ===
+          'auto' &&
+        live.reportedMode !== 'auto'
+      ) {
+        void this.requestMode(live, run, 'auto').catch(() => undefined);
+      }
     }
     return this.get(sessionId);
   }
@@ -1297,6 +1337,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       addition: null,
       additionGrants: new Map(),
       reopen: null,
+      autoHold: null,
+      reportedMode: null,
+      modeRequests: 0,
+      publishedOverride: 'null',
     };
   }
 
@@ -1515,6 +1559,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.interruptRequested = null;
     live.closing = null;
     live.contextResults = 0;
+    live.reportedMode = null;
     try {
       const extras = await this.support.prepare(record);
       // What the user allowed for the session applies to every process.
@@ -1536,9 +1581,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             ),
           ],
           model: record.model,
-          permissionMode: record.permissionMode,
+          permissionMode: this.processMode(live, record.permissionMode),
           ...(await this.resumeTarget(record)),
           canUseTool: this.canUseTool(live),
+          alwaysAsk: approvalLimit,
           allowedTools: [...allowed.rules, ...(extras.allowedTools ?? [])],
           env: { ...SESSION_ENV, ...extras.env },
           tools: this.additions
@@ -1610,6 +1656,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.approver.cancelSession(live.id, 'process_exit');
     live.run = null;
     live.consuming = null;
+    // A held turn is over with its process.
+    live.autoHold = null;
+    live.reportedMode = null;
     this.clearIdleTimer(live);
     live.log.clearDrafts();
     const status = this.requireRecord(live.id).status;
@@ -1753,6 +1802,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         });
       }
     }
+    if (live.autoHold?.delivered && (result.queued_turn_count ?? 0) === 0) {
+      // The held turn (Autofix run) is over: back to `auto`.
+      this.releaseAutoHold(live);
+    }
     if (live.reopen && (result.queued_turn_count ?? 0) === 0) {
       // An added repository needs a new process: it continues there.
       this.setStatus(live, 'waiting');
@@ -1828,6 +1881,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         reason: null,
       });
       this.appendUserMessage(live, message);
+      this.markDelivered(live, message.id);
       const delivered = this.withNote(live, message.agent);
       run.send(delivered);
       this.countContext(live, delivered);
@@ -1888,18 +1942,26 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Records a mode Claude Code reports, if it is one this app uses. */
+  /**
+   * Records a mode Claude Code reports, if it is one this app uses. While
+   * the session is in `auto`, `default` is not a change of the chosen
+   * mode: Claude Code could not use auto mode (plan, model, settings), or
+   * the app holds it for an Autofix run; the override shows it.
+   */
   private syncPermissionMode(live: LiveSession, mode: PermissionMode): void {
+    live.reportedMode = mode;
     const record = this.requireRecord(live.id);
+    if (!SESSION_PERMISSION_MODES.includes(mode as SessionPermissionMode)) {
+      this.logger.warn(
+        `Claude Code of ${live.id} reports permission mode ${mode}, which this app does not use`,
+      );
+      return;
+    }
     if (
       mode === record.permissionMode ||
-      !SESSION_PERMISSION_MODES.includes(mode as SessionPermissionMode)
+      (record.permissionMode === 'auto' && mode === 'default')
     ) {
-      if (!SESSION_PERMISSION_MODES.includes(mode as SessionPermissionMode)) {
-        this.logger.warn(
-          `Claude Code of ${live.id} reports permission mode ${mode}, which this app does not use`,
-        );
-      }
+      this.publishOverride(live);
       return;
     }
     this.applySettings(
@@ -1907,6 +1969,112 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       { permissionMode: mode as SessionPermissionMode },
       'claude',
     );
+  }
+
+  /**
+   * The mode the session's process should run in: the chosen one, except
+   * `default` for `auto` while a turn is held (Autofix run).
+   */
+  private processMode(
+    live: LiveSession,
+    mode: SessionPermissionMode,
+  ): SessionPermissionMode {
+    return mode === 'auto' && live.autoHold ? 'default' : mode;
+  }
+
+  /** Switches the running process's mode; rejects if Claude Code refuses. */
+  private async requestMode(
+    live: LiveSession,
+    run: AgentRun,
+    mode: SessionPermissionMode,
+  ): Promise<void> {
+    live.modeRequests++;
+    try {
+      await run.setPermissionMode(mode);
+      if (live.run === run) {
+        live.reportedMode = mode;
+      }
+    } finally {
+      live.modeRequests--;
+      this.publishOverride(live);
+    }
+  }
+
+  /**
+   * Holds `auto` for the turn of message `id` (an Autofix run): the
+   * process switches to `default` before the message reaches it, or starts
+   * in it. Throws (and releases the hold) if Claude Code refuses.
+   */
+  private async holdAutoMode(live: LiveSession, id: string): Promise<void> {
+    live.autoHold = { messageId: id, delivered: false };
+    const run = live.run;
+    if (run && this.requireRecord(live.id).permissionMode === 'auto') {
+      try {
+        await this.requestMode(live, run, 'default');
+      } catch (error) {
+        live.autoHold = null;
+        this.publishOverride(live);
+        throw new Error(
+          `Claude Code did not leave auto mode for the run: ${errorMessage(error)}`,
+        );
+      }
+    }
+    this.publishOverride(live);
+  }
+
+  /** The held message `id` goes to Claude Code now. */
+  private markDelivered(live: LiveSession, id: string): void {
+    if (live.autoHold?.messageId === id) {
+      live.autoHold.delivered = true;
+    }
+  }
+
+  /** The held turn ended: the process returns to `auto`. */
+  private releaseAutoHold(live: LiveSession): void {
+    live.autoHold = null;
+    const run = live.run;
+    if (run && this.requireRecord(live.id).permissionMode === 'auto') {
+      void this.requestMode(live, run, 'auto').catch((error: unknown) =>
+        this.logger.warn(
+          `Claude Code of ${live.id} did not return to auto mode: ${errorMessage(error)}`,
+        ),
+      );
+    }
+    this.publishOverride(live);
+  }
+
+  /** The mode the process runs in instead of the chosen `auto`, if any. */
+  private permissionModeOverride(
+    record: SessionRecord,
+  ): PermissionModeOverride | null {
+    const live = this.live.get(record.id);
+    if (record.permissionMode !== 'auto' || !live) {
+      return null;
+    }
+    if (live.autoHold) {
+      return { mode: 'default', reason: 'autofix' };
+    }
+    if (
+      live.run &&
+      live.modeRequests === 0 &&
+      live.reportedMode === 'default'
+    ) {
+      return { mode: 'default', reason: 'auto_unavailable' };
+    }
+    return null;
+  }
+
+  /** Publishes the session if its permission mode override changed. */
+  private publishOverride(live: LiveSession): void {
+    const record = this.sessions.get(live.id);
+    if (!record) {
+      return;
+    }
+    const key = JSON.stringify(this.permissionModeOverride(record));
+    if (key !== live.publishedOverride) {
+      live.publishedOverride = key;
+      this.updates.next(this.toDto(record));
+    }
   }
 
   /** Stores a model or mode change, logs it and publishes the session. */
@@ -2563,6 +2731,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   private failRun(live: LiveSession, error: unknown, run?: AgentRun): void {
     live.run = null;
+    live.autoHold = null;
+    live.reportedMode = null;
     this.approver.cancelSession(live.id, 'process_exit');
     this.withdrawQueue(live, QUEUE_WITHDRAWN.failed);
     const message = errorMessage(error, run);
@@ -2930,6 +3100,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       title: record.title,
       model: record.model,
       permissionMode: record.permissionMode,
+      permissionModeOverride: this.permissionModeOverride(record),
       ...this.effectiveStatus(record),
       pendingRequests: this.pendingSummary(record),
       slug: record.slug,

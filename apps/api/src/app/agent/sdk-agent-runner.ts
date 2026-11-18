@@ -257,6 +257,52 @@ export function zeroTurnMessages(message: AgentUserMessage): number {
   return (message.note ? 1 : 0) + (message.context ? 1 : 0);
 }
 
+/**
+ * The PreToolUse hook that sends the calls `alwaysAsk` names to the user:
+ * `permissionDecision: 'ask'` makes Claude Code ask through `canUseTool`
+ * even in `auto` mode, where its classifier would otherwise decide (in
+ * `dontAsk` the call is denied, as every ask is). It never allows
+ * anything, and a failure blocks the call (`onFailure: 'block'`).
+ */
+export function alwaysAskHooks(
+  alwaysAsk: NonNullable<AgentStartOptions['alwaysAsk']>,
+): NonNullable<Sdk.Options['hooks']> {
+  return {
+    PreToolUse: [
+      {
+        onFailure: 'block',
+        hooks: [
+          async (input) => {
+            if (input.hook_event_name !== 'PreToolUse') {
+              return {};
+            }
+            const toolInput =
+              typeof input.tool_input === 'object' && input.tool_input !== null
+                ? (input.tool_input as Record<string, unknown>)
+                : {};
+            const reason = alwaysAsk({
+              toolName: input.tool_name,
+              input: toolInput,
+              toolUseId: input.tool_use_id || null,
+              agentId: input.agent_id ?? null,
+            });
+            if (reason === null) {
+              return {};
+            }
+            return {
+              hookSpecificOutput: {
+                hookEventName: 'PreToolUse',
+                permissionDecision: 'ask',
+                permissionDecisionReason: reason,
+              },
+            };
+          },
+        ],
+      },
+    ],
+  };
+}
+
 /** Builds the SDK options for a session. Exported for tests. */
 export function buildQueryOptions(
   options: AgentStartOptions,
@@ -290,6 +336,7 @@ export function buildQueryOptions(
     ...(options.model ? { model: options.model } : {}),
     permissionMode: options.permissionMode,
     canUseTool: options.canUseTool,
+    ...(options.alwaysAsk ? { hooks: alwaysAskHooks(options.alwaysAsk) } : {}),
     ...(options.resume
       ? { resume: options.resume }
       : options.sessionId

@@ -63,20 +63,39 @@ export function needsUser(
 
 /**
  * Permission modes a session may use. Mirrors the Agent SDK's modes without
- * `bypassPermissions`, which this app never uses.
+ * `bypassPermissions`, which this app never uses. In `auto` a model
+ * classifier of Claude Code approves or denies tool uses and asks the user
+ * only when it cannot decide; some calls always ask the user (see
+ * `PermissionModeOverride` and the README).
  */
 export type SessionPermissionMode =
   | 'default'
   | 'acceptEdits'
+  | 'auto'
   | 'plan'
   | 'dontAsk';
 
 export const SESSION_PERMISSION_MODES: readonly SessionPermissionMode[] = [
   'default',
   'acceptEdits',
+  'auto',
   'plan',
   'dontAsk',
 ];
+
+/**
+ * The session's Claude Code process runs in another mode than the chosen
+ * one (`SessionDto.permissionMode` is `auto`):
+ * - `auto_unavailable`: Claude Code cannot use auto mode here (plan,
+ *   model or settings) and fell back to `default`;
+ * - `autofix`: an Autofix run is going; it works on untrusted GitHub
+ *   content and therefore runs in `default` until its turn ends.
+ */
+export interface PermissionModeOverride {
+  /** The mode in effect. */
+  mode: SessionPermissionMode;
+  reason: 'auto_unavailable' | 'autofix';
+}
 
 /** Token counts and theoretical API cost (USD), summed over requests. */
 export interface UsageTotals {
@@ -228,7 +247,14 @@ export interface SessionDto {
   title: string | null;
   /** Model requested for the session; `null` uses Claude Code's default. */
   model: string | null;
+  /** Mode chosen for the session (see `permissionModeOverride`). */
   permissionMode: SessionPermissionMode;
+  /**
+   * Set while the session's Claude Code process runs in another mode than
+   * `permissionMode` (only for `auto`); `null` otherwise, also while no
+   * process runs. Absent from older servers.
+   */
+  permissionModeOverride?: PermissionModeOverride | null;
   status: SessionStatus;
   /** Set exactly when `status` is `waiting`. */
   waitingFor: SessionWaitingFor | null;
