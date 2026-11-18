@@ -2,9 +2,13 @@
 
 A self-hosted web frontend for managing Claude Code sessions on a home server: sessions that
 work on several repositories at once, each in its own clone of the repository, with live chat, diffs and
-cleanup. Everything runs in one Docker container, or as a NixOS service (see
-[Running as a NixOS service](#running-as-a-nixos-service)). See [docs/specification.md](docs/specification.md)
-(German) for the full specification.
+cleanup. It is not a sandbox: on a NixOS machine (see
+[Running as a NixOS service](#running-as-a-nixos-service)) it runs as the owner's user, and a
+session can do everything Claude Code started by that user in a terminal can do, with the
+user's own `~/.claude`, git and GitHub credentials and rights; the app adds session management,
+per-session clones, PR automation, notifications, previews and the mobile UI on top. It also
+runs in one Docker container. See [docs/specification.md](docs/specification.md) (German) for the
+full specification.
 
 Current state: repositories are chosen from GitHub through the app's GitHub App (or registered
 by clone URL), local projects by name; sessions run through the Claude Agent SDK in their own
@@ -16,8 +20,8 @@ file change appears as a diff in the history and in approvals, and a changes pag
 whole session's diff per repository and file; images can be attached to messages, files of the
 session referenced with `@`, GitHub issues and pull requests with `#` (Claude gets their
 content as untrusted context), and Claude shows files to the user with `show_file`; session
-branches are pushed and pull requests created by button, or by Claude after the user's
-approval; usage is recorded per request. Sessions notify the user over Web Push and ntfy
+branches are pushed and pull requests created by button, or by Claude (as the session's
+permission mode allows, up to `bypassPermissions`); usage is recorded per request. Sessions notify the user over Web Push and ntfy
 (approvals with Allow and Deny right in the notification), and the web app is an installable
 PWA with an offline shell, badge, shortcuts and a share target. Per open pull request,
 autofix continues the session when CI fails or reviewers with write access comment, and
@@ -86,10 +90,11 @@ database lives in `data/db` of this repository (gitignored).
 For GitHub, start it with `GITHUB_APP_ID=… GITHUB_APP_PRIVATE_KEY_FILE=/path/to/key.pem`.
 
 In development (`PROCESS_ISOLATION=single-user`) the API and the sessions run as you, with
-your global git configuration: credentials for repositories registered by clone URL, and
-settings such as commit signing apply in session clones too. To keep them apart, start the
-API with `GIT_CONFIG_GLOBAL` pointing to a separate file. The tests never use your git
-configuration (each test runs git with its own).
+your `~/.claude` and your global git configuration: credentials, and settings such as commit
+signing, apply in session clones too, as on the NixOS service. `API_GIT_CONFIG_GLOBAL` gives
+the API's own git commands on mirrors a configuration of their own; `GIT_CONFIG_GLOBAL` would
+apply to the sessions as well. The tests never use your git configuration (each test runs git
+with its own).
 
 Start the API from a normal shell. Started from inside a Claude Code session it inherits that
 session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions it runs.
@@ -105,8 +110,8 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `SETUP_SCRIPT_TIMEOUT_MINUTES`      | `15`                                                                                             | Setup scripts are stopped after this long                                                                |
 | `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long (never while the session has previews); `0` keeps them        |
 | `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                                            |
-| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, transcripts                                                        |
-| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository                                                                 |
+| `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, skills, plugins, MCP servers, transcripts                          |
+| `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository (NixOS module: `<dataDir>/memory`)                              |
 | `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                                                           |
 | `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret                                              |
 | `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                                                              |
@@ -114,11 +119,14 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `CF_ACCESS_TEAM_DOMAIN`             | none                                                                                             | Team domain (`<team>.cloudflareaccess.com`) for `cloudflare-access`                                      |
 | `CF_ACCESS_AUD`                     | none                                                                                             | Application Audience (AUD) tag(s), comma-separated                                                       |
 | `CF_ACCESS_ALLOWED_EMAILS`          | none (everyone Access lets in)                                                                   | Optional comma-separated email allowlist                                                                 |
-| `PROCESS_ISOLATION`                 | none, required (image: `separate-users`)                                                         | `separate-users` or `single-user`, see [Users](#users-and-what-sessions-can-reach)                       |
+| `PROCESS_ISOLATION`                 | none, required (image: `separate-users`, NixOS: `single-user`)                                   | `single-user` or `separate-users`, see [Users](#users-and-what-sessions-can-reach)                       |
 | `SESSION_USER`                      | `claude`                                                                                         | OS user of session processes with `separate-users`                                                       |
-| `SESSION_PATH`                      | the API's `PATH`                                                                                 | `PATH` of session processes with `separate-users` (may hold directories the session user can write)      |
+| `SESSION_PATH`                      | the API's `PATH`                                                                                 | `PATH` of session processes (the user's profiles; may hold directories sessions can write)               |
 | `LISTEN_ADDRESS`                    | all interfaces                                                                                   | Address the server listens on                                                                            |
-| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How the git credential helper in session clones reaches the API                                          |
+| `INTERNAL_API_URL`                  | `http://127.0.0.1:$PORT`                                                                         | How processes on this machine reach the API; its port is never exposed as a preview                      |
+| `SESSION_INSTRUCTIONS_FILE`         | none                                                                                             | Markdown appended to Claude Code's system prompt in every session (the NixOS module's instructions)      |
+| `API_GIT_CONFIG_GLOBAL`             | none (the environment's `GIT_CONFIG_GLOBAL`)                                                     | `GIT_CONFIG_GLOBAL` of the API's own git commands on mirrors only                                        |
+| `LEGACY_CLAUDE_CONFIG_DIR`          | none                                                                                             | Old configuration directory: its transcripts are copied to Claude Code's current one once, at startup    |
 | `WEB_ROOT`                          | `public` next to the bundle (image: `/app/public`)                                               | Built web app served by the API                                                                          |
 | `ALLOWED_HOSTS`                     | none (loopback names are always allowed)                                                         | Comma-separated host names the server answers to                                                         |
 | `ALLOWED_ORIGINS`                   | `http://localhost:4200` outside production                                                       | Comma-separated origins besides the server's own                                                         |
@@ -171,19 +179,29 @@ user's approval.
 
 Exempt, each with its own protection (`AUTH_EXEMPT_ROUTES` in
 `apps/api/src/app/auth/authenticator.ts`): `GET /api/health` (no data) and
-`POST /api/git/credentials` (session process token) and `POST /api/github/webhook`
-(signature, see [PR automation](#pr-automation); session processes are refused there too).
+`POST /api/github/webhook` (signature, see [PR automation](#pr-automation); session processes
+are refused there too).
 The notification routes (settings, devices, tests, the approval buttons) are not exempt.
 
-**Session processes cannot call the API.** With `PROCESS_ISOLATION=separate-users`, connections
-from a process of the session user (looked up in the kernel's socket table, `/proc/net/tcp*`,
-by ports and addresses: over loopback and to the container's own addresses such as its `eth0`
-address alike) are refused with `403` (`session_process_refused`) except on the routes
-sessions need (the credential endpoint, the health check), in either auth mode. This is what
-closes the hole in `AUTH_MODE=none` inside the container. Still open with `AUTH_MODE=none`:
-every process outside the container that can reach the port (the compose file publishes it on
-the host's loopback only) and, in development (`single-user`), session processes themselves,
-which run as the same user as the API.
+**Session processes do not call the API.** Connections from a session process are refused
+with `403` (`session_process_refused`) except on the health check, in either auth mode, so a
+session cannot, for example, answer its own approval requests. The client socket is looked up
+in the kernel's socket table (`/proc/net/tcp*`, by ports and addresses: over loopback and to
+the machine's or container's own addresses alike); connections from elsewhere (the tunnel on
+another host, Docker's port publishing) have none there and are never refused.
+
+- `separate-users` (the image): the client socket belongs to the session user.
+- `single-user` (NixOS service, development): sessions run as the API's user, so the socket
+  must also be held by a process the API started (`apps/api/src/app/auth/session-processes.ts`):
+  one that descends from the API's process, or, when the API runs in a systemd service, one in
+  the service's cgroup (that covers processes that detached with `setsid` or a double fork).
+  The user's other programs on the machine (a browser, a terminal's `curl`, the Angular dev
+  server's proxy in development) are not refused.
+
+This is a guard against a session using the API by accident or on a whim, not a boundary: with
+the user's rights a session can leave the cgroup (`systemd-run --user`), or read the database
+and the app's secrets. Still open with `AUTH_MODE=none`: every other process that can reach the
+port.
 
 ### Request guard
 
@@ -293,28 +311,32 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   are the list Claude Code reports for the account (`GET /api/models`, read through a
   short-lived Claude Code process without prompt, cached for an hour; the aliases default,
   opus, sonnet and haiku if that fails). Modes offered: `default` (ask), `acceptEdits`, `auto`,
-  `plan` and `dontAsk`; `bypassPermissions` is never offered or accepted, and every session's
-  flag settings disable it (`disableBypassPermissionsMode`). Mode changes Claude Code makes
-  itself (entering plan mode, approving a plan) are taken over from its `status`/`init`
-  messages. Changes are logged as `settings.changed` events.
+  `plan`, `dontAsk` and `bypassPermissions` ("Bypass (dangerous)": everything runs without
+  asking, with all the rights of the user the sessions run as; marked in the attention colour in
+  the mode control and the status strip). Every process is started with
+  `allowDangerouslySkipPermissions` (`--allow-dangerously-skip-permissions`), which only makes
+  the mode available, also for a switch while it runs; a user's or project's
+  `disableBypassPermissionsMode` setting still applies (the session then runs in `default`,
+  override reason `bypass_unavailable`). Mode changes Claude Code makes itself (entering plan
+  mode, approving a plan) are taken over from its `status`/`init` messages. Changes are logged
+  as `settings.changed` events.
 - Auto mode (`auto`): Claude Code's classifier approves or blocks each tool use and asks the
   user through `canUseTool` only when it cannot decide; plan mode stays without it
-  (`useAutoModeDuringPlan: false`). What the classifier approves never reaches `canUseTool`, so
-  the app's limits always go to the user, whatever the mode: every `git push` (in any form the
-  push analysis recognizes, also `git -C dir push`; its approval is what hands out the write
-  token), `create_pull_request` and `add_repository`. A PreToolUse hook of every process
-  (`apps/api/src/app/sessions/approval-limits.ts`) answers `ask` for them, which Claude Code
-  does not leave to the classifier (checked with the bundled Claude Code; the ask rule
-  `Bash(git push:*)` would reach the user as well, but covers plain `git push` only, and the
-  MCP policy `always_ask` is left to the classifier in auto mode). An Autofix run (untrusted
-  GitHub content) runs in `default`: the process switches before the run's message and back to
-  `auto` when its turn ends. Where auto mode is not available (plan, model, settings), Claude
-  Code starts in or falls back to `default` and reports it (`status`/`init`); the chosen mode
-  stays `auto`, and the session's `permissionModeOverride` (`{ mode, reason }`, reason
-  `auto_unavailable` or `autofix`) says which mode is in effect while the process runs. The
-  view shows it in the strip ("Ask (auto unavailable)") and under the mode control. Switching a
-  running process to `auto` fails with Claude Code's reason when it cannot use it; after a model
-  change the app asks for `auto` again (Claude Code does not return to it by itself).
+  (`useAutoModeDuringPlan: false`). The app adds no limits of its own: `git push`,
+  `create_pull_request` and `add_repository` are decided like any tool use, by the mode and the
+  permission rules (the user's, the project's and those allowed for the session).
+- Autofix hold: an Autofix run (untrusted GitHub content) of a session in `auto` or
+  `bypassPermissions` runs in `default`: the process switches before the run's message and back
+  to the chosen mode when its turn ends, so nothing runs without the user while Claude works
+  on that content (the app's narrow `git add`/`commit`/`push` allowance for Autofix stays, see
+  [git during autofix](#git-during-autofix)). Where auto mode is not available (plan, model,
+  settings), Claude Code starts in or falls back to `default` and reports it (`status`/`init`);
+  the chosen mode stays, and the session's `permissionModeOverride` (`{ mode, reason }`, reason
+  `auto_unavailable`, `bypass_unavailable` or `autofix`) says which mode is in effect while the
+  process runs. The view shows it in the strip ("Ask (auto unavailable)") and under the mode
+  control. Switching a running process to `auto` fails with Claude Code's reason when it cannot
+  use it; after a model change the app asks for `auto` again (Claude Code does not return to it
+  by itself).
 - Queued messages: a message sent while a turn runs (also while it waits for an approval) is
   queued by the app (`message.queued`), not handed to Claude Code, and goes to Claude when the
   turn ends (all queued messages at once; Claude Code may take them as one turn). Until then it
@@ -336,12 +358,12 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   exhausted; amber is kept for sessions that need the user); tapping it opens a dialog with
   every window, per-model weekly ones included, with percent, reset time and when they were
   last updated. The session details show the same list.
-- Integrations: each Claude Code process gets a session token and the API URL for the git
-  credential helper, the tools `show_file` (always), `add_repository` (always, see
+- Integrations: each Claude Code process gets the tools `show_file` (always), `add_repository`
+  (always, see
   [Adding repositories to a running session](#adding-repositories-to-a-running-session)) and
   `create_pull_request` (when the session has a GitHub repository; all in the in-process MCP
-  server `crm`), a permission rule
-  that makes `git push` always ask, and the auto-memory directory of its main repository.
+  server `crm`), and the auto-memory directory of its main repository. No credentials: git uses
+  the user's own (see [Push and pull requests](#push-and-pull-requests)).
 - Session files are read by the API only through `apps/api/src/assets/session-files.cjs`, run
   as the session user: it opens the file, checks the real path of what it opened
   (`/proc/self/fd`) against the session's directories and refuses everything else (symlinks
@@ -349,15 +371,17 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   listings of scratch directories and `show_file` use it; git in clones runs as the session
   user as well.
 - Settings: sessions get Claude Code's own system prompt and the user, project and local
-  settings, including `CLAUDE.md` files of the working directory and the user's; the managed
-  policy `/etc/claude-code/CLAUDE.md` is always loaded.
-- MCP servers: sessions get Claude Code's built-in tools and the app's own tools (in-process
-  server `crm`) only. Every process runs with `strictMcpConfig` (`--strict-mcp-config`: MCP
-  servers only from the app's `mcpServers` option, none from the user's configuration, a
-  repository's `.mcp.json`, plugins or agent definitions) and the setting
-  `disableClaudeAiConnectors`, so the Claude account's claude.ai connectors (mail, drive,
-  calendar, task managers, ...) are neither fetched nor reachable. A repository's own
-  `.mcp.json` is not loaded; MCP servers per repository are a later stage.
+  settings of the user's configuration directory (`~/.claude`, or `CLAUDE_CONFIG_DIR` where set,
+  as in the image), as in a terminal: login, `CLAUDE.md` files of the working directory and the
+  user's, skills, plugins, hooks, memory; the managed policy `/etc/claude-code/CLAUDE.md` is
+  always loaded. `SESSION_INSTRUCTIONS_FILE` (the NixOS module's description of the machine) is
+  appended to the system prompt. On top, every process gets `useAutoModeDuringPlan: false` and
+  `dialogExpiry: never` (approval requests wait for the user) as flag settings.
+- MCP servers: as in a terminal (no `strictMcpConfig`): the user's MCP servers, a repository's
+  `.mcp.json` as approved in the user's configuration, plugins and the Claude account's
+  claude.ai connectors, plus the app's own tools (in-process server `crm`). The app's
+  short-lived helper processes (model list, plan usage) start no MCP servers and fetch no
+  connectors.
 
 REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `PATCH /api/sessions/:id`, `POST /api/sessions/:id/messages`,
@@ -373,7 +397,7 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `GET /api/repositories/:id`, `POST /api/repositories`, `PATCH /api/repositories/:id`,
 `POST /api/repositories/:id/fetch`, `POST /api/repositories/:id/github`,
 `GET /api/repositories/:id/branches`, `GET /api/github/status`, `GET /api/github/repositories`,
-`GET /api/settings`, `PUT /api/settings`, `POST /api/git/credentials` (credential helper only),
+`GET /api/settings`, `PUT /api/settings`,
 `GET /api/models`, `GET /api/limits`, `GET /api/health`, `GET /api/sessions/:id/diff`,
 `GET /api/sessions/:id/diff/file`, `GET /api/sessions/:id/files`, `POST /api/attachments`,
 `GET /api/attachments/:id`, `GET /api/shown-files/:id`, `GET /api/shown-files/:id/content`,
@@ -573,13 +597,11 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
   which is applied as a session `setMode` update, or keep planning with feedback).
 - "Allow for this session" is offered only from Claude Code's own suggestions for the request,
   rewritten to the destination `session` (never to settings files): allow rules (not for all
-  Bash commands, not for prefixes covering `git push`, not for the app's tools) and
-  directories. It never switches the permission mode (Claude Code's `setMode` suggestions, e.g.
+  Bash commands at once) and directories, for pushes and the app's tools like for anything
+  else. It never switches the permission mode (Claude Code's `setMode` suggestions, e.g.
   "accept edits" for a file change, are dropped): the mode changes only through the mode control
-  and by approving a plan. It is never offered for pushes, pull requests, questions, plans
-  or when Claude Code says not to (`suppressAlwaysAllowRule`): each push and each pull request
-  needs its own approval (see [Push and pull requests](#push-and-pull-requests)), and never
-  for `add_repository`. Rules and
+  and by approving a plan. It is never offered for questions and plans, or when Claude Code says
+  not to (`suppressAlwaysAllowRule`). Rules and
   directories allowed for the session are given to every later Claude Code process of the
   session (`allowedTools`, additional directories), so they hold until the session ends.
 - A request never stays pending without a process waiting for it: it is cancelled (resolved
@@ -787,8 +809,11 @@ name of its own, so absolute asset paths and hot-reload WebSockets work unchange
   by the listening socket's inode in its own processes' `/proc/<pid>/fd` and sends SIGTERM,
   SIGKILL after 5 s. Only listeners of the session user can be found and signalled. Which
   session started a process cannot be told (all sessions share the user `claude`), so this is
-  the process behind the exposed port, whoever started it. In `single-user` development
-  nothing is killed: the listener could be any program of the developer's. Dev servers Claude
+  the process behind the exposed port, whoever started it. In `single-user` mode (the NixOS
+  service, development) the API stops only processes it started itself (descendants, or
+  processes in its service's cgroup, see [Authentication](#authentication)) that hold a
+  listening socket of the port; other programs of the user listening there are left alone.
+  Dev servers Claude
   started but never exposed are not found; they end with the Claude Code process if they ran
   as its background tasks.
 - **No automatic detection** of newly listening ports: the socket table shows a listener's
@@ -813,8 +838,8 @@ plain 404 page, stopped previews 410.
   (`separate-users`) or to the API's user (`single-user`), whatever listened when the port
   was exposed; the API's own port is always refused. With separate users the API (`crm`)
   and root listeners can never be reached through a preview. Not enforceable: which session's
-  process listens (one user for all sessions); in `single-user` development any service of
-  the developer's user on loopback could be exposed (never the API's port).
+  process listens (one user for all sessions); in `single-user` mode any service of the
+  user's on loopback could be exposed (never the API's port).
 - **Headers to the dev server**: `Host: localhost:<port>`; `Origin` and `Referer` of the
   preview itself become `http://localhost:<port>` (host and CSRF checks of Vite, webpack,
   Next.js and others pass as locally); a foreign `Origin` is passed on as it is; any other
@@ -1180,8 +1205,8 @@ configuration). Two ways in:
   registered first, through the same routes and validation as in the form), and the base
   branch. `POST /api/sessions/:id/repositories` with `{ repositoryId, baseBranch? }`.
 - **By Claude**: the tool `add_repository` (`repository` as `owner/name`, or `url`; optional
-  `base_branch`; `reason`). It asks the user every time (MCP permission policy `always_ask`,
-  never "Allow for this session", no rule lets later calls through). Before anything is asked,
+  `base_branch`; `reason`). It asks like any tool, as the session's permission mode and rules
+  say (it runs without asking in `bypassPermissions`, for example). Before anything is asked,
   the call is checked as the form would check it
   (`apps/api/src/app/workspaces/repository-additions.ts`): a registered repository or local
   project by name, a repository of the GitHub App's installations by name, or a clone URL
@@ -1191,9 +1216,9 @@ configuration). Two ways in:
   where it comes from (GitHub App, clone URL, local project; whether it is registered yet), the
   base branch (or the default branch) and Claude's reason as plain text (untrusted, never
   rendered). It reads "Approve repository" in the session list and status strip, and the
-  notification's Allow and Deny work as for a command. Only an approved call runs, once, with
-  exactly what the approval showed (kept by tool use ID); unregistered repositories are
-  registered only then.
+  notification's Allow and Deny work as for a command. An approved call runs with exactly what
+  the approval showed (kept by tool use ID, used once); a call that was not asked is checked
+  the same way when the tool runs. Unregistered repositories are registered only then.
 
 What happens then is the same for both: the repository gets its own clone
 `sessions/<slug>/<owner>/<name>` from its mirror on the session branch `claude/<slug>`
@@ -1258,8 +1283,9 @@ hold and removed on the Workspace cleanup page (see [Managing sessions](#managin
 
 Repositories registered from GitHub are cloned and fetched with installation tokens (see
 [GitHub](#github)). Repositories registered by clone URL use whatever git credentials the
-API's environment has (SSH key, credential helper), so public HTTPS URLs and local paths work
-out of the box. Clone URLs are validated (https, ssh, scp-like `git@host:owner/repo` or an
+API's environment has (on the NixOS service the user's SSH keys and credential helpers, with
+the API's own `API_GIT_CONFIG_GLOBAL`), so public HTTPS URLs and local paths work out of the
+box. Clone URLs are validated (https, ssh, scp-like `git@host:owner/repo` or an
 absolute local path; no credentials in the URL, no other transports); git always runs with
 argument arrays and `--` before user values, without prompts and without repository hooks.
 
@@ -1279,7 +1305,8 @@ Several sessions may work in the same repository at the same time without seeing
   same time share one fetch.
 - **Limits:** pushes from a session go to the remote (or, for a local project, to its mirror,
   where only fast-forwards are accepted), so a session can still push to a branch others use;
-  the global `CLAUDE.md` allows pushing only the session branch after the user approved. The
+  the session instructions ask to push only the session branch unless the user asks for more.
+  The
   serialization is per API process; two API instances on the same workspace are not
   supported. Joining a running fetch can miss a commit pushed after that fetch started.
 - **Auto-memory is per repository**, not per session clone: Claude Code would keep it per
@@ -1345,15 +1372,14 @@ or logs:
 | clone and fetch of a mirror               | `contents: read`                                                             |
 | push by button                            | `contents: write` (+ `workflows: write` if workflow files changed)           |
 | create / read a pull request              | `pull_requests: write` + `contents: read` / `pull_requests: read`            |
-| credential helper, normally               | `contents: read`                                                             |
-| credential helper, approved push          | `contents: write` (+ `workflows`), fresh, revoked when the push ends         |
 | create a repository                       | `administration: write`, fresh, revoked afterwards                           |
 | `#` references: issues, comments          | `issues: read` + `pull_requests: read`                                       |
 | `#` references: a pull request's diff     | `issues: read` + `pull_requests: read` + `contents: read`                    |
 | PR automation: reading state and feedback | `metadata`, `checks`, `statuses`, `pull_requests`, `actions`, `issues`: read |
 
 If the installation of a repository changed (app reinstalled), the current one is looked up
-and stored.
+and stored. Sessions never get installation tokens: git and `gh` in a session use the user's
+own credentials (see [Push and pull requests](#push-and-pull-requests)).
 
 ### Commit identity
 
@@ -1373,47 +1399,35 @@ Both work two ways:
    and draft flag, pushing first when GitHub lacks the latest commit. The click is the user's
    approval. Repositories registered by clone URL push with the server's own credentials;
    local projects have no remote (put them on GitHub first).
-2. **By Claude**: `git push` in a session clone gets its credentials from a credential helper
-   (`apps/api/src/assets/git-credential-crm.cjs`, configured in every clone of a GitHub
-   repository, with all other helpers reset). It asks `POST /api/git/credentials`,
-   authenticated with a random token of the session's Claude Code process (in its environment,
-   revoked when the process ends), for a token for exactly that repository of exactly that
-   session. The token is read-only unless a `git push` command that the user approved in
-   this session is running right now; then it may write, and it is revoked when Claude Code
-   reports the command's result (at the latest after 15 minutes). Pull requests come from the
-   tool `create_pull_request` (repository, title, body, base branch, draft), which never
-   pushes and runs only for a call the user approved, once.
+2. **By Claude**: `git push` in a session clone runs with the credentials of the user the
+   sessions run as, like in a terminal: the user's git configuration (`~/.gitconfig`),
+   credential helpers such as `gh auth setup-git`, SSH keys and agents. `origin` of a clone of
+   a GitHub repository is its HTTPS clone URL, so the user's helper for `https://github.com`
+   applies (or a URL rewrite such as `url."git@github.com:".insteadOf` in their configuration).
+   The app sets no credential helper in clones; clones made by earlier versions lose the app's
+   old one (it hid the user's) when their session's next Claude Code process starts. Pull
+   requests come from the tool `create_pull_request` (repository, title, body, base branch,
+   draft), which never pushes and makes the pull request with the GitHub App, so the session
+   shows it and the PR automation follows it. Claude may use `gh` as well.
 
-Approval: every tool use that needs approval goes through `canUseTool` and the user's answer
-(see [Approval requests](#approval-requests)); "allow for this session" is never offered for
-these two. Approvals are what unlock them, not Claude Code's own decision: `git push` has an `ask` permission rule in every session (it wins
-over allow rules, e.g. from a repository's `.claude/settings.json`), the tool has the MCP
-permission policy `always_ask`, a PreToolUse hook answers `ask` for both in every permission
-mode (so `auto` mode's classifier never decides them, see the session lifecycle above), and if
-anything still skipped `canUseTool` (a permission mode, an allow rule) no grant is recorded, so
-the helper stays read-only and the tool refuses.
+Approval: both are tool uses like any other; whether they ask depends on the session's
+permission mode and rules (see [Approval requests](#approval-requests)): `default` asks for
+each, "allow for this session" can cover them, `auto` lets the classifier decide,
+`bypassPermissions` runs them without asking. Only during an Autofix run does the app hold
+`auto` and `bypassPermissions` in `default` (see [Autofix](#autofix)).
 
-The approval request carries, for every `git push` in a Bash command, what it would update
-(`gitPushes`: remote, destinations, force, deletes, all branches or tags, and whether it pushes
-only the session branch, with warnings otherwise; `apps/api/src/app/agent/git-push-analysis.ts`),
-so the approval dialog can warn: the approval lets the helper write to the whole repository,
-including e.g. `git push origin HEAD:main`.
+When Claude Code asks, the approval request carries, for every `git push` in a Bash command,
+what it would update (`gitPushes`: remote, destinations, force, deletes, all branches or tags,
+and whether it pushes only the session branch, with warnings otherwise;
+`apps/api/src/app/agent/git-push-analysis.ts`), so the approval dialog can warn: the user's
+credentials can write the whole repository, including e.g. `git push origin HEAD:main`. After
+a `git push` of Claude's finished (asked or not), the app records what reached the remote from
+the clone's remote-tracking branch.
 
-What this boundary cannot guarantee:
-
-- An approved command does whatever it does. A push grant is recognized from the command
-  text (`git … push`) and holds for the whole session (all its GitHub repositories, every
-  process) while that command runs; a command like `git push && git credential fill` would
-  show a write token to Claude. Commands that push in other ways (scripts, aliases) are not
-  recognized and get a read-only token, which fails safely.
-- Read-only tokens are available to every process of the session at any time (for
-  `git fetch`), e.g. by running the helper or `git credential fill`, which itself is a Bash
-  command that needs approval.
-- Sessions are separated from the API (see [Users](#users-and-what-sessions-can-reach)), not
-  from each other: all sessions share the session user, so a process of one session can read
-  another session's clones and process environment (its session token). Claude Code asks
-  before reading outside the session's directories, so only an approved tool use gets there.
-- In development (`single-user`) none of this separation exists.
+Sessions are not separated from each other or from the app: they run as one user, so a
+process of one session can read another session's clones, the database and the app's
+secrets. Claude Code asks before reading outside the session's directories in the modes that
+ask.
 
 ### Local projects on GitHub
 
@@ -1554,7 +1568,7 @@ command run unapproved. The app therefore runs these commands with hooks off
 configuration (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`; the session user's own
 `~/.gitconfig` is Claude's to write), with fsmonitor and commit signing off, and only when the
 clone's own configuration holds nothing but what git and the app write there (core basics,
-`remote.origin`, `branch.*`, identity, the credential helper); otherwise it asks. Repository
+`remote.origin`, `branch.*`, identity, the old credential helper); otherwise it asks. Repository
 hooks such as linters therefore do not run for autofix commits (`--no-verify` is accepted, as
 it changes nothing); CI checks the result.
 
@@ -1563,9 +1577,10 @@ report (`printf … | base64 -d`, failing with exit status 1 when a step failed)
 the real output of every step and a failure never looks like success. The history shows the
 tool call as "done by the app" or "failed" with what the app did ("Staged; Committed; pushed
 … at …"), from a stored `tool.by_app` event that survives reloads and restarts. The chosen
-permission mode is never changed by the automation, and bypass modes stay unavailable; a
-session in `auto` runs an Autofix run in `default` (no classifier approvals while Claude works
-on GitHub content) and returns to `auto` when the run's turn ends.
+permission mode is never changed by the automation; a session in `auto` or
+`bypassPermissions` runs an Autofix run in `default` (nothing runs without the owner while
+Claude works on GitHub content, apart from the git commands above) and returns to its mode
+when the run's turn ends; the view says so ("Ask (Autofix run)").
 
 ### Merge and close
 
@@ -1631,12 +1646,14 @@ It listens on port 8080.
 
 ### Users and what sessions can reach
 
-The image runs with `PROCESS_ISOLATION=separate-users`:
+The image keeps the app's own data away from the sessions with
+`PROCESS_ISOLATION=separate-users` (the NixOS service runs everything as the owner's user
+instead):
 
-| User     | UID (build arg)   | Runs                                                                     | Owns                                                        |
-| -------- | ----------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| `crm`    | 1000 (`API_UID`)  | the API                                                                  | `/data/db` (0700), `/data/git` (0700), mirrors, GitHub key  |
-| `claude` | 1001 (`USER_UID`) | Claude Code, setup scripts, git in session clones, the credential helper | `/data/claude`, `/nix`, session clones, scratch directories |
+| User     | UID (build arg)   | Runs                                              | Owns                                                        |
+| -------- | ----------------- | ------------------------------------------------- | ----------------------------------------------------------- |
+| `crm`    | 1000 (`API_UID`)  | the API                                           | `/data/db` (0700), `/data/git` (0700), mirrors, GitHub key  |
+| `claude` | 1001 (`USER_UID`) | Claude Code, setup scripts, git in session clones | `/data/claude`, `/nix`, session clones, scratch directories |
 
 The container starts as root only for the entrypoint (`docker/entrypoint.sh`): it gives the
 volumes these owners (also volumes of older images), checks that the session user cannot read
@@ -1670,15 +1687,16 @@ What a session process can and cannot reach (checked in the container):
   configuration), the API's `/proc/<pid>/environ`; write or delete in the mirrors; call the
   management API (refused by peer user, see [Authentication](#authentication)); become
   another user (`setpriv`/`su` fail);
-- can: its clones, `/data/claude` (login, transcripts, memory), `/nix`, the credential
-  endpoint with its session token, and everything of other sessions (same user), including
-  their dev servers on loopback; expose ports of its own user through `expose_port` (never the
+- can: its clones, `/data/claude` (login, settings, MCP servers, transcripts, memory), `/nix`,
+  and everything of other sessions (same user), including their dev servers on loopback; expose ports of its own user through `expose_port` (never the
   API's or root's, see [Previews](#previews-of-dev-servers)); not open preview hosts through
   the API's port.
 
-Sessions have no ambient git credentials anymore: repositories registered by clone URL are
-fetched and pushed (by button) by the API with `/data/git`; Claude's own `git push` works only
-for GitHub repositories (credential helper).
+Sessions have no git credentials of the app: repositories are fetched by the API (installation
+tokens, `/data/git`), the Push and Create PR buttons and the tool `create_pull_request` use the
+GitHub App, but Claude's own `git push` uses whatever credentials the session user `claude`
+has, which is none in a fresh container (its home is not a volume). Without them Claude asks
+the user to push with the button.
 
 ### Volumes
 
@@ -1768,10 +1786,13 @@ effect immediately, while personal additions can still go into the volume.
 ## Running as a NixOS service
 
 The repository is a flake with a package (`packages.x86_64-linux.default`) and a NixOS module
-(`nixosModules.default`) that runs the app as a hardened systemd service with
-`PROCESS_ISOLATION=separate-users`: the API as its own system user, sessions as a session user.
-Sessions then use the machine's own tools, Nix and network, and the machine (e.g. a VM) is the
-sandbox. The Docker image stays supported; both are built and tested in CI.
+(`nixosModules.default`) that runs the app as a systemd service of a user of the machine,
+usually the owner's login user (`PROCESS_ISOLATION=single-user`). It is not a sandbox: every
+session can do what Claude Code started by that user in a terminal can do, with the user's own
+`~/.claude` (login, settings, skills, plugins, MCP servers, memory, `CLAUDE.md`), git
+configuration, `gh` login, SSH keys, groups and `sudo`, on the whole machine. The app adds the
+session management, per-session clones, PR automation, notifications, previews and the mobile
+UI. The Docker image stays supported; both are built and tested in CI.
 
 ### Minimal configuration
 
@@ -1790,8 +1811,10 @@ sandbox. The Docker image stays supported; both are built and tested in CI.
         claude-remote-manager.nixosModules.default
         {
           nix.settings.experimental-features = [ "nix-command" "flakes" ];
+          users.users.alice.isNormalUser = true;
           services.claude-remote-manager = {
             enable = true;
+            user = "alice";
             auth.mode = "none"; # loopback only; see the fuller example
           };
         }
@@ -1801,9 +1824,10 @@ sandbox. The Docker image stays supported; both are built and tested in CI.
 }
 ```
 
-This listens on `127.0.0.1:8080`, keeps all state in `/var/lib/claude-remote-manager` and
-creates the users `claude-remote-manager` (API) and `claude` (sessions). Log in to Claude (see
-below) and open it through an SSH tunnel, or put a tunnel or proxy with authentication in front.
+This listens on `127.0.0.1:8080` and keeps the app's state in `/var/lib/claude-remote-manager`,
+owned by `alice`. Sessions use `alice`'s Claude login: log in with `claude` as `alice` once, as
+for a terminal session. Open it through an SSH tunnel, or put a tunnel or proxy with
+authentication in front.
 
 ### Fuller configuration with Cloudflare Access and sops-nix
 
@@ -1812,7 +1836,7 @@ below) and open it through an SSH tunnel, or put a tunnel or proxy with authenti
 {
   sops.secrets = {
     # Root-owned files are fine: systemd hands them to the service as
-    # credentials readable by the API user only.
+    # credentials.
     "crm/github-app-key" = { };
     "crm/github-webhook-secret" = { };
     "crm/ntfy-token" = { };
@@ -1820,6 +1844,7 @@ below) and open it through an SSH tunnel, or put a tunnel or proxy with authenti
 
   services.claude-remote-manager = {
     enable = true;
+    user = "alice";
     # With impermanence: state below the persistent volume.
     dataDir = "/persist/var/lib/claude-remote-manager";
     listenAddress = "127.0.0.1"; # cloudflared on the same machine
@@ -1849,15 +1874,14 @@ below) and open it through an SSH tunnel, or put a tunnel or proxy with authenti
       tokenFile = config.sops.secrets."crm/ntfy-token".path;
     };
 
-    sessionUser = {
-      # Access to selected resources of the home network or the machine.
-      extraGroups = [ "dialout" ];
-      packages = with pkgs; [ jq python3 gnumake ];
-    };
+    packages = with pkgs; [ jq python3 gnumake ];
 
     environment = {
       SESSION_STALL_MINUTES = "20";
       SESSION_IDLE_TIMEOUT_MINUTES = "120";
+      # An SSH agent the sessions should use, if the user's SSH configuration
+      # does not name one (IdentityAgent).
+      # SSH_AUTH_SOCK = "/home/alice/.ssh/agent.sock";
     };
 
     extraInstructions = ''
@@ -1869,182 +1893,154 @@ below) and open it through an SSH tunnel, or put a tunnel or proxy with authenti
 }
 ```
 
-The module checks at evaluation time what the app would refuse at startup: Cloudflare Access
-without team domain or audience, previews behind Access without their own audience (or with
-one of the app's), ntfy without topic or token, a GitHub key without App ID, secret files in
-the Nix store or as relative paths, the same user for API and sessions, an existing session user
-the configuration does not define.
+The module checks at evaluation time what the app would refuse at startup: a user the
+configuration does not define, root, Cloudflare Access without team domain or audience,
+previews behind Access without their own audience (or with one of the app's), ntfy without
+topic or token, a GitHub key without App ID, secret files in the Nix store or as relative paths.
 
 ### Options
 
-| Option (`services.claude-remote-manager.`) | Default                          | Meaning                                                                             |
-| ------------------------------------------ | -------------------------------- | ----------------------------------------------------------------------------------- |
-| `enable`                                   | `false`                          | Run the service                                                                     |
-| `package`                                  | the flake's package              | The app                                                                             |
-| `listenAddress`, `port`                    | `127.0.0.1`, `8080`              | Where the server listens (`LISTEN_ADDRESS`, `PORT`)                                 |
-| `openFirewall`                             | `false`                          | Open `port` in the firewall                                                         |
-| `dataDir`                                  | `/var/lib/claude-remote-manager` | All state: `db/`, `workspace/`, `git/`, `claude/`, `home/` (see below)              |
-| `claudeConfigDir`                          | `<dataDir>/claude`               | `CLAUDE_CONFIG_DIR` of the sessions: login, transcripts, memory                     |
-| `user`, `group`                            | `claude-remote-manager`          | The API's system user and group (created)                                           |
-| `sessionUser.name`                         | `claude`                         | User of session processes                                                           |
-| `sessionUser.create`                       | `true`                           | Create it (`false`: use a user defined elsewhere, e.g. a login user)                |
-| `sessionUser.group`                        | `claude`                         | Primary group of a created session user                                             |
-| `sessionUser.home`                         | `<dataDir>/home` or the user's   | `HOME` of sessions                                                                  |
-| `sessionUser.extraGroups`                  | `[ ]`                            | Supplementary groups of a created session user                                      |
-| `sessionUser.packages`                     | `[ ]`                            | Packages on the sessions' `PATH`                                                    |
-| `sessionUser.writablePaths`                | `[ ]`                            | Further existing paths sessions may write                                           |
-| `auth.mode`                                | none, required                   | `cloudflare-access` or `none`                                                       |
-| `auth.teamDomain`, `auth.audiences`        | `null`, `[ ]`                    | Cloudflare Access team domain and audience tags                                     |
-| `auth.allowedEmails`                       | `[ ]`                            | Optional email allowlist                                                            |
-| `allowedHosts`, `allowedOrigins`           | `[ ]`                            | `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`                                                  |
-| `publicUrl`                                | `null`                           | `PUBLIC_URL`                                                                        |
-| `preview.url`, `preview.accessAudiences`   | `null`, `[ ]`                    | `PREVIEW_URL`, `PREVIEW_ACCESS_AUD`                                                 |
-| `ntfy.url`, `ntfy.topic`                   | `null`                           | `NTFY_URL`, `NTFY_TOPIC`                                                            |
-| `ntfy.tokenFile`                           | `null`                           | Secret file: ntfy token                                                             |
-| `github.appId`                             | `null`                           | `GITHUB_APP_ID`                                                                     |
-| `github.privateKeyFile`                    | `null`                           | Secret file: the GitHub App's private key                                           |
-| `github.webhookSecretFile`                 | `null`                           | Secret file: the webhook secret                                                     |
-| `vapid.privateKeyFile`                     | `null`                           | Secret file: own VAPID private key (otherwise generated into `db/`)                 |
-| `vapid.publicKey`, `vapid.subject`         | `null`                           | `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT`                                                 |
-| `environment`                              | `{ }`                            | Further variables (tunables such as `SESSION_STALL_MINUTES`); never secrets         |
-| `environmentFiles`                         | `[ ]`                            | Secret files with `NAME=value` lines, e.g. `CLAUDE_CODE_OAUTH_TOKEN`                |
-| `hiddenPaths`                              | `[ ]`                            | Further paths made inaccessible inside the service (e.g. an age key file elsewhere) |
-| `extraInstructions`                        | `""`                             | Markdown appended to the sessions' managed `CLAUDE.md`                              |
+| Option (`services.claude-remote-manager.`) | Default                          | Meaning                                                                  |
+| ------------------------------------------ | -------------------------------- | ------------------------------------------------------------------------ |
+| `enable`                                   | `false`                          | Run the service                                                          |
+| `package`                                  | the flake's package              | The app                                                                  |
+| `user`                                     | none, required                   | User the service and every session run as (defined in the configuration) |
+| `group`                                    | the user's primary group         | Group of the service and the data directory                              |
+| `packages`                                 | `[ ]`                            | Packages on the sessions' `PATH` after the user's profiles               |
+| `listenAddress`, `port`                    | `127.0.0.1`, `8080`              | Where the server listens (`LISTEN_ADDRESS`, `PORT`)                      |
+| `openFirewall`                             | `false`                          | Open `port` in the firewall                                              |
+| `dataDir`                                  | `/var/lib/claude-remote-manager` | The app's state: `db/`, `workspace/`, `memory/`, `git/` (see below)      |
+| `auth.mode`                                | none, required                   | `cloudflare-access` or `none`                                            |
+| `auth.teamDomain`, `auth.audiences`        | `null`, `[ ]`                    | Cloudflare Access team domain and audience tags                          |
+| `auth.allowedEmails`                       | `[ ]`                            | Optional email allowlist                                                 |
+| `allowedHosts`, `allowedOrigins`           | `[ ]`                            | `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`                                       |
+| `publicUrl`                                | `null`                           | `PUBLIC_URL`                                                             |
+| `preview.url`, `preview.accessAudiences`   | `null`, `[ ]`                    | `PREVIEW_URL`, `PREVIEW_ACCESS_AUD`                                      |
+| `ntfy.url`, `ntfy.topic`                   | `null`                           | `NTFY_URL`, `NTFY_TOPIC`                                                 |
+| `ntfy.tokenFile`                           | `null`                           | Secret file: ntfy token                                                  |
+| `github.appId`                             | `null`                           | `GITHUB_APP_ID`                                                          |
+| `github.privateKeyFile`                    | `null`                           | Secret file: the GitHub App's private key                                |
+| `github.webhookSecretFile`                 | `null`                           | Secret file: the webhook secret                                          |
+| `vapid.privateKeyFile`                     | `null`                           | Secret file: own VAPID private key (otherwise generated into `db/`)      |
+| `vapid.publicKey`, `vapid.subject`         | `null`                           | `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT`                                      |
+| `environment`                              | `{ }`                            | Further variables of the service and its sessions; never secrets         |
+| `environmentFiles`                         | `[ ]`                            | Secret files with `NAME=value` lines                                     |
+| `extraInstructions`                        | `""`                             | Markdown appended to the instructions every session gets (see below)     |
+
+Removed in this version (evaluation fails with a hint): `sessionUser.create`,
+`sessionUser.group`, `sessionUser.home`, `sessionUser.extraGroups`, `sessionUser.writablePaths`,
+`hiddenPaths`, `claudeConfigDir`. `sessionUser.name` and `sessionUser.packages` are renamed to
+`user` and `packages` (with a warning). The `claude-remote-manager-claude` command is gone: log
+in with the user's own `claude`.
 
 Secret files are paths as strings (for sops-nix `config.sops.secrets.<name>.path`), never
 contents: nothing secret ends up in the Nix store. systemd reads them as root when the service
-starts (`LoadCredential`) and gives the API copies under `/run/credentials/` that only the API
-user can read; before that, a check refuses to start when the session user can read one of the
-original files (like the image's entrypoint does).
+starts (`LoadCredential`) and gives the service copies under `/run/credentials/`. They are not
+hidden from sessions: a session runs as the same user and can read them, as well as the
+database (the owner's decision).
 
 ### Data directory
 
-| Path         | Owner, mode       | Contents                                                                         |
-| ------------ | ----------------- | -------------------------------------------------------------------------------- |
-| `db/`        | API user, 0700    | SQLite database, `files/` (attachments, shown files), generated VAPID keys       |
-| `git/`       | API user, 0700    | The API's `gitconfig` and `ssh/` (its home; `.ssh` points there)                 |
-| `workspace/` | API user, 0755    | `repos/` (mirrors), `sessions/` (clones, the session user's), `scratch/`; one FS |
-| `claude/`    | session user 0700 | Claude Code's configuration directory: login, transcripts, auto-memory           |
-| `home/`      | session user 0700 | Home of a session user the module created (caches, its Nix profile)              |
+| Path         | Contents                                                                          |
+| ------------ | --------------------------------------------------------------------------------- |
+| `db/`        | SQLite database, `files/` (attachments, shown files), generated VAPID keys        |
+| `git/`       | `gitconfig` of the API's own git commands on mirrors (`API_GIT_CONFIG_GLOBAL`)    |
+| `workspace/` | `repos/` (mirrors), `sessions/` (clones), `scratch/`; one file system             |
+| `memory/`    | Claude Code's auto-memory per repository, shared by its sessions (`MEMORY_DIR`)   |
+| `claude/`    | Only from earlier versions: their Claude Code configuration directory (see below) |
 
-The directories are created by systemd-tmpfiles with these owners (not recursively). On a
-machine with impermanence put `dataDir` below the persistent volume (or persist
-`/var/lib/claude-remote-manager`); everything the app needs across reboots is in there. Moving
-data from the container: copy the volumes into these directories, then
-`chown -R` `db`, `git` and `workspace` to the API user and `claude`, `sessions/*` and `scratch/*`
-to the session user, except the object files in session clones that are hardlinks of the
-mirrors' (see what `docker/entrypoint.sh` does).
+Everything belongs to `user` (`dataDir` itself mode 0700). systemd-tmpfiles creates the
+directories. On a machine with impermanence put `dataDir` below the persistent volume (or
+persist `/var/lib/claude-remote-manager`); the user's `~/.claude` must persist as well.
+
+### Upgrading from the version with separate users
+
+Earlier versions ran the API as `claude-remote-manager` and sessions as a session user with a
+configuration directory of their own (`<dataDir>/claude`). On the first start after the
+upgrade:
+
+- **Ownership**: a start step of the service (as root) gives the whole data directory to
+  `user` (`chown -R`, once: `<dataDir>/.owner` records to whom; a change of `user` repeats
+  it). The old users are no longer defined; NixOS removes them.
+- **Transcripts**: Claude Code resumes a session only from its transcript in the current
+  configuration directory, which is now the user's `~/.claude`. The API copies every entry of
+  `<dataDir>/claude/projects/*/` (transcripts, subagent transcripts, memory of scratch
+  sessions) that `~/.claude/projects/` lacks, before it resumes anything
+  (`LEGACY_CLAUDE_CONFIG_DIR`); the project directories are named after the clone paths,
+  which did not change. The repository memory `<dataDir>/claude/repository-memory` moves to
+  `<dataDir>/memory`. Nothing is overwritten or deleted; a marker file
+  (`COPIED-TO-CLAUDE-CONFIG.txt`) keeps it from running again. Remove `<dataDir>/claude` (and
+  `<dataDir>/home` of a created session user) once the old sessions resume fine.
+- **The login**: the old directory's login is not taken over; sessions use the user's own.
+- **Session clones**: the app's old credential helper is removed from a clone when its
+  session's next Claude Code process starts, so the user's credentials apply.
+- **Configuration**: replace `sessionUser = { name = "alice"; create = false; }` by
+  `user = "alice";`, move `sessionUser.packages` to `packages`, and drop the removed options.
 
 ### Logging in to Claude
 
-The module installs `claude-remote-manager-claude`: Claude Code from the package (the version
-the sessions use), run as the session user with the service's `CLAUDE_CONFIG_DIR`, `HOME` and
-`PATH`. Log in once:
-
-```sh
-sudo claude-remote-manager-claude          # then /login if it does not ask, or:
-sudo claude-remote-manager-claude auth login
-sudo claude-remote-manager-claude auth status
-```
-
-The credentials end up in `<claudeConfigDir>/.credentials.json`, mode 0600 in the session
-user's 0700 directory: readable by the session user (and so by every session, as in the
-container), by root and by the API through its DAC_OVERRIDE capability; not by other users.
-With an existing login user as session user, that user can also run the command directly.
-Alternatively put `CLAUDE_CODE_OAUTH_TOKEN=…` (from `claude setup-token`) into a secret file
-listed in `environmentFiles`.
-
-### The session user: dedicated or an existing login user
-
-By default the module creates the system user `claude` with its home in the data directory; this
-is the recommended setup. With `sessionUser = { name = "alice"; create = false; }` sessions run
-as a user the configuration defines itself, e.g. the owner's login user; the module then neither
-creates nor changes that user or its home (its groups, shell and packages stay where they are
-defined, `sessionUser.extraGroups` is refused), and `HOME` defaults to the user's home. The
-workspace and Claude Code's configuration directory still live in the data directory, owned so
-that the user can work there and the API can manage them; `claudeConfigDir` can point elsewhere,
-but should not be the user's own `~/.claude`.
-
-What running sessions as a login user means: sessions get everything that user has: its SSH
-keys and agent sockets, its files, its groups, and indirectly its `sudo` (sessions cannot use
-`sudo` themselves, since they run with `no_new_privs`, but they can write files such as the
-user's shell startup files that the user's own later logins execute). If the user has
-passwordless `sudo`, is a trusted Nix user or is in the `docker` group, sessions are effectively
-root, and then also the protection of the database, the API's files and the secrets is gone.
-The API still runs as its own user, so in the plain case the database and secrets stay out of
-reach as with a dedicated user. And every process of that user on the machine is a session
-process to the API: requests from the user's own browser or `curl` on that machine to the API
-are refused with `session_process_refused` (over loopback and over the machine's own
-addresses); open the app through its public host name (or from another machine).
+Sessions use the login of the user's `~/.claude`, like a terminal session of that user: log in
+once with any Claude Code as that user (`claude`, then `/login`, or `claude auth login`). The
+package's own Claude Code, the version the sessions run, is
+`<package>/libexec/claude-remote-manager/claude`. Alternatively put
+`CLAUDE_CODE_OAUTH_TOKEN=…` (from `claude setup-token`) into a secret file listed in
+`environmentFiles`.
 
 ### The service
 
-- **Users**: the API runs as `claude-remote-manager` (system user, home `<dataDir>/git`);
-  everything a session runs (Claude Code, setup scripts, git in session clones, the file
-  helpers) as the session user, started by the API through `setpriv` with all capabilities
-  dropped and `no_new_privs`, as in the container.
-- **Privileges**: `AmbientCapabilities` and `CapabilityBoundingSet` are exactly `CAP_CHOWN`
-  (hand clones to the session user), `CAP_DAC_OVERRIDE` (read Claude Code's transcripts in the
-  session user's 0700 configuration directory), `CAP_KILL` (signal session processes),
-  `CAP_SETGID` and `CAP_SETUID` (switch to the session user and its groups); the same for a
-  dedicated and an existing session user. `NoNewPrivileges`, `SecureBits=noroot-locked`.
-- **Hardening**: `ProtectSystem=strict` with only the data directory, the session user's home
-  and `sessionUser.writablePaths` writable; `ProtectHome=tmpfs` (other homes hidden, the
-  session user's bound back); `PrivateTmp` (one `/tmp` for the service and its sessions);
-  `PrivateDevices`; `ProtectProc=invisible` (sessions see only the session user's processes,
-  the API only its own); `ProtectKernelTunables/Modules/Logs`, `ProtectControlGroups`,
-  `ProtectClock`, `ProtectHostname`, `LockPersonality`, `RestrictRealtime`, `RestrictSUIDSGID`,
-  `RemoveIPC`, `RestrictAddressFamilies` (Unix, IPv4, IPv6, netlink), native system calls only
-  and a deny list (`@clock @cpu-emulation @module @obsolete @raw-io @reboot @swap`).
-  `InaccessiblePaths` hides sops-nix's `/run/secrets*` and age key, `/etc/shadow`,
-  `/etc/gshadow` and the SSH host keys inside the service, which `CAP_DAC_OVERRIDE` could read
-  otherwise; add more with `hiddenPaths`.
-- **Deliberately off**, because sessions are real development environments on this machine:
-  `PrivateNetwork`/`IPAddressDeny` (sessions reach the network and the home network),
-  `PrivateUsers` (the API switches to a real user), `RestrictNamespaces` (Chromium's sandbox,
-  bubblewrap and container tools need user namespaces), `MemoryDenyWriteExecute` (Node.js and
-  other JIT runtimes), `ProcSubset=pid` (the API reads the socket table in `/proc/net` to refuse
-  session processes), an `@system-service` system call allowlist (debuggers and tracing in
-  sessions). A consumer can change any of these with `systemd.services.claude-remote-manager.serviceConfig`.
-- **Managed `CLAUDE.md`**: `claude-md/nixos.md` (this machine: paths, NixOS, Nix, what is
-  writable) followed by `claude-md/core.md` (shared with the image) and `extraInstructions`,
-  bind-mounted read-only to `/etc/claude-code/CLAUDE.md` inside the service only, so Claude Code
-  used outside the service on the same machine does not get it.
+- **User**: everything runs as `user` with its primary group and supplementary groups: the
+  API, Claude Code, setup scripts, git in session clones, dev servers. The API starts session
+  processes directly (no `setpriv`, no capabilities).
+- **No sandbox**: no `ProtectSystem`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`,
+  `NoNewPrivileges`, system call filter, `RestrictAddressFamilies` or `ProtectProc`, no hidden
+  paths and no mount namespace: sessions use `sudo` (as far as the user may), devices,
+  containers, the whole file system and all processes, and share `/tmp` with the user.
+- **Session instructions**: `claude-md/nixos.md` (this machine: paths, NixOS, what a session
+  may do) followed by `claude-md/core.md` (shared with the image) and `extraInstructions`, in
+  the Nix store and appended to Claude Code's system prompt of every session
+  (`SESSION_INSTRUCTIONS_FILE`), on top of the user's own `CLAUDE.md` files. Not a machine-wide
+  `/etc/claude-code/CLAUDE.md`, which the user's terminal sessions would load as well.
+- **Restarts**: a rebuild that changes the service restarts it, which ends the Claude Code
+  processes of all sessions (they resume with the next message), also of a session that ran the
+  rebuild; `nixos-rebuild` itself runs the switch outside the service (`systemd-run`).
+- **Refused requests**: requests from processes the service started (sessions, their tools and
+  dev servers, also detached ones in the service's cgroup) are refused by the API (see
+  [Authentication](#authentication)); the user's own programs on the machine are not.
 - **No health check unit**: systemd restarts the service when it fails (`Restart=on-failure`);
   `GET /api/health` answers as in the container for external monitoring.
 
 ### The sessions' environment
 
-The app builds session environments from an allowlist; the module sets the allowlisted
-variables to what a login shell of the session user would have:
+Sessions get the service's environment (that of `user`; systemd sets `HOME`, `USER`,
+`LOGNAME` and `SHELL` from the user), without the app's secrets (`CRM_SECRET_*`):
 
-- `PATH` (`SESSION_PATH`): `/run/wrappers/bin`, the user's own Nix profiles
-  (`~/.nix-profile`, `~/.local/state/nix/profile`), `/etc/profiles/per-user/<user>`, the default
-  and the system profile (`/run/current-system/sw`), then a base of bash, coreutils, findutils,
-  grep, sed, awk, tar, gzip, xz, zstd, which, ps, less, git, ssh, curl, ripgrep, Node.js, the
-  machine's Nix, and `sessionUser.packages`. The API's own `PATH` holds store paths only, so
-  nothing the session user installs runs as the API.
-- `HOME`, `USER`, `LOGNAME` of the session user, `SHELL` (its login shell, or bash), `LANG` and
-  `LOCALE_ARCHIVE` from `i18n`, `TZ` from `time.timeZone`, `SSL_CERT_FILE` and
-  `NIX_SSL_CERT_FILE` (the system's CA bundle), `CLAUDE_CONFIG_DIR`, `DISABLE_AUTOUPDATER`.
-- Nothing else: no `CRM_SECRET_*`, no secret file paths, no credentials directory.
+- `PATH` (`SESSION_PATH`): `/run/wrappers/bin` (`sudo`), the user's own Nix profiles
+  (`~/.nix-profile`, `~/.local/state/nix/profile`), `/etc/profiles/per-user/<user>`, the
+  default and the system profile (`/run/current-system/sw`), then a base of bash, coreutils,
+  findutils, grep, sed, awk, tar, gzip, xz, zstd, which, ps, less, git, ssh, curl, ripgrep,
+  Node.js, the machine's Nix, and `packages`. The API's own `PATH` holds store paths only.
+- `LANG` and `LOCALE_ARCHIVE` from `i18n`, `TZ` from `time.timeZone`, `SSL_CERT_FILE` and
+  `NIX_SSL_CERT_FILE` (the system's CA bundle), `DISABLE_AUTOUPDATER`, the app's own variables,
+  and whatever `environment` adds. No `CLAUDE_CONFIG_DIR` and no `GIT_CONFIG_GLOBAL`: Claude
+  Code and git use `~/.claude` and `~/.gitconfig`.
+- A systemd service has no login session: variables a login shell would set (an SSH agent's
+  `SSH_AUTH_SOCK`, `XDG_RUNTIME_DIR`) are missing unless the user's configuration provides
+  them some other way (SSH's `IdentityAgent`, git's credential helpers) or `environment` sets
+  them. Claude Code's Bash tool runs the user's shell with a snapshot of its startup files.
 
-**Nix**: sessions use the machine's Nix daemon (multi-user Nix), with flakes when the
-configuration enables them (`nix.settings.experimental-features`). The session user needs to be
-allowed (`nix.settings.allowed-users`, `*` by default) and must not be trusted
-(`nix.settings.trusted-users`): a trusted user can make the daemon do things as root. The module
-warns about both. Builds land in the shared, read-only `/nix/store`; a session's
-`nix profile install` goes to its home.
+**Git and GitHub**: session clones use the user's git configuration and credentials (see
+[Push and pull requests](#push-and-pull-requests)); the API's own git commands on mirrors use
+installation tokens and `<dataDir>/git/gitconfig`, so the user's URL rewrites or signing
+settings do not change them.
 
 ### What differs from the container
 
+- Everything runs as the owner's user, without sandbox; the container separates the API's
+  user from the session user.
 - No `/nix` volume and no Nix inside an image: the host's Nix and store.
-- No entrypoint: systemd-tmpfiles creates the directories, systemd gives the capabilities and
-  reads the secrets; there is no recursive ownership repair of data from older layouts.
-- Secrets may be root-owned files (they arrive as credentials), instead of files owned by UID 1000.
-- The managed `CLAUDE.md` describes the NixOS machine and is visible inside the service only.
-- Sessions see the machine's file system read-only except their directories, home and the
-  configured paths; `/tmp` is private to the service.
+- No entrypoint: systemd-tmpfiles creates the directories, systemd reads the secrets.
+- Secrets may be root-owned files (they arrive as credentials).
+- The session instructions describe the NixOS machine and go to the system prompt.
 - The server listens on `127.0.0.1` by default (`listenAddress`).
 
 ### Updating
@@ -2064,18 +2060,23 @@ warns about both. Builds land in the shared, read-only `/nix/store`; a session's
 
 `nix flake check` builds the package and runs:
 
-- `vm-session-user`, `vm-login-user`: NixOS VM tests with the module and secrets as root-only
-  files, one with the dedicated session user, one with a login user defined outside the module.
-  They check the service, health, web app and service worker, the API's user and capabilities,
-  owners and modes of the data, that the session user cannot read the database or the secrets,
-  that its processes are refused by the API over loopback and over the machine's address, a
-  local project (mirror, session clone) with a session whose Claude Code is a stand-in script
-  recording its environment (no secrets, the system profile and the user's profile on `PATH`)
-  and what it can do, the file helper run as the session user, ending and deleting the session,
-  `claude --version` of the package as the session user, and print `systemd-analyze security`.
-- `eval-*`: configurations the module must refuse (Cloudflare Access without audience,
-  previews without their own audience, a secret file in the store, an undefined login user) and
-  one it must accept.
+- `vm-install`, `vm-upgrade`: NixOS VM tests with the module, the login user `alice` (wheel,
+  passwordless `sudo`) and secrets as root-only files; `vm-upgrade` starts from the data
+  directory of the earlier version (files of other owners, the old configuration directory with
+  a transcript and repository memory). They check the service, health, web app and service
+  worker, that the service runs as `alice` without capabilities, `no_new_privs`, seccomp or a
+  mount namespace of its own, that the data directory is `alice`'s, that requests of `alice`'s
+  own processes are answered and those of session processes (also detached ones) are refused
+  over loopback and the machine's address, a local project (mirror, session clone) with a
+  `bypassPermissions` session whose Claude Code is a stand-in script recording what it sees
+  (the user's `PATH` with `sudo`, no `CLAUDE_CONFIG_DIR`/`GIT_CONFIG_GLOBAL`, the session
+  instructions in the initialize request, `--allow-dangerously-skip-permissions`) and can do
+  (`sudo`, devices, the shared `/tmp`, the user's git credential helper in the clone), the file
+  helper, ending and deleting the session, `claude --version` of the package, and for
+  `vm-upgrade` the ownership change and the copied transcripts and memory.
+- `eval-*`: configurations the module must refuse (an undefined user, root, a removed option,
+  Cloudflare Access without audience, previews without their own audience, a secret file in
+  the store) and one it must accept.
 
 Not covered by the checks: a real Claude login and turn, Cloudflare Access in front, previews on
 real wildcard host names, GitHub.
