@@ -504,8 +504,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       });
       this.logger.warn(`The preparation of ${record.id} was interrupted`);
     }
-    // Not awaited: a missing clone only logs a warning.
-    void this.support.cleanUpClones(this.sessions.list());
+    // Before anything starts (no session's git races it; failures only log).
+    await this.support.cleanUpClones(this.sessions.list());
     const ids = this.sessions.stopRunningSessions();
     for (const id of ids) {
       // Where in the conversation is unknown: placed at the end.
