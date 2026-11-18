@@ -1,11 +1,12 @@
-# NixOS module: Claude Remote Manager as a hardened systemd service in
-# PROCESS_ISOLATION=separate-users mode. See README.md, "Running as a NixOS
-# service".
+# NixOS module: Claude Remote Manager as a systemd service running as a
+# user of the machine (PROCESS_ISOLATION=single-user). Sessions can do what
+# that user can do in a terminal: its Claude Code configuration (~/.claude),
+# git and GitHub credentials, sudo, devices, the whole file system. See
+# README.md, "Running as a NixOS service".
 {
   config,
   lib,
   pkgs,
-  utils,
   ...
 }:
 let
@@ -15,36 +16,17 @@ let
     mkIf
     types
     optional
-    optionals
     optionalAttrs
     concatStringsSep
     ;
 
   cfg = config.services.claude-remote-manager;
-  sessionCfg = cfg.sessionUser;
-  sessionUser = sessionCfg.name;
-  existingUser = !sessionCfg.create;
-  userDef = config.users.users.${sessionUser} or null;
-  sessionGroup = if existingUser then (if userDef == null then "users" else userDef.group) else sessionCfg.group;
-  sessionHome = sessionCfg.home;
+  userDef = config.users.users.${cfg.user} or null;
+  home = if userDef == null then "/home/${cfg.user}" else userDef.home;
 
   workspaceDir = "${cfg.dataDir}/workspace";
   dbDir = "${cfg.dataDir}/db";
   gitDir = "${cfg.dataDir}/git";
-
-  # The capabilities the API needs to start processes as the session user and
-  # manage the files it hands over (see apps/api/src/app/common/process-isolation.ts):
-  # SETUID/SETGID switch to the session user (and its groups), KILL signals
-  # session processes, CHOWN hands clones to the session user, DAC_OVERRIDE
-  # reads Claude Code's transcripts in the session user's configuration
-  # directory. Nothing else.
-  capabilities = [
-    "CAP_CHOWN"
-    "CAP_DAC_OVERRIDE"
-    "CAP_KILL"
-    "CAP_SETGID"
-    "CAP_SETUID"
-  ];
 
   # Tools every session can rely on, after the user's own profiles and the
   # system profile, plus the consumer's packages. Node.js is the one the app
@@ -76,19 +58,17 @@ let
         config.nix.package
         cfg.package.nodejs or pkgs.nodejs_24
       ]
-      ++ sessionCfg.packages;
+      ++ cfg.packages;
     pathsToLink = [
       "/bin"
       "/share"
     ];
   };
 
-  # The session user's PATH as a NixOS login shell would have it (the
-  # wrappers, then environment.profiles: the user's own Nix profiles, its
+  # The user's PATH as a NixOS login shell has it: the wrappers (sudo, ping,
+  # ...), then environment.profiles (the user's own Nix profiles, its
   # per-user profile, the default and the system profile), followed by the
-  # tools above. Directories the session user can write are fine here: this
-  # PATH is only used by session processes; the API's own PATH (the unit's
-  # `path`) holds store paths only.
+  # tools above.
   expandProfile =
     p:
     builtins.replaceStrings
@@ -98,9 +78,9 @@ let
         "\${XDG_STATE_HOME}"
       ]
       [
-        sessionHome
-        sessionUser
-        "${sessionHome}/.local/state"
+        home
+        cfg.user
+        "${home}/.local/state"
       ]
       p;
   sessionPath = concatStringsSep ":" (
@@ -109,15 +89,9 @@ let
     ++ [ "${sessionEnv}/bin" ]
   );
 
-  sessionShell =
-    if existingUser && userDef != null && userDef.shell != null then
-      utils.toShellPath userDef.shell
-    else
-      "${pkgs.bashInteractive}/bin/bash";
-
   # Secret files, handed to the service as systemd credentials: systemd reads
   # them as root (so sops-nix may keep them root-only) and provides copies
-  # readable only by the API user under $CREDENTIALS_DIRECTORY.
+  # for the service user under $CREDENTIALS_DIRECTORY.
   secrets = lib.filterAttrs (_: v: v.file != null) {
     github-app-key = {
       file = cfg.github.privateKeyFile;
@@ -139,60 +113,38 @@ let
 
   secretPaths = lib.mapAttrsToList (_: v: v.file) secrets ++ cfg.environmentFiles;
 
-  # Like the image entrypoint: refuse to start when the session user can read
-  # a secret file at its original place (the copies systemd provides are the
-  # API user's only).
-  checkSecrets = pkgs.writeShellScript "claude-remote-manager-check-secrets" ''
-    set -eu
-    status=0
-    for file in ${lib.escapeShellArgs secretPaths}; do
-      if ${pkgs.util-linux}/bin/setpriv --reuid=${sessionUser} --regid=${sessionGroup} --init-groups \
-          --inh-caps=-all --no-new-privs -- ${pkgs.coreutils}/bin/test -r "$file"; then
-        echo "error: the session user ${sessionUser} can read $file; make it readable by root (or the API user ${cfg.user}) only" >&2
-        status=1
-      fi
-    done
-    exit $status
-  '';
-
-  claudeMd = pkgs.runCommand "claude-remote-manager-claude-md" { } ''
+  # Appended to Claude Code's system prompt in every session
+  # (SESSION_INSTRUCTIONS_FILE): this machine, then the rules shared with
+  # the image, then the consumer's own text. Not a machine-wide
+  # /etc/claude-code/CLAUDE.md, which Claude Code in the user's terminal
+  # would load as well.
+  instructions = pkgs.runCommand "claude-remote-manager-instructions" { } ''
     mkdir $out
     substitute ${../claude-md/nixos.md} nixos.md \
       --replace-fail @workspace@ ${lib.escapeShellArg workspaceDir} \
       --replace-fail @dataDir@ ${lib.escapeShellArg cfg.dataDir} \
-      --replace-fail @claudeConfig@ ${lib.escapeShellArg cfg.claudeConfigDir} \
-      --replace-fail @home@ ${lib.escapeShellArg sessionHome} \
-      --replace-fail @sessionUser@ ${lib.escapeShellArg sessionUser} \
-      --replace-fail @writablePaths@ ${
-        lib.escapeShellArg (
-          if sessionCfg.writablePaths == [ ] then
-            ""
-          else
-            " and " + concatStringsSep ", " (map (p: "`${p}`") sessionCfg.writablePaths)
-        )
-      }
+      --replace-fail @home@ ${lib.escapeShellArg home} \
+      --replace-fail @user@ ${lib.escapeShellArg cfg.user}
     { cat nixos.md; echo; cat ${../claude-md/core.md}; } > $out/CLAUDE.md
     ${lib.optionalString (cfg.extraInstructions != "") ''
       { echo; cat ${pkgs.writeText "extra-instructions.md" cfg.extraInstructions}; } >> $out/CLAUDE.md
     ''}
   '';
 
-  # The address processes on this machine use to reach the API (the git
-  # credential helper of session clones).
-  internalHost =
-    if
-      lib.elem cfg.listenAddress [
-        "0.0.0.0"
-        "127.0.0.1"
-        "::"
-        "localhost"
-      ]
-    then
-      "127.0.0.1"
-    else if lib.hasInfix ":" cfg.listenAddress then
-      "[${cfg.listenAddress}]"
-    else
-      cfg.listenAddress;
+  # Earlier versions of this module ran the API and the sessions as two
+  # other users. Their files in the data directory are given to the user
+  # once (a stamp file says to whom the directory was given last), so the
+  # API can use them; nothing else changes.
+  takeOverDataDir = pkgs.writeShellScript "claude-remote-manager-take-over-data-dir" ''
+    set -eu
+    stamp=${lib.escapeShellArg "${cfg.dataDir}/.owner"}
+    if [ "$(${pkgs.coreutils}/bin/cat "$stamp" 2>/dev/null || true)" != ${lib.escapeShellArg cfg.user} ]; then
+      echo "Giving ${cfg.dataDir} to ${cfg.user} ..."
+      ${pkgs.coreutils}/bin/chown -R --no-dereference ${lib.escapeShellArg "${cfg.user}:${cfg.group}"} ${lib.escapeShellArg cfg.dataDir}
+      echo ${lib.escapeShellArg cfg.user} > "$stamp"
+      ${pkgs.coreutils}/bin/chown ${lib.escapeShellArg "${cfg.user}:${cfg.group}"} "$stamp"
+    fi
+  '';
 
   list = concatStringsSep ",";
 
@@ -205,16 +157,19 @@ let
     NODE_ENV = "production";
     PORT = toString cfg.port;
     LISTEN_ADDRESS = cfg.listenAddress;
-    INTERNAL_API_URL = "http://${internalHost}:${toString cfg.port}";
-    PROCESS_ISOLATION = "separate-users";
-    SESSION_USER = sessionUser;
+    PROCESS_ISOLATION = "single-user";
     SESSION_PATH = sessionPath;
-    SHELL = sessionShell;
     DATA_DIR = cfg.dataDir;
     DB_DIR = dbDir;
     WORKSPACE_DIR = workspaceDir;
-    CLAUDE_CONFIG_DIR = cfg.claudeConfigDir;
-    GIT_CONFIG_GLOBAL = "${gitDir}/gitconfig";
+    MEMORY_DIR = "${cfg.dataDir}/memory";
+    # The configuration directory of earlier versions: transcripts of old
+    # sessions are copied from there into ~/.claude once.
+    LEGACY_CLAUDE_CONFIG_DIR = "${cfg.dataDir}/claude";
+    # The API's own git commands on mirrors; sessions use ~/.gitconfig.
+    API_GIT_CONFIG_GLOBAL = "${gitDir}/gitconfig";
+    SESSION_INSTRUCTIONS_FILE = "${instructions}/CLAUDE.md";
+    # Claude Code of the package is the version the Agent SDK expects.
     DISABLE_AUTOUPDATER = "1";
     SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
     NIX_SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
@@ -246,34 +201,6 @@ let
   // lib.mapAttrs' (name: v: lib.nameValuePair v.variable "%d/${name}") secrets
   // cfg.environment;
 
-  # Logging in to Claude (and any other Claude Code command) as the session
-  # user, with the service's configuration directory and PATH.
-  claudeCommand = pkgs.writeShellScriptBin "claude-remote-manager-claude" ''
-    set -eu
-    env=(
-      HOME=${lib.escapeShellArg sessionHome}
-      USER=${lib.escapeShellArg sessionUser}
-      LOGNAME=${lib.escapeShellArg sessionUser}
-      PATH=${lib.escapeShellArg sessionPath}
-      SHELL=${lib.escapeShellArg sessionShell}
-      CLAUDE_CONFIG_DIR=${lib.escapeShellArg cfg.claudeConfigDir}
-      LANG=${lib.escapeShellArg locale.LANG}
-      LOCALE_ARCHIVE=${lib.escapeShellArg locale.LOCALE_ARCHIVE}
-      SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-      TERM="''${TERM:-xterm-256color}"
-    )
-    claude=${cfg.package}/libexec/claude-remote-manager/claude
-    if [ "$(id -u)" = 0 ]; then
-      exec ${pkgs.util-linux}/bin/setpriv --reuid=${sessionUser} --regid=${sessionGroup} --init-groups \
-        --inh-caps=-all -- ${pkgs.coreutils}/bin/env -i "''${env[@]}" "$claude" "$@"
-    elif [ "$(id -un)" = ${lib.escapeShellArg sessionUser} ]; then
-      exec ${pkgs.coreutils}/bin/env -i "''${env[@]}" "$claude" "$@"
-    else
-      echo "Run this as root (sudo $(basename "$0") ...) or as ${sessionUser}." >&2
-      exit 1
-    fi
-  '';
-
   secretFileType = types.nullOr (
     types.str
     // {
@@ -281,14 +208,81 @@ let
     }
   );
   isSecretPath = p: p == null || (lib.hasPrefix "/" p && !lib.hasPrefix builtins.storeDir p);
+
+  opt =
+    path:
+    [
+      "services"
+      "claude-remote-manager"
+    ]
+    ++ path;
+  removed =
+    path: why:
+    lib.mkRemovedOptionModule (opt path) ''
+      Sessions now run as services.claude-remote-manager.user, with that user's own
+      ~/.claude, credentials and rights, and without a sandbox. ${why}
+    '';
 in
 {
+  imports = [
+    # The session user is the service's user now.
+    (lib.mkRenamedOptionModule (opt [
+      "sessionUser"
+      "name"
+    ]) (opt [ "user" ]))
+    (lib.mkRenamedOptionModule (opt [
+      "sessionUser"
+      "packages"
+    ]) (opt [ "packages" ]))
+    (removed [ "sessionUser" "create" ] "Set `user` to an existing user and remove this option.")
+    (removed [ "sessionUser" "group" ] "The group is the user's primary group (`group`).")
+    (removed [ "sessionUser" "home" ] "HOME is the user's home directory.")
+    (removed [ "sessionUser" "extraGroups" ] "Give the user its groups where it is defined.")
+    (removed [ "sessionUser" "writablePaths" ] "Sessions can write what the user can write.")
+    (removed [ "hiddenPaths" ] "Nothing is hidden from sessions any more.")
+    (removed [
+      "claudeConfigDir"
+    ] "Sessions use the user's ~/.claude; old transcripts are copied there at startup.")
+  ];
+
   options.services.claude-remote-manager = {
     enable = mkEnableOption "Claude Remote Manager, a web frontend for Claude Code sessions";
 
     package = mkOption {
       type = types.package;
       description = "The claude-remote-manager package (the flake's `packages.<system>.default`).";
+    };
+
+    user = mkOption {
+      type = types.str;
+      example = "alice";
+      description = ''
+        User the service runs as, and with it every session (Claude Code,
+        setup scripts, git, dev servers): an existing user of the
+        configuration, usually the owner's login user. Sessions use its
+        `~/.claude` (login, settings, skills, plugins, MCP servers, memory),
+        its git configuration, `gh` login and SSH keys, its groups and its
+        `sudo`, like Claude Code started by that user in a terminal. Never
+        root.
+      '';
+    };
+
+    group = mkOption {
+      type = types.str;
+      default = if userDef == null then "users" else userDef.group;
+      defaultText = lib.literalExpression "config.users.users.\${user}.group";
+      description = "Group of the service and of the data directory.";
+    };
+
+    packages = mkOption {
+      type = types.listOf types.package;
+      default = [ ];
+      example = lib.literalExpression "[ pkgs.jq pkgs.python3 ]";
+      description = ''
+        Packages on the PATH of sessions, after the user's profiles and the
+        system profile. A base of git, a shell, coreutils, Nix, Node.js,
+        curl, ssh and ripgrep is always there.
+      '';
     };
 
     listenAddress = mkOption {
@@ -312,8 +306,8 @@ in
       default = false;
       description = ''
         Open the port in the firewall. Only with an authenticating proxy in
-        front or `auth.mode = "cloudflare-access"`: the app runs Claude with
-        broad tool permissions.
+        front or `auth.mode = "cloudflare-access"`: whoever controls the
+        sessions acts as `user` on this machine.
       '';
     };
 
@@ -322,107 +316,12 @@ in
       default = "/var/lib/claude-remote-manager";
       example = "/persist/var/lib/claude-remote-manager";
       description = ''
-        All state: `db/` (database, the API's files, generated VAPID keys),
-        `workspace/` (mirrors, session clones, scratch directories; one file
-        system), `git/` (the API's SSH key and git configuration), `claude/`
-        (Claude Code's configuration directory with the login, transcripts
-        and memory) and, for a session user created by this module, `home/`.
-        On a machine with impermanence point it below the persistent volume.
+        The app's state, owned by `user`: `db/` (database, the API's files,
+        generated VAPID keys), `workspace/` (mirrors, session clones,
+        scratch directories; one file system), `memory/` (Claude Code's
+        memory per repository), `git/` (the API's git configuration). On a
+        machine with impermanence point it below the persistent volume.
       '';
-    };
-
-    claudeConfigDir = mkOption {
-      type = types.str;
-      default = "${cfg.dataDir}/claude";
-      defaultText = lib.literalExpression ''"''${dataDir}/claude"'';
-      description = ''
-        Claude Code's configuration directory (`CLAUDE_CONFIG_DIR`) for the
-        sessions: login, settings, transcripts, auto-memory. Owned by the
-        session user (mode 0700); the API reads it with its capabilities.
-      '';
-    };
-
-    user = mkOption {
-      type = types.str;
-      default = "claude-remote-manager";
-      description = "System user the API runs as; created by the module.";
-    };
-
-    group = mkOption {
-      type = types.str;
-      default = "claude-remote-manager";
-      description = "Primary group of the API user; created by the module.";
-    };
-
-    sessionUser = {
-      name = mkOption {
-        type = types.str;
-        default = "claude";
-        description = ''
-          User everything a session runs as (Claude Code, setup scripts, git
-          in session clones). Never the API user or root.
-        '';
-      };
-
-      create = mkOption {
-        type = types.bool;
-        default = true;
-        description = ''
-          Whether the module creates the session user (recommended). Set to
-          false to run sessions as a user the configuration defines itself,
-          e.g. a login user: the module then neither creates nor changes it
-          or its home, and sessions get everything that user can do.
-        '';
-      };
-
-      group = mkOption {
-        type = types.str;
-        default = "claude";
-        description = "Primary group of a session user created by the module.";
-      };
-
-      home = mkOption {
-        type = types.str;
-        default = if existingUser && userDef != null then userDef.home else "${cfg.dataDir}/home";
-        defaultText = lib.literalExpression ''"''${dataDir}/home" (created user), the user's home (existing user)'';
-        description = ''
-          Home directory of the session user (`HOME` of sessions: caches,
-          the user's Nix profile). Writable for sessions.
-        '';
-      };
-
-      extraGroups = mkOption {
-        type = types.listOf types.str;
-        default = [ ];
-        example = [ "dialout" ];
-        description = ''
-          Supplementary groups of a session user created by the module, e.g.
-          to give sessions access to devices or shared directories.
-        '';
-      };
-
-      packages = mkOption {
-        type = types.listOf types.package;
-        default = [ ];
-        example = lib.literalExpression "[ pkgs.jq pkgs.python3 ]";
-        description = ''
-          Packages on the PATH of sessions, after the user's profiles and the
-          system profile. A base of git, a shell, coreutils, Nix, Node.js,
-          curl, ssh and ripgrep is always there.
-        '';
-      };
-
-      writablePaths = mkOption {
-        type = types.listOf types.str;
-        default = [ ];
-        example = [ "/srv/shared" ];
-        description = ''
-          Further existing paths sessions (and the API) may write. The rest of
-          the file system is read-only for the service apart from the data
-          directory and the session user's home; home directories of other
-          users are hidden.
-        '';
-      };
     };
 
     auth = {
@@ -564,11 +463,12 @@ in
       example = {
         SESSION_STALL_MINUTES = "20";
         SESSION_IDLE_TIMEOUT_MINUTES = "120";
-        PR_POLL_INTERVAL_SECONDS = "300";
+        SSH_AUTH_SOCK = "/home/alice/.ssh/agent.sock";
       };
       description = ''
-        Further variables of the API (see the README's table), e.g.
-        `SESSION_STALL_MINUTES`. Never secrets: these end up in the Nix store.
+        Further variables of the service and its sessions (see the README's
+        table), e.g. `SESSION_STALL_MINUTES`, or an `SSH_AUTH_SOCK` the
+        sessions should use. Never secrets: these end up in the Nix store.
       '';
     };
 
@@ -577,23 +477,9 @@ in
       default = [ ];
       example = [ "/run/secrets/crm/env" ];
       description = ''
-        Files with `NAME=value` lines added to the API's environment (read by
-        systemd as root), for secrets that only exist as variables, e.g.
-        `CLAUDE_CODE_OAUTH_TOKEN` or `CRM_SECRET_*`. Checked like the other
-        secret files.
-      '';
-    };
-
-    hiddenPaths = mkOption {
-      type = types.listOf types.str;
-      default = [ ];
-      example = [ "/persist/var/lib/sops-nix/key.txt" ];
-      description = ''
-        Further paths made inaccessible inside the service (to the API and
-        to sessions), e.g. key material on disk that the API's
-        DAC_OVERRIDE capability could otherwise read. sops-nix's
-        `/run/secrets`, its age key file (when `sops.age.keyFile` is set),
-        `/etc/shadow` and the SSH host keys are hidden already.
+        Files with `NAME=value` lines added to the service's environment
+        (read by systemd as root), for secrets that only exist as variables,
+        e.g. `CRM_SECRET_*`.
       '';
     };
 
@@ -606,9 +492,9 @@ in
         - The printer is at printer.example.com.
       '';
       description = ''
-        Markdown appended to the managed `CLAUDE.md` every session loads
-        (`/etc/claude-code/CLAUDE.md` inside the service only), after the
-        module's description of the machine.
+        Markdown appended to the instructions every session gets (on top of
+        the user's own CLAUDE.md files), after the module's description of
+        the machine.
       '';
     };
   };
@@ -616,13 +502,23 @@ in
   config = mkIf cfg.enable {
     assertions = [
       {
+        assertion = userDef != null;
+        message = "services.claude-remote-manager: user = \"${cfg.user}\" needs users.users.${cfg.user} defined in the configuration (sessions run as that user).";
+      }
+      {
+        assertion = cfg.user != "root";
+        message = "services.claude-remote-manager: the service must not run as root; set user to the owner's login user.";
+      }
+      {
         assertion =
           cfg.auth.mode != "cloudflare-access" || (cfg.auth.teamDomain != null && cfg.auth.audiences != [ ]);
         message = "services.claude-remote-manager: auth.mode = \"cloudflare-access\" needs auth.teamDomain and auth.audiences.";
       }
       {
         assertion =
-          cfg.preview.url == null || cfg.auth.mode != "cloudflare-access" || cfg.preview.accessAudiences != [ ];
+          cfg.preview.url == null
+          || cfg.auth.mode != "cloudflare-access"
+          || cfg.preview.accessAudiences != [ ];
         message = "services.claude-remote-manager: preview.url with Cloudflare Access needs preview.accessAudiences (the previews' own Access application).";
       }
       {
@@ -642,11 +538,13 @@ in
         message = "services.claude-remote-manager: github.privateKeyFile needs github.appId.";
       }
       {
-        assertion = cfg.github.appId == null || cfg.github.privateKeyFile != null || cfg.environmentFiles != [ ];
+        assertion =
+          cfg.github.appId == null || cfg.github.privateKeyFile != null || cfg.environmentFiles != [ ];
         message = "services.claude-remote-manager: github.appId needs github.privateKeyFile.";
       }
       {
-        assertion = cfg.vapid.publicKey == null || cfg.vapid.privateKeyFile != null || cfg.environmentFiles != [ ];
+        assertion =
+          cfg.vapid.publicKey == null || cfg.vapid.privateKeyFile != null || cfg.environmentFiles != [ ];
         message = "services.claude-remote-manager: vapid.publicKey needs vapid.privateKeyFile.";
       }
       {
@@ -654,97 +552,51 @@ in
         message = "services.claude-remote-manager: secret files (github.privateKeyFile, github.webhookSecretFile, ntfy.tokenFile, vapid.privateKeyFile, environmentFiles) must be absolute paths outside the Nix store, e.g. sops-nix's /run/secrets/...";
       }
       {
-        assertion = lib.hasPrefix "/" cfg.dataDir && lib.hasPrefix "/" cfg.claudeConfigDir && lib.hasPrefix "/" sessionHome;
-        message = "services.claude-remote-manager: dataDir, claudeConfigDir and sessionUser.home must be absolute paths.";
-      }
-      {
-        assertion = sessionUser != cfg.user && sessionUser != "root" && cfg.user != "root";
-        message = "services.claude-remote-manager: the API user and the session user must be two different users, neither of them root.";
-      }
-      {
-        assertion = !existingUser || userDef != null;
-        message = "services.claude-remote-manager: sessionUser.create = false needs users.users.${sessionUser} defined elsewhere in the configuration.";
-      }
-      {
-        assertion = !existingUser || sessionCfg.extraGroups == [ ];
-        message = "services.claude-remote-manager: sessionUser.extraGroups only applies to a session user the module creates; give an existing user its groups where it is defined.";
-      }
-      {
-        assertion = !(lib.hasPrefix "${cfg.claudeConfigDir}/" "${cfg.dataDir}/") && cfg.claudeConfigDir != dbDir && cfg.claudeConfigDir != gitDir && cfg.claudeConfigDir != workspaceDir;
-        message = "services.claude-remote-manager: claudeConfigDir must not be the data directory or one of the API's directories in it.";
+        assertion = lib.hasPrefix "/" cfg.dataDir;
+        message = "services.claude-remote-manager: dataDir must be an absolute path.";
       }
     ];
 
     warnings =
-      let
-        nixSettings = config.nix.settings;
-        trusted = nixSettings.trusted-users or [ ];
-        allowed = nixSettings.allowed-users or [ "*" ];
-        groupsOf = if userDef == null then [ ] else [ userDef.group ] ++ userDef.extraGroups;
-        isTrusted = lib.elem sessionUser trusted || lib.any (g: lib.elem "@${g}" trusted) groupsOf;
-      in
-      optional isTrusted "services.claude-remote-manager: the session user ${sessionUser} is a trusted Nix user; sessions can then act as root through the Nix daemon."
-      ++ optional (
-        config.nix.enable && !(lib.elem "*" allowed || lib.elem sessionUser allowed || lib.any (g: lib.elem "@${g}" allowed) groupsOf)
-      ) "services.claude-remote-manager: the session user ${sessionUser} is not in nix.settings.allowed-users; sessions cannot use Nix."
-      ++ optional (
-        cfg.auth.mode == "none" && (cfg.openFirewall || !lib.elem cfg.listenAddress [ "127.0.0.1" "::1" "localhost" ])
-      ) "services.claude-remote-manager: auth.mode = \"none\" on a non-loopback address: everyone who reaches the port controls the sessions.";
-
-    users.users = {
-      ${cfg.user} = {
-        isSystemUser = true;
-        group = cfg.group;
-        home = gitDir;
-        description = "Claude Remote Manager API";
-      };
-    }
-    // optionalAttrs (!existingUser) {
-      ${sessionUser} = {
-        isSystemUser = true;
-        group = sessionCfg.group;
-        home = sessionHome;
-        createHome = false;
-        shell = pkgs.bashInteractive;
-        extraGroups = sessionCfg.extraGroups;
-        description = "Claude Remote Manager sessions";
-      };
-    };
-    users.groups = {
-      ${cfg.group} = { };
-    }
-    // optionalAttrs (!existingUser) { ${sessionCfg.group} = { }; };
+      optional
+        (
+          cfg.auth.mode == "none"
+          && (
+            cfg.openFirewall
+            || !lib.elem cfg.listenAddress [
+              "127.0.0.1"
+              "::1"
+              "localhost"
+            ]
+          )
+        )
+        "services.claude-remote-manager: auth.mode = \"none\" on a non-loopback address: everyone who reaches the port acts as ${cfg.user} on this machine.";
 
     # Directories and their owners; `d` adjusts mode and owner of the
-    # directory itself, never recursively.
+    # directory itself, never recursively (the service's start takes over
+    # an earlier version's files, see takeOverDataDir).
     systemd.tmpfiles.settings."10-claude-remote-manager" =
       let
-        dir = user: group: mode: {
-          d = { inherit user group mode; };
+        dir = mode: {
+          d = {
+            inherit (cfg) user group;
+            inherit mode;
+          };
         };
       in
       {
-        ${cfg.dataDir} = dir "root" "root" "0755";
-        ${dbDir} = dir cfg.user cfg.group "0700";
-        ${gitDir} = dir cfg.user cfg.group "0700";
-        "${gitDir}/ssh" = dir cfg.user cfg.group "0700";
-        "${gitDir}/.ssh".L.argument = "ssh";
+        ${cfg.dataDir} = dir "0700";
+        ${dbDir} = dir "0700";
+        ${gitDir} = dir "0700";
         "${gitDir}/gitconfig".f = {
-          user = cfg.user;
-          group = cfg.group;
+          inherit (cfg) user group;
           mode = "0600";
         };
-        ${workspaceDir} = dir cfg.user cfg.group "0755";
-        "${workspaceDir}/repos" = dir cfg.user cfg.group "0755";
-        "${workspaceDir}/sessions" = dir cfg.user cfg.group "0755";
-        "${workspaceDir}/scratch" = dir cfg.user cfg.group "0755";
-        ${cfg.claudeConfigDir} = dir sessionUser sessionGroup "0700";
-      }
-      // optionalAttrs (!existingUser) {
-        ${sessionHome} = dir sessionUser sessionGroup "0700";
+        ${workspaceDir} = dir "0755";
+        "${workspaceDir}/repos" = dir "0755";
+        "${workspaceDir}/sessions" = dir "0755";
+        "${workspaceDir}/scratch" = dir "0755";
       };
-
-    environment.systemPackages = [ claudeCommand ];
 
     networking.firewall.allowedTCPPorts = optional cfg.openFirewall cfg.port;
 
@@ -757,10 +609,9 @@ in
         "systemd-tmpfiles-setup.service"
         "systemd-tmpfiles-resetup.service"
       ];
-      # The API's own PATH: store paths only. It resolves setpriv and its own
-      # git and find commands here; sessions get SESSION_PATH instead.
+      # The API's own PATH: store paths only, for its git and find commands;
+      # sessions get the user's PATH (SESSION_PATH).
       path = with pkgs; [
-        util-linux
         git
         openssh
         coreutils
@@ -768,13 +619,14 @@ in
         bash
       ];
       environment = serviceEnvironment;
-      restartTriggers = [ claudeMd ];
 
+      # No sandbox: sessions are Claude Code of the user, with sudo,
+      # devices, containers, the whole file system and all processes.
       serviceConfig = {
         Type = "simple";
         User = cfg.user;
         Group = cfg.group;
-        ExecStartPre = optional (secretPaths != [ ]) "+${checkSecrets}";
+        ExecStartPre = [ "+${takeOverDataDir}" ];
         ExecStart = lib.getExe cfg.package;
         WorkingDirectory = cfg.dataDir;
         Restart = "on-failure";
@@ -783,92 +635,6 @@ in
         TimeoutStopSec = 30;
         LoadCredential = lib.mapAttrsToList (name: v: "${name}:${v.file}") secrets;
         EnvironmentFile = cfg.environmentFiles;
-
-        # Privileges: exactly the capabilities the API needs, ambient so they
-        # survive the exec into Node.js; it drops them for every process it
-        # starts (setpriv --inh-caps=-all --ambient-caps=-all --no-new-privs).
-        AmbientCapabilities = capabilities;
-        CapabilityBoundingSet = capabilities;
-        NoNewPrivileges = true;
-        SecureBits = "noroot-locked";
-
-        # File system: read-only except the data directory, the session
-        # user's home and the configured paths. This also bounds the API's
-        # DAC_OVERRIDE. Other homes are hidden.
-        ProtectSystem = "strict";
-        ProtectHome = "tmpfs";
-        ReadWritePaths = [ cfg.dataDir ];
-        # Bind mounts, so that they work below the hidden /home too.
-        BindPaths = [
-          sessionHome
-        ]
-        ++ lib.optional (!lib.hasPrefix "${cfg.dataDir}/" cfg.claudeConfigDir) cfg.claudeConfigDir
-        ++ sessionCfg.writablePaths;
-        # The managed CLAUDE.md for sessions, inside the service only.
-        BindReadOnlyPaths = [ "${claudeMd}:/etc/claude-code" ];
-        # Secret stores and keys of the machine, which DAC_OVERRIDE could read
-        # otherwise; the service's own secrets arrive as credentials.
-        InaccessiblePaths = map (p: "-${p}") (
-          [
-            "/run/secrets"
-            "/run/secrets.d"
-            "/run/secrets-for-users"
-            "/run/secrets-for-users.d"
-            "/etc/shadow"
-            "/etc/gshadow"
-            "/var/lib/sops-nix"
-          ]
-          ++ map (k: k.path) (config.services.openssh.hostKeys or [ ])
-          ++ lib.optional (
-            (config.sops.age.keyFile or null) != null
-          ) config.sops.age.keyFile
-          ++ cfg.hiddenPaths
-        );
-        PrivateTmp = true;
-        PrivateDevices = true;
-        ProtectKernelTunables = true;
-        ProtectKernelModules = true;
-        ProtectKernelLogs = true;
-        ProtectControlGroups = true;
-        ProtectClock = true;
-        ProtectHostname = true;
-        # Session processes see only the session user's processes, the API
-        # only its own; /proc/net (the socket table the API reads to refuse
-        # session processes) stays.
-        ProtectProc = "invisible";
-        LockPersonality = true;
-        RestrictRealtime = true;
-        RestrictSUIDSGID = true;
-        RemoveIPC = true;
-        RestrictAddressFamilies = [
-          "AF_UNIX"
-          "AF_INET"
-          "AF_INET6"
-          "AF_NETLINK"
-        ];
-        SystemCallArchitectures = "native";
-        SystemCallFilter = [
-          "~@clock"
-          "~@cpu-emulation"
-          "~@module"
-          "~@obsolete"
-          "~@raw-io"
-          "~@reboot"
-          "~@swap"
-        ];
-        UMask = "0022";
-
-        # Deliberately off, because sessions are real development
-        # environments on this machine:
-        # - PrivateNetwork/IPAddressDeny: sessions reach the network and the
-        #   home network like any program on the machine.
-        # - PrivateUsers: the API switches to a real user.
-        # - RestrictNamespaces: browsers (Chromium's sandbox), bubblewrap and
-        #   container tools in sessions need user namespaces.
-        # - MemoryDenyWriteExecute: Node.js and other JIT runtimes.
-        # - ProcSubset=pid: would hide /proc/net.
-        # - A @system-service allowlist for system calls: debuggers, tracing
-        #   and the like in sessions.
       };
     };
   };

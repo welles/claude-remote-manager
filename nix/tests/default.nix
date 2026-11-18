@@ -1,6 +1,6 @@
-# Flake checks: the package, NixOS VM tests of the module (a session user
-# created by the module, and an existing login user), and evaluation checks
-# of the module's assertions.
+# Flake checks: the package, NixOS VM tests of the module (a new install,
+# and an upgrade from the data directory of an earlier version), and
+# evaluation checks of the module's assertions.
 {
   self,
   nixpkgs,
@@ -27,8 +27,10 @@ let
               fsType = "ext4";
             };
             system.stateVersion = "26.05";
+            users.users.alice.isNormalUser = true;
             services.claude-remote-manager = {
               enable = true;
+              user = "alice";
             }
             // settings;
           }
@@ -83,14 +85,14 @@ in
 {
   package = self.packages.${system}.default;
 
-  vm-session-user = vmTest {
-    name = "session-user";
-    existingUser = false;
+  vm-install = vmTest {
+    name = "install";
+    upgrade = false;
   };
 
-  vm-login-user = vmTest {
-    name = "login-user";
-    existingUser = true;
+  vm-upgrade = vmTest {
+    name = "upgrade";
+    upgrade = true;
   };
 
   eval-valid-configuration = accepted;
@@ -120,11 +122,18 @@ in
     };
   } "must be absolute paths outside the Nix store";
 
-  eval-missing-login-user = expectFailure "missing-login-user" {
+  eval-missing-user = expectFailure "missing-user" {
     auth.mode = "none";
-    sessionUser = {
-      name = "nobody-defined";
-      create = false;
-    };
+    user = "nobody-defined";
   } "needs users.users.nobody-defined defined";
+
+  eval-removed-session-user = expectFailure "removed-session-user" {
+    auth.mode = "none";
+    sessionUser.create = false;
+  } "no longer has any effect";
+
+  eval-root = expectFailure "root" {
+    auth.mode = "none";
+    user = "root";
+  } "must not run as root";
 }
