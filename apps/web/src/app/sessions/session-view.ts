@@ -5,6 +5,7 @@ import { AppPageBar } from '../ui/page-bar';
 import { StatusBadge } from '../ui/status-badge';
 import { AppSidePanel } from '../ui/side-panel';
 import { mediaQuery, WIDE_LIST, WIDE_PANEL } from '../ui/media';
+import { PaneResizer, PaneWidth } from '../ui/pane-resizer';
 import { LimitWindows } from '../limits/limit-windows';
 import { SessionList } from './session-list';
 import { SessionStrip, type DetailSection } from './session-strip';
@@ -52,7 +53,12 @@ import {
 } from './conversation';
 import { groupPreparation } from './preparation';
 import { formatCost, formatTokens, needLabel, totalTokens } from './format';
-import { ModelsStore, modelOptionsWith, normalizeModel } from './models-store';
+import {
+  ModelsStore,
+  modelLabel,
+  modelOptionsWith,
+  normalizeModel,
+} from './models-store';
 import { PermissionCard } from './permission-card';
 import { ContextMeter } from './context-meter';
 import { sessionGitHubRepositories } from '../github-references/references';
@@ -87,6 +93,7 @@ const MENTION_TOKEN = /^@(?:"[^"\n]{1,4096}"|[^\s"]{1,4096})$/;
     AddRepository,
     AdditionBanners,
     AppSidePanel,
+    PaneResizer,
     SessionConversation,
     LimitWindows,
     SessionList,
@@ -140,6 +147,19 @@ export class SessionView implements OnInit {
   protected readonly wideList = mediaQuery(WIDE_LIST);
   /** The details as a permanent column (wider screens). */
   protected readonly docked = mediaQuery(WIDE_PANEL);
+  /** Widths the user gave the session list and the docked details. */
+  protected readonly listWidth = new PaneWidth('crm.paneWidth.list', {
+    min: 240,
+    max: 560,
+    initial: 320,
+    windowShare: 0.3,
+  });
+  protected readonly detailsWidth = new PaneWidth('crm.paneWidth.details', {
+    min: 280,
+    max: 640,
+    initial: 340,
+    windowShare: 0.34,
+  });
   /** The details are open (phone and narrower desktops). */
   protected readonly panelOpen = signal(false);
   private readonly panel = viewChild(AppSidePanel);
@@ -180,14 +200,12 @@ export class SessionView implements OnInit {
     groupPreparation(this.items()),
   );
   /** Name of the session's model for the strip. */
-  protected readonly modelName = computed(() => {
-    const model = normalizeModel(this.session()?.model ?? null);
-    const label =
-      this.modelOptions().find((option) => option.value === model)?.label ??
-      model ??
-      'Default';
-    return label.replace(/\s*\(.*\)$/, '');
-  });
+  protected readonly modelName = computed(() =>
+    modelLabel(this.modelOptions(), this.session()?.model ?? null).replace(
+      /\s*\((?!1M\)).*\)$/,
+      '',
+    ),
+  );
   /**
    * The permission mode in effect, for the strip: the chosen one, or the
    * one the process runs in instead (e.g. "Ask (auto unavailable)").

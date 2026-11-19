@@ -13,7 +13,9 @@
         (blur)="references.close()"
         (paste)="onPaste($event)"
         cdkTextareaAutosize
-        rows="3"
+        cdkAutosizeMinRows="6"
+        cdkAutosizeMaxRows="18"
+        rows="6"
         data-testid="new-prompt"
         #promptField
       ></textarea>

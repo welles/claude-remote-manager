@@ -105,7 +105,7 @@ describe('SessionView', () => {
     await harness.fixture.whenStable();
     expect(text('status')).toBe('Running');
     expect(text('usage')).toBe('1.5k tokens · $0.01 theoretical API cost');
-    expect(text('context')).toBe('Context 1.5k / 200k (0.8%)');
+    expect(text('context')).toBe('1.5k / 200k · 0.8%');
     expect(element.querySelector('.user-message')?.textContent).toBe(
       'Reply with pong',
     );

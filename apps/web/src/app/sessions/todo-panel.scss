@@ -31,10 +31,15 @@
   flex: none;
   width: 1em;
   text-align: center;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.todo-in_progress .todo-mark {
+  color: inherit;
 }
 
 .todo-in_progress {
-  font-weight: 600;
+  font-weight: 500;
   color: var(--app-status-running);
 }
 
