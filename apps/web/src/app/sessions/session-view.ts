@@ -444,6 +444,24 @@ export class SessionView implements OnInit {
     }
   }
 
+  /**
+   * Stops the turn and sends a queued message (`null`: all of them) right
+   * away.
+   */
+  protected sendQueuedNow(messageId: string | null): void {
+    const requestId = newId();
+    if (
+      this.socket.send({
+        type: 'queue.send',
+        sessionId: this.sessionId(),
+        ...(messageId ? { messageId } : {}),
+        requestId,
+      })
+    ) {
+      this.pending.add(requestId);
+    }
+  }
+
   /** Puts a message that was not sent back into the input. */
   protected edit(item: QueuedItem): void {
     this.composer()?.restore(

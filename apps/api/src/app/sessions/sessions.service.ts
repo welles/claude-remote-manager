@@ -320,10 +320,16 @@ interface LiveSession {
   contextRequestedAt: number;
   /**
    * Set when the running turn is being stopped: by the user (Stop; queued
-   * messages are withdrawn) or by a denial without message (the queue
-   * goes on).
+   * messages are withdrawn), by a denial without message (the queue goes
+   * on) or to send queued messages right away (`send`, see `sendNow`).
    */
-  interruptRequested: 'user' | 'denied' | null;
+  interruptRequested: 'user' | 'denied' | 'send' | null;
+  /**
+   * Queued messages the user sent right away, by ID (`all`: the whole
+   * queue): they go to Claude when the stopped turn ends, the others stay
+   * queued.
+   */
+  sendNow: Set<string> | 'all' | null;
   /**
    * Messages sent while a turn runs; they go to Claude when it ends. Held
    * by the app (not Claude Code's own queue) so that they can be removed.
@@ -919,6 +925,47 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * Sends queued messages to Claude right away: stops the running turn (as
+   * Stop does, but the queue is kept) and sends the message `messageId`, or
+   * all queued messages, when it ended. A single message moves to the
+   * front; the others stay queued for the end of the next turn. Fails with
+   * 409 when the message (or no message) is queued.
+   */
+  async sendQueuedNow(
+    sessionId: string,
+    messageId: string | null,
+  ): Promise<void> {
+    this.requireRecord(sessionId);
+    const live = this.live.get(sessionId);
+    const index = messageId
+      ? (live?.queue.findIndex((queued) => queued.id === messageId) ?? -1)
+      : (live?.queue.length ?? 0) - 1;
+    if (!live?.run || index < 0) {
+      throw new ConflictException(
+        messageId
+          ? 'The message is not queued: it was sent to Claude already or withdrawn'
+          : 'No message is queued',
+      );
+    }
+    if (messageId) {
+      const [message] = live.queue.splice(index, 1);
+      live.queue.unshift(message);
+      if (live.sendNow !== 'all') {
+        live.sendNow = new Set(live.sendNow).add(messageId);
+      }
+    } else {
+      live.sendNow = 'all';
+    }
+    if (live.interruptRequested) {
+      // Being stopped already: the turn's end sends them.
+      return;
+    }
+    live.interruptRequested = 'send';
+    this.approver.cancelSession(sessionId, 'interrupted');
+    await live.run.interrupt();
+  }
+
   /** Pending approval requests of a session, oldest first. */
   pendingPermissions(sessionId: string): PermissionRequestEvent[] {
     this.requireRecord(sessionId);
@@ -1406,6 +1453,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       context: null,
       contextRequestedAt: 0,
       interruptRequested: null,
+      sendNow: null,
       queue: [],
       sending: new Set(),
       order: Promise.resolve(),
@@ -1639,6 +1687,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.mapper = new SdkEventMapper();
     live.tracker = new UsageTracker(this.usage.totalsByModel(record.id));
     live.interruptRequested = null;
+    live.sendNow = null;
     live.closing = null;
     live.contextResults = 0;
     live.reportedMode = null;
@@ -1911,6 +1960,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const stop = live.interruptRequested;
     const interrupted = stop !== null;
     live.interruptRequested = null;
+    const sendNow = live.sendNow;
+    live.sendNow = null;
     const errors = result.subtype === 'success' ? [] : result.errors;
     this.append(live, {
       type: 'turn.result',
@@ -1958,7 +2009,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const run = live.run;
     // Queued messages go to Claude now (Claude Code may take them as one
     // turn); after the user stopped the turn they were withdrawn already.
-    const flushed = run && stop !== 'user' ? this.flushQueue(live, run) : 0;
+    // Sent right away: only those, the others wait for this turn's end.
+    const flushed =
+      run && stop !== 'user' ? this.flushQueue(live, run, sendNow) : 0;
     const queued = flushed > 0 || (result.queued_turn_count ?? 0) > 0;
     if (!this.setStatus(live, queued ? 'running' : 'waiting')) {
       // Usage changed even if the status did not.
@@ -2014,9 +2067,26 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Sends all queued messages to Claude; returns how many. */
-  private flushQueue(live: LiveSession, run: AgentRun): number {
-    const messages = live.queue.splice(0);
+  /**
+   * Sends the queued messages to Claude (`only`: those of them, unless none
+   * is queued anymore); returns how many.
+   */
+  private flushQueue(
+    live: LiveSession,
+    run: AgentRun,
+    only: Set<string> | 'all' | null = null,
+  ): number {
+    const selected =
+      only instanceof Set ? live.queue.filter(({ id }) => only.has(id)) : [];
+    const messages =
+      selected.length > 0
+        ? selected
+        : // Nothing selected is queued anymore (removed meanwhile): the
+          // queue must not stay behind without a running turn.
+          live.queue.splice(0);
+    if (selected.length > 0) {
+      live.queue = live.queue.filter((queued) => !selected.includes(queued));
+    }
     for (const message of messages) {
       this.append(live, {
         type: 'message.dequeued',
@@ -2197,11 +2267,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const tasks = [...live.heldTasks];
     live.heldTasks.clear();
     for (const taskId of tasks) {
-      void run?.stopTask(taskId).catch((error: unknown) =>
-        this.logger.warn(
-          `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
-        ),
-      );
+      void run
+        ?.stopTask(taskId)
+        .catch((error: unknown) =>
+          this.logger.warn(
+            `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
+          ),
+        );
     }
     const mode = this.requireRecord(live.id).permissionMode;
     if (run && heldForUntrusted(mode)) {

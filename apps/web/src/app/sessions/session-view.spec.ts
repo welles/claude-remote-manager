@@ -746,6 +746,24 @@ describe('SessionView', () => {
       sessionId: 's1',
       messageId: 'q1',
     });
+    (
+      element.querySelector(
+        '[data-testid="send-queued-message"]',
+      ) as HTMLButtonElement
+    ).click();
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'queue.send',
+      sessionId: 's1',
+      messageId: 'q1',
+    });
+    (
+      element.querySelector('[data-testid="send-queued"]') as HTMLButtonElement
+    ).click();
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'queue.send',
+      sessionId: 's1',
+    });
+    expect(socket.sent.at(-1)).not.toHaveProperty('messageId');
     expect(
       element.querySelector('[data-testid="withdrawn"]')?.textContent,
     ).toContain('Not sent: The turn was stopped.');
