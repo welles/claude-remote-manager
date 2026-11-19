@@ -1312,6 +1312,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * all clients are told. Call after the database rows are gone.
    */
   forget(sessionId: string): void {
+    this.slashCommands?.forget(sessionId);
     const live = this.live.get(sessionId);
     if (live) {
       this.clearIdleTimer(live);

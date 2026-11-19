@@ -41,7 +41,7 @@ const MENTION = /(?:^|\s)@([^\s"@]*)$/;
 const SLASH = /^\/(\S*)$/;
 
 /** At most this many commands are listed. */
-const MAX_COMMANDS = 50;
+const MAX_COMMANDS = 100;
 
 /**
  * Commands matching what was typed after `/`: names and aliases starting
@@ -142,12 +142,20 @@ export class MessageComposer {
   /** The session's commands, loaded when `/` is typed. */
   private readonly commands = signal<readonly SlashCommandOption[]>([]);
   private commandsOf: string | null = null;
+  /** Answers to older requests are dropped. */
+  private commandRequest = 0;
   protected readonly commandMatches = computed(() => {
     const query = this.slash();
     return query === null ? [] : matchCommands(this.commands(), query);
   });
   protected readonly suggestingCommands = computed(
     () => this.commandMatches().length > 0,
+  );
+  /** The option screen readers announce as chosen. */
+  protected readonly activeCommandId = computed(() =>
+    this.suggestingCommands()
+      ? `command-${Math.min(this.active(), this.commandMatches().length - 1)}`
+      : null,
   );
   /** `#` autocomplete. */
   protected readonly references = new ReferenceAutocomplete(
@@ -270,7 +278,9 @@ export class MessageComposer {
         case 'Enter':
         case 'Tab':
           event.preventDefault();
-          this.chooseCommand(this.commandMatches()[this.active()]);
+          this.chooseCommand(
+            this.commandMatches()[Math.min(this.active(), count - 1)],
+          );
           return;
         case 'Escape':
           event.preventDefault();
@@ -342,15 +352,16 @@ export class MessageComposer {
   }
 
   /** Replaces the command being typed with the chosen one. */
-  protected chooseCommand(command: SlashCommandOption): void {
+  protected chooseCommand(command: SlashCommandOption | undefined): void {
     const field = this.textarea()?.nativeElement;
-    if (this.slash() === null || !field) {
+    if (!command || this.slash() === null || !field) {
       return;
     }
     const value = this.draft();
     const typed = SLASH.exec(value.slice(0, field.selectionStart))?.[0] ?? '/';
     const inserted = `/${command.name} `;
-    const next = inserted + value.slice(typed.length).replace(/^\S*\s?/, '');
+    // The rest of the word typed into; a space after it (not a line break).
+    const next = inserted + value.slice(typed.length).replace(/^\S*[ \t]?/, '');
     field.value = next;
     this.draft.set(next);
     field.setSelectionRange(inserted.length, inserted.length);
@@ -385,12 +396,14 @@ export class MessageComposer {
       this.commands.set([]);
       this.commandsOf = id;
     }
+    const request = ++this.commandRequest;
     this.api
       .slashCommands(id)
       .pipe(catchError(() => of({ commands: [], source: 'user' as const })))
       .subscribe((result) => {
-        if (this.commandsOf === id) {
+        if (this.commandsOf === id && request === this.commandRequest) {
           this.commands.set(result.commands);
+          this.active.set(0);
         }
       });
   }

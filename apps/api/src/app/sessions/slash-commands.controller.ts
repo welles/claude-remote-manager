@@ -18,10 +18,4 @@ export class SlashCommandsController {
     this.sessions.get(id);
     return this.commands.forSession(id);
   }
-
-  /** The user's and Claude Code's own (for a new session). */
-  @Get('slash-commands')
-  forUser(): Promise<SlashCommandsResponse> {
-    return this.commands.forSession(null);
-  }
 }

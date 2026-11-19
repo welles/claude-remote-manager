@@ -34,18 +34,18 @@
     @for (command of commandMatches(); track command.name; let i = $index) {
     <li
       role="option"
+      [id]="'command-' + i"
       [class.active]="i === active()"
       [attr.aria-selected]="i === active()"
       (mousedown)="$event.preventDefault(); chooseCommand(command)"
       data-testid="command"
     >
-      <span class="command-name"
-        >/{{ command.name }}@if (command.argumentHint) {<span
-          class="command-hint"
-        >
-          {{ command.argumentHint }}</span
-        >}</span
-      >
+      <span class="command-name">
+        <span>/{{ command.name }}</span>
+        @if (command.argumentHint) {
+        <span class="command-hint">{{ command.argumentHint }}</span>
+        }
+      </span>
       @if (command.description) {
       <span class="command-description">{{ command.description }}</span>
       }
@@ -109,6 +109,7 @@
             : null
       "
       [attr.aria-expanded]="suggesting() || suggestingCommands()"
+      [attr.aria-activedescendant]="activeCommandId()"
       enterkeyhint="send"
       data-testid="message-input"
     ></textarea>

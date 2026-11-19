@@ -43,6 +43,9 @@
 }
 
 .command-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1ch;
   font: var(--app-font-code);
 }
 

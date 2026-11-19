@@ -487,11 +487,14 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   (`GET /api/sessions/:id/slash-commands`), names and aliases starting with what was typed
   first, then names containing it; choosing inserts `/name `. The list is what the session's
   Claude Code reported (`supportedCommands()` after its `init`, replaced by
-  `commands_changed`; with the project's and plugins' commands), kept after the process
-  ends; before the session's first process, the user's commands and Claude Code's own from
-  a short-lived process without prompt (cached 10 min, also `GET /api/slash-commands`).
-  Commands Claude Code marks as bound to a terminal (`terminal_slash_commands`) are left
-  out. The message goes to Claude Code as typed, which runs the command.
+  `commands_changed`; with the project's and plugins' commands, one row per name), kept in
+  memory after the process ends; before the session's first process in the API's lifetime,
+  the user's commands and Claude Code's own from a short-lived process without prompt
+  (cached 10 min, 20 s timeout). Commands Claude Code marks as bound to a terminal
+  (`terminal_slash_commands`) are left out. The message goes to Claude Code as typed, which
+  runs the command; the transcript keeps it as tags, from which history rebuilt after a
+  restart shows `/name args` again. The output of a command Claude Code runs itself (e.g.
+  `/usage`) is shown live, but is not in the transcript and so missing after a reload.
 - `show_file` (path, optional caption): reads the file as the session user, only inside the
   session's directories, and keeps a snapshot (up to 20 MB) in `FILES_DIR/shown`; larger
   files keep only their metadata and are served from the session while it exists

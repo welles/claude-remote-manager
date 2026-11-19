@@ -11,11 +11,33 @@ export const USER_COMMANDS_CACHE_MS = 10 * 60_000;
 /** After a failed probe, Claude Code is asked again after this long at the earliest. */
 export const USER_COMMANDS_RETRY_MS = 60_000;
 
+/** How long a probe may take to list the commands. */
+export const PROBE_TIMEOUT_MS = 20_000;
+
 /**
- * Commands bound to a terminal, hidden from the list (Claude Code names
- * them in its `init` message; these are known before any session ran).
+ * Commands bound to a terminal, hidden from the list. Claude Code names
+ * them in its `init` message (`terminal_slash_commands`, added as they
+ * come); these are the ones Claude Code 2.1.322 names, for lists asked
+ * before any session sent its `init`.
  */
-const TERMINAL_COMMANDS = ['exit', 'quit', 'statusline', 'terminal-setup', 'vim'];
+const TERMINAL_COMMANDS = ['doctor', 'color', 'focus', 'reload-plugins'];
+
+/**
+ * One row per name: Claude Code's own row where it marks one (that is what
+ * `/name` runs), else the first.
+ */
+export function uniqueCommands(
+  commands: readonly SlashCommandOption[],
+): SlashCommandOption[] {
+  const byName = new Map<string, SlashCommandOption>();
+  for (const command of commands) {
+    const known = byName.get(command.name);
+    if (!known || (command.builtin && !known.builtin)) {
+      byName.set(command.name, command);
+    }
+  }
+  return [...byName.values()];
+}
 
 /** A command of Claude Code's list as offered in the UI. */
 export function slashCommandOption(command: SlashCommand): SlashCommandOption {
@@ -31,8 +53,9 @@ export function slashCommandOption(command: SlashCommand): SlashCommandOption {
 /**
  * The slash commands and skills for `/` autocomplete. A session's list is
  * what its Claude Code reported last (`supportedCommands` after `init`,
- * replaced by `commands_changed`; kept after the process ends). Before a
- * session's first process, the user's commands and Claude Code's own,
+ * replaced by `commands_changed`; kept in memory after the process ends,
+ * until the session is removed or the API restarts). Before that, the
+ * user's commands and Claude Code's own,
  * asked through a short-lived process without prompt (cached). Commands
  * bound to a terminal are left out.
  */
@@ -50,8 +73,8 @@ export class SlashCommandsService {
 
   constructor(private readonly runner: AgentRunner) {}
 
-  async forSession(sessionId: string | null): Promise<SlashCommandsResponse> {
-    const reported = sessionId ? this.sessions.get(sessionId) : undefined;
+  async forSession(sessionId: string): Promise<SlashCommandsResponse> {
+    const reported = this.sessions.get(sessionId);
     if (reported) {
       return { commands: this.visible(reported), source: 'session' };
     }
@@ -60,7 +83,10 @@ export class SlashCommandsService {
 
   /** What a session's Claude Code reported (a full list). */
   remember(sessionId: string, commands: readonly SlashCommand[]): void {
-    this.sessions.set(sessionId, commands.map(slashCommandOption));
+    this.sessions.set(
+      sessionId,
+      uniqueCommands(commands.map(slashCommandOption)),
+    );
   }
 
   /** Commands Claude Code names as bound to a terminal (`init`). */
@@ -90,9 +116,13 @@ export class SlashCommandsService {
 
   private async load(): Promise<SlashCommandOption[]> {
     try {
-      const commands = (
-        await this.runner.probe((probe) => probe.supportedCommands())
-      ).map(slashCommandOption);
+      const commands = uniqueCommands(
+        (
+          await this.runner.probe((probe) =>
+            withTimeout(probe.supportedCommands(), PROBE_TIMEOUT_MS),
+          )
+        ).map(slashCommandOption),
+      );
       this.user = { commands, until: this.now() + USER_COMMANDS_CACHE_MS };
       return commands;
     } catch (error) {
@@ -102,4 +132,18 @@ export class SlashCommandsService {
       return commands;
     }
   }
+}
+
+/** Rejects when `promise` takes longer than `ms` (the probe then closes). */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`no answer within ${ms / 1000} s`)),
+        ms,
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
 }

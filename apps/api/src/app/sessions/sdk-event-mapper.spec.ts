@@ -7,6 +7,7 @@ import {
   SdkEventMapper,
   toolResultText,
   transcriptEntries,
+  userContentEvents,
 } from './sdk-event-mapper';
 
 /** Builds SDK messages; only the fields the mapper reads are relevant. */
@@ -467,7 +468,7 @@ describe('transcriptEntries', () => {
       transcriptEvents([
         entry('user', {
           role: 'user',
-          content: '<command-name>/clear</command-name>',
+          content: '<local-command-caveat>Caveat</local-command-caveat>',
         }),
         entry('user', {
           role: 'user',
@@ -476,6 +477,31 @@ describe('transcriptEntries', () => {
         entry('system', { content: 'ignored' }),
         entry('assistant', 'not an object'),
       ]),
+    ).toEqual([]);
+  });
+});
+
+describe('userContentEvents', () => {
+  it('shows slash commands as typed, from the transcript\'s tags', () => {
+    expect(
+      userContentEvents(
+        'u1',
+        '<command-message>deploy</command-message>\n<command-name>/deploy</command-name>\n<command-args>prod</command-args>',
+        null,
+        true,
+      ),
+    ).toEqual([{ type: 'user.message', id: 'u1', text: '/deploy prod' }]);
+    expect(
+      userContentEvents(
+        'u2',
+        [{ type: 'text', text: '<command-name>/usage</command-name>\n<command-args></command-args>' }],
+        null,
+        true,
+      ),
+    ).toEqual([{ type: 'user.message', id: 'u2', text: '/usage' }]);
+    // Other generated text stays out.
+    expect(
+      userContentEvents('u3', '<local-command-stdout>x</local-command-stdout>', null, true),
     ).toEqual([]);
   });
 });

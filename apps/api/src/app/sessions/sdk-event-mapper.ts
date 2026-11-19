@@ -92,6 +92,23 @@ export function assistantContentEvents(
  */
 const GENERATED_USER_TEXT = /^\s*(<[a-z-]+>|\[Request interrupted)/;
 
+const COMMAND_NAME = /<command-name>([^<]*)<\/command-name>/;
+const COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
+
+/**
+ * What the user typed for a slash command: Claude Code keeps it in the
+ * transcript as `<command-message>…<command-name>/name</command-name>
+ * <command-args>args</command-args>`, not as typed. `null` for other text.
+ */
+export function typedSlashCommand(text: string): string | null {
+  const name = COMMAND_NAME.exec(text)?.[1]?.trim();
+  if (!name || !name.startsWith('/')) {
+    return null;
+  }
+  const args = COMMAND_ARGS.exec(text)?.[1]?.trim() ?? '';
+  return args ? `${name} ${args}` : name;
+}
+
 /**
  * Events for the content of a user-role message: tool results, and, when
  * `includeText` is set (history from a transcript), the user's text.
@@ -125,9 +142,9 @@ export function userContentEvents(
   }
   if (includeText && parentToolUseId === null) {
     // Interruptions are shown through the stored turn result instead.
-    const typed = texts.filter(
-      (text) => !GENERATED_USER_TEXT.test(text) && text.trim(),
-    );
+    const typed = texts
+      .map((text) => typedSlashCommand(text) ?? text)
+      .filter((text) => !GENERATED_USER_TEXT.test(text) && text.trim());
     for (const text of typed) {
       events.push({ type: 'user.message', id, text });
     }
