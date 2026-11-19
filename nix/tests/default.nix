@@ -81,13 +81,14 @@ let
       };
     in
     pkgs.runCommand "claude-remote-manager-eval-accepted" { } (
-      if
-        result.messages == [ ]
-        && result.environment.PR_TRUSTED_BOTS or null == "my-reviewer[bot],ci-helper[bot]"
-      then
-        "touch $out"
-      else
+      if result.messages != [ ] then
         throw "a valid configuration was refused: ${builtins.toJSON result.messages}"
+      else if result.environment.PR_TRUSTED_BOTS or null != "my-reviewer[bot],ci-helper[bot]" then
+        throw "github.trustedBots did not reach PR_TRUSTED_BOTS: ${
+          builtins.toJSON (result.environment.PR_TRUSTED_BOTS or null)
+        }"
+      else
+        "touch $out"
     );
 in
 {
