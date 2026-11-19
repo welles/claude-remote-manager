@@ -144,6 +144,9 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `CRM_SECRET_NTFY_TOKEN`             | none                                                                                             | The ntfy access token itself, instead of the file                                                        |
 | `VAPID_PRIVATE_KEY_FILE`            | none (keys generated into `DB_DIR`)                                                              | File with the VAPID private key (base64url), to use own keys                                             |
 | `CRM_SECRET_VAPID_PRIVATE_KEY`      | none                                                                                             | The VAPID private key itself, instead of the file                                                        |
+| `ENVIRONMENT_KEY_FILE`              | `$DB_DIR/environment.key` (created on first use)                                                 | Key (32 bytes, Base64 or hex) of the environments' secrets                                               |
+| `CRM_SECRET_ENVIRONMENT_KEY`        | none                                                                                             | The key itself, instead of the file                                                                      |
+| `ENVIRONMENT_FILES_DIR`             | `$TMPDIR/crm-environment-files`                                                                  | Files of environments per session process; emptied at startup                                            |
 | `VAPID_PUBLIC_KEY`                  | derived from the private key                                                                     | Optional; checked against the private key                                                                |
 | `VAPID_SUBJECT`                     | `PUBLIC_URL` if https, else a placeholder `mailto:`                                              | Contact for the push services (`mailto:` or `https:`)                                                    |
 | `GITHUB_WEBHOOK_SECRET_FILE`        | none (webhook refuses everything)                                                                | File with the GitHub App's webhook secret (at least 16 characters), e.g. a Docker secret                 |
@@ -698,6 +701,33 @@ resolution back (`alreadyResolved`); session processes cannot call these routes 
   Code's own permission prompts have no deadline (`dialogExpiry: never` is set as well), so a
   request waits for the user as long as the process lives; the idle timeout does not apply
   while one is pending.
+
+### Environments
+
+An environment (page **Settings → Environments**, `/api/environments`) bundles what sessions need
+for a kind of work and is chosen in the new-session form (one can be the default); it stays with the
+session. It has:
+
+- **Variables**: any `NAME=value`, set in the Claude Code process and in the setup scripts. Names
+  the session or the app needs (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `CLAUDE_*`,
+  `ANTHROPIC_*`, `CRM_*`, `GIT_CONFIG_*`) are refused.
+- **Files** (e.g. a service account JSON, a kubeconfig): written for each process into a directory of
+  its own below `ENVIRONMENT_FILES_DIR` (`0700`, files `0600`, owned by the session user, outside the
+  clones), the path in a variable named per file; removed when the process ends.
+- **Secret switch** per variable and file: secrets are stored with AES-256-GCM (key from
+  `ENVIRONMENT_KEY_FILE` / `CRM_SECRET_ENVIRONMENT_KEY`, else generated next to the database) and
+  never returned by the API (only their length); the UI can replace or remove them. Secret values of
+  at least 6 characters (for files also each line) are replaced by `***` in the session's events
+  before they are stored, sent or indexed, and when an older conversation is loaded from the
+  transcript, with the current values. Claude itself knows the values; diffs, the file browser and
+  shown files are not masked.
+- **Instructions**, appended to the system prompt together with the names (not values) of the
+  variables and files; a **setup script** that runs once after the repositories' scripts, in the
+  working directory, with the same variables and files (retried with them); and **presets** for the
+  form (repositories, model, permission mode).
+
+Everything except the presets is read again at each process start, so a rotated key applies with
+the next process. An environment cannot be deleted while a session that is not archived uses it.
 
 ## Managing sessions
 

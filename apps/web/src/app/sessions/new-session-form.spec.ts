@@ -6,6 +6,7 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type {
+  EnvironmentDto,
   RepositoryDto,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
@@ -56,6 +57,8 @@ interface FormInternals {
   create(): void;
   addFromGitHub(repository: RepositoryDto): void;
   images: AttachmentDrafts;
+  environmentId(): string;
+  chooseEnvironment(id: string): void;
 }
 
 import type { AttachmentDrafts } from '../attachments/attachment-drafts';
@@ -77,7 +80,10 @@ describe('NewSessionForm', () => {
 
   afterEach(() => http.verify());
 
-  const render = async (repositories: RepositoryDto[]) => {
+  const render = async (
+    repositories: RepositoryDto[],
+    environments: EnvironmentDto[] = [],
+  ) => {
     const fixture = TestBed.createComponent(NewSessionForm);
     const created: SessionDto[] = [];
     fixture.componentInstance.created.subscribe((session) =>
@@ -105,6 +111,7 @@ describe('NewSessionForm', () => {
     http
       .expectOne('/api/repositories')
       .flush({ repositories, strayDirectories: [] });
+    http.expectOne('/api/environments').flush({ environments });
     await fixture.whenStable();
     const form = fixture.componentInstance as unknown as FormInternals;
     const element = fixture.nativeElement as HTMLElement;
@@ -377,5 +384,91 @@ describe('NewSessionForm', () => {
       .forEach((pending) =>
         pending.flush({ message: 'x' }, { status: 404, statusText: 'x' }),
       );
+  });
+  const environment = (
+    overrides: Partial<EnvironmentDto> = {},
+  ): EnvironmentDto => ({
+    id: 'e1',
+    name: 'Staging',
+    instructions: null,
+    setupScript: null,
+    model: null,
+    permissionMode: null,
+    repositories: [],
+    isDefault: false,
+    variables: [],
+    files: [],
+    sessions: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  });
+
+  it('preselects the default environment with its presets and sends it', async () => {
+    const { form, fixture, element } = await render(
+      [repository('r1', 'acme/app'), repository('r2', 'acme/lib')],
+      [
+        environment({ id: 'e0', name: 'Other' }),
+        environment({
+          isDefault: true,
+          model: 'haiku',
+          permissionMode: 'plan',
+          repositories: [
+            { repositoryId: 'r2', baseBranch: 'release' },
+            { repositoryId: 'r1' },
+          ],
+        }),
+      ],
+    );
+    http
+      .expectOne('/api/repositories/r2/branches')
+      .flush({ defaultBranch: 'main', branches: ['main', 'release'] });
+    http
+      .expectOne('/api/repositories/r1/branches')
+      .flush({ defaultBranch: 'main', branches: ['main'] });
+    fixture.detectChanges();
+    expect(
+      element.querySelector('[data-testid="environment-select"]'),
+    ).not.toBeNull();
+    expect(form.environmentId()).toBe('e1');
+    expect(form.model).toBe('haiku');
+    expect(form.permissionMode).toBe('plan');
+    expect(form.choices()).toEqual([
+      { repositoryId: 'r2', baseBranch: 'release' },
+      { repositoryId: 'r1', baseBranch: '' },
+    ]);
+    // Still editable.
+    form.permissionMode = 'auto';
+    form.prompt = 'Check the API';
+    form.create();
+    const request = http.expectOne({ method: 'POST', url: '/api/sessions' });
+    expect(request.request.body).toEqual({
+      prompt: 'Check the API',
+      model: 'haiku',
+      permissionMode: 'auto',
+      repositories: [
+        { repositoryId: 'r2', baseBranch: 'release' },
+        { repositoryId: 'r1' },
+      ],
+      environmentId: 'e1',
+    });
+    request.flush(sessionDto({ id: 'new', status: 'preparing' }));
+  });
+
+  it('starts without environment when None is chosen', async () => {
+    const { form } = await render(
+      [repository('r1', 'acme/app')],
+      [environment({ isDefault: true })],
+    );
+    form.chooseEnvironment('');
+    form.prompt = 'Go';
+    form.chooseRepository(0, 'r1');
+    http
+      .expectOne('/api/repositories/r1/branches')
+      .flush({ defaultBranch: 'main', branches: ['main'] });
+    form.create();
+    const request = http.expectOne({ method: 'POST', url: '/api/sessions' });
+    expect(request.request.body.environmentId).toBeUndefined();
+    request.flush(sessionDto({ id: 'new', status: 'preparing' }));
   });
 });

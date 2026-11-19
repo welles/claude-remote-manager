@@ -24,6 +24,7 @@ import {
   DANGEROUS_PERMISSION_MODES,
   SESSION_PERMISSION_MODES,
   type CreateSessionRequest,
+  type EnvironmentDto,
   type RepositoryBranchesResponse,
   type RepositoryDto,
   type SessionDto,
@@ -48,6 +49,7 @@ import { AttachmentDrafts, imageFiles } from '../attachments/attachment-drafts';
 import { AttachmentsApi } from '../attachments/attachments-api';
 import { DraftImages } from '../attachments/draft-images';
 import { SessionsApi } from './sessions-api';
+import { EnvironmentsApi } from '../environments/environments-api';
 
 /** Permission modes offered for new sessions, in this order. */
 export const PERMISSION_MODE_OPTIONS = SESSION_PERMISSION_MODES.map((mode) => ({
@@ -111,6 +113,7 @@ export class NewSessionForm implements OnInit {
   private readonly sessionsApi = inject(SessionsApi);
   private readonly repositoriesApi = inject(RepositoriesApi);
   private readonly modelsStore = inject(ModelsStore);
+  private readonly environmentsApi = inject(EnvironmentsApi);
 
   /** The session was created. */
   readonly created = output<SessionDto>();
@@ -143,6 +146,9 @@ export class NewSessionForm implements OnInit {
   /** New sessions start in `auto` (the owner's choice). */
   protected permissionMode: SessionPermissionMode = 'auto';
   protected projectName = '';
+  protected readonly environments = signal<EnvironmentDto[]>([]);
+  /** Chosen environment; `''` for none. */
+  protected readonly environmentId = signal('');
   protected readonly mode = signal<SessionMode>('repository');
   protected readonly choices = signal<RepositoryChoice[]>([emptyChoice()]);
   protected readonly creating = signal(false);
@@ -221,6 +227,54 @@ export class NewSessionForm implements OnInit {
       },
       error: () => this.repositoriesLoaded.set(true),
     });
+    this.environmentsApi.list().subscribe({
+      next: ({ environments }) => {
+        this.environments.set(environments);
+        const preset = environments.find((entry) => entry.isDefault);
+        // Not over a choice the user made while the list loaded.
+        if (preset && !this.environmentId()) {
+          this.chooseEnvironment(preset.id);
+        }
+      },
+      error: () => undefined,
+    });
+  }
+
+  /**
+   * Chooses the session's environment and fills in its presets
+   * (repositories, model, permission mode); all stay editable.
+   */
+  protected chooseEnvironment(id: string): void {
+    this.environmentId.set(id);
+    const environment = this.environments().find((entry) => entry.id === id);
+    if (!environment) {
+      return;
+    }
+    if (environment.model) {
+      this.model = environment.model;
+    }
+    if (environment.permissionMode) {
+      this.permissionMode = environment.permissionMode;
+    }
+    const known = new Set(
+      this.repositories().map((repository) => repository.id),
+    );
+    const presets = environment.repositories.filter(
+      (repository) =>
+        !this.repositoriesLoaded() || known.has(repository.repositoryId),
+    );
+    if (presets.length > 0) {
+      this.mode.set('repository');
+      this.choices.set(
+        presets.map((repository) => ({
+          repositoryId: repository.repositoryId,
+          baseBranch: repository.baseBranch ?? '',
+        })),
+      );
+      for (const repository of presets) {
+        this.loadBranches(repository.repositoryId);
+      }
+    }
   }
 
   protected setMode(mode: SessionMode): void {
@@ -246,6 +300,10 @@ export class NewSessionForm implements OnInit {
 
   protected chooseRepository(index: number, repositoryId: string): void {
     this.updateChoice(index, { repositoryId, baseBranch: '' });
+    this.loadBranches(repositoryId);
+  }
+
+  private loadBranches(repositoryId: string): void {
     if (repositoryId && !this.branches().has(repositoryId)) {
       this.repositoriesApi.branches(repositoryId).subscribe({
         next: (branches) =>
@@ -341,6 +399,7 @@ export class NewSessionForm implements OnInit {
         ? { newProject: { name: this.projectName.trim() } }
         : {}),
       ...(this.mode() === 'scratch' ? { scratch: true } : {}),
+      ...(this.environmentId() ? { environmentId: this.environmentId() } : {}),
     };
     this.creating.set(true);
     this.createError.set(null);

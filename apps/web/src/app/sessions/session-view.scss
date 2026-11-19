@@ -179,3 +179,10 @@
   font: var(--mat-sys-body-small);
   color: var(--mat-sys-error);
 }
+
+.environment {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}

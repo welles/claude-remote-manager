@@ -1,0 +1,117 @@
+<app-page-bar [heading]="heading()" back="/settings">
+  @if (editing() === null) {
+  <button
+    matButton="filled"
+    type="button"
+    (click)="edit('new')"
+    data-testid="new-environment"
+  >
+    <app-icon name="plus" />New
+  </button>
+  }
+</app-page-bar>
+
+@if (editing(); as id) { @if (id === 'new' || edited()) {
+<app-environment-editor
+  [environment]="edited()"
+  (saved)="saved($event)"
+  (cancelled)="editing.set(null)"
+/>
+} } @else {
+<p class="muted">
+  An environment gives the sessions that choose it variables and files (secrets
+  of any kind, such as API keys, tokens or credential files), additional
+  information for Claude and a setup script, and fills in the new-session form.
+  Changes apply from a session's next start.
+</p>
+@if (loading()) {
+<mat-progress-bar mode="indeterminate" />
+} @if (error(); as text) {
+<p class="error" role="alert">{{ text }}</p>
+} @if (!loading() && !error() && environments().length === 0) {
+<p class="muted" data-testid="no-environments">No environments yet.</p>
+}
+<ul class="list">
+  @for (environment of environments(); track environment.id) {
+  <li class="item" data-testid="environment">
+    <button
+      type="button"
+      class="open"
+      (click)="edit(environment.id)"
+      data-testid="environment-open"
+    >
+      <span class="name">
+        {{ environment.name }} @if (environment.isDefault) {
+        <span class="badge" data-testid="environment-default-badge"
+          >Default</span
+        >
+        }
+      </span>
+      <span class="muted details">
+        {{ environment.variables.length }} variable{{
+        environment.variables.length === 1 ? '' : 's' }} · {{
+        environment.files.length }} file{{ environment.files.length === 1 ? '' :
+        's' }} @if (environment.repositories.length > 0) { · {{
+        environment.repositories.length }} repositor{{
+        environment.repositories.length === 1 ? 'y' : 'ies' }} } @if
+        (activeSessions(environment) > 0) { · used by {{
+        activeSessions(environment) }} session{{ activeSessions(environment) ===
+        1 ? '' : 's' }} }
+      </span>
+    </button>
+    <button
+      type="button"
+      class="app-icon-btn"
+      (click)="askDelete(environment)"
+      [attr.aria-label]="'Delete ' + environment.name"
+      title="Delete"
+      data-testid="environment-delete"
+    >
+      <app-icon name="trash" />
+    </button>
+  </li>
+  }
+</ul>
+}
+
+<app-dialog
+  [heading]="'Delete ' + (deleting()?.name ?? 'environment') + '?'"
+  testId="environment-delete-dialog"
+  (closed)="deleting.set(null)"
+>
+  @if (deleting(); as environment) {
+  <p>
+    Its variables, files and secrets are deleted for good. Archived sessions
+    that used it keep running without it if they are shown again.
+  </p>
+  @if (activeSessions(environment) > 0) {
+  <p class="error">Used by sessions that are not archived:</p>
+  <ul>
+    @for (session of environment.sessions; track session.id) { @if
+    (!session.archived) {
+    <li>
+      <a [routerLink]="['/sessions', session.id]" (click)="closeDelete()"
+        >{{ session.title ?? 'Untitled session' }}</a
+      >
+    </li>
+    } }
+  </ul>
+  } @if (deleteError(); as text) {
+  <p class="error" role="alert" data-testid="environment-delete-error">
+    {{ text }}
+  </p>
+  } }
+  <div dialog-actions>
+    <button matButton type="button" (click)="closeDelete()">Cancel</button>
+    <button
+      matButton="filled"
+      class="app-danger"
+      type="button"
+      [disabled]="deleteBusy()"
+      (click)="confirmDelete()"
+      data-testid="environment-delete-confirm"
+    >
+      Delete
+    </button>
+  </div>
+</app-dialog>

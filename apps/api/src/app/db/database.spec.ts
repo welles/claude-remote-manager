@@ -38,6 +38,8 @@ describe('openDatabase', () => {
       'app_settings',
       'attachments',
       'deleted_sessions',
+      'environment_entries',
+      'environments',
       'message_contexts',
       'previews',
       'pull_requests',

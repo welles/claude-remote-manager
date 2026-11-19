@@ -7,6 +7,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -16,7 +17,10 @@ import type {
   RepositoryAddedBy,
   SessionEventInput,
   SetupResultEvent,
+  SetupStatus,
 } from '@claude-remote-manager/shared-types';
+import { EnvironmentFiles } from '../environments/environment-files';
+import { EnvironmentsService } from '../environments/environments.service';
 import {
   isUuid,
   optionalString,
@@ -39,6 +43,7 @@ import {
   type NewSessionDirectory,
   type SessionDirectoryRecord,
   type SessionRecord,
+  workingDirectory as workingDirectoryOf,
 } from '../sessions/session.repository';
 import { SettingsService } from '../settings/settings.service';
 import { cloneRule, scratchRule, WorkspaceEntries } from './workspace-entries';
@@ -132,6 +137,10 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
     private readonly git: GitService,
     private readonly setup: SetupScriptRunner,
     private readonly settings: SettingsService,
+    @Optional()
+    private readonly environments?: EnvironmentsService,
+    @Optional()
+    private readonly environmentFiles?: EnvironmentFiles,
   ) {}
 
   /** A changed commit identity applies to all existing session clones. */
@@ -314,7 +323,13 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
         `${failures.join('; ')}. The session's other directories were removed again.`,
       );
     }
-    return this.runSetupScripts(sessionId, emit, signal, () => true);
+    return this.runSetupScripts(
+      sessionId,
+      emit,
+      signal,
+      () => true,
+      (status) => status === 'pending',
+    );
   }
 
   /** Runs the setup scripts that failed or timed out once more. */
@@ -330,6 +345,7 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
       (directory) =>
         directory.setupStatus === 'failed' ||
         directory.setupStatus === 'timed_out',
+      (status) => status === 'failed' || status === 'timed_out',
     );
   }
 
@@ -947,79 +963,174 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
     emit: Emit,
     signal: AbortSignal,
     select: (directory: SessionDirectoryRecord) => boolean,
+    selectEnvironment: (status: SetupStatus) => boolean = () => false,
   ): Promise<SetupOutcome> {
     const session = this.sessions.require(sessionId);
     const failed: string[] = [];
-    for (const directory of session.directories.filter(
+    const clones = session.directories.filter(
       (entry) => isClone(entry) && select(entry),
-    )) {
-      const repository = this.repositories.require(
-        directory.repositoryId as string,
+    );
+    const environment = this.environments?.forLaunch(session.environmentId);
+    const environmentScript =
+      selectEnvironment(session.environmentSetupStatus) &&
+      environment?.setupScript
+        ? environment.setupScript
+        : null;
+    if (
+      selectEnvironment(session.environmentSetupStatus) &&
+      !environmentScript &&
+      session.environmentSetupStatus !== 'none'
+    ) {
+      // The script was removed from the environment meanwhile.
+      this.sessions.update(sessionId, { environmentSetupStatus: 'none' });
+    }
+    const needsScripts =
+      environmentScript !== null ||
+      clones.some(
+        (directory) =>
+          !!this.repositories.require(directory.repositoryId as string)
+            .setupScript,
       );
-      const name = directory.repositoryName as string;
-      const result = (
-        state: SetupResultEvent['state'],
-        details: Partial<Omit<SetupResultEvent, 'type' | 'seq' | 'at'>> = {},
-      ): SessionEventInput => ({
-        type: 'setup.result',
-        repository: name,
-        path: directory.path,
-        state,
-        exitCode: null,
-        signal: null,
-        durationMs: null,
-        message: null,
-        outputTail: null,
-        ...details,
-      });
-      if (!repository.setupScript) {
-        this.sessions.updateDirectory(sessionId, directory.position, {
-          setupStatus: 'none',
+    // The environment's variables and files, for every script.
+    const written =
+      environment && needsScripts && this.environmentFiles
+        ? await this.environmentFiles.write(sessionId, environment.files)
+        : null;
+    const environmentEnv = {
+      ...(environment?.variables ?? {}),
+      ...(written?.env ?? {}),
+    };
+    try {
+      for (const directory of clones) {
+        const repository = this.repositories.require(
+          directory.repositoryId as string,
+        );
+        const name = directory.repositoryName as string;
+        const outcome = await this.runScript({
+          name,
+          path: directory.path,
+          script: repository.setupScript,
+          env: {
+            ...environmentEnv,
+            CRM_SESSION_ID: sessionId,
+            CRM_SESSION_SLUG: session.slug ?? '',
+            CRM_REPOSITORY: name,
+            CRM_CLONE: directory.path,
+          },
+          emit,
+          signal,
+          status: (setupStatus) =>
+            this.sessions.updateDirectory(sessionId, directory.position, {
+              setupStatus,
+            }),
         });
-        continue;
+        if (outcome === 'failed') {
+          failed.push(name);
+        }
       }
-      if (signal.aborted) {
-        this.sessions.updateDirectory(sessionId, directory.position, {
-          setupStatus: 'skipped',
+      if (environmentScript && environment) {
+        const name = `environment ${environment.name}`;
+        const cwd = workingDirectoryOf(session);
+        const outcome = await this.runScript({
+          name,
+          path: cwd,
+          script: environmentScript,
+          env: {
+            ...environmentEnv,
+            CRM_SESSION_ID: sessionId,
+            CRM_SESSION_SLUG: session.slug ?? '',
+          },
+          emit,
+          signal,
+          status: (environmentSetupStatus) =>
+            this.sessions.update(sessionId, { environmentSetupStatus }),
         });
-        emit(result('skipped', { message: 'The session was ended' }));
-        continue;
+        if (outcome === 'failed') {
+          failed.push(name);
+        }
       }
-      this.sessions.updateDirectory(sessionId, directory.position, {
-        setupStatus: 'running',
-      });
-      emit(result('started'));
-      const outcome = await this.setup.run({
-        script: repository.setupScript,
-        cwd: directory.path,
-        env: {
-          CRM_SESSION_ID: sessionId,
-          CRM_SESSION_SLUG: session.slug ?? '',
-          CRM_REPOSITORY: name,
-          CRM_CLONE: directory.path,
-        },
-        timeoutMs: this.config.setupScriptTimeoutMs,
-        signal,
-        onOutput: (text) =>
-          emit({ type: 'setup.output', repository: name, text }),
-      });
-      this.sessions.updateDirectory(sessionId, directory.position, {
-        setupStatus: outcome.state,
-      });
-      if (outcome.state !== 'succeeded' && !signal.aborted) {
-        failed.push(name);
+    } finally {
+      if (written) {
+        await this.environmentFiles
+          ?.remove(written.dir)
+          .catch((error: unknown) =>
+            this.logger.warn(
+              `Could not remove the environment files ${written.dir}: ${errorText(error)}`,
+            ),
+          );
       }
-      emit(
-        result(outcome.state, {
-          exitCode: outcome.exitCode,
-          signal: outcome.signal,
-          durationMs: outcome.durationMs,
-          message: outcome.message,
-          outputTail: outcome.outputTail,
-        }),
-      );
     }
     return { failed };
+  }
+
+  /**
+   * Runs one setup script (of a repository or the environment), with its
+   * events and status. `failed`: it failed or timed out (not when the
+   * session was ended).
+   */
+  private async runScript({
+    name,
+    path,
+    script,
+    env,
+    emit,
+    signal,
+    status,
+  }: {
+    name: string;
+    path: string;
+    script: string | null;
+    env: Record<string, string>;
+    emit: Emit;
+    signal: AbortSignal;
+    status: (status: SetupStatus) => void;
+  }): Promise<'ok' | 'failed'> {
+    const result = (
+      state: SetupResultEvent['state'],
+      details: Partial<Omit<SetupResultEvent, 'type' | 'seq' | 'at'>> = {},
+    ): SessionEventInput => ({
+      type: 'setup.result',
+      repository: name,
+      path,
+      state,
+      exitCode: null,
+      signal: null,
+      durationMs: null,
+      message: null,
+      outputTail: null,
+      ...details,
+    });
+    if (!script) {
+      status('none');
+      return 'ok';
+    }
+    if (signal.aborted) {
+      status('skipped');
+      emit(result('skipped', { message: 'The session was ended' }));
+      return 'ok';
+    }
+    status('running');
+    emit(result('started'));
+    const outcome = await this.setup.run({
+      script,
+      cwd: path,
+      env,
+      timeoutMs: this.config.setupScriptTimeoutMs,
+      signal,
+      onOutput: (text) =>
+        emit({ type: 'setup.output', repository: name, text }),
+    });
+    status(outcome.state);
+    emit(
+      result(outcome.state, {
+        exitCode: outcome.exitCode,
+        signal: outcome.signal,
+        durationMs: outcome.durationMs,
+        message: outcome.message,
+        outputTail: outcome.outputTail,
+      }),
+    );
+    return outcome.state !== 'succeeded' && !signal.aborted ? 'failed' : 'ok';
   }
 }
 

@@ -1,3 +1,4 @@
+import type { SessionEnvironmentDto } from './environments';
 import type { MessageReferenceRequest } from './github-references';
 import type { PendingRequestSummary } from './pending-requests';
 import type { PullRequestAutomationDto } from './pr-automation';
@@ -375,6 +376,11 @@ export interface SessionDto {
   additionalDirectories: string[];
   /** Last error message, e.g. why the session failed. */
   lastError: string | null;
+  /**
+   * Environment chosen when the session was created; `null` without (or
+   * after it was deleted). Absent from older servers.
+   */
+  environment?: SessionEnvironmentDto | null;
   createdAt: string;
   updatedAt: string;
   /** Summed usage of all requests of the session. */
@@ -440,6 +446,11 @@ export interface CreateSessionRequest {
   newProject?: { name: string };
   /** Work in an empty scratch directory without repository. */
   scratch?: boolean;
+  /**
+   * Environment of the session (variables, files, instructions, setup
+   * script), fixed for its lifetime.
+   */
+  environmentId?: string;
 }
 
 /**

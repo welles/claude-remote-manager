@@ -17,6 +17,7 @@ import type {
   SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
+  SessionRepositoryRequest,
   SessionStatus,
   SessionTitleSource,
   SetupStatus,
@@ -73,6 +74,62 @@ export const repositories = sqliteTable(
   ],
 );
 
+/**
+ * Environments: variables, files, instructions and a setup script for the
+ * sessions that choose one, plus presets of the new-session form. Entries
+ * are in `environment_entries`.
+ */
+export const environments = sqliteTable('environments', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().unique(),
+  instructions: text('instructions'),
+  setupScript: text('setup_script'),
+  model: text('model'),
+  permissionMode: text('permission_mode').$type<SessionPermissionMode>(),
+  /** Preset repositories in order (the first is the main repository). */
+  repositories: text('repositories', { mode: 'json' })
+    .$type<SessionRepositoryRequest[]>()
+    .notNull()
+    .default(sql`'[]'`),
+  /** Preselected in the new-session form; at most one. */
+  isDefault: integer('is_default', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+  createdAt: createdAt(),
+  updatedAt: timestamp('updated_at').notNull(),
+});
+
+/**
+ * Variables (`kind` `variable`: `name` gets `value`) and files (`file`: a
+ * file `file_name` with the content `value`, its path in the variable
+ * `name`) of an environment. Secrets have `value` `null` and the value in
+ * `encrypted` (AES-256-GCM, see `SecretCipher`).
+ */
+export const environmentEntries = sqliteTable(
+  'environment_entries',
+  {
+    id: text('id').primaryKey(),
+    environmentId: text('environment_id')
+      .notNull()
+      .references(() => environments.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull(),
+    kind: text('kind').$type<'variable' | 'file'>().notNull(),
+    name: text('name').notNull(),
+    fileName: text('file_name'),
+    secret: integer('secret', { mode: 'boolean' }).notNull(),
+    value: text('value'),
+    encrypted: text('encrypted'),
+    /** Length of the plain value in characters. */
+    length: integer('length').notNull(),
+  },
+  (table) => [
+    uniqueIndex('environment_entries_environment_name').on(
+      table.environmentId,
+      table.name,
+    ),
+  ],
+);
+
 export const sessions = sqliteTable('sessions', {
   id: text('id').primaryKey(),
   /** Claude Code session ID used for resuming; known after the first start. */
@@ -120,6 +177,15 @@ export const sessions = sqliteTable('sessions', {
    * readable, ended; `null` while not archived.
    */
   archivedAt: timestamp('archived_at'),
+  /** Environment chosen at creation; `null` without or after deletion. */
+  environmentId: text('environment_id').references(() => environments.id, {
+    onDelete: 'set null',
+  }),
+  /** The environment's setup script for this session (see `SetupStatus`). */
+  environmentSetupStatus: text('environment_setup_status')
+    .$type<SetupStatus>()
+    .notNull()
+    .default('none'),
 });
 
 /**

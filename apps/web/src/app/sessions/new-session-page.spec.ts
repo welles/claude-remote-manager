@@ -39,6 +39,7 @@ describe('NewSessionPage', () => {
       repositories: [],
       strayDirectories: [],
     });
+    http.expectOne('/api/environments').flush({ environments: [] });
     await fixture.whenStable();
     return fixture;
   };

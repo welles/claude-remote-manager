@@ -1,4 +1,4 @@
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DEV_ORIGINS, loadAppConfig } from './app-config';
 
@@ -46,6 +46,8 @@ describe('loadAppConfig', () => {
     const devData = join(homedir(), '.local/share/claude-remote-manager');
     expect(loadAppConfig(DEV)).toEqual({
       dbDir: resolve('data/db'),
+      environmentKeyFile: resolve('data/db/environment.key'),
+      environmentFilesDir: join(tmpdir(), 'crm-environment-files'),
       filesDir: resolve('data/db/files'),
       workspaceDir: join(devData, 'workspace'),
       reposDir: join(devData, 'workspace', 'repos'),
@@ -115,6 +117,8 @@ describe('loadAppConfig', () => {
       ),
     ).toEqual({
       dbDir: '/data/db',
+      environmentKeyFile: '/data/db/environment.key',
+      environmentFilesDir: join(tmpdir(), 'crm-environment-files'),
       filesDir: '/data/db/files',
       workspaceDir: '/data/workspace',
       reposDir: '/data/workspace/repos',

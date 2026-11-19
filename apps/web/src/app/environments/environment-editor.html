@@ -1,0 +1,438 @@
+@let d = draft();
+<form class="editor" (ngSubmit)="save()" data-testid="environment-editor">
+  <section class="block">
+    <div class="row">
+      <mat-form-field
+        appearance="outline"
+        class="grow"
+        subscriptSizing="dynamic"
+      >
+        <mat-label>Name</mat-label>
+        <input
+          matInput
+          name="name"
+          [ngModel]="d.name"
+          (ngModelChange)="change({ name: $event })"
+          autocomplete="off"
+          data-testid="environment-name"
+        />
+      </mat-form-field>
+      <mat-slide-toggle
+        name="isDefault"
+        [ngModel]="d.isDefault"
+        (ngModelChange)="change({ isDefault: $event })"
+        data-testid="environment-default"
+        >Default for new sessions</mat-slide-toggle
+      >
+    </div>
+    @if (problem('name'); as text) {
+    <p class="error">{{ text }}</p>
+    }
+  </section>
+
+  <section class="block">
+    <h3 class="app-section-label">Variables</h3>
+    <p class="hint">
+      Environment variables of Claude Code and every command it runs, and of the
+      setup scripts. Secrets are stored encrypted, never shown again and masked
+      as *** in the conversation.
+    </p>
+    @for (entry of d.variables; track entry.key) {
+    <div class="entry" data-testid="variable">
+      <div class="row">
+        <mat-form-field
+          appearance="outline"
+          class="name"
+          subscriptSizing="dynamic"
+        >
+          <mat-label>Name</mat-label>
+          <input
+            matInput
+            [name]="'variable-name-' + entry.key"
+            [ngModel]="entry.name"
+            (ngModelChange)="updateEntry('variables', entry.key, { name: $event })"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            data-testid="variable-name"
+          />
+        </mat-form-field>
+        @if (keepsStored(entry)) {
+        <span class="stored" data-testid="variable-stored"
+          ><app-icon name="key" />Set ({{ entry.length }} characters)</span
+        >
+        <button
+          matButton
+          type="button"
+          (click)="replace('variables', entry)"
+          data-testid="variable-replace"
+        >
+          Replace
+        </button>
+        } @else {
+        <mat-form-field
+          appearance="outline"
+          class="grow"
+          subscriptSizing="dynamic"
+        >
+          <mat-label>{{ entry.stored ? 'New value' : 'Value' }}</mat-label>
+          <input
+            matInput
+            [type]="entry.secret ? 'password' : 'text'"
+            [name]="'variable-value-' + entry.key"
+            [ngModel]="entry.value"
+            (ngModelChange)="updateEntry('variables', entry.key, { value: $event })"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            data-testid="variable-value"
+          />
+        </mat-form-field>
+        @if (entry.stored && entry.secret) {
+        <button matButton type="button" (click)="keep('variables', entry)">
+          Keep old
+        </button>
+        } }
+      </div>
+      <div class="row">
+        <mat-slide-toggle
+          [name]="'variable-secret-' + entry.key"
+          [ngModel]="entry.secret"
+          (ngModelChange)="toggleSecret('variables', entry, $event)"
+          data-testid="variable-secret"
+          >Secret</mat-slide-toggle
+        >
+        <span class="spacer"></span>
+        <button
+          matButton
+          type="button"
+          class="app-danger"
+          (click)="removeEntry('variables', entry.key)"
+          data-testid="variable-remove"
+        >
+          <app-icon name="trash" />Remove
+        </button>
+      </div>
+      @if (problem('variable-' + entry.key); as text) {
+      <p class="error" data-testid="variable-problem">{{ text }}</p>
+      }
+    </div>
+    }
+    <button
+      matButton
+      type="button"
+      (click)="addVariable()"
+      data-testid="add-variable"
+    >
+      <app-icon name="plus" />Add variable
+    </button>
+  </section>
+
+  <section class="block">
+    <h3 class="app-section-label">Files</h3>
+    <p class="hint">
+      Written for each Claude Code process (and setup script) into a private
+      directory of the session, outside the clones, and removed when it ends.
+      The variable gets the file's path, e.g.
+      <code>GOOGLE_APPLICATION_CREDENTIALS</code>, <code>KUBECONFIG</code> or
+      <code>NPM_CONFIG_USERCONFIG</code>.
+    </p>
+    @for (entry of d.files; track entry.key) {
+    <div class="entry" data-testid="file">
+      <div class="row">
+        <mat-form-field
+          appearance="outline"
+          class="name"
+          subscriptSizing="dynamic"
+        >
+          <mat-label>Variable with the path</mat-label>
+          <input
+            matInput
+            [name]="'file-variable-' + entry.key"
+            [ngModel]="entry.name"
+            (ngModelChange)="updateEntry('files', entry.key, { name: $event })"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            data-testid="file-variable"
+          />
+        </mat-form-field>
+        <mat-form-field
+          appearance="outline"
+          class="name"
+          subscriptSizing="dynamic"
+        >
+          <mat-label>File name</mat-label>
+          <input
+            matInput
+            [name]="'file-name-' + entry.key"
+            [ngModel]="entry.fileName"
+            (ngModelChange)="updateEntry('files', entry.key, { fileName: $event })"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            placeholder="credentials.json"
+            data-testid="file-name"
+          />
+        </mat-form-field>
+      </div>
+      @if (keepsStored(entry)) {
+      <div class="row">
+        <span class="stored" data-testid="file-stored"
+          ><app-icon name="key" />Set ({{ entry.length }} characters)</span
+        >
+        <button
+          matButton
+          type="button"
+          (click)="replace('files', entry)"
+          data-testid="file-replace"
+        >
+          Replace
+        </button>
+      </div>
+      } @else {
+      <mat-form-field
+        appearance="outline"
+        class="full"
+        subscriptSizing="dynamic"
+      >
+        <mat-label>{{ entry.stored ? 'New content' : 'Content' }}</mat-label>
+        <textarea
+          matInput
+          class="mono"
+          [name]="'file-content-' + entry.key"
+          [ngModel]="entry.value"
+          (ngModelChange)="updateEntry('files', entry.key, { value: $event })"
+          cdkTextareaAutosize
+          cdkAutosizeMinRows="3"
+          cdkAutosizeMaxRows="14"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          data-testid="file-content"
+        ></textarea>
+      </mat-form-field>
+      @if (entry.stored && entry.secret) {
+      <button matButton type="button" (click)="keep('files', entry)">
+        Keep old
+      </button>
+      } }
+      <div class="row">
+        <mat-slide-toggle
+          [name]="'file-secret-' + entry.key"
+          [ngModel]="entry.secret"
+          (ngModelChange)="toggleSecret('files', entry, $event)"
+          data-testid="file-secret"
+          >Secret</mat-slide-toggle
+        >
+        <span class="spacer"></span>
+        <button
+          matButton
+          type="button"
+          class="app-danger"
+          (click)="removeEntry('files', entry.key)"
+          data-testid="file-remove"
+        >
+          <app-icon name="trash" />Remove
+        </button>
+      </div>
+      @if (problem('file-' + entry.key); as text) {
+      <p class="error" data-testid="file-problem">{{ text }}</p>
+      }
+    </div>
+    }
+    <button matButton type="button" (click)="addFile()" data-testid="add-file">
+      <app-icon name="plus" />Add file
+    </button>
+    @if (problem('entries'); as text) {
+    <p class="error">{{ text }}</p>
+    }
+  </section>
+
+  <section class="block">
+    <h3 class="app-section-label">Instructions</h3>
+    <mat-form-field appearance="outline" class="full" subscriptSizing="dynamic">
+      <mat-label>Additional information for Claude</mat-label>
+      <textarea
+        matInput
+        name="instructions"
+        [ngModel]="d.instructions"
+        (ngModelChange)="change({ instructions: $event })"
+        cdkTextareaAutosize
+        cdkAutosizeMinRows="3"
+        cdkAutosizeMaxRows="14"
+        data-testid="environment-instructions"
+      ></textarea>
+      <mat-hint
+        >Appended to the system prompt, e.g. "The staging API is at …, its key
+        is in $STAGING_KEY"</mat-hint
+      >
+    </mat-form-field>
+    @if (problem('instructions'); as text) {
+    <p class="error">{{ text }}</p>
+    }
+  </section>
+
+  <section class="block">
+    <h3 class="app-section-label">Setup script</h3>
+    <mat-form-field appearance="outline" class="full" subscriptSizing="dynamic">
+      <mat-label>Shell script</mat-label>
+      <textarea
+        matInput
+        class="mono"
+        name="setupScript"
+        [ngModel]="d.setupScript"
+        (ngModelChange)="change({ setupScript: $event })"
+        cdkTextareaAutosize
+        cdkAutosizeMinRows="2"
+        cdkAutosizeMaxRows="14"
+        autocapitalize="off"
+        spellcheck="false"
+        data-testid="environment-setup-script"
+      ></textarea>
+      <mat-hint
+        >Runs once when a session is prepared, after the repositories' setup
+        scripts, in its working directory</mat-hint
+      >
+    </mat-form-field>
+    @if (problem('setupScript'); as text) {
+    <p class="error">{{ text }}</p>
+    }
+  </section>
+
+  <section class="block">
+    <h3 class="app-section-label">Presets for new sessions</h3>
+    <p class="hint">
+      Choosing the environment in the new-session form fills these in; they can
+      still be changed there.
+    </p>
+    @for (entry of d.repositories; track entry.key; let index = $index) {
+    <div class="row" data-testid="preset-repository">
+      <mat-form-field
+        appearance="outline"
+        class="grow"
+        subscriptSizing="dynamic"
+      >
+        <mat-label
+          >{{ index === 0 ? 'Main repository' : 'Additional repository'
+          }}</mat-label
+        >
+        <mat-select
+          [value]="entry.repositoryId"
+          (selectionChange)="chooseRepository(entry.key, $event.value)"
+          data-testid="preset-repository-select"
+        >
+          @for (repository of repositories(); track repository.id) {
+          <mat-option
+            [value]="repository.id"
+            [disabled]="
+              repository.id !== entry.repositoryId &&
+              chosenIds().has(repository.id)
+            "
+            >{{ repository.fullName }}</mat-option
+          >
+          }
+        </mat-select>
+      </mat-form-field>
+      <mat-form-field
+        appearance="outline"
+        class="name"
+        subscriptSizing="dynamic"
+      >
+        <mat-label>Base branch</mat-label>
+        <mat-select
+          [value]="entry.baseBranch"
+          (selectionChange)="chooseBaseBranch(entry.key, $event.value)"
+          [disabled]="!entry.repositoryId"
+        >
+          <mat-option value=""
+            >{{ defaultLabel(entry.repositoryId) }}</mat-option
+          >
+          @for (branch of branchOptions(entry.repositoryId); track branch) {
+          <mat-option [value]="branch">{{ branch }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+      <button
+        type="button"
+        class="app-icon-btn"
+        (click)="removeRepository(entry.key)"
+        title="Remove this repository"
+      >
+        <app-icon name="close" /><span class="visually-hidden">Remove</span>
+      </button>
+    </div>
+    } @if (repositories().length > d.repositories.length) {
+    <button
+      matButton
+      type="button"
+      (click)="addRepository()"
+      data-testid="add-preset-repository"
+    >
+      <app-icon name="plus" />Add repository
+    </button>
+    }
+    <div class="row">
+      <mat-form-field
+        appearance="outline"
+        class="grow"
+        subscriptSizing="dynamic"
+      >
+        <mat-label>Model</mat-label>
+        <mat-select
+          name="model"
+          [ngModel]="d.model"
+          (ngModelChange)="change({ model: $event })"
+          data-testid="environment-model"
+        >
+          <mat-option value="">No preset</mat-option>
+          @for (option of modelOptions(); track option.value) {
+          <mat-option [value]="option.value">{{ option.label }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+      <mat-form-field
+        appearance="outline"
+        class="grow"
+        subscriptSizing="dynamic"
+      >
+        <mat-label>Permissions</mat-label>
+        <mat-select
+          name="permissionMode"
+          [ngModel]="d.permissionMode"
+          (ngModelChange)="change({ permissionMode: $event })"
+          data-testid="environment-mode"
+        >
+          <mat-option value="">No preset</mat-option>
+          @for (option of modeOptions; track option.value) {
+          <mat-option
+            [value]="option.value"
+            [title]="option.description"
+            [class.mode-danger]="option.dangerous"
+            >{{ option.label }}</mat-option
+          >
+          }
+        </mat-select>
+      </mat-form-field>
+    </div>
+  </section>
+
+  @if (error(); as text) {
+  <p class="error" role="alert" data-testid="environment-error">{{ text }}</p>
+  } @if (attempted() && problems().size > 0) {
+  <p class="error" data-testid="environment-problems">
+    Fix the fields marked above.
+  </p>
+  }
+  <div class="actions">
+    <button matButton type="button" (click)="cancelled.emit()">Cancel</button>
+    <button
+      matButton="filled"
+      type="submit"
+      [disabled]="saving()"
+      data-testid="environment-save"
+    >
+      Save
+    </button>
+  </div>
+</form>

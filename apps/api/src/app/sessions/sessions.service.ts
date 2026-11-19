@@ -142,6 +142,8 @@ import {
   type SessionDirectoryRecord,
   type SessionRecord,
 } from './session.repository';
+import { EnvironmentsService } from '../environments/environments.service';
+import { NO_MASKING, type SecretMasker } from '../environments/secret-masker';
 import { EMPTY_USAGE, UsageRepository } from './usage.repository';
 import { sumUsage, UsageTracker } from './usage-tracker';
 
@@ -361,6 +363,11 @@ interface LiveSession {
   /** Stops the preparation of a repository being added (ending the session). */
   addition: AbortController | null;
   /**
+   * Masks the secrets of the session's environment in its events; read on
+   * first use and again for each process (see {@link SessionsService.maskFor}).
+   */
+  mask?: SecretMasker;
+  /**
    * `add_repository` calls the user approved, by tool use ID: what the
    * user saw and allowed, used once by the tool (calls that did not ask
    * are resolved by the tool itself).
@@ -549,7 +556,31 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // Keeps what each session's Claude Code reports for `/` autocomplete.
     @Optional()
     private readonly slashCommands?: SlashCommandsService,
+    @Optional()
+    private readonly environments?: EnvironmentsService,
   ) {}
+
+  /**
+   * The masker of a session's environment secrets, cached on the live
+   * session. If the secrets cannot be read (e.g. the key changed), events
+   * are not stopped: the error is logged and nothing is masked.
+   */
+  private maskFor(live: LiveSession): SecretMasker {
+    if (!live.mask) {
+      const record = this.sessions.get(live.id);
+      try {
+        live.mask =
+          this.environments?.masker(record?.environmentId ?? null) ??
+          NO_MASKING;
+      } catch (error) {
+        this.logger.warn(
+          `Could not read the environment secrets of ${live.id}: ${String(error)}`,
+        );
+        live.mask = NO_MASKING;
+      }
+    }
+    return live.mask;
+  }
 
   /**
    * Sessions still marked running were cut off by a server stop that did not
@@ -698,6 +729,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const permissionMode =
       optionalEnum(body, 'permissionMode', SESSION_PERMISSION_MODES) ??
       'default';
+    const environment = this.environments
+      ? this.environments.requireForSession(body['environmentId'])
+      : null;
 
     this.attachmentStore(attachmentIds).check(attachmentIds);
     const plan = await this.workspaces.plan(request, title);
@@ -717,6 +751,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         slug: plan.slug,
         pendingMessage: message,
         directories: plan.directories,
+        environmentId: environment?.id ?? null,
+        environmentSetupStatus: environment?.setupScript ? 'pending' : 'none',
       });
     } catch (error) {
       if (
@@ -1600,8 +1636,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Nothing else is logged before the history is loaded.
       const images = this.attachments?.forSession(record.id) ?? new Map();
       const contexts = this.contexts?.forSession(record.id) ?? new Map();
+      // Freshly, with the environment's current secrets.
+      live.mask = undefined;
+      const mask = this.maskFor(live);
       const extras = (event: SessionEventInput) =>
-        withContext(withAttachments(event, images), contexts);
+        mask(withContext(withAttachments(event, images), contexts));
       // Context messages sent before user messages are not conversation.
       const contextIds = new Set(
         [...contexts.values()].map((summary) => summary.contextId),
@@ -1773,6 +1812,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.closing = null;
     live.contextResults = 0;
     live.reportedMode = null;
+    // A changed secret is masked from this process on.
+    live.mask = undefined;
     try {
       const extras = await this.support.prepare(record);
       // What the user allowed for the session applies to every process.
@@ -2394,11 +2435,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const tasks = [...live.heldTasks];
     live.heldTasks.clear();
     for (const taskId of tasks) {
-      void run?.stopTask(taskId).catch((error: unknown) =>
-        this.logger.warn(
-          `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
-        ),
-      );
+      void run
+        ?.stopTask(taskId)
+        .catch((error: unknown) =>
+          this.logger.warn(
+            `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
+          ),
+        );
     }
     const mode = this.requireRecord(live.id).permissionMode;
     if (run && heldForUntrusted(mode)) {
@@ -3679,9 +3722,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   private append(
     live: LiveSession,
-    input: SessionEventInput,
+    unmasked: SessionEventInput,
     { store = true }: { store?: boolean } = {},
   ): void {
+    // Secrets of the environment never reach the log, the database, the
+    // clients or the hooks (notifications, search).
+    const input = this.maskFor(live)(unmasked);
     const event = live.log.append(input);
     this.eventAppended?.(live.id, input);
     if (store && STORED_EVENT_TYPES.has(input.type)) {
@@ -3955,6 +4001,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       autoclosedAt: record.autoclosedAt?.toISOString() ?? null,
       previews: this.previews?.forSession(record.id) ?? [],
       archivedAt: record.archivedAt?.toISOString() ?? null,
+      environment: this.environments?.summary(record.environmentId) ?? null,
     };
   }
 }

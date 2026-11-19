@@ -1,3 +1,7 @@
+import { SINGLE_USER } from '../../common/process-isolation';
+import { EnvironmentFiles } from '../../environments/environment-files';
+import { EnvironmentsService } from '../../environments/environments.service';
+import { SecretCipher } from '../../environments/secret-cipher';
 import { SessionFileAccess } from '../../files/session-file-access';
 import { ShownFilesService } from '../../shown-files/shown-files.service';
 import { randomUUID } from 'node:crypto';
@@ -103,6 +107,14 @@ export class WorkspaceHarness {
   readonly events: SessionEventEnvelope[] = [];
   readonly config: AppConfig = testAppConfig(this.dir);
   readonly approver = new RecordingApprover();
+  readonly environments = new EnvironmentsService(
+    this.db,
+    new SecretCipher(this.config.environmentKeyFile, undefined),
+  );
+  readonly environmentFiles = new EnvironmentFiles(
+    this.config.environmentFilesDir,
+    SINGLE_USER,
+  );
   /** Hooks for the PR automation (set by its tests). */
   readonly hooks = new SessionAutomationHooks();
   repositories!: RepositoriesService;
@@ -130,6 +142,8 @@ export class WorkspaceHarness {
       this.git,
       new SetupScriptRunner(),
       this.settings,
+      this.environments,
+      this.environmentFiles,
     );
     this.workspaces.onModuleInit();
     this.additions = new RepositoryAdditions(this.repositories);
@@ -154,6 +168,9 @@ export class WorkspaceHarness {
       this.shownFiles,
       undefined,
       this.hooks,
+      undefined,
+      this.environments,
+      this.environmentFiles,
     );
     this.service = new SessionsService(
       this.config,
@@ -174,6 +191,8 @@ export class WorkspaceHarness {
       this.hooks,
       undefined,
       this.additions,
+      undefined,
+      this.environments,
     );
     const service = this.service;
     this.shownFiles.shown$.subscribe(({ sessionId, toolUseId, file }) =>
