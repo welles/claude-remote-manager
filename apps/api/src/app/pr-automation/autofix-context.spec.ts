@@ -143,7 +143,9 @@ describe('autofix context', () => {
       number: 3,
       headSha: 'b'.repeat(40),
       branch: 'claude/fix-k3x9q2',
-      feedback: false,
+      context: 'none',
+      attempt: null,
+      maxAttempts: 3,
     });
     expect(plain).toContain('acme/app#3');
     expect(plain).toContain('bbbbbbbbbbbb');
@@ -156,9 +158,12 @@ describe('autofix context', () => {
       number: 3,
       headSha: 'not a sha',
       branch: 'claude/fix-k3x9q2',
-      feedback: true,
+      context: 'feedback',
+      attempt: 2,
+      maxAttempts: 3,
     });
     expect(withFeedback).toContain('untrusted context');
+    expect(withFeedback).toContain('attempt 2 of 3');
     expect(withFeedback).toContain('claude/fix-k3x9q2');
     expect(withFeedback).not.toContain('not a sha');
   });

@@ -643,8 +643,10 @@ describe('PrAutomationService', () => {
       const context = messages[0].context?.text ?? '';
       expect(context).toContain('No open findings.');
       expect(context).toContain('Summary: looks good.');
+      // The bot's comment may ask for changes: an attempt.
+      expect(messages[0].text).toContain('attempt 1 of 3');
       expect(record(pull)).toMatchObject({
-        autofixAttempts: 0,
+        autofixAttempts: 1,
         autofixLastTrigger: 'ready',
         autofixReadySha: head,
         autofixRunning: true,
@@ -690,7 +692,7 @@ describe('PrAutomationService', () => {
       expect(readyMessages()[0].context?.text ?? '').toContain(
         'Summary: no findings.',
       );
-      expect(record(pull).autofixAttempts).toBe(0);
+      expect(record(pull).autofixAttempts).toBe(1);
     });
 
     it('counts approvals of people with write access, without context when they wrote nothing', async () => {
@@ -712,6 +714,102 @@ describe('PrAutomationService', () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].context).toBeFalsy();
       expect(messages[0].text).not.toContain('untrusted context');
+      expect(record(pull).autofixAttempts).toBe(0);
+    });
+
+    it('sends approval text without an attempt, and at the limit leaves feedback to the give-up notice', async () => {
+      trustReviewer();
+      const { session, pull } = await sessionWithPullRequest();
+      const head = fakePull(pull.number).headSha;
+      automation.update(session.id, pull.id, { autofix: true, maxAttempts: 1 });
+      harness.sessions.updatePullRequest(pull.id, { autofixAttempts: 1 });
+      green(head);
+      addReview(pull, {
+        kind: 'review',
+        author: REVIEWER,
+        authorType: 'Bot',
+        state: 'APPROVED',
+        body: 'Fine.',
+        commitId: head,
+      });
+      addReview(pull, {
+        kind: 'comment',
+        author: REVIEWER,
+        authorType: 'Bot',
+        body: 'Nit: rename the helper.',
+      });
+      const before = record(pull).autofixReviewsAfter;
+
+      await automation.check(pull.id);
+
+      const messages = readyMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0].text).not.toContain('commit and push');
+      const context = messages[0].context?.text ?? '';
+      expect(context).toContain('Fine.');
+      expect(context).not.toContain('rename the helper');
+      expect(notifications.gaveUp).toHaveLength(1);
+      expect(record(pull)).toMatchObject({
+        autofixAttempts: 1,
+        autofixReadySha: head,
+      });
+      // The feedback stays new for a run after a reset.
+      expect(record(pull).autofixReviewsAfter).toEqual(before);
+    });
+
+    it('is not ready while a check was cancelled', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      const head = fakePull(pull.number).headSha;
+      enableAutofix(session.id, pull);
+      harness.github.checkRuns.set(head, [
+        {
+          id: 91,
+          name: 'test',
+          status: 'completed',
+          conclusion: 'cancelled',
+          app: 'github-actions',
+        },
+      ]);
+      addReview(pull, {
+        kind: 'review',
+        author: 'owner',
+        state: 'APPROVED',
+        body: '',
+        commitId: head,
+      });
+
+      await automation.check(pull.id);
+
+      expect(readyMessages()).toHaveLength(0);
+      expect(appMessages()).toHaveLength(0);
+    });
+
+    it('ignores dismissed reviews, and a dismissal withdraws a change request', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      const head = fakePull(pull.number).headSha;
+      enableAutofix(session.id, pull);
+      green(head);
+      addReview(pull, {
+        kind: 'review',
+        author: 'maintainer',
+        state: 'APPROVED',
+        body: '',
+        commitId: head,
+      });
+      addReview(pull, {
+        kind: 'review',
+        author: 'owner',
+        state: 'DISMISSED',
+        body: 'Withdrawn: please rewrite everything.',
+        commitId: head,
+      });
+
+      await automation.check(pull.id);
+
+      expect(appMessages()).toHaveLength(0);
+      const messages = readyMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0].context?.text ?? '').not.toContain('Withdrawn');
     });
 
     it('is not ready without a counting approval of the head commit, with changes requested, or with failed checks', async () => {

@@ -118,7 +118,12 @@ interface Triggers {
   /** The head commit passed all checks and is approved (not told yet). */
   ready: boolean;
   headSha: string | null;
+  /** At the attempt limit: feedback left out, the review time kept. */
+  limited?: boolean;
 }
+
+/** Conclusions (and status states) of checks that passed. */
+const PASSED_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
 
 /** Review states that decide whether a reviewer approves. */
 const DECIDING_REVIEW_STATES = new Set([
@@ -510,12 +515,21 @@ export class PrAutomationService
     if (!current?.autofix || current.state !== 'open') {
       return;
     }
-    // Telling the session that its pull request is ready is no attempt.
-    if (
-      !triggers.ready &&
-      current.autofixAttempts >= current.autofixMaxAttempts
-    ) {
-      this.giveUp(current, triggers);
+    if (current.autofixAttempts >= current.autofixMaxAttempts) {
+      if (triggers.failed.length > 0 || triggers.feedback.length > 0) {
+        this.giveUp(current, triggers);
+      }
+      if (!triggers.ready) {
+        return;
+      }
+      // The session still learns that the pull request is ready, but
+      // without the feedback that would need an attempt.
+      await this.startRun(current, repository, {
+        ...triggers,
+        failed: [],
+        feedback: [],
+        limited: true,
+      });
       return;
     }
     await this.startRun(current, repository, triggers);
@@ -555,8 +569,12 @@ export class PrAutomationService
         (item) =>
           new Date(item.createdAt).getTime() > after &&
           // An empty review (an approval without text, or the container
-          // of review comments) says nothing by itself.
-          !(item.kind === 'review' && item.body.trim() === ''),
+          // of review comments) says nothing by itself; a dismissed one
+          // was withdrawn.
+          !(
+            item.kind === 'review' &&
+            (item.body.trim() === '' || item.state === 'DISMISSED')
+          ),
       )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     for (const item of fresh) {
@@ -572,10 +590,15 @@ export class PrAutomationService
     const ready =
       headSha !== null &&
       headSha !== pull.autofixReadySha &&
-      pending.length === 0 &&
-      failedChecks(checks).length === 0 &&
+      checks.every(
+        (check) =>
+          check.status === 'completed' &&
+          check.conclusion !== null &&
+          PASSED_CONCLUSIONS.has(check.conclusion),
+      ) &&
       (await this.approved(repository, items, headSha));
     const key = `${pull.id}:${headSha}`;
+    this.forgetWaiting(pull.id, key);
     if (pending.length === 0) {
       this.waitingSince.delete(key);
     } else if (failures.length > 0 || feedback.length > 0) {
@@ -594,6 +617,15 @@ export class PrAutomationService
       ready,
       headSha,
     };
+  }
+
+  /** Drops what waited for other commits of a pull request than `keep`. */
+  private forgetWaiting(pullRequestId: number, keep?: string): void {
+    for (const key of this.waitingSince.keys()) {
+      if (key.startsWith(`${pullRequestId}:`) && key !== keep) {
+        this.waitingSince.delete(key);
+      }
+    }
   }
 
   /**
@@ -727,9 +759,11 @@ export class PrAutomationService
         : triggers.failed.length > 0
           ? 'ci'
           : 'review';
-    // Telling the session that its pull request is ready is no attempt
-    // (once per head commit).
-    const attempt = current.autofixAttempts + (trigger === 'ready' ? 0 : 1);
+    // Telling the session that its pull request is ready (once per head
+    // commit) is no attempt, unless feedback that may ask for changes
+    // comes along.
+    const counted = trigger !== 'ready' || triggers.feedback.length > 0;
+    const attempt = current.autofixAttempts + (counted ? 1 : 0);
     const directory = session.directories.find(
       (entry) =>
         entry.kind === 'clone' && entry.repositoryId === pull.repositoryId,
@@ -745,7 +779,14 @@ export class PrAutomationService
             number: pull.number,
             headSha: triggers.headSha,
             branch,
-            feedback: feedback.length > 0,
+            context:
+              triggers.feedback.length > 0
+                ? 'feedback'
+                : feedback.length > 0
+                  ? 'approvals'
+                  : 'none',
+            attempt: counted ? attempt : null,
+            maxAttempts: current.autofixMaxAttempts,
           })
         : autofixMessage({
             repository: pull.repositoryName,
@@ -776,10 +817,12 @@ export class PrAutomationService
         ? { autofixCiHandledSha: triggers.headSha }
         : {}),
       ...(trigger === 'ready' ? { autofixReadySha: triggers.headSha } : {}),
-      ...(newest ? { autofixReviewsAfter: new Date(newest) } : {}),
+      ...(newest && !triggers.limited
+        ? { autofixReviewsAfter: new Date(newest) }
+        : {}),
     });
     this.logger.log(
-      trigger === 'ready'
+      trigger === 'ready' && !counted
         ? `Told the session that ${pull.repositoryName}#${pull.number} is ready to merge`
         : `Autofix run ${attempt}/${current.autofixMaxAttempts} for ${pull.repositoryName}#${pull.number} (${trigger})`,
     );
@@ -1114,6 +1157,7 @@ export class PrAutomationService
     if (!pull || pull.state === 'open' || pull.closeHandledAt) {
       return;
     }
+    this.forgetWaiting(pull.id);
     this.records.updatePullRequest(pull.id, {
       closeHandledAt: new Date(),
       autofixRunning: false,

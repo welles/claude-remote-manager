@@ -1544,7 +1544,8 @@ at a time; one asked for meanwhile runs afterwards.
   turned on (or after the last run), by users
   whose permission on the repository is admin, maintain or write
   (`GET /repos/{owner}/{repo}/collaborators/{user}/permission`), or by a bot listed in
-  `PR_TRUSTED_BOTS` (e.g. a reviewer bot); other bots (the app itself, Actions, other apps)
+  `PR_TRUSTED_BOTS` (e.g. a reviewer bot; list only dedicated reviewer apps, not
+  `github-actions[bot]`, whose text any workflow can write); other bots (the app itself, Actions, other apps)
   and everybody else never start a run. Approvals and empty reviews ask for nothing and start
   no run; the text of an approval goes along as context of the next message.
 - **Coalescing**: one run handles everything that is current: all failed checks of the head
@@ -1553,15 +1554,20 @@ at a time; one asked for meanwhile runs afterwards.
   and feedback wait for them (at most 30 minutes after they were first seen), so a reviewer
   bot's comments, posted while its own check still runs, end up in the same run as the
   checks' results. A head commit's failures start at most one run; feedback is new only once.
-- **Ready to merge**: once all checks of the head commit have finished without failure and
+- **Ready to merge**: once all checks of the head commit have finished with `success`,
+  `neutral` or `skipped` (a cancelled check is not passed) and
   the commit is approved (the latest approving or change-requesting review of someone who
   counts as above approves exactly the head commit, and nobody who counts requests changes),
   the app tells the session so in its own words, once per head commit
   (`autofix_ready_sha`). New reviews and comments go along as untrusted context; the message
   asks Claude to address what should be changed, or else to merge if the user asked for that
   (merging still needs the owner's approval, as the turn runs like an autofix run), or to tell
-  the user. Such a message is no attempt and is sent also when the limit is reached; the last
-  trigger shows as "ready to merge".
+  the user. Such a message is no attempt unless reviews or comments that may ask for changes
+  come along. At the limit it is sent with the text of approvals only, and the rest gets the
+  usual give-up notice. The last trigger shows as "ready to merge". A check that never
+  finishes (a status stuck at `pending`, a job waiting for an environment approval) delays
+  feedback by the full 30 minutes and keeps the pull request from being ready. Drafts,
+  conflicts or branch protection are not looked at: GitHub may still refuse the merge.
 - **Busy sessions**: a run starts only while the session waits for a message (not while a
   turn runs, an approval, question or plan waits, the first message is held back, or the
   session is finished or failed). Events meanwhile are not queued: when the session waits for
