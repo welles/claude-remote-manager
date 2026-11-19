@@ -9,6 +9,7 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import type {
   PreviewStopper,
+  PullRequestChecksDto,
   PullRequestCreator,
   PullRequestState,
   RepositoryAddedBy,
@@ -291,6 +292,8 @@ export const pullRequests = sqliteTable(
     automergeWaiting: text('automerge_waiting'),
     /** Head commit for which the owner was told that automerge is stuck. */
     automergeNotifiedSha: text('automerge_notified_sha'),
+    /** CI checks of the head commit as last read (for the view only). */
+    checks: text('checks', { mode: 'json' }).$type<PullRequestChecksDto>(),
   },
   (table) => [
     uniqueIndex('pull_requests_repository_number').on(

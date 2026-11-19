@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm';
 import type {
   PullRequestCreator,
+  PullRequestChecksDto,
   PullRequestState,
   RepositoryAddedBy,
   RepositoryAdditionState,
@@ -503,16 +504,37 @@ export class SessionRepository {
     ) as PullRequestRecord;
   }
 
-  updatePullRequest(id: number, patch: PullRequestPatch): void {
+  /**
+   * Changes a pull request; `touch: false` leaves the session's
+   * `updatedAt` (its place in the list) alone.
+   */
+  updatePullRequest(
+    id: number,
+    patch: PullRequestPatch,
+    { touch = true }: { touch?: boolean } = {},
+  ): void {
     const row = this.db
       .update(pullRequests)
       .set(patch)
       .where(eq(pullRequests.id, id))
       .returning({ sessionId: pullRequests.sessionId })
       .get();
-    if (row) {
+    if (row && touch) {
       this.touch(row.sessionId);
     }
+  }
+
+  /**
+   * Stores the checks read for a pull request's head commit. Unlike
+   * {@link updatePullRequest} it leaves the session's `updatedAt` alone:
+   * CI progress does not move a session up the list.
+   */
+  setPullRequestChecks(id: number, checks: PullRequestChecksDto): void {
+    this.db
+      .update(pullRequests)
+      .set({ checks })
+      .where(eq(pullRequests.id, id))
+      .run();
   }
 
   /** A pull request by its ID. */

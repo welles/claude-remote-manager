@@ -15,6 +15,7 @@ import {
 import { errorMessage } from '../repositories/repositories-api';
 import { DiscardCloneDialog } from './discard-clone-dialog';
 import { PullRequestAutomation } from './pull-request-automation';
+import { PullRequestChecks } from './pull-request-checks';
 import { SessionsApi } from './sessions-api';
 
 /** A clone of the session that can be pushed. */
@@ -52,6 +53,7 @@ export const PULL_REQUEST_STATE_LABELS: Record<
     MatFormFieldModule,
     MatInputModule,
     PullRequestAutomation,
+    PullRequestChecks,
     TextFieldModule,
   ],
   templateUrl: './session-git-panel.html',

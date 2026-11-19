@@ -45,5 +45,6 @@ export function pullRequestDto(pull: PullRequestRecord): PullRequestDto {
       lastRunAt: pull.autofixLastRunAt?.toISOString() ?? null,
       lastTrigger: (pull.autofixLastTrigger as AutofixTrigger | null) ?? null,
     },
+    checks: pull.checks ?? null,
   };
 }

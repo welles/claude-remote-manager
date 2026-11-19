@@ -135,6 +135,62 @@ describe('SessionGitPanel', () => {
     expect(all('pr-automation')).toHaveLength(1);
   });
 
+  it('shows the checks of an open pull request, folded into one line', async () => {
+    const { element, all, click } = await render(
+      githubSession({
+        pullRequests: [
+          pull({
+            checks: {
+              headSha: 'a'.repeat(40),
+              readAt: '2026-01-01T10:00:00.000Z',
+              checks: [
+                {
+                  name: 'test',
+                  state: 'failure',
+                  url: 'https://github.com/acme/app/runs/1',
+                },
+                { name: 'lint', state: 'pending', url: null },
+                { name: 'build', state: 'success', url: null },
+                { name: 'review', state: 'neutral', url: null },
+              ],
+            },
+          }),
+          pull({
+            id: 2,
+            number: 8,
+            checks: {
+              headSha: 'b'.repeat(40),
+              readAt: '2026-01-01T10:00:00.000Z',
+              checks: [],
+            },
+          }),
+          pull({ id: 3, number: 9 }),
+        ],
+      }),
+    );
+    expect(all('pr-checks-summary')).toEqual([
+      'Checks: 1 failed, 1 running, 2 passed',
+      'No checks reported',
+    ]);
+    const summary = element.querySelector(
+      '[data-testid="pr-checks-summary"]',
+    ) as HTMLElement;
+    expect(summary.getAttribute('aria-expanded')).toBe('false');
+    expect(all('pr-check')).toEqual([]);
+    await click('pr-checks-summary');
+    expect(summary.getAttribute('aria-expanded')).toBe('true');
+    expect(all('pr-check')).toEqual([
+      'test failed',
+      'lint running',
+      'build passed',
+      'review neutral',
+    ]);
+    const link = element.querySelector(
+      '[data-testid="pr-check"] a',
+    ) as HTMLAnchorElement;
+    expect(link.href).toBe('https://github.com/acme/app/runs/1');
+  });
+
   describe('PR automation', () => {
     const automation = (
       overrides: Partial<PullRequestDto['automation']> = {},

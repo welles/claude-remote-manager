@@ -65,6 +65,7 @@ export class SessionGitService {
   private readonly locks = new KeyedMutex();
   private readonly changes = new Subject<string>();
   private readonly closed = new Subject<PullRequestRecord>();
+  private readonly refreshed = new Subject<PullRequestRecord>();
   /** IDs of sessions whose clones or pull requests changed. */
   readonly changes$ = this.changes.asObservable();
   /**
@@ -72,6 +73,8 @@ export class SessionGitService {
    * are read so; the PR automation handles each once).
    */
   readonly closed$ = this.closed.asObservable();
+  /** Open pull requests just created or read from GitHub. */
+  readonly refreshed$ = this.refreshed.asObservable();
 
   constructor(
     private readonly sessions: SessionRepository,
@@ -272,6 +275,7 @@ export class SessionGitService {
       syncedAt: new Date(),
     });
     this.changes.next(sessionId);
+    this.refreshed.next(saved);
     return pullRequestDto(saved);
   }
 
@@ -326,26 +330,34 @@ export class SessionGitService {
       `${repository.owner}/${repository.name}`,
       pull.number,
     );
-    this.sessions.updatePullRequest(pull.id, {
-      title: info.title,
-      state: info.state,
-      draft: info.draft,
-      baseBranch: info.baseBranch,
-      headSha: info.headSha,
-      closedAt: info.closedAt,
-      mergedAt: info.mergedAt,
-      syncedAt: new Date(),
-    });
-    const updated = this.sessions.pullRequest(pull.id) ?? null;
-    if (
+    const changed =
       pull.state !== info.state ||
       pull.title !== info.title ||
-      pull.draft !== info.draft
-    ) {
+      pull.draft !== info.draft;
+    // Reading the same state again does not move the session up the list.
+    const touch = changed || pull.headSha !== info.headSha;
+    this.sessions.updatePullRequest(
+      pull.id,
+      {
+        title: info.title,
+        state: info.state,
+        draft: info.draft,
+        baseBranch: info.baseBranch,
+        headSha: info.headSha,
+        closedAt: info.closedAt,
+        mergedAt: info.mergedAt,
+        syncedAt: new Date(),
+      },
+      { touch },
+    );
+    const updated = this.sessions.pullRequest(pull.id) ?? null;
+    if (changed) {
       this.changes.next(pull.sessionId);
     }
     if (updated && updated.state !== 'open') {
       this.closed.next(updated);
+    } else if (updated) {
+      this.refreshed.next(updated);
     }
     return updated;
   }

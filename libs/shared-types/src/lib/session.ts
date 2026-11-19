@@ -263,6 +263,43 @@ export interface PullRequestDto {
   syncedAt: string;
   /** PR automation of this pull request (see `PullRequestAutomationDto`). */
   automation: PullRequestAutomationDto;
+  /**
+   * CI checks of the head commit as last read from GitHub; `null` (or
+   * absent from older servers) until they were read.
+   */
+  checks?: PullRequestChecksDto | null;
+}
+
+/**
+ * State of one check: `pending` (queued or running), `failure` (also
+ * timed out, errored or needing action), `cancelled` (also stale).
+ */
+export type PullRequestCheckState =
+  | 'pending'
+  | 'success'
+  | 'failure'
+  | 'neutral'
+  | 'skipped'
+  | 'cancelled';
+
+/** A check run or commit status of a pull request's head commit. */
+export interface PullRequestCheckDto {
+  name: string;
+  state: PullRequestCheckState;
+  /** Details on GitHub (or wherever the check links to). */
+  url: string | null;
+}
+
+/**
+ * The checks of a pull request's head commit, failed first, then running,
+ * then the rest (by name each). Re-read on webhook deliveries and, while
+ * the session is viewed, every 30 seconds while checks run.
+ */
+export interface PullRequestChecksDto {
+  /** The commit they belong to (an older head's checks until re-read). */
+  headSha: string;
+  readAt: string;
+  checks: PullRequestCheckDto[];
 }
 
 /**
