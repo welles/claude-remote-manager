@@ -2641,6 +2641,24 @@ describe('SessionsService', () => {
       expect(service.get(session.id).waitingFor).toBe('background');
     });
 
+    it('waits for background tasks at most a while after the turn', async () => {
+      service.claudeWaitLimitMs = 60;
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks({ task_id: 'dev-server' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
+      // A task that never ends (a dev server) holds the session no longer.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(service.get(session.id)).toMatchObject({
+        waitingFor: 'message',
+        backgroundTasks: 1,
+      });
+      expect(runner.last.closed).toBe(false);
+    });
+
     it('forgets background tasks when the process ends', async () => {
       const session = await startSession();
       runner.last.emit(

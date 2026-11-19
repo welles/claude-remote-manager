@@ -395,6 +395,13 @@ interface LiveSession {
    */
   backgroundGrace: ReturnType<typeof setTimeout> | null;
   /**
+   * Runs from the end of a turn: once it fired (`backgroundOverdue`), the
+   * background tasks alone no longer make the session wait for them (a
+   * task that never ends, such as a dev server, would hold it forever).
+   */
+  backgroundLimit: ReturnType<typeof setTimeout> | null;
+  backgroundOverdue: boolean;
+  /**
    * What Claude said the session waits for after the current or last turn
    * (`set_waiting_state`): ahead of the background tasks; cleared when the
    * next turn starts, with the process, and `work` after
@@ -1384,6 +1391,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live) {
       this.clearIdleTimer(live);
       this.clearBackgroundGrace(live);
+      this.clearBackgroundLimit(live);
       this.clearClaudeWait(live);
       const run = live.run;
       // Detached first: the message loop then ends without looking for
@@ -1472,6 +1480,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       heldTasks: new Set(),
       backgroundTasks: new Set(),
       backgroundGrace: null,
+      backgroundLimit: null,
+      backgroundOverdue: false,
       claudeWait: null,
       reportedMode: null,
       modeRequests: 0,
@@ -1810,6 +1820,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       live.backgroundTasks.size > 0 || live.claudeWait?.on === 'work';
     live.backgroundTasks.clear();
     this.clearBackgroundGrace(live);
+    this.clearBackgroundLimit(live);
     this.clearClaudeWait(live);
     live.reportedMode = null;
     this.clearIdleTimer(live);
@@ -3233,6 +3244,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.heldTasks.clear();
     live.backgroundTasks.clear();
     this.clearBackgroundGrace(live);
+    this.clearBackgroundLimit(live);
     this.clearClaudeWait(live);
     live.reportedMode = null;
     this.approver.cancelSession(live.id, 'process_exit');
@@ -3263,10 +3275,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // A turn runs: background work reported back or is waited for anew,
       // and Claude says anew what comes after it.
       this.clearBackgroundGrace(live);
+      this.clearBackgroundLimit(live);
       this.clearClaudeWait(live);
     }
     if (status === 'waiting') {
       this.startClaudeWaitTimer(live);
+      this.startBackgroundLimit(live);
       this.startIdleTimer(live);
     } else {
       this.clearIdleTimer(live);
@@ -3411,7 +3425,37 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live.claudeWait) {
       return live.claudeWait.on === 'work';
     }
-    return live.backgroundTasks.size > 0 || live.backgroundGrace !== null;
+    return (
+      !live.backgroundOverdue &&
+      (live.backgroundTasks.size > 0 || live.backgroundGrace !== null)
+    );
+  }
+
+  /** Starts the time limit of waiting for background tasks after a turn. */
+  private startBackgroundLimit(live: LiveSession): void {
+    this.clearBackgroundLimit(live);
+    live.backgroundLimit = setTimeout(() => {
+      live.backgroundLimit = null;
+      live.backgroundOverdue = true;
+      if (
+        this.live.get(live.id) !== live ||
+        this.sessions.get(live.id)?.status !== 'waiting' ||
+        live.closing
+      ) {
+        return;
+      }
+      // Ready now (unless Claude said it goes on by itself).
+      this.publishStatus(live);
+    }, this.claudeWaitLimitMs);
+    live.backgroundLimit.unref?.();
+  }
+
+  private clearBackgroundLimit(live: LiveSession): void {
+    if (live.backgroundLimit) {
+      clearTimeout(live.backgroundLimit);
+      live.backgroundLimit = null;
+    }
+    live.backgroundOverdue = false;
   }
 
   /**
