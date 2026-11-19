@@ -102,7 +102,10 @@ describe('NotificationSettings', () => {
     http.expectOne('/api/notifications').flush(notificationStatus());
     fixture.detectChanges();
     expect(TestBed.inject(Toasts).all()).toMatchObject([
-      { title: 'Device removed', lines: ['Chrome on Linux'] },
+      {
+        title: 'Device removed',
+        lines: ['Chrome on Linux · fcm.googleapis.com'],
+      },
     ]);
   });
 

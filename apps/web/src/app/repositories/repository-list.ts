@@ -262,10 +262,13 @@ export class RepositoryList implements OnInit {
         this.editing.set(null);
         this.upsert(updated);
         this.toasts.show({
-          title: script
-            ? `Setup script of ${updated.fullName} saved`
-            : `Setup script of ${updated.fullName} removed`,
-          lines: ['It runs for new session clones.'],
+          title:
+            script || !repository.setupScript
+              ? `Setup script of ${updated.fullName} saved`
+              : `Setup script of ${updated.fullName} removed`,
+          lines: script
+            ? ['It runs for new session clones and retried setups.']
+            : ['New session clones get no setup.'],
         });
       },
       error: (error: unknown) => {

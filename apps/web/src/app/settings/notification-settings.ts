@@ -16,6 +16,7 @@ import {
   type NotificationChannel,
   type NotificationEventType,
   type NotificationStatusDto,
+  type PushSubscriptionDto,
 } from '@claude-remote-manager/shared-types';
 import { firstValueFrom } from 'rxjs';
 import { errorMessage } from '../repositories/repositories-api';
@@ -164,10 +165,14 @@ export class NotificationSettings implements OnInit {
     }
   }
 
-  protected removeDevice(device: { id: string; label: string }): void {
+  protected removeDevice(device: PushSubscriptionDto): void {
+    this.deviceMessage.set(null);
     this.api.removeDevice(device.id).subscribe({
       next: () => {
-        this.toasts.show({ title: 'Device removed', lines: [device.label] });
+        this.toasts.show({
+          title: 'Device removed',
+          lines: [`${device.label} · ${device.pushService}`],
+        });
         this.load();
       },
       error: (error: unknown) =>
