@@ -32,16 +32,18 @@ export class ViewerPresence {
 
   /** Whether an active client shows this session. */
   isViewed(sessionId: string): boolean {
+    return this.viewedSessions().has(sessionId);
+  }
+
+  /** IDs of the sessions active clients show. */
+  viewedSessions(): Set<string> {
     const limit = this.now() - PRESENCE_TIMEOUT_MS;
+    const viewed = new Set<string>();
     for (const presence of this.clients.values()) {
-      if (
-        presence.active &&
-        presence.sessionId === sessionId &&
-        presence.at >= limit
-      ) {
-        return true;
+      if (presence.active && presence.sessionId && presence.at >= limit) {
+        viewed.add(presence.sessionId);
       }
     }
-    return false;
+    return viewed;
   }
 }

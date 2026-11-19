@@ -122,7 +122,9 @@
         <span class="by"
           >{{ pull.createdBy === 'claude' ? 'by Claude' : '' }}</span
         >
-        @if (pull.state === 'open') {
+        @if (pull.state === 'open') { @if (pull.checks; as checks) {
+        <app-pull-request-checks class="pull-checks" [checks]="checks" />
+        }
         <app-pull-request-automation
           class="pull-automation"
           [sessionId]="session().id"

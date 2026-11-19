@@ -12,6 +12,7 @@ import {
   PR_AUTOMATION_TIMING,
   PrAutomationService,
 } from './pr-automation.service';
+import { PullRequestChecksService } from './pull-request-checks.service';
 import { PullRequestFeedback } from './pull-request-feedback';
 import { WebhookDeliveryRepository } from './webhook-deliveries.repository';
 import { WebhookController, WebhookHandler } from './webhook.controller';
@@ -61,6 +62,7 @@ import { WebhookSecret } from './webhook-signature';
         new PullRequestFeedback(github, http),
     },
     WebhookDeliveryRepository,
+    PullRequestChecksService,
     PrAutomationService,
     { provide: WebhookHandler, useExisting: PrAutomationService },
   ],

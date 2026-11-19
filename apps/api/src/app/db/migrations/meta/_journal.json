@@ -113,6 +113,13 @@
       "when": 1795095939065,
       "tag": "0015_pr_automerge",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1795101537074,
+      "tag": "0016_pr_checks",
+      "breakpoints": true
     }
   ]
 }

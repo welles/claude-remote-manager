@@ -10,6 +10,7 @@ import {
   NotFoundException,
   type OnModuleDestroy,
   type OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import type { Subscription } from 'rxjs';
 import {
@@ -39,6 +40,7 @@ import {
   type AutofixCommandOutcome,
 } from '../sessions/session-automation-hooks';
 import { parseAutofixGitCommand } from './autofix-git';
+import { PullRequestChecksService } from './pull-request-checks.service';
 import { SessionGitService } from '../sessions/session-git.service';
 import {
   isActiveDirectory,
@@ -220,6 +222,7 @@ export class PrAutomationService
     private readonly notifications: NotificationsService,
     private readonly hooks: SessionAutomationHooks,
     private readonly devServers: DevServers,
+    @Optional() private readonly checksView?: PullRequestChecksService,
   ) {
     super();
     this.trustedBots = new Set(
@@ -536,6 +539,17 @@ export class PrAutomationService
       case 'check_suite':
         pullsOf(data['check_suite']);
         break;
+    }
+    if (
+      event === 'check_run' ||
+      event === 'check_suite' ||
+      event === 'status'
+    ) {
+      // The view shows the checks of every open pull request.
+      this.checksView?.onDelivery(
+        repository.id,
+        numbers.size > 0 ? [...numbers] : undefined,
+      );
     }
     // Statuses (and checks of forks) name no pull request: every pull
     // request of the repository that the automation follows is checked.
@@ -926,6 +940,9 @@ export class PrAutomationService
     const checks = headSha
       ? await this.feedback.checks(repository, headSha)
       : [];
+    if (headSha) {
+      this.checksView?.store(pull.id, headSha, checks);
+    }
     const pending = pendingChecks(checks);
     const failures =
       headSha && headSha !== pull.autofixCiHandledSha
