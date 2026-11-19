@@ -632,7 +632,8 @@ export class SessionView implements OnInit {
       target =
         [
           ...host.querySelectorAll<HTMLElement>(
-            '.user-message, .assistant-text',
+            // Not a subagent's text in a closed group of tool calls.
+            '.user-message, .assistant-text:not(.group-body > *)',
           ),
         ].find((element) =>
           (element.textContent ?? '').toLowerCase().includes(word),
