@@ -135,6 +135,12 @@ export type ConversationItem =
 
 const MAX_SUMMARY_LENGTH = 120;
 
+/**
+ * Claude's tool that sets the session's title: not shown as a tool call,
+ * the change appears as a `settings.changed` line instead.
+ */
+const SET_SESSION_TITLE_TOOL = 'mcp__crm__set_session_title';
+
 /** Short description of a tool call's input, e.g. the command or file. */
 export function toolSummary(name: string, input: unknown): string {
   const fields =
@@ -274,6 +280,9 @@ export function applyEvent(
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
     }
     case 'tool.call': {
+      if (event.name === SET_SESSION_TITLE_TOOL) {
+        return items;
+      }
       const key = `tool:${event.toolUseId}`;
       const index = items.findIndex((item) => item.key === key);
       const existing = items[index];
@@ -615,6 +624,9 @@ export function settingsText(event: SettingsChangedEvent): string {
   }
   if (event.permissionMode) {
     parts.push(`Mode: ${PERMISSION_MODE_INFO[event.permissionMode].label}`);
+  }
+  if (event.title !== undefined) {
+    parts.push(`Title: ${event.title}`);
   }
   const by =
     event.cause === 'plan'

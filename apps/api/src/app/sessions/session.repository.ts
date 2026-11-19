@@ -20,6 +20,7 @@ import type {
   SessionDirectoryState,
   SessionPermissionMode,
   SessionStatus,
+  SessionTitleSource,
   SetupStatus,
 } from '@claude-remote-manager/shared-types';
 import { DATABASE, type AppDatabase } from '../db/database';
@@ -123,6 +124,8 @@ export interface SessionRecord {
   id: string;
   sdkSessionId: string | null;
   title: string | null;
+  /** Where the title comes from (see `sessions.title_source`). */
+  titleSource: SessionTitleSource;
   model: string | null;
   permissionMode: SessionPermissionMode;
   status: SessionStatus;
@@ -155,6 +158,7 @@ export type NewSessionDirectory = Pick<
 export interface NewSession {
   id: string;
   title: string | null;
+  titleSource?: SessionTitleSource;
   model: string | null;
   permissionMode: SessionPermissionMode;
   status: SessionStatus;
@@ -168,6 +172,7 @@ export type SessionPatch = Partial<
     SessionRecord,
     | 'sdkSessionId'
     | 'title'
+    | 'titleSource'
     | 'status'
     | 'lastError'
     | 'pendingMessage'

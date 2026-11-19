@@ -94,7 +94,8 @@ export function sessionSubtitle(session: SessionDto): string {
                 ? 'the branch ' + s.directories[0].branch + ' and'
                 : ''
             }}
-            the directory names stay as they are.
+            the directory names stay as they are. Claude no longer changes a
+            title you chose.
           </p>
           @if (error(); as text) {
             <p class="error" role="alert">{{ text }}</p>

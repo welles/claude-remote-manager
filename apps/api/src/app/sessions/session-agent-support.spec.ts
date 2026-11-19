@@ -100,10 +100,12 @@ describe('session integrations (tools, memory, pushes)', () => {
     expect(options().tools?.map((entry) => entry.name)).toEqual([
       'show_file',
       'create_pull_request',
+      'set_session_title',
       'add_repository',
     ]);
-    // Showing a file never asks.
+    // Showing a file and setting the title never ask.
     expect(options().allowedTools).toContain('mcp__crm__show_file');
+    expect(options().allowedTools).toContain('mcp__crm__set_session_title');
     await expect(
       git(session.cwd, 'config', '--local', '--get-all', 'credential.helper'),
     ).rejects.toThrow();
@@ -129,6 +131,7 @@ describe('session integrations (tools, memory, pushes)', () => {
     expect(options().settings).toEqual(SESSION_SETTINGS);
     expect(options().tools?.map((entry) => entry.name)).toEqual([
       'show_file',
+      'set_session_title',
       'add_repository',
     ]);
   });

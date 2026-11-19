@@ -30,7 +30,8 @@ autofix continues the session when CI fails or reviewers with write access comme
 autoclose ends the session and removes its clones when the pull request is merged or closed
 (see [PR automation](#pr-automation)). Dev servers Claude starts become previews on host names
 of their own, opened as links or embedded (see [Previews](#previews-of-dev-servers)).
-Sessions are renamed, archived, searched (titles, repositories, branches and the
+Claude names each session with `set_session_title` once it knows what it is about and keeps
+the title up to date, unless the user chose one. Sessions are renamed, archived, searched (titles, repositories, branches and the
 conversation), cleaned up (push, merge into a local project, discard or keep their clones) and
 deleted; leftover directories of the workspace are found and removed; usage and theoretical
 API cost are charted per day, week and month (see [Managing sessions](#managing-sessions)).
@@ -661,10 +662,19 @@ session list (search, the Archived filter) and the Workspace cleanup page (under
 Maintenance, also linked from Repositories). Every route is a management route: Access token required, refused to
 session processes (see [Authentication](#authentication)).
 
+- **Titles**: a new session is titled with the first line of its first message, or the title
+  given in the form. Claude sets a short title of its own with the app's tool
+  `set_session_title` (never asks, also not during an Autofix run) once it has read what the
+  task refers to, and again when the topic changes substantially (the global `CLAUDE.md` of
+  sessions says when); each change is a `settings.changed` line in the history, the tool call
+  itself is not shown. `sessions.title_source` says where the title comes from (`prompt`,
+  `user`, `claude`): a title the user gave or confirmed is never replaced, the tool tells
+  Claude so.
 - **Rename** (`PATCH /api/sessions/:id` with `title`, 1-200 characters, or the
   `session.update` frame): only the title changes. The slug, the session branches
   `claude/<slug>` and the directory names keep their names (the form says so); search and
-  statistics use the new title at once.
+  statistics use the new title at once. From then on Claude no longer changes the title, also
+  when the rename kept it as it was.
 - **Clean up** (`GET`/`POST /api/sessions/:id/cleanup`): all directories of a session together,
   only when it has ended (finished or failed; not while a turn runs, waits for an approval or
   the session is being prepared). Per directory:
