@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "788e5ca3-bf2e-43a3-b15a-f666270c52b1",
+  "id": "935abe74-6997-49cc-8b33-9f9f363fc056",
   "prevId": "af3e71bc-f224-489a-baeb-c75c110773bf",
   "tables": {
     "app_settings": {
@@ -608,6 +608,13 @@
         },
         "automerge_waiting": {
           "name": "automerge_waiting",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "automerge_notified_sha": {
+          "name": "automerge_notified_sha",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

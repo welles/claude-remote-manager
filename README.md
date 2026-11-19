@@ -1016,15 +1016,15 @@ refused (SecurityError), framing the app blocked (`frame-ancestors`), and, embed
 Sessions run unattended, so the API reports what needs the user, over two channels, each
 switchable per event on the Settings page (stored in `app_settings`):
 
-| Event                         | When                                                                               | Withdrawn when                           |
-| ----------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------- |
-| Claude needs you              | an approval request, a question or a plan to review                                | it is answered or cancelled, anywhere    |
-| Turn finished                 | a turn ended and Claude waits for the next message (not after Stop or a denial)    | the next turn starts or the session ends |
-| Session hangs                 | a running turn without any event for `SESSION_STALL_MINUTES` (once per stall)      | activity resumes or the turn ends        |
-| Session failed                | the session failed, or a setup script failed and the first message is held back    | the session continues                    |
-| Autofix gave up               | the PR automation reached its attempt limit (reported by the PR automation)        | –                                        |
-| Automerge needs you           | Claude asked for the owner's decision before merging, or GitHub refused the merge  | –                                        |
-| Pull request merged or closed | a pull request of the session was merged or closed (reported by the PR automation) | –                                        |
+| Event                         | When                                                                                                       | Withdrawn when                           |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Claude needs you              | an approval request, a question or a plan to review                                                        | it is answered or cancelled, anywhere    |
+| Turn finished                 | a turn ended and Claude waits for the next message (not after Stop or a denial)                            | the next turn starts or the session ends |
+| Session hangs                 | a running turn without any event for `SESSION_STALL_MINUTES` (once per stall)                              | activity resumes or the turn ends        |
+| Session failed                | the session failed, or a setup script failed and the first message is held back                            | the session continues                    |
+| Autofix gave up               | the PR automation reached its attempt limit (reported by the PR automation)                                | –                                        |
+| Automerge needs you           | Claude asked for the owner's decision, GitHub refused the merge, or threads stay open that no run works on | –                                        |
+| Pull request merged or closed | a pull request of the session was merged or closed (reported by the PR automation)                         | –                                        |
 
 Ending a session ("End session") notifies nobody. Notifications carry the session title and
 its repositories, approvals the action and the command or file path (shortened, relative to
@@ -1086,7 +1086,7 @@ derived from its tag; withdrawing it deletes it in the ntfy apps
 **For the PR automation**: `NotificationsService` (exported by `NotificationsModule`) has
 `notifyAutofixGaveUp(sessionId, pullRequest, attempts, reason)`,
 `notifyAutomerge(sessionId, pullRequest, kind, detail)` (`held` with Claude's question,
-`failed` with GitHub's reason) and
+`failed` with GitHub's reason, `waiting` for threads nobody works on) and
 `notifyPullRequestClosed(sessionId, pullRequest, note)` (merged or closed by
 `pullRequest.state`; `note` says what autoclose did, e.g. that a clone was kept); preferences,
 presence and channels apply as for the other events. The PR automation sends each once per
@@ -1235,8 +1235,8 @@ its branches and tags, and points the existing session clones' `origin` there (s
   time after which reviews are new, the last run and what triggered it, whether a run is
   going on, when the merge or close was handled; for automerge: `automerge`, the hold
   (`automerge_held_at`, `automerge_hold_reason`: Claude's question), the head commit GitHub
-  refused to merge and why, and what a green, approved head commit waits for
-  (`automerge_waiting`).
+  refused to merge and why, what a green, approved head commit waits for
+  (`automerge_waiting`), and the head commit the owner was told about stuck threads for.
 - `sessions.autoclosed_at`: when autoclose ended the session; clones still `ready`
   afterwards were kept because they hold work that is not on GitHub.
 - `webhook_deliveries`: IDs of processed webhook deliveries (a week), so redeliveries do
@@ -1647,23 +1647,30 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
 
 - **When it merges**: in a check, once the head commit is ready as above (all checks passed,
   exactly this commit approved by someone who counts, nobody who counts requests changes;
-  never without an approval), no failed check or new review or comment waits for a run, the
+  never without an approval; at least one check reported, so a fresh push whose checks GitHub
+  does not list yet is not green), no failed check or new review or comment waits for a run, the
   pull request is no draft, Claude did not ask for the owner's decision, GitHub did not
   refuse this head commit before, and **no review thread is unresolved** (GraphQL
   `reviewThreads`, as REST has no resolution state; every unresolved thread counts, also
-  hints and threads of people without write access, and an incomplete answer counts as not
-  resolved). The session must wait for a message (merging never races a turn). The app merges
+  hints and threads of people without write access; when they cannot be read, nothing is
+  merged and the view says so). The session must wait for a message when the merge starts
+  (the merge is pinned to the checked commit, so a later push cannot slip in). The app merges
   with `PUT …/pulls/{number}/merge` and `sha` set to the checked head commit (GitHub refuses
   if it moved), trying `rebase`, then `squash`, then `merge` (the next one only when GitHub
   says the method is not allowed or the branch cannot be rebased). The merge is then seen like
   any other: notification "Merged", autoclose if on. The history says how it merged.
 - **Findings first**: unresolved threads on a green, approved head commit go along with the
   ready message (once per head commit, as untrusted context, only those whose author counts;
-  an attempt), which asks Claude to fix every finding, also hints, commit and push; the
+  an attempt only when such threads go along), which asks Claude to fix every finding, also
+  hints, commit and push; the
   reviewer resolves what it finds fixed with its next review, which starts the next round.
   The UI shows "Automerge waits: 2 unresolved review threads". Messages to Claude while
   automerge is on say that the app merges and Claude must neither merge nor resolve threads.
-  After a run ends, the pull request is checked again (nothing left may mean ready).
+  After a run ends, the pull request is checked again (nothing left may mean ready). When
+  threads stay open that no run works on (Claude left them without asking the owner, or none
+  of them is by someone who counts, whose text never reaches Claude), the owner is notified
+  once per head commit ("Automerge is stuck"). At the attempt limit the ready message says
+  that the limit stops the work, and the usual give-up notice follows.
 - **The owner's decision**: when a finding needs the owner (a product or design decision, a
   trade-off, scope, or Claude thinks it is wrong), Claude calls the app's tool
   `request_owner_decision` with its question (offered to sessions with a GitHub clone; never
@@ -1672,8 +1679,10 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   owner ("Automerge needs you", with the question). The owner's next message in the session
   (`SessionsService.send`, not the app's) lifts the hold; the pull request is checked again
   when that turn ends.
-- **Refusals**: when GitHub refuses (conflict, branch protection, workflow files the app may
-  not merge), the head commit and GitHub's reason are stored, the history says so, the owner is
+- **Refusals**: refusals that may pass by themselves (409, "Base branch was modified", "not
+  mergeable" while GitHub computes mergeability, GitHub unreachable) are retried up to three
+  times, two minutes apart. When GitHub still refuses (conflict, branch protection, workflow
+  files the app may not merge), the head commit and GitHub's reason are stored, the history says so, the owner is
   notified once, and the session's ready message says it was refused. A new head commit, or
   turning automerge off and on, tries again.
 

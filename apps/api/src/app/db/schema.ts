@@ -289,6 +289,8 @@ export const pullRequests = sqliteTable(
     automergeFailure: text('automerge_failure'),
     /** What keeps a green, approved head commit from being merged now. */
     automergeWaiting: text('automerge_waiting'),
+    /** Head commit for which the owner was told that automerge is stuck. */
+    automergeNotifiedSha: text('automerge_notified_sha'),
   },
   (table) => [
     uniqueIndex('pull_requests_repository_number').on(

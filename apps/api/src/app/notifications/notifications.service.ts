@@ -210,13 +210,15 @@ export class NotificationsService implements OnModuleDestroy {
 
   /**
    * PR automation: automerge of this pull request needs the owner: Claude
-   * asked for their decision (`held`), or GitHub refused the merge
-   * (`failed`). `detail`: Claude's question or GitHub's reason.
+   * asked for their decision (`held`), GitHub refused the merge
+   * (`failed`), or review threads nobody works on keep it from merging
+   * (`waiting`). `detail`: Claude's question, GitHub's reason, or what
+   * waits.
    */
   notifyAutomerge(
     sessionId: string,
     pullRequest: PullRequestDto,
-    kind: 'held' | 'failed',
+    kind: 'held' | 'failed' | 'waiting',
     detail: string,
   ): boolean {
     const session = this.sessionOrNull(sessionId);
@@ -224,7 +226,7 @@ export class NotificationsService implements OnModuleDestroy {
       type: 'automerge',
       key: notificationKeys.automerge(pullRequest.id),
       sessionId,
-      title: `${kind === 'held' ? 'Automerge waits for your decision' : 'Automerge could not merge'}: ${pullRequestLabel(pullRequest)}`,
+      title: `${kind === 'held' ? 'Automerge waits for your decision' : kind === 'failed' ? 'Automerge could not merge' : 'Automerge is stuck'}: ${pullRequestLabel(pullRequest)}`,
       body: [
         shorten(detail, 160),
         session ? sessionContext(session) : shorten(pullRequest.title, 80),

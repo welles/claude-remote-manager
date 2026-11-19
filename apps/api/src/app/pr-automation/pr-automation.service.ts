@@ -24,7 +24,11 @@ import { requireObject } from '../common/validation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { DevServers } from '../dev-servers/dev-servers';
 import { GitService } from '../git/git.service';
-import { GitHubRateLimitError } from '../github/github-errors';
+import {
+  GitHubApiError,
+  GitHubRateLimitError,
+  GitHubUnavailableError,
+} from '../github/github-errors';
 import { GitHubService, type MergeMethod } from '../github/github.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { isGitHubRepository } from '../repositories/repository-credentials';
@@ -113,6 +117,26 @@ function errorText(error: unknown): string {
 /** Characters of Claude's question kept with a hold. */
 const MAX_HOLD_REASON = 1000;
 
+/**
+ * Refusals of a merge that may pass by themselves (the base branch moved,
+ * GitHub still computing mergeability, GitHub unreachable): retried this
+ * often per head commit, every {@link PrAutomationTiming.ciRecheckMs},
+ * before they count as refused.
+ */
+export const MAX_MERGE_RETRIES = 3;
+
+function transientMergeFailure(error: unknown): boolean {
+  return (
+    error instanceof GitHubUnavailableError ||
+    (error instanceof GitHubApiError &&
+      (error.githubStatus === 409 ||
+        (error.githubStatus === 405 &&
+          /not mergeable|was modified|try the merge again/i.test(
+            error.message,
+          ))))
+  );
+}
+
 /** What an automerge attempt came to. */
 type AutomergeOutcome =
   | { kind: 'merged' }
@@ -132,6 +156,8 @@ interface Triggers {
   ready: boolean;
   /** The head commit passed all checks and is approved (told or not). */
   passed: boolean;
+  /** GitHub reports at least one check for the head commit. */
+  checked: boolean;
   headSha: string | null;
   /** At the attempt limit: feedback left out, the review time kept. */
   limited?: boolean;
@@ -171,6 +197,8 @@ export class PrAutomationService
    * for the commit's other checks to finish.
    */
   private readonly waitingSince = new Map<string, number>();
+  /** Merges retried per `pullRequestId:sha` after a passing refusal. */
+  private readonly mergeRetries = new Map<string, number>();
   /** Bots whose reviews and comments count (lower case). */
   private readonly trustedBots: ReadonlySet<string>;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -637,20 +665,35 @@ export class PrAutomationService
         triggers.failed.length === 0 &&
         triggers.feedback.length === 0
       ) {
-        merge = await this.automerge(pull, repository, triggers.headSha);
-        if (merge.kind === 'merged') {
-          return;
+        if (!triggers.checked) {
+          // "CI green" needs CI: right after a push GitHub may not list
+          // the new commit's checks yet.
+          this.setWaiting(pull.id, 'no checks reported for the head commit');
+        } else {
+          merge = await this.automerge(pull, repository, triggers.headSha);
+          if (merge.kind === 'merged') {
+            return;
+          }
         }
       } else {
         // Not green and approved, or there is something to fix first.
         this.setWaiting(pull.id, null);
       }
     }
-    if (
+    const idleRound =
       triggers.failed.length === 0 &&
       triggers.feedback.length === 0 &&
-      !triggers.ready
+      !triggers.ready;
+    if (
+      merge?.kind === 'threads' &&
+      triggers.headSha &&
+      (idleRound || merge.counting.length === 0)
     ) {
+      // No run works on them (or none of them may go to Claude): the owner
+      // has to look.
+      this.notifyStuck(pull, triggers.headSha, merge);
+    }
+    if (idleRound) {
       return;
     }
     const current = this.records.pullRequest(pull.id);
@@ -669,15 +712,50 @@ export class PrAutomationService
       }
       // The session still learns that the pull request is ready, but
       // without the feedback (or threads) that would need an attempt.
-      await this.startRun(current, repository, {
-        ...triggers,
-        failed: [],
-        feedback: [],
-        limited: true,
-      });
+      await this.startRun(
+        current,
+        repository,
+        { ...triggers, failed: [], feedback: [], limited: true },
+        threads,
+      );
       return;
     }
     await this.startRun(current, repository, triggers, threads);
+  }
+
+  /**
+   * Tells the owner once per head commit that automerge waits for review
+   * threads no run works on (Claude left them open without asking, or
+   * nobody who counts wrote them).
+   */
+  private notifyStuck(
+    pull: PullRequestRecord,
+    headSha: string,
+    threads: { count: number; counting: ReviewThread[] },
+  ): void {
+    const current = this.records.pullRequest(pull.id);
+    if (
+      !current ||
+      current.automergeHeldAt ||
+      current.automergeNotifiedSha === headSha
+    ) {
+      return;
+    }
+    this.records.updatePullRequest(pull.id, { automergeNotifiedSha: headSha });
+    const others = threads.count - threads.counting.length;
+    const detail = `${threads.count} review thread${threads.count === 1 ? ' is' : 's are'} still unresolved${others > 0 ? ` (${others} by people the app does not trust)` : ''}; resolve ${threads.count === 1 ? 'it' : 'them'} on GitHub or tell the session what to do.`;
+    this.sessions.recordEvent(pull.sessionId, {
+      type: 'notice',
+      level: 'warning',
+      text: `Automerge of ${pull.repositoryName}#${pull.number} waits: ${detail}`,
+    });
+    this.notifications.notifyAutomerge(
+      pull.sessionId,
+      pullRequestDto(current),
+      'waiting',
+      detail,
+    );
+    this.sessions.publishUpdate(pull.sessionId);
   }
 
   /**
@@ -706,10 +784,20 @@ export class PrAutomationService
       this.setWaiting(pull.id, null);
       return { kind: 'blocked' };
     }
-    const threads = await this.feedback.unresolvedThreads(
-      repository,
-      pull.number,
-    );
+    let threads: ReviewThread[];
+    try {
+      threads = await this.feedback.unresolvedThreads(repository, pull.number);
+    } catch (error) {
+      if (error instanceof GitHubRateLimitError) {
+        throw error;
+      }
+      // Nothing is taken for resolved; the rest of the check goes on.
+      this.logger.warn(
+        `Could not read the review threads of ${pull.repositoryName}#${pull.number}: ${errorText(error)}`,
+      );
+      this.setWaiting(pull.id, 'the review threads could not be read');
+      return { kind: 'blocked' };
+    }
     if (threads.length > 0) {
       this.setWaiting(
         pull.id,
@@ -731,10 +819,12 @@ export class PrAutomationService
       !current?.automerge ||
       current.automergeHeldAt ||
       current.state !== 'open' ||
-      current.headSha !== headSha ||
-      current.autofixRunning ||
-      !this.idle(session)
+      current.headSha !== headSha
     ) {
+      return { kind: 'blocked' };
+    }
+    if (current.autofixRunning || !this.idle(session)) {
+      // Looked at again when the session waits for a message again.
       this.deferred.add(pull.id);
       return { kind: 'blocked' };
     }
@@ -762,6 +852,7 @@ export class PrAutomationService
     // GitHub's state decides (a retried request may have merged already).
     const after = await this.sessionGit.refreshPullRequest(pull.id);
     if (method || after?.state === 'merged') {
+      this.mergeRetries.delete(`${pull.id}:${headSha}`);
       this.records.updatePullRequest(pull.id, { automergeWaiting: null });
       this.sessions.recordEvent(pull.sessionId, {
         type: 'notice',
@@ -774,6 +865,17 @@ export class PrAutomationService
       this.sessions.publishUpdate(pull.sessionId);
       return { kind: 'merged' };
     }
+    const key = `${pull.id}:${headSha}`;
+    const retries = this.mergeRetries.get(key) ?? 0;
+    if (transientMergeFailure(failure) && retries < MAX_MERGE_RETRIES) {
+      this.mergeRetries.set(key, retries + 1);
+      this.logger.warn(
+        `Automerge of ${name} failed for now (${errorText(failure)}); trying again`,
+      );
+      this.schedule(pull.id, this.timing.ciRecheckMs);
+      return { kind: 'blocked' };
+    }
+    this.mergeRetries.delete(key);
     const reason = errorText(failure ?? 'GitHub did not merge it');
     this.records.updatePullRequest(pull.id, {
       automergeFailedSha: headSha,
@@ -870,6 +972,7 @@ export class PrAutomationService
       ) &&
       (await this.approved(repository, items, headSha));
     const ready = passed && headSha !== pull.autofixReadySha;
+    const checked = checks.length > 0;
     const key = `${pull.id}:${headSha}`;
     this.forgetWaiting(pull.id, key);
     if (pending.length === 0) {
@@ -886,6 +989,7 @@ export class PrAutomationService
           approvals: [],
           ready,
           passed,
+          checked,
           headSha,
         };
       }
@@ -896,15 +1000,18 @@ export class PrAutomationService
       approvals,
       ready,
       passed,
+      checked,
       headSha,
     };
   }
 
   /** Drops what waited for other commits of a pull request than `keep`. */
   private forgetWaiting(pullRequestId: number, keep?: string): void {
-    for (const key of this.waitingSince.keys()) {
-      if (key.startsWith(`${pullRequestId}:`) && key !== keep) {
-        this.waitingSince.delete(key);
+    for (const map of [this.waitingSince, this.mergeRetries]) {
+      for (const key of map.keys()) {
+        if (key.startsWith(`${pullRequestId}:`) && key !== keep) {
+          map.delete(key);
+        }
       }
     }
   }
@@ -1058,7 +1165,7 @@ export class PrAutomationService
     const counted =
       trigger !== 'ready' ||
       triggers.feedback.length > 0 ||
-      (unresolved !== null && !triggers.limited);
+      (threads.length > 0 && !triggers.limited);
     const automerge: AutomergeNote | null = !current.automerge
       ? null
       : current.automergeHeldAt
@@ -1069,7 +1176,11 @@ export class PrAutomationService
           : unresolved && trigger === 'ready'
             ? triggers.limited
               ? { state: 'limit', count: unresolved.count }
-              : { state: 'threads', count: unresolved.count }
+              : {
+                  state: 'threads',
+                  count: unresolved.count,
+                  counting: unresolved.counting.length,
+                }
             : { state: 'on' };
     const attempt = current.autofixAttempts + (counted ? 1 : 0);
     const directory = session.directories.find(

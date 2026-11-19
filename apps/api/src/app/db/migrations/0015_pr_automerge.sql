@@ -3,4 +3,5 @@ ALTER TABLE `pull_requests` ADD `automerge_held_at` integer;--> statement-breakp
 ALTER TABLE `pull_requests` ADD `automerge_hold_reason` text;--> statement-breakpoint
 ALTER TABLE `pull_requests` ADD `automerge_failed_sha` text;--> statement-breakpoint
 ALTER TABLE `pull_requests` ADD `automerge_failure` text;--> statement-breakpoint
-ALTER TABLE `pull_requests` ADD `automerge_waiting` text;
+ALTER TABLE `pull_requests` ADD `automerge_waiting` text;--> statement-breakpoint
+ALTER TABLE `pull_requests` ADD `automerge_notified_sha` text;

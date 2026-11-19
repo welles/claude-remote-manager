@@ -12,8 +12,8 @@
  * - `failed`: the session failed (or its setup script, so that the first
  *   message is held back);
  * - `autofix_gave_up`: the PR automation stopped after its attempt limit;
- * - `automerge`: automerge waits for the owner's decision, or GitHub
- *   refused the merge;
+ * - `automerge`: automerge waits for the owner's decision, GitHub refused
+ *   the merge, or review threads nobody works on keep it from merging;
  * - `pull_request_closed`: a pull request of the session was merged or
  *   closed.
  */
@@ -74,7 +74,7 @@ export const NOTIFICATION_EVENT_INFO: Record<
   automerge: {
     label: 'Automerge needs you',
     description:
-      'Claude asked for your decision on a review finding before merging, or GitHub refused the merge.',
+      'Claude asked for your decision before merging, GitHub refused the merge, or review threads nobody works on keep it waiting.',
   },
   pull_request_closed: {
     label: 'Pull request merged or closed',

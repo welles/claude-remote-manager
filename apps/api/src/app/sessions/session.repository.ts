@@ -123,6 +123,7 @@ export type PullRequestPatch = Partial<
       | 'automergeFailedSha'
       | 'automergeFailure'
       | 'automergeWaiting'
+      | 'automergeNotifiedSha'
     >
 >;
 
