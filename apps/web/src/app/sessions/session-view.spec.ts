@@ -964,6 +964,24 @@ describe('SessionView', () => {
     await harness.fixture.whenStable();
     expect(text('archive-offer')).toContain('The session has ended.');
 
+    // Ending again with text in the input keeps the input.
+    (
+      element.querySelector(
+        '[data-testid="archive-offer-continue"]',
+      ) as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    const input = element.querySelector(
+      '[data-testid="message-input"]',
+    ) as HTMLTextAreaElement;
+    input.value = 'Next step';
+    input.dispatchEvent(new Event('input'));
+    live(socket, event({ type: 'session.status', status: 'running' }));
+    live(socket, event({ type: 'session.status', status: 'finished' }));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+    expect(composer()).not.toBeNull();
+
     // Archived: no offer.
     history(
       socket,

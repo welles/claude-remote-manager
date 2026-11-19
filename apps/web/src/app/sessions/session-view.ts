@@ -559,7 +559,13 @@ export class SessionView implements OnInit {
   /** A session that ends again offers archiving again. */
   private endedAgain(status: SessionDto['status']): void {
     const before = this.session()?.status;
-    if (status === 'finished' && before && before !== 'finished') {
+    // Not while something waits in the input: it would vanish mid-typing.
+    if (
+      status === 'finished' &&
+      before &&
+      before !== 'finished' &&
+      !this.composer()?.hasContent()
+    ) {
       this.continuing.set(false);
     }
   }
