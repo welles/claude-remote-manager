@@ -20,7 +20,7 @@ file change appears as a diff in the history and in approvals, and a changes pag
 whole session's diff per repository and file, a files page its directories (changed files
 marked); images can be attached to messages, files of the
 session referenced with `@`, Claude Code's slash commands and skills completed after `/`,
-Claude Code's suggested next message taken over with a tap or Tab,
+Claude Code's suggested next message as placeholder of the input (Tab takes it, Send sends it),
 GitHub issues and pull requests with `#` (Claude gets their
 content as untrusted context), and Claude shows files to the user with `show_file`; session
 branches are pushed and pull requests created by button, or by Claude (as the session's
@@ -518,10 +518,11 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   or `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, which wins over the setting). It is taken
   only when the turn ended without a stop and the session waits for the user: a suggestion
   arriving after the next message was sent is dropped. It becomes the stored event
-  `prompt.suggestion` (history keeps only the newest); the web app offers it above the empty
-  input until a message is sent or queued, and not while a turn runs. A tap or Tab puts it
-  into the input, to edit or send; it is never sent by itself. It comes from the
-  conversation, which may contain untrusted content: once taken it is the user's message,
+  `prompt.suggestion` (history keeps only the newest); as in the terminal, the web app shows
+  it as placeholder (in italics) of the empty input until a message is sent or queued, and
+  not while a turn runs. Send (Ctrl+Enter) with the empty input sends it as it is; Tab or the
+  edit button next to Send (touch screens) puts it into the input to change it. It comes from
+  the conversation, which may contain untrusted content: once sent it is the user's message,
   with `@` expansion and slash commands.
 - `show_file` (path, optional caption): reads the file as the session user, only inside the
   session's directories, and keeps a snapshot (up to 20 MB) in `FILES_DIR/shown`; larger

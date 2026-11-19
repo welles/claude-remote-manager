@@ -68,45 +68,6 @@
   color: var(--mat-sys-on-surface-variant);
 }
 
-// Claude Code's suggested next message, above the input.
-.suggestion {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  max-width: 100%;
-  margin: 0 0 4px;
-  padding: 6px 12px;
-  border: 1px dashed var(--mat-sys-outline-variant);
-  border-radius: var(--mat-sys-corner-medium);
-  background: none;
-  color: var(--mat-sys-on-surface-variant);
-  font: var(--mat-sys-body-medium);
-  text-align: left;
-  cursor: pointer;
-
-  &:hover,
-  &:focus-visible {
-    border-color: var(--mat-sys-outline);
-    color: var(--mat-sys-on-surface);
-  }
-}
-
-.suggestion-label {
-  flex-shrink: 0;
-  font: var(--mat-sys-label-small);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.suggestion-text {
-  min-width: 0;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow-wrap: anywhere;
-}
-
 // One row: attach, the text (growing up to 8 lines), stop, send.
 .composer-row {
   display: flex;
@@ -138,6 +99,11 @@
 
   &::placeholder {
     color: var(--mat-sys-on-surface-variant);
+  }
+
+  // Claude Code's suggested next message, as in the terminal.
+  &[data-suggestion]::placeholder {
+    font-style: italic;
   }
 }
 

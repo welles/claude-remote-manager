@@ -227,8 +227,11 @@ describe('SessionView', () => {
 
   it('offers the prompt suggestion of the last turn until a message is sent', async () => {
     const { harness, socket, element } = await open();
+    const input = element.querySelector(
+      '[data-testid="message-input"]',
+    ) as HTMLTextAreaElement;
     const suggestion = () =>
-      element.querySelector('[data-testid="prompt-suggestion"]')?.textContent;
+      input.hasAttribute('data-suggestion') ? input.placeholder : undefined;
     socket.receive({
       type: 'session.history',
       logId: LOG,
@@ -251,11 +254,8 @@ describe('SessionView', () => {
       event: { type: 'session.status', status: 'waiting', seq: 4, at: null },
     });
     await harness.fixture.whenStable();
-    expect(suggestion()).toContain('Run the tests');
+    expect(suggestion()).toBe('Run the tests');
 
-    const input = element.querySelector(
-      '[data-testid="message-input"]',
-    ) as HTMLTextAreaElement;
     input.value = 'Something else';
     input.dispatchEvent(new Event('input'));
     await harness.fixture.whenStable();

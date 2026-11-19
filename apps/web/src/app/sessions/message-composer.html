@@ -65,23 +65,6 @@
     (optionsChange)="setReferenceOptions($event)"
   />
   <app-draft-images [drafts]="images" />
-  @if (offering()) {
-  <button
-    type="button"
-    id="prompt-suggestion"
-    class="suggestion"
-    (mousedown)="$event.preventDefault()"
-    (click)="takeSuggestion()"
-    title="Use the suggested message (Tab)"
-    data-testid="prompt-suggestion"
-  >
-    <span class="suggestion-label">Suggested</span>
-    <span class="suggestion-text">{{ suggestion() }}</span>
-    <span class="visually-hidden"
-      >Press Tab in the empty input to use it.</span
-    >
-  </button>
-  }
   <div class="composer-row">
     <button
       type="button"
@@ -106,7 +89,7 @@
     <textarea
       class="input"
       [value]="draft()"
-      [placeholder]="label()"
+      [placeholder]="offering() ? suggestion() : label()"
       [attr.aria-label]="label()"
       (input)="onInput($event)"
       (keydown)="onKeydown($event)"
@@ -128,10 +111,28 @@
       [attr.aria-expanded]="suggesting() || suggestingCommands()"
       [attr.aria-activedescendant]="activeCommandId()"
       [attr.aria-describedby]="offering() ? 'prompt-suggestion' : null"
+      [attr.data-suggestion]="offering() ? '' : null"
       enterkeyhint="send"
       data-testid="message-input"
     ></textarea>
-    @if (running()) {
+    @if (offering()) {
+    <span id="prompt-suggestion" class="visually-hidden"
+      >Suggested: {{ suggestion() }}. Tab puts it into the input, Send sends
+      it.</span
+    >
+    <button
+      type="button"
+      class="app-icon-btn take"
+      (mousedown)="$event.preventDefault()"
+      (click)="takeSuggestion()"
+      title="Edit the suggestion (Tab)"
+      data-testid="take-suggestion"
+    >
+      <app-icon name="edit" /><span class="visually-hidden"
+        >Edit the suggestion</span
+      >
+    </button>
+    } @if (running()) {
     <button
       type="button"
       class="app-icon-btn stop"

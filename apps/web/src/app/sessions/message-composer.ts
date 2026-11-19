@@ -84,7 +84,7 @@ export interface ComposedMessage {
  * GitHub issues and pull requests (autocomplete, chips with the choice to
  * give Claude comments and diffs), `/` for Claude Code's slash commands and
  * skills at the start of a message (autocomplete), Claude Code's suggested
- * next message and the Send and Stop buttons.
+ * next message as placeholder and the Send and Stop buttons.
  */
 @Component({
   selector: 'app-message-composer',
@@ -101,8 +101,9 @@ export class MessageComposer {
   /** A turn runs: Stop is offered. */
   readonly running = input(false);
   /**
-   * Claude Code's guess at the next message: offered while the input is
-   * empty, taken over with a tap or Tab (to edit or send).
+   * Claude Code's guess at the next message, as in the terminal: the
+   * placeholder of the empty input; Tab (or the edit button) puts it into
+   * the input, Send sends it as it is.
    */
   readonly suggestion = input<string | null>(null);
   /** Session whose files `@` offers; without, no autocomplete. */
@@ -126,10 +127,18 @@ export class MessageComposer {
    */
   private readonly autosize = afterRenderEffect(() => {
     this.draft();
+    const suggestion = this.offering() ? this.suggestion() : null;
     const field = this.textarea()?.nativeElement;
     if (field) {
       field.style.height = 'auto';
-      field.style.height = `${Math.min(field.scrollHeight, MAX_INPUT_HEIGHT)}px`;
+      if (suggestion && field.value === '') {
+        // Room for the whole suggestion: measured as if it were the text.
+        field.value = suggestion;
+        field.style.height = `${Math.min(field.scrollHeight, MAX_INPUT_HEIGHT)}px`;
+        field.value = '';
+      } else {
+        field.style.height = `${Math.min(field.scrollHeight, MAX_INPUT_HEIGHT)}px`;
+      }
     }
   });
   /** Where the `@` reference being typed starts, and its text. */
@@ -198,7 +207,9 @@ export class MessageComposer {
     () =>
       !this.disabled() &&
       !this.images.busy() &&
-      (this.draft().trim() !== '' || this.images.ids().length > 0),
+      (this.draft().trim() !== '' ||
+        this.images.ids().length > 0 ||
+        this.offering()),
   );
   /** The suggestion is offered: there is one and nothing was typed. */
   protected readonly offering = computed(
@@ -265,12 +276,16 @@ export class MessageComposer {
     if (!this.canSend()) {
       return;
     }
+    // An empty input sends the suggestion it shows.
+    const text = this.offering()
+      ? (this.suggestion() ?? '').trim()
+      : this.draft().trim();
     this.send.emit({
       id: this.reuseId,
-      text: this.draft().trim(),
+      text,
       attachmentIds: this.images.ids(),
       references: draftReferences(
-        this.draft().trim(),
+        text,
         this.githubRepositories(),
         this.referenceOptions(),
       ),

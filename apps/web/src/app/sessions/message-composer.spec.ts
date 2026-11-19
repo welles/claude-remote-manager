@@ -134,24 +134,39 @@ describe('MessageComposer', () => {
     ]);
   });
 
-  it('offers the suggested message while the input is empty', async () => {
+  it('shows the suggested message as placeholder, to take or send', async () => {
     fixture.componentRef.setInput('suggestion', 'Run the tests');
     await fixture.whenStable();
     const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
-    button('prompt-suggestion').click();
-    await fixture.whenStable();
-    expect(textarea.value).toBe('Run the tests');
-    expect(button('prompt-suggestion')).toBeNull();
+    expect(textarea.placeholder).toBe('Run the tests');
+
+    // Send with the empty input sends it as it is.
+    expect(button('send').disabled).toBe(false);
     button('send').click();
     expect(sent.at(-1)?.text).toBe('Run the tests');
 
-    fixture.componentInstance.clear();
-    await fixture.whenStable();
+    // Tab puts it into the input to edit.
     const tab = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true });
     textarea.dispatchEvent(tab);
     await fixture.whenStable();
     expect(tab.defaultPrevented).toBe(true);
     expect(textarea.value).toBe('Run the tests');
+    expect(textarea.placeholder).toBe('Message');
+    expect(button('take-suggestion')).toBeNull();
+
+    // So does the edit button (touch screens).
+    fixture.componentInstance.clear();
+    await fixture.whenStable();
+    button('take-suggestion').click();
+    await fixture.whenStable();
+    expect(textarea.value).toBe('Run the tests');
+
+    // Typed text wins over the suggestion.
+    textarea.value = 'Something else';
+    textarea.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    button('send').click();
+    expect(sent.at(-1)?.text).toBe('Something else');
 
     fixture.componentRef.setInput('suggestion', null);
     fixture.componentInstance.clear();
@@ -162,7 +177,8 @@ describe('MessageComposer', () => {
     });
     textarea.dispatchEvent(plainTab);
     expect(plainTab.defaultPrevented).toBe(false);
-    expect(button('prompt-suggestion')).toBeNull();
+    expect(textarea.placeholder).toBe('Message');
+    expect(button('send').disabled).toBe(true);
   });
 
   it('completes @ references from the session’s files', async () => {
