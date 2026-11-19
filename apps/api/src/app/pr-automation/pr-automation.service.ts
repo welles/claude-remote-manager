@@ -1318,9 +1318,7 @@ export class PrAutomationService
     // Claude said it goes on with by itself.
     const free =
       session.status === 'waiting' &&
-      (session.waitingFor === 'message' ||
-        (session.waitingFor === 'background' &&
-          this.sessions.acceptsAppMessage(session.id)));
+      this.sessions.acceptsAppMessage(session.id);
     let changed = false;
     for (const pull of session.pullRequests) {
       if (pull.automation.running) {

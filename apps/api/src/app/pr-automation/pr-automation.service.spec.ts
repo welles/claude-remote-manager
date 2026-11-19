@@ -481,6 +481,40 @@ describe('PrAutomationService', () => {
       expect(appMessages()).toHaveLength(0);
     });
 
+    it('runs once the background tasks ended and Claude took no turn for their report', async () => {
+      harness.service.backgroundReportGraceMs = 30;
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      await harness.service.sendMessage(session.id, { text: 'Push the fix' });
+      await setWaitingState({ waiting_on: 'work', reason: 'Review agent' });
+      const tasks = (...ids: string[]) =>
+        ({
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: ids.map((id) => ({
+            task_id: id,
+            task_type: 'local_agent',
+            description: id,
+          })),
+        }) as never;
+      harness.runner.last.emit(tasks('agent'), resultMessage(30, 0.03));
+      await waitFor(
+        () => harness.service.get(session.id).backgroundTasks === 1,
+      );
+      failingCheck(fakePull(pull.number).headSha);
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(0);
+
+      // The task ends; within the grace period Claude may still answer.
+      harness.runner.last.emit(tasks());
+      await waitFor(
+        () => harness.service.get(session.id).backgroundTasks === 0,
+      );
+      expect(appMessages()).toHaveLength(0);
+      await waitFor(() => appMessages().length === 1);
+      expect(harness.service.get(session.id).status).toBe('running');
+    });
+
     it('stops after the attempt limit, notifies once, and continues after a reset', async () => {
       const { session, pull } = await sessionWithPullRequest();
       automation.update(session.id, pull.id, { autofix: true, maxAttempts: 1 });

@@ -3606,7 +3606,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // No turn of Claude's own followed: the session is ready.
       if (live.run && this.requireRecord(live.id).status === 'waiting') {
         this.startIdleTimer(live);
-        this.publishStatus(live);
+        if (!this.publishStatus(live) && live.claudeWait?.on === 'work') {
+          // Still "background" for Claude's word, but now free for app
+          // messages (`acceptsAppMessage`): subscribers such as the PR
+          // automation look again.
+          this.updates.next(this.toDto(this.requireRecord(live.id)));
+        }
       }
     }, this.backgroundReportGraceMs);
     live.backgroundGrace.unref?.();
