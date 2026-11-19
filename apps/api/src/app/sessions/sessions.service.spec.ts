@@ -479,6 +479,25 @@ describe('SessionsService', () => {
       expect(logged[3].seq - logged[2].seq).toBe(3);
     });
 
+    it('logs and stores the prompt suggestion that follows a turn', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(10, 0.01), {
+        type: 'prompt_suggestion',
+        suggestion: 'Run the tests',
+      } as never);
+      await flush();
+
+      expect(lastEvent('prompt.suggestion')).toMatchObject({
+        text: 'Run the tests',
+      });
+      expect(
+        new SessionEventRepository(db)
+          .list(session.id)
+          .map(({ event }) => event)
+          .filter((event) => event.type === 'prompt.suggestion'),
+      ).toEqual([{ type: 'prompt.suggestion', text: 'Run the tests' }]);
+    });
+
     it('sends follow-up messages into the running process', async () => {
       const session = await startSession();
       runner.last.emit(resultMessage(10, 0.01));

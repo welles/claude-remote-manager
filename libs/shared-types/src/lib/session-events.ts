@@ -352,6 +352,16 @@ export interface ContextUsageEvent extends SessionEventBase {
   context: ContextUsage;
 }
 
+/**
+ * Claude Code's guess at the user's next message, after a turn (as the
+ * terminal shows it in its input). It applies until the user sends the
+ * next message; the web app offers it in the input.
+ */
+export interface PromptSuggestionEvent extends SessionEventBase {
+  type: 'prompt.suggestion';
+  text: string;
+}
+
 /** Informational or warning message, e.g. an API retry or compaction. */
 export interface NoticeEvent extends SessionEventBase {
   type: 'notice';
@@ -449,6 +459,7 @@ export type SessionEvent =
   | StatusEvent
   | TurnResultEvent
   | ContextUsageEvent
+  | PromptSuggestionEvent
   | NoticeEvent
   | ErrorEvent
   | PrepareProgressEvent

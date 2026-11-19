@@ -134,6 +134,37 @@ describe('MessageComposer', () => {
     ]);
   });
 
+  it('offers the suggested message while the input is empty', async () => {
+    fixture.componentRef.setInput('suggestion', 'Run the tests');
+    await fixture.whenStable();
+    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    button('prompt-suggestion').click();
+    await fixture.whenStable();
+    expect(textarea.value).toBe('Run the tests');
+    expect(button('prompt-suggestion')).toBeNull();
+    button('send').click();
+    expect(sent.at(-1)?.text).toBe('Run the tests');
+
+    fixture.componentInstance.clear();
+    await fixture.whenStable();
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true });
+    textarea.dispatchEvent(tab);
+    await fixture.whenStable();
+    expect(tab.defaultPrevented).toBe(true);
+    expect(textarea.value).toBe('Run the tests');
+
+    fixture.componentRef.setInput('suggestion', null);
+    fixture.componentInstance.clear();
+    await fixture.whenStable();
+    const plainTab = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      cancelable: true,
+    });
+    textarea.dispatchEvent(plainTab);
+    expect(plainTab.defaultPrevented).toBe(false);
+    expect(button('prompt-suggestion')).toBeNull();
+  });
+
   it('completes @ references from the session’s files', async () => {
     fixture.componentRef.setInput('sessionId', 's1');
     fixture.componentRef.setInput('showRepository', true);

@@ -83,8 +83,8 @@ export interface ComposedMessage {
  * session (autocomplete over all its directories), `#` references to
  * GitHub issues and pull requests (autocomplete, chips with the choice to
  * give Claude comments and diffs), `/` for Claude Code's slash commands and
- * skills at the start of a message (autocomplete) and the Send and Stop
- * buttons.
+ * skills at the start of a message (autocomplete), Claude Code's suggested
+ * next message and the Send and Stop buttons.
  */
 @Component({
   selector: 'app-message-composer',
@@ -100,6 +100,11 @@ export class MessageComposer {
   readonly disabled = input(false);
   /** A turn runs: Stop is offered. */
   readonly running = input(false);
+  /**
+   * Claude Code's guess at the next message: offered while the input is
+   * empty, taken over with a tap or Tab (to edit or send).
+   */
+  readonly suggestion = input<string | null>(null);
   /** Session whose files `@` offers; without, no autocomplete. */
   readonly sessionId = input<string | null>(null);
   /** Name the repository of files (sessions with several directories). */
@@ -195,6 +200,14 @@ export class MessageComposer {
       !this.images.busy() &&
       (this.draft().trim() !== '' || this.images.ids().length > 0),
   );
+  /** The suggestion is offered: there is one and nothing was typed. */
+  protected readonly offering = computed(
+    () =>
+      !!this.suggestion() &&
+      !this.disabled() &&
+      this.draft() === '' &&
+      this.images.ids().length === 0,
+  );
   /** ID of a message being sent again. */
   private reuseId: string | null = null;
 
@@ -222,6 +235,21 @@ export class MessageComposer {
     this.images.clear();
     this.reuseId = null;
     this.referenceOptions.set(new Map());
+  }
+
+  /** Puts the suggestion into the input, the caret at its end. */
+  protected takeSuggestion(): void {
+    const text = this.suggestion();
+    const field = this.textarea()?.nativeElement;
+    if (!text || !this.offering()) {
+      return;
+    }
+    this.draft.set(text);
+    if (field) {
+      field.value = text;
+      field.focus();
+      field.setSelectionRange(text.length, text.length);
+    }
   }
 
   protected setReferenceOptions(change: {
@@ -262,6 +290,18 @@ export class MessageComposer {
       return;
     }
     if (this.references.keydown(event, event.target as HTMLTextAreaElement)) {
+      return;
+    }
+    if (
+      event.key === 'Tab' &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      this.offering()
+    ) {
+      event.preventDefault();
+      this.takeSuggestion();
       return;
     }
     if (this.suggestingCommands()) {

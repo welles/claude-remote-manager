@@ -230,6 +230,10 @@ export class SdkEventMapper {
       }
       case 'system':
         return this.mapSystem(message);
+      case 'prompt_suggestion':
+        return message.suggestion.trim()
+          ? [{ type: 'prompt.suggestion', text: message.suggestion.trim() }]
+          : [];
       default:
         return [];
     }

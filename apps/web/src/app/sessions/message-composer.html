@@ -65,6 +65,19 @@
     (optionsChange)="setReferenceOptions($event)"
   />
   <app-draft-images [drafts]="images" />
+  @if (offering()) {
+  <button
+    type="button"
+    class="suggestion"
+    (mousedown)="$event.preventDefault()"
+    (click)="takeSuggestion()"
+    title="Use the suggested message (Tab)"
+    data-testid="prompt-suggestion"
+  >
+    <span class="suggestion-label">Suggested</span>
+    <span class="suggestion-text">{{ suggestion() }}</span>
+  </button>
+  }
   <div class="composer-row">
     <button
       type="button"

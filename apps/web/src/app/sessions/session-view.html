@@ -166,6 +166,7 @@
         [label]="composerLabel()"
         [disabled]="!connected() || preparing() || heldBack() || !resumable()"
         [running]="running()"
+        [suggestion]="running() ? null : suggestion()"
         [sessionId]="sessionId()"
         [showRepository]="(session()?.directories?.length ?? 0) > 1"
         [githubRepositories]="githubRepositories()"

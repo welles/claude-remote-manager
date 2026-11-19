@@ -186,6 +186,8 @@ Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
 
 * **MCP-Server, Slash-Commands und Skills:** Kommen bereits wie im Terminal aus dem `~/.claude` des Benutzers und den Repos. **Umsetzung (entschieden):** Autovervollständigung im Eingabefeld der Sitzung, wenn die Nachricht mit `/` beginnt: die Befehle und Skills, die Claude Code der Sitzung meldet (vor dem ersten Prozess die des Benutzers und die eigenen von Claude Code), ohne die an ein Terminal gebundenen; die Nachricht geht unverändert an Claude Code, das den Befehl ausführt.
 
+* **Antwortvorschläge:** Wie im Terminal und in der Desktop-App schlägt Claude Code nach einem Turn die nächste Nachricht des Nutzers vor, die er übernehmen kann. **Umsetzung:** Der Vorschlag steht über dem leeren Eingabefeld, solange kein Turn läuft und noch keine Nachricht gesendet wurde; Antippen oder Tab übernimmt ihn ins Eingabefeld (zum Bearbeiten oder Senden), er wird nicht direkt gesendet. Er bleibt nach einem Neuladen erhalten. Ausschalten über die Claude-Code-Einstellung `promptSuggestionEnabled: false`.
+
 ## Offene Entscheidungen
 
 - Aufteilung gemeinsamer Typen und Bibliotheken im Nx-Workspace

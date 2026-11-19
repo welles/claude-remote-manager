@@ -356,6 +356,9 @@ export function buildQueryOptions(
     },
     settingSources: SETTING_SOURCES,
     includePartialMessages: true,
+    // Claude Code's guess at the next message after each turn, as the
+    // terminal offers it (unless the user's settings turn it off).
+    promptSuggestions: true,
     ...(config.claudeExecutable
       ? { pathToClaudeCodeExecutable: config.claudeExecutable }
       : {}),
