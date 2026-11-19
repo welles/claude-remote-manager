@@ -431,7 +431,7 @@ describe('notifications', () => {
     expect(push.payloads('show')).toHaveLength(1);
   });
 
-  it('notifies a finished turn only once background tasks ended', async () => {
+  it('notifies a finished turn only once background work is over', async () => {
     await device();
     const session = await createSession();
     const tasks = (...ids: string[]) => ({
@@ -447,11 +447,14 @@ describe('notifications', () => {
     await finishTurn('Started a subagent.');
     expect(push.payloads('show')).toEqual([]);
 
+    // The subagent reported back: Claude goes on with a turn of its own.
     app.runner.last.emit(tasks());
     await flush();
     await service.settled();
+    expect(push.payloads('show')).toEqual([]);
+    await finishTurn('The subagent found it.');
     expect(push.payloads('show')).toMatchObject([
-      { tag: `turn-${session.id}`, body: expect.stringContaining('subagent') },
+      { tag: `turn-${session.id}`, body: expect.stringContaining('found it') },
     ]);
   });
 

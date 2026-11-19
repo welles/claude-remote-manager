@@ -30,6 +30,7 @@ import { SlashCommandsService } from './slash-commands.service';
 import { SessionRepository } from './session.repository';
 import {
   AUTOFIX_ASK_REASON,
+  BACKGROUND_TASKS_ENDED,
   QUEUE_WITHDRAWN,
   RESTART_NOTICE,
   SessionsService,
@@ -121,6 +122,7 @@ describe('SessionsService', () => {
       undefined,
       slashCommands,
     );
+    created.backgroundReportGraceMs = 0;
     await created.onModuleInit();
     created.events$.subscribe((event) => events.push(event));
     created.updates$.subscribe((update) => updates.push(update));
@@ -316,12 +318,7 @@ describe('SessionsService', () => {
     it("offers the user's commands first, then what the session reported", async () => {
       runner.probeCommands = () => [
         { name: 'review', description: 'Review', argumentHint: '' },
-        {
-          name: 'doctor',
-          description: 'Doctor',
-          argumentHint: '',
-          builtin: true,
-        },
+        { name: 'doctor', description: 'Doctor', argumentHint: '', builtin: true },
       ];
       const session = await startSession();
       await expect(slashCommands.forSession(session.id)).resolves.toEqual({
@@ -340,13 +337,7 @@ describe('SessionsService', () => {
       runner.last.commands = [
         { name: 'deploy', description: 'Project skill', argumentHint: '<env>' },
         { name: 'statusline', description: 'Terminal', argumentHint: '' },
-        {
-          name: 'compact',
-          description: 'Compact',
-          argumentHint: '',
-          builtin: true,
-          aliases: ['c'],
-        },
+        { name: 'compact', description: 'Compact', argumentHint: '', builtin: true, aliases: ['c'] },
       ];
       runner.last.emit({
         type: 'system',
@@ -361,10 +352,7 @@ describe('SessionsService', () => {
         'deploy',
         'compact',
       ]);
-      expect(reported.commands[1]).toMatchObject({
-        builtin: true,
-        aliases: ['c'],
-      });
+      expect(reported.commands[1]).toMatchObject({ builtin: true, aliases: ['c'] });
 
       // A change replaces the list.
       runner.last.emit({
@@ -374,9 +362,7 @@ describe('SessionsService', () => {
       } as never);
       await flush();
       expect(
-        (await slashCommands.forSession(session.id)).commands.map(
-          (c) => c.name,
-        ),
+        (await slashCommands.forSession(session.id)).commands.map((c) => c.name),
       ).toEqual(['fresh']);
     });
   });
@@ -2502,6 +2488,56 @@ describe('SessionsService', () => {
       expect(runner.last.sent.at(-1)).toMatchObject({ id: MSG_2 });
     });
 
+    it('waits a while for the turn a finished background task starts', async () => {
+      service.backgroundReportGraceMs = 40;
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks({ task_id: 'shell' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+
+      // The task reported back; Claude's answer takes a moment.
+      runner.last.emit(backgroundTasks());
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        waitingFor: 'background',
+        backgroundTasks: 0,
+      });
+      runner.last.emit({
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'message_start', message: { id: 'm2' } },
+      });
+      await flush();
+      expect(service.get(session.id).status).toBe('running');
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('message');
+
+      // No turn follows: ready after the grace period.
+      runner.last.emit(backgroundTasks({ task_id: 'agent' }));
+      runner.last.emit(backgroundTasks());
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(service.get(session.id).waitingFor).toBe('message');
+    });
+
+    it('takes no answer of another agent for a turn of its own', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      runner.last.emit({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        agent_id: 'teammate',
+        message: { id: 'm3', content: [] },
+      });
+      await flush();
+      expect(service.get(session.id).status).toBe('waiting');
+    });
+
     it('forgets background tasks when the process ends', async () => {
       const session = await startSession();
       runner.last.emit(
@@ -2520,6 +2556,9 @@ describe('SessionsService', () => {
       });
       expect(lastEvent('session.status')).toMatchObject({
         waitingFor: 'message',
+      });
+      expect(lastEvent('notice')).toMatchObject({
+        text: BACKGROUND_TASKS_ENDED,
       });
     });
   });

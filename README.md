@@ -302,8 +302,10 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   message after a failed setup script, see below; `background`, nothing from the user: the
   turn is over, but background tasks Claude started (subagents, background commands, monitors,
   workflows; `background_tasks_changed` without ambient ones) still run, Claude Code continues
-  on its own when they report back (shown as running, the process is kept, "finished" is
-  notified once they ended; a turn Claude Code starts on its own is `running`), `finished`
+  on its own when they report back (shown as running, the process is not closed for
+  idleness; after the last one ended the session stays `background` for up to 30 seconds for
+  the turn Claude Code starts with the report, which is `running`; "finished" is notified only
+  after that), `finished`
   (ended with "End session", `POST /api/sessions/:id/end` or the `session.end` frame) and
   `failed` (a clone could not be created, or the process could not start or ended with an
   error during a turn). A message to a finished or failed session resumes it, unless its

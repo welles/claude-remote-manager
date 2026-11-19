@@ -383,6 +383,14 @@ interface LiveSession {
    */
   backgroundTasks: Set<string>;
   /**
+   * Runs after the last background task ended while the session waits:
+   * Claude Code usually takes the task's report as a turn of its own, which
+   * shows only with its first answer. Until then (or the timeout) the
+   * session still waits for background work, so it does not look ready (and
+   * report "finished") in between.
+   */
+  backgroundGrace: ReturnType<typeof setTimeout> | null;
+  /**
    * The mode the current process last reported (`init`/`status`), or that
    * it accepted; `null` without process.
    */
@@ -403,6 +411,16 @@ export const RESTART_NOTICE =
 /** Error of a session whose preparation a server stop cut off. */
 export const PREPARATION_INTERRUPTED =
   'The preparation was interrupted because the server stopped; its directories were removed again. Start a new session.';
+
+/** Notice when the process ends while background tasks of Claude run. */
+export const BACKGROUND_TASKS_ENDED =
+  'Claude Code ended, and with it the background tasks that were still running.';
+
+/**
+ * How long a session still waits for background work after the last task
+ * ended, for the turn Claude Code starts with its report.
+ */
+export const BACKGROUND_REPORT_GRACE_MS = 30_000;
 
 /** Notice when a session is ended before its first message reached Claude. */
 export const ENDED_WHILE_PREPARING =
@@ -437,6 +455,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly updates = new Subject<SessionDto>();
   private readonly deletions = new Subject<string>();
   private shuttingDown = false;
+  /** See {@link BACKGROUND_REPORT_GRACE_MS}; tests shorten it. */
+  backgroundReportGraceMs = BACKGROUND_REPORT_GRACE_MS;
   /**
    * Called when a session's history was built (the search index rebuilds
    * the session's entries from it); `transcript` is whether the
@@ -1429,6 +1449,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       autoHold: null,
       heldTasks: new Set(),
       backgroundTasks: new Set(),
+      backgroundGrace: null,
       reportedMode: null,
       modeRequests: 0,
       publishedOverride: 'null',
@@ -1759,11 +1780,20 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // A held turn is over with its process.
     live.autoHold = null;
     live.heldTasks.clear();
+    const hadBackgroundTasks = live.backgroundTasks.size > 0;
     live.backgroundTasks.clear();
+    this.clearBackgroundGrace(live);
     live.reportedMode = null;
     this.clearIdleTimer(live);
     live.log.clearDrafts();
     const status = this.requireRecord(live.id).status;
+    if (hadBackgroundTasks && status === 'waiting') {
+      this.append(live, {
+        type: 'notice',
+        level: 'warning',
+        text: BACKGROUND_TASKS_ENDED,
+      });
+    }
     if (live.closing) {
       // Closed on purpose (idle timeout or end): the status stays.
     } else if (status === 'running') {
@@ -1868,7 +1898,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     if (
       (message.type === 'assistant' || message.type === 'stream_event') &&
-      message.parent_tool_use_id === null
+      message.parent_tool_use_id === null &&
+      !(message.type === 'assistant' && message.agent_id)
     ) {
       this.turnStartedByClaude(live);
     }
@@ -2229,13 +2260,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const tasks = [...live.heldTasks];
     live.heldTasks.clear();
     for (const taskId of tasks) {
-      void run
-        ?.stopTask(taskId)
-        .catch((error: unknown) =>
-          this.logger.warn(
-            `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
-          ),
-        );
+      void run?.stopTask(taskId).catch((error: unknown) =>
+        this.logger.warn(
+          `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
+        ),
+      );
     }
     const mode = this.requireRecord(live.id).permissionMode;
     if (run && heldForUntrusted(mode)) {
@@ -3073,6 +3102,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.autoHold = null;
     live.heldTasks.clear();
     live.backgroundTasks.clear();
+    this.clearBackgroundGrace(live);
     live.reportedMode = null;
     this.approver.cancelSession(live.id, 'process_exit');
     this.withdrawQueue(live, QUEUE_WITHDRAWN.failed);
@@ -3099,6 +3129,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const updated = this.sessions.update(live.id, { status, lastError });
     if (status !== 'waiting') {
       live.suggestionOpen = false;
+      // A turn runs: background work reported back or is waited for anew.
+      this.clearBackgroundGrace(live);
     }
     if (status === 'waiting') {
       this.startIdleTimer(live);
@@ -3127,6 +3159,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return this.live.get(sessionId)?.backgroundTasks.size ?? 0;
   }
 
+  private waitsForBackgroundById(sessionId: string): boolean {
+    const live = this.live.get(sessionId);
+    return live ? this.waitsForBackground(live) : false;
+  }
+
   private effectiveStatus(record: SessionRecord): {
     status: SessionStatus;
     waitingFor: SessionWaitingFor | null;
@@ -3139,7 +3176,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         status: 'waiting',
         waitingFor: record.pendingMessage
           ? 'setup'
-          : this.backgroundTaskCount(record.id) > 0
+          : this.waitsForBackgroundById(record.id)
             ? 'background'
             : 'message',
       };
@@ -3206,10 +3243,16 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private backgroundTasksChanged(live: LiveSession, taskIds: string[]): void {
     const before = live.backgroundTasks.size;
     live.backgroundTasks = new Set(taskIds);
-    if (this.requireRecord(live.id).status !== 'waiting' || live.closing) {
+    const waiting = this.requireRecord(live.id).status === 'waiting';
+    if (live.backgroundTasks.size > 0) {
+      this.clearBackgroundGrace(live);
+    } else if (before > 0 && waiting && !live.closing) {
+      this.startBackgroundGrace(live);
+    }
+    if (!waiting || live.closing) {
       return;
     }
-    if (live.backgroundTasks.size > 0) {
+    if (this.waitsForBackground(live)) {
       this.clearIdleTimer(live);
     } else if (!live.idleTimer) {
       this.startIdleTimer(live);
@@ -3220,6 +3263,33 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private waitsForBackground(live: LiveSession): boolean {
+    return live.backgroundTasks.size > 0 || live.backgroundGrace !== null;
+  }
+
+  private startBackgroundGrace(live: LiveSession): void {
+    this.clearBackgroundGrace(live);
+    if (this.backgroundReportGraceMs <= 0) {
+      return;
+    }
+    live.backgroundGrace = setTimeout(() => {
+      live.backgroundGrace = null;
+      // No turn of Claude's own followed: the session is ready.
+      if (live.run && this.requireRecord(live.id).status === 'waiting') {
+        this.startIdleTimer(live);
+        this.publishStatus(live);
+      }
+    }, this.backgroundReportGraceMs);
+    live.backgroundGrace.unref?.();
+  }
+
+  private clearBackgroundGrace(live: LiveSession): void {
+    if (live.backgroundGrace) {
+      clearTimeout(live.backgroundGrace);
+      live.backgroundGrace = null;
+    }
+  }
+
   /**
    * Claude Code answers while the session waits: it started a turn on its
    * own (a background task reported back), which runs like one the user
@@ -3227,7 +3297,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   private turnStartedByClaude(live: LiveSession): void {
     const record = this.requireRecord(live.id);
-    if (record.status === 'waiting' && !record.pendingMessage && live.run) {
+    if (
+      record.status === 'waiting' &&
+      !record.pendingMessage &&
+      live.run &&
+      !live.closing
+    ) {
       this.setStatus(live, 'running');
     }
   }
@@ -3237,7 +3312,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       this.config.sessionIdleTimeoutMs <= 0 ||
       this.keptForPreviews(live.id) ||
-      live.backgroundTasks.size > 0
+      this.waitsForBackground(live)
     ) {
       return;
     }
@@ -3247,7 +3322,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         live.run &&
         this.requireRecord(live.id).status === 'waiting' &&
         !this.keptForPreviews(live.id) &&
-        live.backgroundTasks.size === 0
+        !this.waitsForBackground(live)
       ) {
         this.logger.log(`Closing idle session ${live.id}`);
         live.closing = 'idle';
