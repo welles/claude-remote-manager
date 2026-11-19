@@ -1,0 +1,6 @@
+#!/bin/sh
+# gh for sessions: runs the real gh (/usr/bin/gh, Debian's package) with a
+# short-lived, read-only installation token of the GitHub App for the
+# session's repositories, from the session manager's API (see
+# apps/api/src/assets/crm-github.cjs).
+exec /usr/local/bin/node /app/assets/crm-github.cjs gh "$@"

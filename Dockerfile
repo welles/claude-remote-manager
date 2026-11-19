@@ -48,7 +48,7 @@ ARG USER_GID=1001
 # capabilities; setpriv (util-linux) starts session processes.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl git libcap2-bin openssh-client tini xz-utils zstd \
+        ca-certificates curl gh git libcap2-bin openssh-client tini xz-utils zstd \
     && rm -rf /var/lib/apt/lists/*
 
 # The base image ships a "node" user with UID/GID 1000; it becomes the API
@@ -122,6 +122,10 @@ RUN claude="$(ls /app/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude
     && test -x "${claude}" \
     && ln -s "${claude}" /usr/local/bin/claude \
     && claude --version
+
+# gh for sessions: a wrapper ahead of Debian's /usr/bin/gh on the PATH that
+# gets a read-only token of the GitHub App for the session's repositories.
+COPY --chmod=0755 docker/gh /usr/local/bin/gh
 
 ENV NODE_ENV=production \
     PROCESS_ISOLATION=separate-users \

@@ -119,6 +119,18 @@ jobs:
         id: commit
         run: echo "time=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
 
+      - name: Build for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: claude-remote-manager:smoke
+          cache-from: type=gha
+
+      - name: Smoke test
+        run: docker/smoke-test.sh claude-remote-manager:smoke
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:

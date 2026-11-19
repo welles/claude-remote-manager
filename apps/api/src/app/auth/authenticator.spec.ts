@@ -133,6 +133,18 @@ describe('authentication', () => {
     expect((await get('/api/github/webhook')).status).toBe(401);
   });
 
+  it('opens the token helper’s routes to session processes only', async () => {
+    const token = { 'cf-access-jwt-assertion': access.token() };
+    for (const path of ['/api/session-tokens/git', '/api/session-tokens/gh']) {
+      // Not even with a valid Access token from the browser.
+      const response = await postJson(app.port, path, {}, token);
+      expect([path, response.status]).toEqual([path, 403]);
+      expect(response.json<{ reason: string }>().reason).toBe(
+        'session_process_only',
+      );
+    }
+  });
+
   it('refuses session processes, whatever token they bring', async () => {
     peerUid = SESSION_UID;
     const response = await get('/api/sessions', {
@@ -228,6 +240,13 @@ describe('authentication', () => {
     }
     // What sessions need stays reachable.
     expect((await get('/api/health')).status).toBe(200);
+    // The token helper's routes need no Access token (the process token
+    // is checked instead, missing here).
+    const helper = await postJson(app.port, '/api/session-tokens/git', {});
+    expect(helper.status).toBe(401);
+    expect(helper.json<{ message: string }>().message).toContain(
+      'session token',
+    );
     // Other local users (e.g. the API's own) are not affected.
     peerUid = 1000;
     expect(

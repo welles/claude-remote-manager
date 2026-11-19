@@ -23,6 +23,16 @@ sessions.
   e.g. `nix develop -c npm test`, or enter it with `nix develop` first.
 - Missing tools: get them from Nix instead of installing them globally, e.g.
   `nix shell nixpkgs#dotnet-sdk -c dotnet build`. There is no root access and no `apt`.
-- The image itself only provides a small base: git, Node.js/npm, curl, ssh and Nix.
+- The image itself only provides a small base: git, `gh`, Node.js/npm, curl, ssh and Nix.
 - You run as the user `claude`, not as the session manager: the session manager's API, its
   database and keys are out of reach, and `sudo`/`su` do not work.
+
+## GitHub credentials
+
+- `git` and `gh` get short-lived tokens of the session manager's GitHub App for this
+  session's repositories, nothing else; you have no SSH key or token of your own.
+- `git push` to `https://github.com/...` works for this session's repositories (the token can
+  write the whole repository, so push only the session branch unless the user asks for more).
+- `gh` can read: pull requests, reviews and comments, issues, checks, Actions runs and logs.
+  It cannot comment, approve, merge, resolve review threads or change settings; create pull
+  requests with the tool `create_pull_request`, and tell the user what else needs doing.
