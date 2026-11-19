@@ -402,6 +402,119 @@ describe('PrAutomationService', () => {
       expect(record(pull).autofixAttempts).toBe(1);
     });
 
+    const setWaitingState = (input: Record<string, unknown>) => {
+      const tool = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'set_waiting_state',
+      );
+      if (!tool) {
+        throw new Error('set_waiting_state is missing');
+      }
+      return tool.handler(input, { toolUseId: 'toolu_wait' });
+    };
+
+    const failingCheck = (head: string) =>
+      harness.github.checkRuns.set(head, [
+        {
+          id: 42,
+          name: 'test',
+          status: 'completed',
+          conclusion: 'failure',
+          app: 'github-actions',
+        },
+      ]);
+
+    it('runs while Claude only said it waits for CI by itself', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      await harness.service.sendMessage(session.id, { text: 'Push the fix' });
+      await setWaitingState({ waiting_on: 'work', reason: 'CI of PR #1' });
+      harness.runner.last.emit(resultMessage(30, 0.03));
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'background',
+      );
+
+      // CI fails while the session shows that Claude waits for it.
+      failingCheck(fakePull(pull.number).headSha);
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(1);
+      expect(record(pull).autofixAttempts).toBe(1);
+    });
+
+    it('runs a check deferred during the turn once Claude says it waits by itself', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      failingCheck(fakePull(pull.number).headSha);
+      enableAutofix(session.id, pull);
+      await harness.service.sendMessage(session.id, { text: 'Push the fix' });
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(0);
+
+      await setWaitingState({ waiting_on: 'work', reason: 'CI of PR #1' });
+      harness.runner.last.emit(resultMessage(30, 0.03));
+      await waitFor(() => appMessages().length === 1);
+    });
+
+    it('waits while background tasks of Claude still run', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      await harness.service.sendMessage(session.id, { text: 'Push the fix' });
+      await setWaitingState({ waiting_on: 'work', reason: 'Review agent' });
+      harness.runner.last.emit(
+        {
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: [
+            {
+              task_id: 'agent',
+              task_type: 'local_agent',
+              description: 'Review',
+            },
+          ],
+        } as never,
+        resultMessage(30, 0.03),
+      );
+      await waitFor(
+        () => harness.service.get(session.id).backgroundTasks === 1,
+      );
+
+      failingCheck(fakePull(pull.number).headSha);
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(0);
+    });
+
+    it('runs once the background tasks ended and Claude took no turn for their report', async () => {
+      harness.service.backgroundReportGraceMs = 30;
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      await harness.service.sendMessage(session.id, { text: 'Push the fix' });
+      await setWaitingState({ waiting_on: 'work', reason: 'Review agent' });
+      const tasks = (...ids: string[]) =>
+        ({
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: ids.map((id) => ({
+            task_id: id,
+            task_type: 'local_agent',
+            description: id,
+          })),
+        }) as never;
+      harness.runner.last.emit(tasks('agent'), resultMessage(30, 0.03));
+      await waitFor(
+        () => harness.service.get(session.id).backgroundTasks === 1,
+      );
+      failingCheck(fakePull(pull.number).headSha);
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(0);
+
+      // The task ends; within the grace period Claude may still answer.
+      harness.runner.last.emit(tasks());
+      await waitFor(
+        () => harness.service.get(session.id).backgroundTasks === 0,
+      );
+      expect(appMessages()).toHaveLength(0);
+      await waitFor(() => appMessages().length === 1);
+      expect(harness.service.get(session.id).status).toBe('running');
+    });
+
     it('stops after the attempt limit, notifies once, and continues after a reset', async () => {
       const { session, pull } = await sessionWithPullRequest();
       automation.update(session.id, pull.id, { autofix: true, maxAttempts: 1 });

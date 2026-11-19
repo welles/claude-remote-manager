@@ -3406,6 +3406,35 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       : null;
   }
 
+  /**
+   * Whether a message of the app (such as an autofix run) may start a turn
+   * now: the session waits for a message, or only because Claude said it
+   * goes on by itself (`set_waiting_state` with `work`, e.g. "CI of PR #12")
+   * while no background task of it still runs or is about to report back.
+   * Claude may well be waiting for exactly what the app brings.
+   */
+  acceptsAppMessage(sessionId: string): boolean {
+    const record = this.sessions.get(sessionId);
+    if (!record) {
+      return false;
+    }
+    const { status, waitingFor } = this.effectiveStatus(record);
+    if (status !== 'waiting') {
+      return false;
+    }
+    if (waitingFor === 'message') {
+      return true;
+    }
+    const live = this.live.get(sessionId);
+    return (
+      waitingFor === 'background' &&
+      live !== undefined &&
+      live.claudeWait?.on === 'work' &&
+      live.backgroundTasks.size === 0 &&
+      live.backgroundGrace === null
+    );
+  }
+
   private waitsForBackgroundById(sessionId: string): boolean {
     const live = this.live.get(sessionId);
     return live ? this.waitsForBackground(live) : false;
@@ -3577,7 +3606,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // No turn of Claude's own followed: the session is ready.
       if (live.run && this.requireRecord(live.id).status === 'waiting') {
         this.startIdleTimer(live);
-        this.publishStatus(live);
+        if (!this.publishStatus(live) && live.claudeWait?.on === 'work') {
+          // Still "background" for Claude's word, but now free for app
+          // messages (`acceptsAppMessage`): subscribers such as the PR
+          // automation look again.
+          this.updates.next(this.toDto(this.requireRecord(live.id)));
+        }
       }
     }, this.backgroundReportGraceMs);
     live.backgroundGrace.unref?.();
