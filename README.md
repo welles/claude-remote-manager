@@ -299,7 +299,11 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   `running` (Claude works on a turn), `waiting` (waits for the user, whether or not a process
   is alive; `waitingFor` says for what: `message`, the next message; `permission`, an answer to
   an approval request, question or plan of the running turn; `setup`, a decision about the first
-  message after a failed setup script, see below), `finished`
+  message after a failed setup script, see below; `background`, nothing from the user: the
+  turn is over, but background tasks Claude started (subagents, background commands, monitors,
+  workflows; `background_tasks_changed` without ambient ones) still run, Claude Code continues
+  on its own when they report back (shown as running, the process is kept, "finished" is
+  notified once they ended; a turn Claude Code starts on its own is `running`), `finished`
   (ended with "End session", `POST /api/sessions/:id/end` or the `session.end` frame) and
   `failed` (a clone could not be created, or the process could not start or ended with an
   error during a turn). A message to a finished or failed session resumes it, unless its

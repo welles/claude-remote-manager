@@ -149,7 +149,7 @@ describe('SessionView', () => {
       'pong',
     );
     expect(element.textContent).not.toContain('not mine');
-    expect(text('status')).toBe('Waiting');
+    expect(text('status')).toBe('Ready');
     expect(text('interrupt')).toBeUndefined();
   });
 

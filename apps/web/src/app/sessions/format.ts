@@ -9,12 +9,16 @@ import {
 export const STATUS_LABELS: Record<SessionStatus, string> = {
   preparing: 'Preparing',
   running: 'Running',
-  waiting: 'Waiting',
+  waiting: 'Ready',
   finished: 'Finished',
   failed: 'Failed',
 };
 
-/** Status label that says what a waiting session waits for. */
+/**
+ * Status label that says what a waiting session waits for: `Ready` for
+ * the next message, `Background` while Claude's background tasks still
+ * run (Claude goes on by itself).
+ */
 export function statusLabel(
   session: Pick<SessionDto, 'status' | 'waitingFor'>,
 ): string {
@@ -24,20 +28,35 @@ export function statusLabel(
         return 'Needs you';
       case 'setup':
         return 'Setup failed';
+      case 'background':
+        return 'Background';
       default:
-        return 'Waiting';
+        return 'Ready';
     }
   }
   return STATUS_LABELS[session.status];
 }
 
 /**
- * What a session needs, as specific as known: `Approve command`,
- * `2 questions`, `Plan ready`, `Setup failed`; else the status label.
+ * What a session needs or waits for, as specific as known: `Approve
+ * command`, `2 questions`, `Plan ready`, `Setup failed`, `2 background
+ * tasks`; else the status label.
  */
 export function needLabel(
-  session: Pick<SessionDto, 'status' | 'waitingFor' | 'pendingRequests'>,
+  session: Pick<
+    SessionDto,
+    'status' | 'waitingFor' | 'pendingRequests' | 'backgroundTasks'
+  >,
 ): string {
+  if (
+    session.status === 'waiting' &&
+    session.waitingFor === 'background' &&
+    session.backgroundTasks
+  ) {
+    return session.backgroundTasks === 1
+      ? '1 background task'
+      : `${session.backgroundTasks} background tasks`;
+  }
   if (
     session.status === 'waiting' &&
     session.waitingFor === 'permission' &&

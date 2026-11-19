@@ -375,6 +375,14 @@ interface LiveSession {
    */
   heldTasks: Set<string>;
   /**
+   * Background tasks of the current process that still run, by task ID
+   * (`background_tasks_changed`, without ambient ones such as watchers):
+   * while there are any, a session whose turn is over waits for them
+   * (`waitingFor: 'background'`) and its process is not closed for
+   * idleness. Empty without process.
+   */
+  backgroundTasks: Set<string>;
+  /**
    * The mode the current process last reported (`init`/`status`), or that
    * it accepted; `null` without process.
    */
@@ -1420,6 +1428,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       reopen: null,
       autoHold: null,
       heldTasks: new Set(),
+      backgroundTasks: new Set(),
       reportedMode: null,
       modeRequests: 0,
       publishedOverride: 'null',
@@ -1750,6 +1759,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // A held turn is over with its process.
     live.autoHold = null;
     live.heldTasks.clear();
+    live.backgroundTasks.clear();
     live.reportedMode = null;
     this.clearIdleTimer(live);
     live.log.clearDrafts();
@@ -1769,6 +1779,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `Claude Code of ${live.id} ended while waiting: ${errorMessage(failure, run)}`,
       );
+    }
+    if (status === 'waiting') {
+      // Background tasks end with the process.
+      this.publishStatus(live);
     }
     live.closing = null;
     this.releaseIfUnused(live);
@@ -1839,6 +1853,24 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     if (message.type === 'system' && message.subtype === 'task_notification') {
       live.heldTasks.delete(message.task_id);
+    }
+    if (
+      message.type === 'system' &&
+      message.subtype === 'background_tasks_changed'
+    ) {
+      this.backgroundTasksChanged(
+        live,
+        message.tasks
+          .filter((task) => !task.ambient)
+          .map((task) => task.task_id),
+      );
+      return;
+    }
+    if (
+      (message.type === 'assistant' || message.type === 'stream_event') &&
+      message.parent_tool_use_id === null
+    ) {
+      this.turnStartedByClaude(live);
     }
     if (
       message.type === 'system' &&
@@ -2197,11 +2229,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const tasks = [...live.heldTasks];
     live.heldTasks.clear();
     for (const taskId of tasks) {
-      void run?.stopTask(taskId).catch((error: unknown) =>
-        this.logger.warn(
-          `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
-        ),
-      );
+      void run
+        ?.stopTask(taskId)
+        .catch((error: unknown) =>
+          this.logger.warn(
+            `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
+          ),
+        );
     }
     const mode = this.requireRecord(live.id).permissionMode;
     if (run && heldForUntrusted(mode)) {
@@ -3038,6 +3072,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.run = null;
     live.autoHold = null;
     live.heldTasks.clear();
+    live.backgroundTasks.clear();
     live.reportedMode = null;
     this.approver.cancelSession(live.id, 'process_exit');
     this.withdrawQueue(live, QUEUE_WITHDRAWN.failed);
@@ -3088,6 +3123,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       : null;
   }
 
+  private backgroundTaskCount(sessionId: string): number {
+    return this.live.get(sessionId)?.backgroundTasks.size ?? 0;
+  }
+
   private effectiveStatus(record: SessionRecord): {
     status: SessionStatus;
     waitingFor: SessionWaitingFor | null;
@@ -3098,7 +3137,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (record.status === 'waiting') {
       return {
         status: 'waiting',
-        waitingFor: record.pendingMessage ? 'setup' : 'message',
+        waitingFor: record.pendingMessage
+          ? 'setup'
+          : this.backgroundTaskCount(record.id) > 0
+            ? 'background'
+            : 'message',
       };
     }
     return { status: record.status, waitingFor: null };
@@ -3155,11 +3198,46 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return (this.previews?.forSession(sessionId).length ?? 0) > 0;
   }
 
+  /**
+   * The process's background tasks changed: a session whose turn is over
+   * waits for them (or for the next message once the last one ended), and
+   * its process stays while they run (closing it would end them).
+   */
+  private backgroundTasksChanged(live: LiveSession, taskIds: string[]): void {
+    const before = live.backgroundTasks.size;
+    live.backgroundTasks = new Set(taskIds);
+    if (this.requireRecord(live.id).status !== 'waiting' || live.closing) {
+      return;
+    }
+    if (live.backgroundTasks.size > 0) {
+      this.clearIdleTimer(live);
+    } else if (!live.idleTimer) {
+      this.startIdleTimer(live);
+    }
+    if (!this.publishStatus(live) && before !== live.backgroundTasks.size) {
+      // Still waiting for background tasks, but for another number.
+      this.updates.next(this.toDto(this.requireRecord(live.id)));
+    }
+  }
+
+  /**
+   * Claude Code answers while the session waits: it started a turn on its
+   * own (a background task reported back), which runs like one the user
+   * started and ends with its result.
+   */
+  private turnStartedByClaude(live: LiveSession): void {
+    const record = this.requireRecord(live.id);
+    if (record.status === 'waiting' && !record.pendingMessage && live.run) {
+      this.setStatus(live, 'running');
+    }
+  }
+
   private startIdleTimer(live: LiveSession): void {
     this.clearIdleTimer(live);
     if (
       this.config.sessionIdleTimeoutMs <= 0 ||
-      this.keptForPreviews(live.id)
+      this.keptForPreviews(live.id) ||
+      live.backgroundTasks.size > 0
     ) {
       return;
     }
@@ -3168,7 +3246,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (
         live.run &&
         this.requireRecord(live.id).status === 'waiting' &&
-        !this.keptForPreviews(live.id)
+        !this.keptForPreviews(live.id) &&
+        live.backgroundTasks.size === 0
       ) {
         this.logger.log(`Closing idle session ${live.id}`);
         live.closing = 'idle';
@@ -3421,6 +3500,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       permissionModeOverride: this.permissionModeOverride(record),
       ...this.effectiveStatus(record),
       pendingRequests: this.pendingSummary(record),
+      backgroundTasks: this.backgroundTaskCount(record.id),
       slug: record.slug,
       pendingMessage: record.pendingMessage?.text ?? null,
       directories: record.directories.map(

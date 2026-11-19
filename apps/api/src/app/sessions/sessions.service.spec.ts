@@ -316,7 +316,12 @@ describe('SessionsService', () => {
     it("offers the user's commands first, then what the session reported", async () => {
       runner.probeCommands = () => [
         { name: 'review', description: 'Review', argumentHint: '' },
-        { name: 'doctor', description: 'Doctor', argumentHint: '', builtin: true },
+        {
+          name: 'doctor',
+          description: 'Doctor',
+          argumentHint: '',
+          builtin: true,
+        },
       ];
       const session = await startSession();
       await expect(slashCommands.forSession(session.id)).resolves.toEqual({
@@ -335,7 +340,13 @@ describe('SessionsService', () => {
       runner.last.commands = [
         { name: 'deploy', description: 'Project skill', argumentHint: '<env>' },
         { name: 'statusline', description: 'Terminal', argumentHint: '' },
-        { name: 'compact', description: 'Compact', argumentHint: '', builtin: true, aliases: ['c'] },
+        {
+          name: 'compact',
+          description: 'Compact',
+          argumentHint: '',
+          builtin: true,
+          aliases: ['c'],
+        },
       ];
       runner.last.emit({
         type: 'system',
@@ -350,7 +361,10 @@ describe('SessionsService', () => {
         'deploy',
         'compact',
       ]);
-      expect(reported.commands[1]).toMatchObject({ builtin: true, aliases: ['c'] });
+      expect(reported.commands[1]).toMatchObject({
+        builtin: true,
+        aliases: ['c'],
+      });
 
       // A change replaces the list.
       runner.last.emit({
@@ -360,7 +374,9 @@ describe('SessionsService', () => {
       } as never);
       await flush();
       expect(
-        (await slashCommands.forSession(session.id)).commands.map((c) => c.name),
+        (await slashCommands.forSession(session.id)).commands.map(
+          (c) => c.name,
+        ),
       ).toEqual(['fresh']);
     });
   });
@@ -2401,6 +2417,110 @@ describe('SessionsService', () => {
       await service.send(session.id, { id: MSG_2, text: 'Later' });
       await flush();
       expect(runner.runs).toHaveLength(2);
+    });
+
+    const backgroundTasks = (
+      ...tasks: { task_id: string; ambient?: boolean }[]
+    ) =>
+      ({
+        type: 'system',
+        subtype: 'background_tasks_changed',
+        tasks: tasks.map((task) => ({
+          task_type: 'local_bash',
+          description: task.task_id,
+          ...task,
+        })),
+      }) as never;
+
+    it('waits for background tasks after a turn and keeps the process for them', async () => {
+      config.sessionIdleTimeoutMs = 20;
+      service = await createService();
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks(
+          { task_id: 'agent' },
+          { task_id: 'shell' },
+          { task_id: 'watcher', ambient: true },
+        ),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'background',
+        backgroundTasks: 2,
+      });
+      expect(lastEvent('session.status')).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'background',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(runner.last.closed).toBe(false);
+
+      runner.last.emit(backgroundTasks({ task_id: 'agent' }));
+      await flush();
+      expect(updates.at(-1)).toMatchObject({
+        waitingFor: 'background',
+        backgroundTasks: 1,
+      });
+
+      runner.last.emit(backgroundTasks({ task_id: 'watcher', ambient: true }));
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'message',
+        backgroundTasks: 0,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(runner.last.closed).toBe(true);
+    });
+
+    it('runs a turn Claude Code starts on its own after a background task', async () => {
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks({ task_id: 'shell' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
+
+      runner.last.emit(backgroundTasks(), {
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'message_start', message: { id: 'm2' } },
+      } as never);
+      await flush();
+      expect(service.get(session.id).status).toBe('running');
+
+      // A message meanwhile waits for the end of that turn.
+      await service.send(session.id, { id: MSG_2, text: 'Also this' });
+      expect(lastEvent('message.queued')).toMatchObject({ id: MSG_2 });
+
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.at(-1)).toMatchObject({ id: MSG_2 });
+    });
+
+    it('forgets background tasks when the process ends', async () => {
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks({ task_id: 'shell' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
+
+      runner.last.crash(new Error('gone'));
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'message',
+        backgroundTasks: 0,
+      });
+      expect(lastEvent('session.status')).toMatchObject({
+        waitingFor: 'message',
+      });
     });
   });
 

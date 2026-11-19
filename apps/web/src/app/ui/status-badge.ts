@@ -14,9 +14,10 @@ import { statusLabel } from '../sessions/format';
  * The five visual states of a session:
  * - `attention`: blocked on the user (approval, question, plan, failed
  *   setup), the only amber state;
- * - `running`: preparing or working on a turn;
+ * - `running`: preparing, working on a turn, or waiting for background
+ *   tasks Claude started (it goes on by itself);
  * - `failed`: crashed or could not start;
- * - `idle`: waits for the next message;
+ * - `idle`: ready for the next message;
  * - `done`: ended or archived.
  */
 export type StatusKind = 'attention' | 'running' | 'failed' | 'idle' | 'done';
@@ -31,6 +32,9 @@ export function statusKind(
   }
   if (session.archivedAt) {
     return 'done';
+  }
+  if (session.status === 'waiting' && session.waitingFor === 'background') {
+    return 'running';
   }
   switch (session.status) {
     case 'preparing':

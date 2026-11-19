@@ -431,6 +431,30 @@ describe('notifications', () => {
     expect(push.payloads('show')).toHaveLength(1);
   });
 
+  it('notifies a finished turn only once background tasks ended', async () => {
+    await device();
+    const session = await createSession();
+    const tasks = (...ids: string[]) => ({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: ids.map((id) => ({
+        task_id: id,
+        task_type: 'local_agent',
+        description: id,
+      })),
+    });
+    app.runner.last.emit(tasks('agent'));
+    await finishTurn('Started a subagent.');
+    expect(push.payloads('show')).toEqual([]);
+
+    app.runner.last.emit(tasks());
+    await flush();
+    await service.settled();
+    expect(push.payloads('show')).toMatchObject([
+      { tag: `turn-${session.id}`, body: expect.stringContaining('subagent') },
+    ]);
+  });
+
   it('skips sessions an active client shows', async () => {
     await device();
     const session = await createSession();
