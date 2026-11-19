@@ -295,15 +295,17 @@ export interface MessageDequeuedEvent extends SessionEventBase {
 }
 
 /**
- * The model or permission mode of the session changed: by the user, by
- * approving a plan, or by Claude Code itself (e.g. entering plan mode).
- * Stored.
+ * The model, permission mode or title of the session changed: by the user,
+ * by approving a plan, or by Claude Code itself (e.g. entering plan mode,
+ * or setting the title with `set_session_title`). Stored.
  */
 export interface SettingsChangedEvent extends SessionEventBase {
   type: 'settings.changed';
   /** New model when it changed (`null`: Claude Code's default). */
   model?: string | null;
   permissionMode?: SessionPermissionMode;
+  /** New title when it changed (a rename, or Claude's tool). */
+  title?: string;
   cause: 'user' | 'plan' | 'claude';
 }
 

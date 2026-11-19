@@ -139,7 +139,8 @@ export class NewSessionForm implements OnInit {
   protected readonly images = new AttachmentDrafts(inject(AttachmentsApi));
   protected readonly accept = ATTACHMENT_MEDIA_TYPES.join(',');
   protected model = '';
-  protected permissionMode: SessionPermissionMode = 'default';
+  /** New sessions start in `auto` (the owner's choice). */
+  protected permissionMode: SessionPermissionMode = 'auto';
   protected projectName = '';
   protected readonly mode = signal<SessionMode>('repository');
   protected readonly choices = signal<RepositoryChoice[]>([emptyChoice()]);
@@ -327,9 +328,8 @@ export class NewSessionForm implements OnInit {
         ? { attachmentIds: this.images.ids() }
         : {}),
       ...(this.model ? { model: this.model } : {}),
-      ...(this.permissionMode !== 'default'
-        ? { permissionMode: this.permissionMode }
-        : {}),
+      // Always sent: the API's default (`default`) differs from the form's.
+      permissionMode: this.permissionMode,
       ...(repositories.length > 0 ? { repositories } : {}),
       ...(this.mode() === 'project'
         ? { newProject: { name: this.projectName.trim() } }
