@@ -316,12 +316,7 @@ describe('SessionsService', () => {
     it("offers the user's commands first, then what the session reported", async () => {
       runner.probeCommands = () => [
         { name: 'review', description: 'Review', argumentHint: '' },
-        {
-          name: 'doctor',
-          description: 'Doctor',
-          argumentHint: '',
-          builtin: true,
-        },
+        { name: 'doctor', description: 'Doctor', argumentHint: '', builtin: true },
       ];
       const session = await startSession();
       await expect(slashCommands.forSession(session.id)).resolves.toEqual({
@@ -340,13 +335,7 @@ describe('SessionsService', () => {
       runner.last.commands = [
         { name: 'deploy', description: 'Project skill', argumentHint: '<env>' },
         { name: 'statusline', description: 'Terminal', argumentHint: '' },
-        {
-          name: 'compact',
-          description: 'Compact',
-          argumentHint: '',
-          builtin: true,
-          aliases: ['c'],
-        },
+        { name: 'compact', description: 'Compact', argumentHint: '', builtin: true, aliases: ['c'] },
       ];
       runner.last.emit({
         type: 'system',
@@ -361,10 +350,7 @@ describe('SessionsService', () => {
         'deploy',
         'compact',
       ]);
-      expect(reported.commands[1]).toMatchObject({
-        builtin: true,
-        aliases: ['c'],
-      });
+      expect(reported.commands[1]).toMatchObject({ builtin: true, aliases: ['c'] });
 
       // A change replaces the list.
       runner.last.emit({
@@ -374,9 +360,7 @@ describe('SessionsService', () => {
       } as never);
       await flush();
       expect(
-        (await slashCommands.forSession(session.id)).commands.map(
-          (c) => c.name,
-        ),
+        (await slashCommands.forSession(session.id)).commands.map((c) => c.name),
       ).toEqual(['fresh']);
     });
   });
@@ -1236,13 +1220,35 @@ describe('SessionsService', () => {
       expect(READ_ONLY_TOOLS.has('mcp__crm__set_session_title')).toBe(true);
     });
 
-    it('never replaces a title the user chose', async () => {
+    it('refuses a blank title', async () => {
+      const session = await startSession({ prompt: 'p' });
+      await expect(setTitle('   ')).resolves.toMatchObject({ isError: true });
+      expect(service.get(session.id).title).toBe('p');
+    });
+
+    it('never offers to replace a title the user chose', async () => {
       const session = await startSession({ prompt: 'p', title: 'Mine' });
-      await expect(setTitle('Something else')).resolves.toMatchObject({
-        text: expect.stringContaining('The user chose the title "Mine"'),
-      });
-      expect(service.get(session.id).title).toBe('Mine');
+      expect(
+        runner.last.options.tools?.map((entry) => entry.name),
+      ).not.toContain('set_session_title');
       expect(lastEvent('settings.changed')).toBeUndefined();
+      // Renamed to itself: nothing changes, nothing is logged.
+      await service.update(session.id, { title: 'Mine' });
+      expect(lastEvent('settings.changed')).toBeUndefined();
+    });
+
+    it('logs a rename of a session without process', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      runner.last.close();
+      await flush();
+      await service.update(session.id, { title: 'Later' });
+      expect(service.get(session.id).title).toBe('Later');
+      const history = await service.subscribe(session.id);
+      expect(
+        history.events.filter((event) => event.type === 'settings.changed'),
+      ).toEqual([expect.objectContaining({ title: 'Later', cause: 'user' })]);
     });
 
     it('stops after a rename, also one that keeps the title', async () => {
@@ -1253,7 +1259,9 @@ describe('SessionsService', () => {
         title: 'Renamed',
         cause: 'user',
       });
-      await setTitle('Again from Claude');
+      await expect(setTitle('Again from Claude')).resolves.toMatchObject({
+        text: expect.stringContaining('The user chose the title "Renamed"'),
+      });
       expect(service.get(session.id).title).toBe('Renamed');
 
       const other = await startSession();

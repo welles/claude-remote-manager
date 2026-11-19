@@ -1669,7 +1669,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           env: { ...SESSION_ENV, ...extras.env },
           tools: [
             ...extras.tools,
-            this.setTitleTool(live),
+            // A title the user chose stays: no tool to change it.
+            ...(record.titleSource === 'user' ? [] : [this.setTitleTool(live)]),
             ...(this.additions ? [this.addRepositoryTool(live)] : []),
           ],
           settings: extras.settings,
@@ -2180,13 +2181,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const tasks = [...live.heldTasks];
     live.heldTasks.clear();
     for (const taskId of tasks) {
-      void run
-        ?.stopTask(taskId)
-        .catch((error: unknown) =>
-          this.logger.warn(
-            `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
-          ),
-        );
+      void run?.stopTask(taskId).catch((error: unknown) =>
+        this.logger.warn(
+          `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
+        ),
+      );
     }
     const mode = this.requireRecord(live.id).permissionMode;
     if (run && heldForUntrusted(mode)) {

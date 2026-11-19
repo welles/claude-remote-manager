@@ -49,7 +49,6 @@ describe('session integrations (tools, memory, pushes)', () => {
   const start = async (repositoryId: string | null): Promise<SessionDto> => {
     const session = await harness.service.create({
       prompt: 'Work',
-      title: 'Improve',
       ...(repositoryId
         ? { repositories: [{ repositoryId }] }
         : { scratch: true }),

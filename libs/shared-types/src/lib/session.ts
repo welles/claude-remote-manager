@@ -69,6 +69,9 @@ export function needsUser(
  */
 export type SessionTitleSource = 'prompt' | 'user' | 'claude';
 
+/** Name of Claude's tool that sets the title, as Claude Code reports it. */
+export const SET_SESSION_TITLE_TOOL_NAME = 'mcp__crm__set_session_title';
+
 /**
  * Permission modes a session may use: the Agent SDK's modes. In `auto` a
  * model classifier of Claude Code approves or denies tool uses and asks the

@@ -1,5 +1,6 @@
 import {
   PERMISSION_MODE_INFO,
+  SET_SESSION_TITLE_TOOL_NAME,
   type AssistantDraft,
   type AttachmentDto,
   type FileDiff,
@@ -134,12 +135,6 @@ export type ConversationItem =
     };
 
 const MAX_SUMMARY_LENGTH = 120;
-
-/**
- * Claude's tool that sets the session's title: not shown as a tool call,
- * the change appears as a `settings.changed` line instead.
- */
-const SET_SESSION_TITLE_TOOL = 'mcp__crm__set_session_title';
 
 /** Short description of a tool call's input, e.g. the command or file. */
 export function toolSummary(name: string, input: unknown): string {
@@ -280,7 +275,8 @@ export function applyEvent(
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
     }
     case 'tool.call': {
-      if (event.name === SET_SESSION_TITLE_TOOL) {
+      // Not shown as a tool call: the change is a `settings.changed` line.
+      if (event.name === SET_SESSION_TITLE_TOOL_NAME) {
         return items;
       }
       const key = `tool:${event.toolUseId}`;

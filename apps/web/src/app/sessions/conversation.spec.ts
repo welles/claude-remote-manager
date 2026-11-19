@@ -736,6 +736,19 @@ describe('approval requests, queue and settings in the conversation', () => {
       'Title: Login fails with SSO (changed by Claude)',
       'Title: Mine',
     ]);
+
+    // Should it ever be denied, that still shows.
+    const denied = buildConversation([
+      event({
+        type: 'permission.denied',
+        toolUseId: 't2',
+        toolName: 'mcp__crm__set_session_title',
+        input: { title: 'x' },
+        message: 'Denied by a rule',
+        reason: 'rule',
+      }),
+    ]);
+    expect(denied.map((item) => item.kind)).toEqual(['tool']);
   });
 });
 

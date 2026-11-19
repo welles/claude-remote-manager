@@ -332,14 +332,17 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 - Autofix hold: an Autofix run (untrusted GitHub content) of a session in `auto` or
   `bypassPermissions` runs in `default`: the process switches before the run's message and back
   to the chosen mode when its turn ends. During that turn every tool call except reading
-  (`Read`, `Glob`, `Grep`, `LSP`, `ToolSearch`, to-dos and task lists) goes to the user, in any
+  (`Read`, `Glob`, `Grep`, `LSP`, `ToolSearch`, to-dos and task lists) and setting the session
+  title (`set_session_title`; injected text could only change the displayed title, and every
+  change is a line in the history) goes to the user, in any
   mode and whatever allow rules say (the user's own, the project's, "Allow for this
   session"): a PreToolUse hook answers `ask`, which Claude Code does not leave to allow rules,
   and the dialog does not offer to allow it for the session (in `dontAsk` it is refused).
   Work that would go on unheld after the run and start a turn of its own is refused:
   subagents, backgrounded commands, monitors, schedules, workflows and teammates; a task the
   run started anyway (a command moved to the background at its timeout) is stopped when the
-  run ends. Still unasked: the app's own tools that never ask (showing a file, previews).
+  run ends. Still unasked: the app's own tools that never ask (showing a file, previews, the
+  session title).
   Not covered: a `PermissionRequest` hook in the user's or the project's Claude Code settings
   that approves requests itself. Injected text in a CI
   log or comment cannot push elsewhere with the user's credentials. The app's narrow
@@ -374,8 +377,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   exhausted; amber is kept for sessions that need the user); tapping it opens a dialog with
   every window, per-model weekly ones included, with percent, reset time and when they were
   last updated. The session details show the same list.
-- Integrations: each Claude Code process gets the tools `show_file` (always), `add_repository`
-  (always, see
+- Integrations: each Claude Code process gets the tools `show_file` (always),
+  `set_session_title` (unless the user chose the title, see
+  [Managing sessions](#managing-sessions)), `add_repository` (always, see
   [Adding repositories to a running session](#adding-repositories-to-a-running-session)) and
   `create_pull_request` (when the session has a GitHub repository; all in the in-process MCP
   server `crm`), and the auto-memory directory of its main repository. No credentials: git uses
@@ -662,14 +666,16 @@ session list (search, the Archived filter) and the Workspace cleanup page (under
 Maintenance, also linked from Repositories). Every route is a management route: Access token required, refused to
 session processes (see [Authentication](#authentication)).
 
-- **Titles**: a new session is titled with the first line of its first message, or the title
-  given in the form. Claude sets a short title of its own with the app's tool
+- **Titles**: a new session is titled with the first line of its first message ("Image" or
+  "Images" without text), or the title given in the form. Claude sets a short title of its own with the app's tool
   `set_session_title` (never asks, also not during an Autofix run) once it has read what the
   task refers to, and again when the topic changes substantially (the global `CLAUDE.md` of
   sessions says when); each change is a `settings.changed` line in the history, the tool call
   itself is not shown. `sessions.title_source` says where the title comes from (`prompt`,
-  `user`, `claude`): a title the user gave or confirmed is never replaced, the tool tells
-  Claude so.
+  `user`, `claude`): a title the user gave or confirmed is never replaced. A process of such a
+  session does not get the tool; one that has it when the user renames is told so by the
+  tool. Sessions from before this have `prompt` (their origin is unknown) and get titles from
+  Claude when they run again.
 - **Rename** (`PATCH /api/sessions/:id` with `title`, 1-200 characters, or the
   `session.update` frame): only the title changes. The slug, the session branches
   `claude/<slug>` and the directory names keep their names (the form says so); search and
@@ -1830,7 +1836,8 @@ image or the compose file in plain text.
 ### Global CLAUDE.md
 
 `claude-md/container.md` (the container: directory layout, Nix in the image) followed by
-`claude-md/core.md` (shared with the NixOS module: directories, showing files, previews, git)
+`claude-md/core.md` (shared with the NixOS module: directories, the session title, showing
+files, previews, git)
 hold the rules for all sessions in the container. The image installs them as the managed policy
 file `/etc/claude-code/CLAUDE.md`, which Claude Code loads in addition to the user's
 `/data/claude/CLAUDE.md`. That way it is not hidden by the Claude volume and image updates take
