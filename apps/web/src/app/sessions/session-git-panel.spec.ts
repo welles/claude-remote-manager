@@ -9,6 +9,7 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { words } from '../testing/text';
+import { Toasts } from '../ui/toasts';
 import { SessionGitPanel } from './session-git-panel';
 import { sessionDto } from './testing/session-dto';
 
@@ -109,7 +110,7 @@ describe('SessionGitPanel', () => {
   };
 
   it('offers push and pull requests for repositories with a remote and lists the pull requests', async () => {
-    const { all } = await render(
+    const { all, element } = await render(
       githubSession({
         pullRequests: [
           pull(),
@@ -131,8 +132,21 @@ describe('SessionGitPanel', () => {
       /^Open #7 Fix login by Claude Autofix Autoclose Automerge/,
     );
     expect(pulls[1]).toBe('Merged #3 Old');
+    expect(
+      element.querySelector('[data-testid="pull-request-state"]')?.className,
+    ).toContain('state-open');
     // The automation is offered for open pull requests only.
     expect(all('pr-automation')).toHaveLength(1);
+  });
+
+  it('marks an open draft pull request grey, like GitHub', async () => {
+    const { all, element } = await render(
+      githubSession({ pullRequests: [pull({ draft: true })] }),
+    );
+    expect(all('pull-request-state')).toEqual(['Draft']);
+    const state = element.querySelector('[data-testid="pull-request-state"]');
+    expect(state?.classList).toContain('state-draft');
+    expect(state?.classList).not.toContain('state-open');
   });
 
   it('shows the checks of an open pull request, folded into one line', async () => {
@@ -383,6 +397,9 @@ describe('SessionGitPanel', () => {
       discard.flush(githubSession());
       fixture.detectChanges();
       expect(all('discard-clone-confirm')).toEqual([]);
+      expect(TestBed.inject(Toasts).all()).toMatchObject([
+        { title: 'Clone of acme/app deleted', kind: 'info' },
+      ]);
     });
   });
 

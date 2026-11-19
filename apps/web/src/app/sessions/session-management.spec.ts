@@ -318,6 +318,10 @@ describe('session management', () => {
     const request = http.expectOne('/api/sessions/s1/delete');
     expect(request.request.body).toEqual({ confirm: true, acceptLoss: true });
     request.flush(null);
+    view.fixture.detectChanges();
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      { title: 'Session deleted' },
+    ]);
   });
 
   it('renames only the title and says so', async () => {

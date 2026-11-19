@@ -85,6 +85,7 @@ import { CleanupDialog } from './cleanup-dialog';
 import { SessionTitle } from './session-title';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { errorMessage } from '../repositories/repositories-api';
+import { Toasts } from '../ui/toasts';
 
 /** One session: the streamed conversation, input and usage. */
 /** One `@path` reference, as the file browser hands it over (`?mention=`). */
@@ -131,6 +132,7 @@ const MENTION_TOKEN = /^@(?:"[^"\n]{1,4096}"|[^\s"]{1,4096})$/;
 export class SessionView implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly socket = inject(SessionSocket);
+  private readonly toasts = inject(Toasts);
   private readonly destroyRef = inject(DestroyRef);
   private readonly modelsStore = inject(ModelsStore);
   private readonly host = inject(ElementRef);
@@ -624,7 +626,10 @@ export class SessionView implements OnInit {
 
   protected unarchive(): void {
     this.sessionsApi.unarchive(this.sessionId()).subscribe({
-      next: (session) => this.session.set(session),
+      next: (session) => {
+        this.session.set(session);
+        this.toasts.show({ title: 'Session unarchived' });
+      },
       error: (error: unknown) =>
         this.error.set(errorMessage(error, 'The session was not unarchived.')),
     });

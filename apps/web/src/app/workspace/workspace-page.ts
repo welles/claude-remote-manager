@@ -14,6 +14,7 @@ import { errorMessage } from '../repositories/repositories-api';
 import { LossDetails } from '../sessions/loss-details';
 import { AppIcon } from '../ui/icon';
 import { AppPageBar } from '../ui/page-bar';
+import { Toasts } from '../ui/toasts';
 
 const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
   clone: 'Clone without session',
@@ -205,6 +206,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
 })
 export class WorkspacePage implements OnInit {
   private readonly http = inject(HttpClient);
+  private readonly toasts = inject(Toasts);
 
   protected readonly kindLabels = KIND_LABELS;
   protected readonly data = signal<WorkspaceOrphansResponse | null>(null);
@@ -255,6 +257,10 @@ export class WorkspacePage implements OnInit {
           this.busy.set(false);
           this.confirming.set(null);
           this.data.set(data);
+          this.toasts.show({
+            title: 'Directory removed',
+            lines: [orphan.path],
+          });
         },
         error: (error: unknown) => {
           this.busy.set(false);
@@ -273,6 +279,10 @@ export class WorkspacePage implements OnInit {
       .subscribe({
         next: () => {
           this.busy.set(false);
+          this.toasts.show({
+            title: 'Directory forgotten',
+            lines: [`${entry.name} of ${entry.sessionTitle ?? 'the session'}`],
+          });
           this.load();
         },
         error: (error: unknown) => {

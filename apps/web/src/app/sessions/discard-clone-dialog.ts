@@ -12,6 +12,7 @@ import type { CloneLossReport } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { AppDialog } from '../ui/dialog';
 import { SessionsApi } from './sessions-api';
+import { Toasts } from '../ui/toasts';
 
 /** A clone the user may delete. */
 export interface DiscardCloneTarget {
@@ -141,6 +142,7 @@ export interface DiscardCloneTarget {
 })
 export class DiscardCloneDialog {
   private readonly api = inject(SessionsApi);
+  private readonly toasts = inject(Toasts);
   private readonly dialog = viewChild.required(AppDialog);
 
   readonly sessionId = input.required<string>();
@@ -186,6 +188,7 @@ export class DiscardCloneDialog {
     this.api.discardClone(this.sessionId(), target.repositoryId).subscribe({
       next: () => {
         this.close();
+        this.toasts.show({ title: `Clone of ${target.name} deleted` });
         this.discarded.emit(target.repositoryId);
       },
       error: (error: unknown) => {

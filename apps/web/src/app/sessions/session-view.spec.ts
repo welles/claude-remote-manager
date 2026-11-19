@@ -6,10 +6,12 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import type {
+  PullRequestDto,
   SessionEvent,
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
 import { words } from '../testing/text';
+import { Toasts } from '../ui/toasts';
 import { WEBSOCKET_FACTORY } from './session-socket';
 import { SessionView } from './session-view';
 import { FakeWebSocket, fakeWebSocketFactory } from './testing/fake-websocket';
@@ -991,6 +993,42 @@ describe('SessionView', () => {
       element.querySelector('[data-testid="archive-offer-continue"]'),
     ).toBeNull();
     expect(element.querySelector('app-message-composer')).toBeNull();
+  });
+
+  it('unarchives with a toast and shows a draft pull request grey', async () => {
+    const { harness, socket, element } = await open();
+    const draft = {
+      id: 1,
+      number: 7,
+      state: 'open',
+      draft: true,
+      automation: { autofix: false },
+    } as unknown as PullRequestDto;
+    history(
+      socket,
+      sessionDto({
+        status: 'finished',
+        waitingFor: null,
+        archivedAt: '2026-01-02T00:00:00Z',
+        pullRequests: [draft],
+      }),
+    );
+    await harness.fixture.whenStable();
+    const state = element.querySelector('[data-testid="strip-pr-state"]');
+    expect(state?.textContent?.trim()).toBe('draft');
+    expect(state?.classList).toContain('pr-draft');
+
+    (
+      element.querySelector(
+        '[data-testid="unarchive-banner"]',
+      ) as HTMLButtonElement
+    ).click();
+    TestBed.inject(HttpTestingController)
+      .expectOne('/api/sessions/s1/unarchive')
+      .flush(sessionDto({ status: 'finished', waitingFor: null }));
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      { title: 'Session unarchived' },
+    ]);
   });
 
   it('makes no offer for failed sessions', async () => {
