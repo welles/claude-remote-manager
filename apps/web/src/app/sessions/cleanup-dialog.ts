@@ -266,6 +266,8 @@ export class CleanupDialog {
   protected readonly accepted = signal(new Set<number>());
   protected readonly error = signal<string | null>(null);
   protected readonly busy = signal(false);
+  /** Counts the openings, so that a late answer finds a newer one. */
+  private run = 0;
 
   protected readonly hasClones = computed(
     () =>
@@ -319,6 +321,7 @@ export class CleanupDialog {
 
   /** Opens the dialog and reads what the directories hold. */
   show(mode: CleanupMode): void {
+    this.run++;
     this.mode.set(mode);
     this.open.set(true);
     this.preview.set(null);
@@ -374,27 +377,46 @@ export class CleanupDialog {
     }
     this.busy.set(true);
     this.error.set(null);
+    const mode = this.mode();
+    // The dialog may be closed (Esc) or opened again meanwhile: then the
+    // answer goes to a toast only.
+    const run = this.run;
+    const current = () => run === this.run && this.open();
     const request =
-      this.mode() === 'archive'
+      mode === 'archive'
         ? this.api.archive(this.sessionId(), choices)
         : this.api.cleanup(this.sessionId(), choices);
     request.subscribe({
       next: (result) => {
-        this.busy.set(false);
-        this.close();
-        this.report(result.outcomes);
+        if (current()) {
+          this.busy.set(false);
+          this.close();
+        }
+        this.report(mode, result.outcomes);
         this.done.emit(result);
       },
       error: (error: unknown) => {
-        this.busy.set(false);
-        this.error.set(errorMessage(error, 'Nothing was changed.'));
+        const message = errorMessage(error, 'Nothing was changed.');
+        if (current()) {
+          this.busy.set(false);
+          this.error.set(message);
+        } else {
+          this.toasts.show({
+            title:
+              mode === 'archive'
+                ? 'The session was not archived'
+                : 'The cleanup failed',
+            lines: [message],
+            kind: 'error',
+          });
+        }
       },
     });
   }
 
   /** What happened, as a toast: it needs nothing from the user. */
-  private report(outcomes: CleanupOutcome[]): void {
-    const archive = this.mode() === 'archive';
+  private report(mode: CleanupMode, outcomes: CleanupOutcome[]): void {
+    const archive = mode === 'archive';
     const failed = outcomes.some((outcome) => outcome.result === 'failed');
     this.toasts.show({
       title: archive
@@ -406,7 +428,10 @@ export class CleanupDialog {
           : 'Cleaned up',
       lines:
         outcomes.length > 0
-          ? outcomes.map((outcome) => `${outcome.name}: ${outcome.message}`)
+          ? outcomes.map(
+              (outcome) =>
+                `${outcome.result === 'failed' ? 'Failed: ' : ''}${outcome.name}: ${outcome.message}`,
+            )
           : archive
             ? ['Nothing was cleaned up.']
             : [],

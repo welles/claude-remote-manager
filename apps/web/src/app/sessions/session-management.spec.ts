@@ -1,4 +1,3 @@
-import { Toasts } from '../ui/toasts';
 import { provideHttpClient } from '@angular/common/http';
 import {
   HttpTestingController,
@@ -14,6 +13,7 @@ import type {
   DirectoryLoss,
 } from '@claude-remote-manager/shared-types';
 import { words } from '../testing/text';
+import { Toasts } from '../ui/toasts';
 import { CleanupDialog, type CleanupMode, lossOf } from './cleanup-dialog';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { SessionTitle } from './session-title';
@@ -191,6 +191,72 @@ describe('session management', () => {
         ],
         kind: 'info',
       },
+    ]);
+  });
+
+  it('reports a partial failure as a toast that stays, and errors in the dialog', async () => {
+    const preview: CleanupPreview = {
+      sessionId: 's1',
+      blocked: null,
+      archiveBlocked: null,
+      directories: [directory({ loss: clean, lossAfterIntegration: null })],
+      previews: 0,
+    };
+    const view = await openCleanup('cleanup', preview);
+    await view.click('[data-testid="choice-discard"] input');
+    await view.click('[data-testid="cleanup-confirm"]');
+    // Refused: the dialog stays with the reason, no toast.
+    http
+      .expectOne('/api/sessions/s1/cleanup')
+      .flush(
+        { message: 'The session is running' },
+        { status: 409, statusText: 'Conflict' },
+      );
+    view.fixture.detectChanges();
+    expect(view.all('cleanup-dialog')[0]).toContain('The session is running');
+    expect(TestBed.inject(Toasts).all()).toEqual([]);
+
+    await view.click('[data-testid="cleanup-confirm"]');
+    http.expectOne('/api/sessions/s1/cleanup').flush({
+      session: sessionDto(),
+      outcomes: [
+        {
+          position: 0,
+          name: 'acme/app',
+          action: 'discard',
+          result: 'failed',
+          message: 'permission denied',
+        },
+      ],
+    });
+    view.fixture.detectChanges();
+    expect(view.all('cleanup-confirm')).toEqual([]);
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      {
+        title: 'The cleanup failed in part',
+        lines: ['Failed: acme/app: permission denied'],
+        kind: 'error',
+      },
+    ]);
+  });
+
+  it('reports the answer as a toast when the dialog was closed meanwhile', async () => {
+    const view = await openCleanup('archive', {
+      sessionId: 's1',
+      blocked: null,
+      archiveBlocked: null,
+      directories: [directory({ loss: clean, lossAfterIntegration: null })],
+      previews: 0,
+    });
+    await view.click('[data-testid="cleanup-confirm"]');
+    await view.click(
+      '[data-testid="cleanup-dialog"] button[aria-label="Close"]',
+    );
+    http
+      .expectOne('/api/sessions/s1/archive')
+      .flush({ message: 'Not now' }, { status: 409, statusText: 'Conflict' });
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      { title: 'The session was not archived', kind: 'error' },
     ]);
   });
 
