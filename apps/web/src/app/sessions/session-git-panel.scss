@@ -71,9 +71,8 @@
 .pulls {
   list-style: none;
   margin: 0;
-  padding-top: 6px;
+  padding: 6px 0 0;
   border-top: 1px solid var(--mat-sys-outline-variant);
-  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;

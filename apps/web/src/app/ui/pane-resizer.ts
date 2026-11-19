@@ -24,7 +24,7 @@ export interface PaneWidthRange {
  * The width of a resizable column, kept in `localStorage` under `key` (only
  * for this page where storage is unavailable). Changes are limited to the
  * range and the window's share; the column's CSS applies the same share
- * when the window gets narrower later (see the session view).
+ * to a stored width when the window is narrower (see the session view).
  */
 export class PaneWidth {
   readonly value: WritableSignal<number>;
@@ -58,19 +58,30 @@ export class PaneWidth {
     this.save();
   }
 
+  /** Limits to the range and to the window's share now. */
   clamp(width: number): number {
+    return Math.round(Math.min(this.max(), Math.max(this.range.min, width)));
+  }
+
+  /** The largest width the window allows now. */
+  max(): number {
     const window =
       typeof innerWidth === 'number' && innerWidth > 0
         ? innerWidth * this.range.windowShare
         : this.range.max;
-    const max = Math.max(this.range.min, Math.min(this.range.max, window));
-    return Math.round(Math.min(max, Math.max(this.range.min, width)));
+    return Math.round(
+      Math.max(this.range.min, Math.min(this.range.max, window)),
+    );
   }
 
   private stored(): number | null {
     try {
+      // Only the range: the window may be narrower now than later (the
+      // column's CSS limits it to the window meanwhile).
       const stored = Number(localStorage.getItem(this.key));
-      return stored > 0 ? this.clamp(stored) : null;
+      return stored > 0
+        ? Math.round(Math.min(this.range.max, Math.max(this.range.min, stored)))
+        : null;
     } catch {
       return null;
     }
@@ -95,10 +106,12 @@ const KEY_STEP = 16;
     tabindex: '0',
     'aria-orientation': 'vertical',
     '[attr.aria-label]': 'label()',
-    '[attr.aria-valuenow]': 'width().value()',
+    '[attr.aria-valuenow]': 'width().clamp(width().value())',
     '[attr.aria-valuemin]': 'width().range.min',
-    '[attr.aria-valuemax]': 'width().range.max',
-    '[attr.title]': '"Drag to resize, double-click to reset"',
+    '[attr.aria-valuemax]': 'width().max()',
+    '[attr.aria-valuetext]': 'width().clamp(width().value()) + " pixels"',
+    'aria-keyshortcuts': 'ArrowLeft ArrowRight Home End Enter',
+    title: 'Drag or use the arrow keys to resize; double-click or Enter resets',
     '[class.edge-start]': 'edge() === "start"',
     '[class.edge-end]': 'edge() === "end"',
     '[class.dragging]': 'dragging()',
@@ -201,6 +214,10 @@ export class PaneResizer {
   }
 
   protected key(event: KeyboardEvent): void {
+    // Leave browser shortcuts (Alt+Left: back) alone.
+    if (event.altKey || event.ctrlKey || event.metaKey) {
+      return;
+    }
     const width = this.width();
     const step = event.shiftKey ? KEY_STEP * 4 : KEY_STEP;
     // Right moves the edge to the right: wider for a left column.

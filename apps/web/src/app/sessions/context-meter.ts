@@ -15,7 +15,10 @@ import { formatTokens } from './format';
       <div class="context" title="Context window of {{ c.model }}">
         <div class="row">
           <span class="label">Context</span>
-          <span class="value" data-testid="context"
+          <span
+            class="value"
+            [class.high]="c.percentage >= 80"
+            data-testid="context"
             >{{ formatTokens(c.usedTokens) }} /
             {{ formatTokens(c.maxTokens) }} ·
             {{ c.percentage | number: '1.0-1' }}%</span
@@ -44,6 +47,7 @@ import { formatTokens } from './format';
             >known after Claude's next answer</span
           >
         </div>
+        <div class="bar" aria-hidden="true"></div>
       </div>
     }
   `,

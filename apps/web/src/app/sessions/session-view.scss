@@ -86,26 +86,38 @@
   background: var(--mat-sys-surface);
 }
 
-// Details panel: one size for its actions (32 px buttons, small switches),
-// so the sections read as one column. Inherited by the components inside.
+// Details panel: one size for its actions (32 px buttons, small switches)
+// with a mouse, so the sections read as one column; touch screens keep the
+// larger targets. Inherited by the components inside (dialogs reset them,
+// see `ui/dialog.ts`).
+@media (pointer: fine) {
+  .details {
+    --mat-button-outlined-container-height: 32px;
+    --mat-button-text-container-height: 32px;
+    --mat-button-filled-container-height: 32px;
+    --mat-slide-toggle-track-height: 20px;
+    --mat-slide-toggle-track-width: 36px;
+    --mat-slide-toggle-unselected-handle-size: 12px;
+    --mat-slide-toggle-selected-handle-size: 14px;
+    --mat-slide-toggle-with-icon-handle-size: 14px;
+    --mat-slide-toggle-pressed-handle-size: 16px;
+    --mat-slide-toggle-selected-icon-size: 10px;
+    --mat-slide-toggle-unselected-icon-size: 10px;
+    --mat-slide-toggle-state-layer-size: 28px;
+  }
+}
+
 .details {
-  --mat-button-outlined-container-height: 32px;
-  --mat-button-outlined-horizontal-padding: 12px;
-  --mat-button-text-container-height: 32px;
-  --mat-button-text-horizontal-padding: 12px;
-  --mat-button-filled-container-height: 32px;
-  --mat-slide-toggle-track-height: 20px;
-  --mat-slide-toggle-track-width: 36px;
-  --mat-slide-toggle-unselected-handle-size: 12px;
-  --mat-slide-toggle-selected-handle-size: 14px;
-  --mat-slide-toggle-with-icon-handle-size: 14px;
-  --mat-slide-toggle-pressed-handle-size: 16px;
-  --mat-slide-toggle-selected-icon-size: 10px;
-  --mat-slide-toggle-unselected-icon-size: 10px;
-  --mat-slide-toggle-state-layer-size: 28px;
   --mat-slide-toggle-label-text-size: var(--mat-sys-body-medium-size);
   --mat-select-trigger-text-size: var(--mat-sys-body-medium-size);
   --mat-select-trigger-text-line-height: var(--mat-sys-body-medium-line-height);
+}
+
+// The resize handles stick out of their columns: above the bars of the
+// conversation column (z 3).
+.list-pane,
+.details.docked {
+  z-index: 4;
 }
 
 // Settings: room for the floating labels and between field and hint.

@@ -88,7 +88,7 @@ Das Angular-Frontend nutzt als installierbare PWA zusätzlich:
 
 ## Weitere Sitzungsfunktionen
 
-- **Modell und Plan-Modus:** Modell pro Sitzung wählbar (z. B. Opus oder Sonnet), auch während der Sitzung umschaltbar; Plan-Modus, in dem Claude zuerst einen Plan vorlegt und erst nach Freigabe umsetzt.
+- **Modell und Plan-Modus:** Modell pro Sitzung wählbar (z. B. Opus oder Sonnet), auch während der Sitzung umschaltbar; Plan-Modus, in dem Claude zuerst einen Plan vorlegt und erst nach Freigabe umsetzt. **Umsetzung (entschieden):** „Default (recommended)“ heißt das Standardmodell nur in der Auswahl (neue Sitzung, Einstellungen der Sitzung); überall sonst (Sitzungsliste, Leiste der Sitzung) steht das Modell, auf das der Standard gerade zeigt, z. B. „Opus 5.5“.
 - **Dateien per @:** Im Eingabefeld Dateien aus allen Klonen der Sitzung per `@` mit Autovervollständigung referenzieren.
 - **Bilder anhängen:** Screenshots einfügen, per Drag-and-drop oder Upload an den Prompt hängen.
 - **Nachrichten einreihen:** Während Claude arbeitet, lassen sich weitere Nachrichten schreiben; sie werden eingereiht und nach dem aktuellen Schritt verarbeitet.

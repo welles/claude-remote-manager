@@ -26,6 +26,11 @@
   font-variant-numeric: tabular-nums;
   color: var(--mat-sys-on-surface-variant);
   text-align: right;
+
+  &.high {
+    color: var(--mat-sys-error);
+    font-weight: 700;
+  }
 }
 
 .bar {

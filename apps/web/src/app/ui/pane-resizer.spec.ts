@@ -56,6 +56,15 @@ describe('PaneWidth', () => {
     expect(localStorage.getItem(KEY)).toBeNull();
   });
 
+  it('keeps a stored width that a narrow window cannot show yet', () => {
+    localStorage.setItem(KEY, '500');
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 390,
+    });
+    expect(new PaneWidth(KEY, RANGE).value()).toBe(500);
+  });
+
   it('ignores stored values that are not widths', () => {
     localStorage.setItem(KEY, 'wide');
     expect(new PaneWidth(KEY, RANGE).value()).toBe(320);
@@ -101,7 +110,17 @@ describe('PaneResizer', () => {
       );
       fixture.detectChanges();
     };
-    return { fixture, handle, press };
+    let captured = false;
+    handle.setPointerCapture = () => (captured = true);
+    handle.hasPointerCapture = () => captured;
+    handle.releasePointerCapture = () => (captured = false);
+    const pointer = (type: string, clientX: number, button = 0) => {
+      const event = new MouseEvent(type, { clientX, button, cancelable: true });
+      Object.defineProperty(event, 'pointerId', { value: 1 });
+      handle.dispatchEvent(event);
+      fixture.detectChanges();
+    };
+    return { fixture, handle, press, pointer, captured: () => captured };
   }
 
   it('is a labelled separator with the current width', () => {
@@ -139,5 +158,38 @@ describe('PaneResizer', () => {
     handle.dispatchEvent(new MouseEvent('dblclick'));
     expect(fixture.componentInstance.width.value()).toBe(320);
     expect(localStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('follows a drag and stores the width only at its end', () => {
+    const { fixture, handle, pointer, captured } = render('end');
+    pointer('pointerdown', 100);
+    expect(captured()).toBe(true);
+    expect(handle.classList).toContain('dragging');
+    pointer('pointermove', 150);
+    expect(fixture.componentInstance.width.value()).toBe(370);
+    expect(localStorage.getItem(KEY)).toBeNull();
+    pointer('pointerup', 150);
+    expect(captured()).toBe(false);
+    expect(handle.classList).not.toContain('dragging');
+    expect(localStorage.getItem(KEY)).toBe('370');
+  });
+
+  it('widens a right column when dragged to the left', () => {
+    const { fixture, pointer } = render('start');
+    pointer('pointerdown', 500);
+    pointer('pointermove', 440);
+    pointer('pointerup', 440);
+    expect(fixture.componentInstance.width.value()).toBe(380);
+  });
+
+  it('ignores other mouse buttons and keys with modifiers', () => {
+    const { fixture, handle, pointer } = render('end');
+    pointer('pointerdown', 100, 2);
+    pointer('pointermove', 200);
+    expect(fixture.componentInstance.width.value()).toBe(320);
+    handle.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true }),
+    );
+    expect(fixture.componentInstance.width.value()).toBe(320);
   });
 });
