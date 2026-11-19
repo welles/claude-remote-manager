@@ -239,6 +239,21 @@ describe('NewSessionForm', () => {
     ).toContain('model is not a valid model name');
   });
 
+  it('sends an explicitly chosen default mode', async () => {
+    const { form } = await render([]);
+    form.prompt = 'Ask first';
+    form.setMode('scratch');
+    form.permissionMode = 'default';
+    form.create();
+    expect(
+      http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
+    ).toEqual({
+      prompt: 'Ask first',
+      permissionMode: 'default',
+      scratch: true,
+    });
+  });
+
   it('starts a scratch session without repository', async () => {
     const { form } = await render([repository('r1', 'acme/app')]);
     form.prompt = 'Quick question';
