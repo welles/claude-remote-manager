@@ -1,0 +1,82 @@
+<app-page-bar
+  heading="Files"
+  [back]="['/sessions', id()]"
+  backLabel="Back to the session"
+/>
+<div class="toolbar">
+  <input
+    class="filter"
+    type="search"
+    placeholder="Filter by path"
+    aria-label="Filter files by path"
+    [value]="filter()"
+    (input)="setFilter($event)"
+    data-testid="files-filter"
+  />
+  @if (changedCount() > 0) {
+  <span class="changed-count" data-testid="changed-count"
+    >{{ changedCount() }} changed</span
+  >
+  }
+</div>
+@if (error(); as message) {
+<p class="error" role="alert">{{ message }}</p>
+} @if (!listing() && !error()) {
+<p class="hint">Listing files…</p>
+} @for (section of sections(); track section.directory.directory) {
+<section class="directory" data-testid="files-directory">
+  <h2 class="directory-title">
+    <app-icon name="repo" />{{ section.title }} @if
+    (section.directory.truncated) {<span class="hint">
+      (not all files listed)</span
+    >}
+  </h2>
+  @if (section.rows.length === 0) {
+  <p class="hint">{{ filter() ? 'No matching files' : 'No files' }}</p>
+  }
+  <ul class="rows" [attr.aria-label]="section.title">
+    @for (row of section.rows; track row.key) {
+    <li [style.--depth]="row.depth">
+      <button
+        type="button"
+        class="row"
+        [class.folder]="row.folder"
+        [class.busy]="opening() === row.key"
+        [attr.aria-expanded]="row.folder ? row.expanded : null"
+        (click)="toggle(row)"
+        data-testid="file-row"
+      >
+        @if (row.folder) {
+        <app-icon [name]="row.expanded ? 'chevron-down' : 'chevron-right'" />
+        <app-icon name="folder" />
+        } @else {
+        <span class="spacer"></span>
+        <app-icon name="file" />
+        }
+        <span class="name">{{ row.name }}</span>
+        @if (row.change; as change) {
+        <span
+          [class]="'change ' + change"
+          [title]="change"
+          data-testid="file-change"
+          >{{ change === 'added' ? 'A' : change === 'deleted' ? 'D' : 'M'
+          }}</span
+        >
+        } @else if (row.changedInside) {
+        <span class="change inside" title="Changed files inside">•</span>
+        }
+      </button>
+    </li>
+    }
+  </ul>
+</section>
+} @if (opened(); as o) {
+<app-file-viewer
+  [file]="o.file"
+  [contentUrl]="o.url"
+  [contentDownloadUrl]="o.downloadUrl"
+  actionLabel="Reference in message"
+  (action)="reference(o.browsed)"
+  (closed)="opened.set(null)"
+/>
+}

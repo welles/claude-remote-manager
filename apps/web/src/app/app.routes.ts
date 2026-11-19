@@ -23,6 +23,11 @@ export const appRoutes: Route[] = [
       import('./diffs/session-changes-page').then((m) => m.SessionChangesPage),
   },
   {
+    path: 'sessions/:id/files',
+    loadComponent: () =>
+      import('./files/session-files-page').then((m) => m.SessionFilesPage),
+  },
+  {
     path: 'repositories',
     loadComponent: () =>
       import('./repositories/repository-list').then((m) => m.RepositoryList),

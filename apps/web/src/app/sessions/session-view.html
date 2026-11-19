@@ -21,7 +21,15 @@
         data-testid="changes-link"
         ><app-icon name="changes"
       /></a>
-      } } @if (!docked()) {
+      } <a
+        class="app-icon-btn"
+        [routerLink]="['/sessions', s.id, 'files']"
+        aria-label="Files"
+        title="Files"
+        data-testid="files-link"
+        ><app-icon name="folder"
+      /></a>
+      } @if (!docked()) {
       <button
         type="button"
         class="app-icon-btn"

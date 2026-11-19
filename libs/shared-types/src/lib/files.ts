@@ -1,3 +1,5 @@
+import type { ShownFileKind } from './shown-files';
+
 /**
  * Files of a session for `@` references in the input
  * (`GET /api/sessions/:id/files?query=&limit=`).
@@ -24,4 +26,44 @@ export interface FileMentionsResponse {
   files: FileMention[];
   /** More files matched than were returned. */
   truncated: boolean;
+}
+
+/**
+ * A directory of a session for the file browser
+ * (`GET /api/sessions/:id/browse`).
+ */
+export interface BrowsedDirectory {
+  /** Position in the session (0: working directory). */
+  directory: number;
+  /** `owner/name` of the repository; `null` for scratch. */
+  repository: string | null;
+  /** Absolute path of the directory. */
+  path: string;
+  /** Files below it, relative (git's tracked and untracked, not ignored). */
+  files: string[];
+  /** More files than were listed. */
+  truncated: boolean;
+}
+
+export interface BrowseResponse {
+  directories: BrowsedDirectory[];
+}
+
+/**
+ * A file of a session's directory as the browser shows it
+ * (`GET /api/sessions/:id/browse/file?directory=&path=`); its content is
+ * at `.../browse/content` with the same query.
+ */
+export interface BrowsedFileDto {
+  directory: number;
+  /** Relative to the directory. */
+  path: string;
+  name: string;
+  kind: ShownFileKind;
+  mediaType: string;
+  /** Language for syntax highlighting (text), e.g. `typescript`. */
+  language: string | null;
+  size: number;
+  /** What to put into a message to reference it (`@path`). */
+  mention: string;
 }

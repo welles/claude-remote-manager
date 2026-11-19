@@ -103,6 +103,11 @@ export const ICONS = {
   copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'],
   'chevron-down': ['M6 9l6 6 6-6'],
   'chevron-right': ['M9 6l6 6-6 6'],
+  folder: ['M3 6h6l2 2h10v11H3z'],
+  at: [
+    'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+    'M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8',
+  ],
   image: [
     'M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
     'M9 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z',

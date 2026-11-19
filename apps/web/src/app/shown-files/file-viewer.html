@@ -12,6 +12,17 @@
       <h2>{{ f.name }}</h2>
       <p class="meta">{{ size() }} · <span class="path">{{ f.path }}</span></p>
     </div>
+    @if (actionLabel(); as label) {
+    <button
+      type="button"
+      class="app-icon-btn"
+      (click)="action.emit()"
+      [title]="label"
+      data-testid="viewer-action"
+    >
+      <app-icon name="at" /><span class="visually-hidden">{{ label }}</span>
+    </button>
+    }
     <a
       class="app-icon-btn"
       [href]="downloadUrl()"

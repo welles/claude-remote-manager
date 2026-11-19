@@ -312,6 +312,7 @@ export class SessionView implements OnInit {
   private stickToBottom = true;
 
   constructor() {
+    this.takeMention();
     let revealed = false;
     afterRenderEffect(() => {
       this.items();
@@ -502,6 +503,26 @@ export class SessionView implements OnInit {
    * first message containing the first word of `?q=`), once the history
    * has loaded.
    */
+  /**
+   * A file referenced from the file browser (`?mention=@path`): added to
+   * the input, then dropped from the URL.
+   */
+  private takeMention(): void {
+    const mention = this.route.snapshot.queryParamMap.get('mention');
+    if (!mention || !mention.startsWith('@')) {
+      return;
+    }
+    this.draft.update((text) =>
+      text.trim() ? `${text.replace(/\s+$/, '')} ${mention} ` : `${mention} `,
+    );
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { mention: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
   private revealSearchTarget(): void {
     const params = this.route.snapshot.queryParamMap;
     const anchor = params.get('at');
