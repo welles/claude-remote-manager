@@ -168,8 +168,25 @@ describe('DraftReferences', () => {
     answer();
     // #12 is the eleventh reference: neither sent nor asked about.
     expect(references.unresolved()).toBe(false);
-    expect(states.has('acme/lib#12')).toBe(false);
     expect(references.entries()).toHaveLength(10);
+    expect(references.entries().every((entry) => entry.kind === 'chip')).toBe(
+      true,
+    );
+  });
+
+  it('looks up a #12 that moves into the sent references', () => {
+    existing = new Set(['acme/lib#7', 'acme/lib#20']);
+    const { references, type } = create(['acme/app', 'acme/lib']);
+    const named = Array.from({ length: 8 }, (_, i) => `acme/app#${i + 1}`);
+    // #7 becomes acme/lib#7, so #20 is the tenth reference.
+    const text = `${named.join(' ')} #7 acme/lib#7 #20`;
+    type(text);
+    answer();
+    expect(references.unresolved()).toBe(false);
+    expect(references.requests(text).slice(-2)).toEqual([
+      { token: '#7', repository: 'acme/lib', number: 7 },
+      { token: '#20', repository: 'acme/lib', number: 20 },
+    ]);
   });
 
   it('shows a #12 being looked up without a repository', () => {

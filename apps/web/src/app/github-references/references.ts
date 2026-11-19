@@ -116,28 +116,21 @@ export function draftReferences(
 }
 
 /**
- * The numbers of the bare `#12` references of a text, each once, among the
- * first {@link MAX_REFERENCES_PER_MESSAGE} references (the ones sent).
+ * The numbers of the bare `#12` references of a text, each once: the
+ * first {@link MAX_REFERENCES_PER_MESSAGE}, all that can be among the
+ * references sent.
  */
 export function bareNumbers(text: string): number[] {
-  const keys = new Set<string>();
-  const numbers: number[] = [];
+  const numbers = new Set<number>();
   for (const parsed of parseReferences(text, null)) {
-    const key = parsed.repository
-      ? referenceKey(parsed.repository, parsed.number)
-      : `#${parsed.number}`;
-    if (keys.has(key)) {
-      continue;
-    }
-    if (keys.size === MAX_REFERENCES_PER_MESSAGE) {
+    if (numbers.size === MAX_REFERENCES_PER_MESSAGE) {
       break;
     }
-    keys.add(key);
     if (!parsed.repository) {
-      numbers.push(parsed.number);
+      numbers.add(parsed.number);
     }
   }
-  return numbers;
+  return [...numbers];
 }
 
 /**

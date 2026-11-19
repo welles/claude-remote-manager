@@ -11,7 +11,6 @@ import {
 import {
   bareNumbers,
   draftChip,
-  draftReferences,
   NO_OPTIONS,
   ReferenceDetails,
   resolveBare,
@@ -48,7 +47,10 @@ export class DraftReferences {
   private readonly details = inject(ReferenceDetails);
   /** The text once typing paused, so partial numbers are not looked up. */
   private readonly settled: Signal<string>;
-  /** What the bare `#12` of the settled text refer to (several repositories). */
+  /**
+   * What the bare `#12` of the settled text refer to (several
+   * repositories): every number that could be sent is looked up.
+   */
   private readonly bare = computed(() => {
     const repositories = this.repositories();
     const resolutions = new Map<number, BareResolution>();
@@ -70,76 +72,45 @@ export class DraftReferences {
   });
 
   /** The references as chips, or the choice of repository, in text order. */
-  readonly entries = computed<DraftReferenceEntry[]>(() => {
-    const repositories = this.repositories();
-    const options = this.options();
-    const bare = this.bare();
-    const seen = new Set<string>();
-    const entries: DraftReferenceEntry[] = [];
-    for (const parsed of parseReferences(this.settled(), null)) {
-      const resolution = parsed.repository ? null : bare.get(parsed.number);
-      if (resolution?.status === 'ambiguous') {
-        const key = `#${parsed.number}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          entries.push({
+  readonly entries = computed<DraftReferenceEntry[]>(() =>
+    this.resolve(this.settled(), this.bare()).map(
+      (reference): DraftReferenceEntry => {
+        const { resolution, request, key } = reference;
+        if (resolution?.status === 'ambiguous') {
+          return {
             kind: 'ambiguous',
             key,
-            number: parsed.number,
+            number: request.number,
             candidates: resolution.candidates,
-          });
+          };
         }
-        continue;
-      }
-      const repository =
-        parsed.repository ??
-        (resolution?.status === 'resolved'
-          ? resolution.repository
-          : repositories[0]);
-      if (!repository) {
-        continue;
-      }
-      const key = referenceKey(repository, parsed.number);
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      const chosen = options.get(key) ?? NO_OPTIONS;
-      const request: MessageReferenceRequest = {
-        token: parsed.token,
-        repository,
-        number: parsed.number,
-        comments: chosen.comments,
-        diff: chosen.diff,
-      };
-      entries.push({
-        kind: 'chip',
-        key,
-        pending: resolution?.status === 'pending',
-        chip: draftChip(
-          request,
-          resolution?.status === 'pending'
-            ? { status: 'loading' }
-            : this.details.get(repository, parsed.number)(),
-        ),
-      });
-    }
-    return entries.slice(0, MAX_REFERENCES_PER_MESSAGE);
-  });
+        const pending = resolution?.status === 'pending';
+        return {
+          kind: 'chip',
+          key,
+          pending,
+          chip: draftChip(
+            request,
+            pending
+              ? { status: 'loading' }
+              : this.details.get(request.repository, request.number)(),
+          ),
+        };
+      },
+    ),
+  );
 
   /**
-   * A bare `#12` is not yet known to refer to one repository (just typed,
-   * still being looked up, or the user has to choose): the message waits.
+   * A bare `#12` that is sent is not yet known to refer to one repository
+   * (just typed, still being looked up, or the user has to choose): the
+   * message waits.
    */
-  readonly unresolved = computed(() => {
-    if (this.repositories().length < 2) {
-      return false;
-    }
-    // Numbers typed since the text settled are not in `bare` yet.
-    const bare = this.bare();
-    const numbers = bareNumbers(this.text());
-    return numbers.some((number) => bare.get(number)?.status !== 'resolved');
-  });
+  readonly unresolved = computed(() =>
+    this.resolve(this.text(), this.bare()).some(
+      ({ resolution }) =>
+        resolution !== null && resolution.status !== 'resolved',
+    ),
+  );
 
   /**
    * @param text the text being written
@@ -159,13 +130,76 @@ export class DraftReferences {
 
   /** The references to send with `text` (once {@link unresolved} is false). */
   requests(text: string): MessageReferenceRequest[] {
-    const repositories = this.repositories();
-    const bare = this.bare();
-    return draftReferences(text, repositories, this.options(), (number) => {
-      const resolution = bare.get(number);
-      return resolution?.status === 'resolved'
-        ? resolution.repository
-        : (repositories[0] ?? null);
+    return this.resolve(text, this.bare()).map(({ request }) => {
+      const { comments, diff, ...rest } = request;
+      return {
+        ...rest,
+        ...(comments ? { comments: true } : {}),
+        ...(diff ? { diff: true } : {}),
+      };
     });
+  }
+
+  /**
+   * The references of a text that are sent, each once, in order: what each
+   * refers to, and for a bare `#12` with several repositories how far it is
+   * resolved (a number not looked up yet is `pending`). Pending and
+   * ambiguous ones count as their own reference (`#12`) until resolved.
+   */
+  private resolve(
+    text: string,
+    bare: ReadonlyMap<number, BareResolution>,
+  ): {
+    key: string;
+    request: Required<MessageReferenceRequest>;
+    resolution: BareResolution | null;
+  }[] {
+    const repositories = this.repositories();
+    const options = this.options();
+    const several = repositories.length > 1;
+    const seen = new Set<string>();
+    const resolved: {
+      key: string;
+      request: Required<MessageReferenceRequest>;
+      resolution: BareResolution | null;
+    }[] = [];
+    for (const parsed of parseReferences(text, null)) {
+      const resolution =
+        parsed.repository || !several
+          ? null
+          : (bare.get(parsed.number) ?? { status: 'pending' as const });
+      const repository =
+        parsed.repository ??
+        (resolution?.status === 'resolved'
+          ? resolution.repository
+          : repositories[0]);
+      if (!repository) {
+        continue;
+      }
+      const key =
+        resolution && resolution.status !== 'resolved'
+          ? `#${parsed.number}`
+          : referenceKey(repository, parsed.number);
+      if (seen.has(key)) {
+        continue;
+      }
+      if (seen.size === MAX_REFERENCES_PER_MESSAGE) {
+        break;
+      }
+      seen.add(key);
+      const chosen = options.get(key) ?? NO_OPTIONS;
+      resolved.push({
+        key,
+        resolution,
+        request: {
+          token: parsed.token,
+          repository,
+          number: parsed.number,
+          comments: chosen.comments,
+          diff: chosen.diff,
+        },
+      });
+    }
+    return resolved;
   }
 }
