@@ -131,11 +131,21 @@ export interface HistoryItem {
  * app events. A stored event goes right after the transcript entry it was
  * anchored to; if that entry is unknown (e.g. compacted away), at the end of
  * its user message's turn; otherwise (also without anchor) at the end.
+ * Of the prompt suggestions only the newest is kept.
  */
 export function buildHistory(
   entries: TranscriptEntry[],
   stored: StoredEvent[],
 ): HistoryItem[] {
+  // Only the newest prompt suggestion can still apply; an older one placed
+  // later (its entry compacted away) would otherwise win.
+  const newestSuggestion = stored.findLast(
+    (item) => item.event.type === 'prompt.suggestion',
+  );
+  stored = stored.filter(
+    (item) =>
+      item.event.type !== 'prompt.suggestion' || item === newestSuggestion,
+  );
   const entryIds = new Set(entries.map((entry) => entry.uuid));
   const userIds = new Set(
     entries.filter((entry) => entry.isUserMessage).map((entry) => entry.uuid),

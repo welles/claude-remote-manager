@@ -513,11 +513,16 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   `/usage`) is shown live, but is not in the transcript and so missing after a reload.
 - Prompt suggestions: sessions run with the SDK's `promptSuggestions`, so after a turn Claude
   Code may send its guess at the user's next message (`prompt_suggestion`, as the terminal
-  shows it in its input; not after the first turn, in plan mode, near the plan's limit, or
-  when the user's settings have `promptSuggestionEnabled: false`). It becomes the stored event
-  `prompt.suggestion`; the web app offers the latest one above the empty input until a
-  message is sent or queued, and not while a turn runs. A tap or Tab puts it into the input,
-  to edit or send.
+  shows it in its input; not after the first turn, after API errors, in plan mode, near the
+  plan's limit, or when turned off with `promptSuggestionEnabled: false` in the user's settings
+  or `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, which wins over the setting). It is taken
+  only when the turn ended without a stop and the session waits for the user: a suggestion
+  arriving after the next message was sent is dropped. It becomes the stored event
+  `prompt.suggestion` (history keeps only the newest); the web app offers it above the empty
+  input until a message is sent or queued, and not while a turn runs. A tap or Tab puts it
+  into the input, to edit or send; it is never sent by itself. It comes from the
+  conversation, which may contain untrusted content: once taken it is the user's message,
+  with `@` expansion and slash commands.
 - `show_file` (path, optional caption): reads the file as the session user, only inside the
   session's directories, and keeps a snapshot (up to 20 MB) in `FILES_DIR/shown`; larger
   files keep only their metadata and are served from the session while it exists

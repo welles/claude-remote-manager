@@ -400,6 +400,8 @@ export class SessionView implements OnInit {
     this.pending.add(requestId);
     this.error.set(null);
     this.composer()?.clear();
+    // The message answers the suggestion, whether taken or not.
+    this.suggestion.set(null);
     this.stickToBottom = true;
   }
 

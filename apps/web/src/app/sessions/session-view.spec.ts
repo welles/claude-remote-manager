@@ -225,6 +225,49 @@ describe('SessionView', () => {
     expect(element.querySelector('.notice')).toBeNull();
   });
 
+  it('offers the prompt suggestion of the last turn until a message is sent', async () => {
+    const { harness, socket, element } = await open();
+    const suggestion = () =>
+      element.querySelector('[data-testid="prompt-suggestion"]')?.textContent;
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto({ status: 'running' }),
+      events: [
+        { type: 'prompt.suggestion', text: 'Old', seq: 1, at: null },
+        { type: 'user.message', id: 'u1', text: 'Hi', seq: 2, at: null },
+        { type: 'prompt.suggestion', text: 'Run the tests', seq: 3, at: null },
+      ],
+    });
+    await harness.fixture.whenStable();
+    // Not while a turn runs.
+    expect(suggestion()).toBeUndefined();
+
+    socket.receive({
+      type: 'session.event',
+      sessionId: 's1',
+      event: { type: 'session.status', status: 'waiting', seq: 4, at: null },
+    });
+    await harness.fixture.whenStable();
+    expect(suggestion()).toContain('Run the tests');
+
+    const input = element.querySelector(
+      '[data-testid="message-input"]',
+    ) as HTMLTextAreaElement;
+    input.value = 'Something else';
+    input.dispatchEvent(new Event('input'));
+    await harness.fixture.whenStable();
+    (
+      element.querySelector('[data-testid="send"]') as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    // Gone right away, before the server confirms the message.
+    expect(input.value).toBe('');
+    expect(suggestion()).toBeUndefined();
+  });
+
   it('sends messages and interrupts', async () => {
     const { harness, socket, element, text } = await open();
     socket.receive({

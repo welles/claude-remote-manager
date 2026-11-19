@@ -68,6 +68,7 @@
   @if (offering()) {
   <button
     type="button"
+    id="prompt-suggestion"
     class="suggestion"
     (mousedown)="$event.preventDefault()"
     (click)="takeSuggestion()"
@@ -76,6 +77,9 @@
   >
     <span class="suggestion-label">Suggested</span>
     <span class="suggestion-text">{{ suggestion() }}</span>
+    <span class="visually-hidden"
+      >Press Tab in the empty input to use it.</span
+    >
   </button>
   }
   <div class="composer-row">
@@ -123,6 +127,7 @@
       "
       [attr.aria-expanded]="suggesting() || suggestingCommands()"
       [attr.aria-activedescendant]="activeCommandId()"
+      [attr.aria-describedby]="offering() ? 'prompt-suggestion' : null"
       enterkeyhint="send"
       data-testid="message-input"
     ></textarea>
