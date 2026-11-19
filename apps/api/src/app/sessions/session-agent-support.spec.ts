@@ -101,12 +101,14 @@ describe('session integrations (tools, memory, pushes)', () => {
       'create_pull_request',
       'request_owner_decision',
       'set_session_title',
+      'set_waiting_state',
       'add_repository',
     ]);
-    // Showing a file, setting the title and asking for the owner's
-    // decision (it only pauses automerge) never ask.
+    // Showing a file, setting the title and the waiting state, and asking
+    // for the owner's decision (it only pauses automerge) never ask.
     expect(options().allowedTools).toContain('mcp__crm__show_file');
     expect(options().allowedTools).toContain('mcp__crm__set_session_title');
+    expect(options().allowedTools).toContain('mcp__crm__set_waiting_state');
     expect(options().allowedTools).toContain(
       'mcp__crm__request_owner_decision',
     );
@@ -136,6 +138,7 @@ describe('session integrations (tools, memory, pushes)', () => {
     expect(options().tools?.map((entry) => entry.name)).toEqual([
       'show_file',
       'set_session_title',
+      'set_waiting_state',
       'add_repository',
     ]);
   });

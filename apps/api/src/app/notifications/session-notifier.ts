@@ -59,8 +59,9 @@ const BODY_LENGTH = 200;
  * - approval requests, questions and plans (`approval`); withdrawn when
  *   answered or cancelled, anywhere;
  * - a turn that ended normally with the session waiting for the next
- *   message (`turn_finished`; not after Stop or a denial); withdrawn when
- *   the next turn starts or the session ends;
+ *   message (`turn_finished`; not after Stop or a denial), only once the
+ *   background tasks Claude started ended too; withdrawn when the next
+ *   turn starts or the session ends;
  * - a running turn without any event for `SESSION_STALL_MINUTES`
  *   (`stalled`), once per stall; withdrawn when activity resumes or the
  *   turn ends; reported again only after activity resumed and stalled anew;
@@ -203,7 +204,9 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
     }
     if (
       state === 'waiting/message' &&
-      (previous === 'running/' || previous === 'waiting/permission')
+      (previous === 'running/' ||
+        previous === 'waiting/permission' ||
+        previous === 'waiting/background')
     ) {
       if (!watched.interrupted) {
         this.notifyTurnFinished(session, watched);

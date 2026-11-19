@@ -76,6 +76,23 @@ describe('parseClientFrame', () => {
       sessionId: SESSION,
       messageId: MESSAGE,
     });
+    expect(
+      parseClientFrame({
+        type: 'queue.send',
+        sessionId: SESSION,
+        messageId: MESSAGE,
+      }),
+    ).toEqual({ type: 'queue.send', sessionId: SESSION, messageId: MESSAGE });
+    expect(
+      parseClientFrame({ type: 'queue.send', sessionId: SESSION }),
+    ).toEqual({ type: 'queue.send', sessionId: SESSION });
+    expect(() =>
+      parseClientFrame({
+        type: 'queue.send',
+        sessionId: SESSION,
+        messageId: 'x',
+      }),
+    ).toThrow(BadRequestException);
     for (const type of ['pending.send', 'setup.rerun'] as const) {
       expect(
         parseClientFrame({ type, sessionId: SESSION, requestId: 'r' }),

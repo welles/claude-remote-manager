@@ -185,6 +185,23 @@ export class SessionsController {
     return this.sessions.removeAddition(id, repositoryId);
   }
 
+  /** Stops the running turn and sends all queued messages right away. */
+  @Post(':id/queued-messages/send')
+  @HttpCode(204)
+  sendQueuedNow(@Param('id') id: string): Promise<void> {
+    return this.sessions.sendQueuedNow(id, null);
+  }
+
+  /** Stops the running turn and sends this queued message right away. */
+  @Post(':id/queued-messages/:messageId/send')
+  @HttpCode(204)
+  sendQueuedMessageNow(
+    @Param('id') id: string,
+    @Param('messageId') messageId: string,
+  ): Promise<void> {
+    return this.sessions.sendQueuedNow(id, messageId);
+  }
+
   /** Removes a queued message before it goes to Claude. */
   @Delete(':id/queued-messages/:messageId')
   @HttpCode(204)

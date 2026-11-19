@@ -5,37 +5,38 @@
 }
 
 .clone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
   border: 1px solid var(--mat-sys-outline-variant);
   border-radius: var(--mat-sys-corner-small);
-  padding: 4px 4px 8px 12px;
-  background: var(--mat-sys-surface);
 }
 
+// Name and what was pushed, then the actions in their own row (narrow
+// details column), flush with the name.
 .clone-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: 6px 8px;
 }
 
 .spacer {
   display: none;
 }
 
-// Name, then the actions in their own row (narrow details column).
 .clone-head > strong {
+  order: -2;
   flex: 1 1 100%;
-  margin-top: 4px;
-}
-
-.clone-head button {
-  margin-left: -12px;
-  margin-right: 12px;
+  font: var(--mat-sys-title-small);
+  overflow-wrap: anywhere;
 }
 
 .pushed {
-  order: 5;
+  order: -1;
   flex-basis: 100%;
+  margin-top: -4px;
 }
 
 .pushed,
@@ -69,8 +70,9 @@
 
 .pulls {
   list-style: none;
-  margin: 4px 0;
-  padding: 0;
+  margin: 0;
+  padding: 6px 0 0;
+  border-top: 1px solid var(--mat-sys-outline-variant);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -79,13 +81,24 @@
 .pulls li {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   min-width: 0;
 }
 
+// State and title in one line, the title wrapping beside the state.
 .pulls a {
+  flex: 1 1 0;
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.by {
+  flex-basis: 100%;
+}
+
+.by:empty {
+  display: none;
 }
 
 .state {

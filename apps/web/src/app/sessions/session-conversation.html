@@ -1,7 +1,7 @@
 @if (loading()) {
 <mat-progress-bar mode="indeterminate" />
-} @for (item of items(); track item.key) { @switch (item.kind) { @case ('user')
-{
+} @for (item of entries(); track item.key) { @switch (item.kind) { @case
+('user') {
 <!-- prettier-ignore -->
 <div class="user-message" [class.app-message]="item.origin === 'app'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="message-origin" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" /></div>
 @if (item.contextLength) {
@@ -18,75 +18,56 @@
   [class.streaming]="item.streaming"
   [innerHTML]="item.text | markdown"
 ></div>
-} @case ('tool') { @let state = toolState(item);
-<details class="tool tool-{{ toolTone(state) }}" [class.nested]="item.nested">
+} @case ('tool') {
+<ng-container
+  [ngTemplateOutlet]="toolRow"
+  [ngTemplateOutletContext]="{ $implicit: item }"
+/>
+<ng-container
+  [ngTemplateOutlet]="permissionLine"
+  [ngTemplateOutletContext]="{ $implicit: item }"
+/>
+<ng-container
+  [ngTemplateOutlet]="toolExtras"
+  [ngTemplateOutletContext]="{ $implicit: item }"
+/>
+} @case ('tools') { @let group = groupState(item);
+<details class="tool-group tool-{{ group.tone }}" data-testid="tool-group">
   <summary>
-    <app-icon class="tool-icon" [name]="toolIcon(state)" />
-    <span class="tool-name">{{ item.name }}</span>
-    <code class="tool-summary">{{ toolLine(item) }}</code>
-    <span class="tool-state tool-state-{{ state }}">{{ state }}</span>
-  </summary>
-  <div class="tool-body">
-    @if (item.byApp; as byApp) {
-    <p class="tool-by-app" data-testid="tool-by-app">
-      Run by the app (autofix): {{ byApp.summary }}
-    </p>
-    } @if (item.denied) {
-    <p class="tool-denied">{{ item.denied }}</p>
-    } @if (item.permission?.resolved?.answers; as answers) {
-    <dl class="answers">
-      @for (answer of answers | keyvalue; track answer.key) {
-      <dt>{{ answer.key }}</dt>
-      <dd>{{ answer.value }}</dd>
-      }
-    </dl>
-    }
-    <pre class="tool-io">{{ inputJson(item.input) }}</pre>
-    @if (item.result; as result) {
-    <pre class="tool-io" [class.tool-error]="result.isError">
-{{ result.content }}@if (result.truncated) {
-…(truncated)}</pre
+    <app-icon class="tool-icon group-chevron" name="chevron-right" />
+    <span class="group-count">{{ item.tools.length }} tool calls</span>
+    <span class="group-detail" [class.group-current]="group.current"
+      >{{ group.current ?? group.counts }}</span
     >
+    @if (group.state) {
+    <span class="tool-state">{{ group.state }}</span>
     }
+  </summary>
+  <div class="group-body">
+    @for (inner of item.items; track inner.key) { @if (inner.kind === 'tool') {
+    <ng-container
+      [ngTemplateOutlet]="toolRow"
+      [ngTemplateOutletContext]="{ $implicit: inner }"
+    />
+    <ng-container
+      [ngTemplateOutlet]="permissionLine"
+      [ngTemplateOutletContext]="{ $implicit: inner }"
+    />
+    } @else {
+    <div
+      class="assistant-text markdown nested"
+      [class.streaming]="inner.streaming"
+      [innerHTML]="inner.text | markdown"
+    ></div>
+    } }
   </div>
 </details>
-@if (item.diff; as change) {
-<app-file-diff-card
-  class="tool-diff"
-  [class.nested]="item.nested"
-  [diff]="change.diff"
-  [label]="sessionPath(change.diff.path)"
-  data-testid="tool-diff"
+@for (tool of item.tools; track tool.key) {
+<ng-container
+  [ngTemplateOutlet]="toolExtras"
+  [ngTemplateOutletContext]="{ $implicit: tool }"
 />
-} @for (file of item.shown; track file.id) {
-<app-shown-file-card
-  class="shown"
-  [class.nested]="item.nested"
-  [file]="file"
-  (open)="openFile.emit($event)"
-/>
-} @for (preview of item.previews; track preview.id) {
-<app-preview-card
-  class="shown"
-  [class.nested]="item.nested"
-  [preview]="current(preview)"
-  (embed)="embed.emit($event)"
-/>
-} @if (item.permission; as permission) { @if (permission.resolved) {
-<p
-  class="permission-line"
-  [class.permission-denied]="permission.resolved.decision === 'deny'"
-  [class.nested]="item.nested"
-  data-testid="permission-line"
->
-  {{ resolutionText(permission) }}
-</p>
-} @if (permission.request.plan && permission.resolved) {
-<details class="plan" [class.nested]="item.nested">
-  <summary>Plan</summary>
-  <div class="markdown" [innerHTML]="permission.request.plan | markdown"></div>
-</details>
-} } } @case ('queued') { @if (item.state === 'withdrawn') {
+} } @case ('queued') { @if (item.state === 'withdrawn') {
 <div class="withdrawn" data-testid="withdrawn">
   <span class="withdrawn-text"
     ><app-message-text [text]="item.text" [references]="item.references"
@@ -211,4 +192,87 @@
       }
     </div>
   </details>
+</ng-template>
+
+<ng-template #toolRow let-item>
+  @let state = toolState(item);
+  <details class="tool tool-{{ toolTone(state) }}" [class.nested]="item.nested">
+    <summary>
+      <app-icon class="tool-icon" [name]="toolIcon(state)" />
+      <span class="tool-name">{{ item.name }}</span>
+      <code class="tool-summary">{{ toolLine(item) }}</code>
+      <span class="tool-state tool-state-{{ state }}">{{ state }}</span>
+    </summary>
+    <div class="tool-body">
+      @if (item.byApp; as byApp) {
+      <p class="tool-by-app" data-testid="tool-by-app">
+        Run by the app (autofix): {{ byApp.summary }}
+      </p>
+      } @if (item.denied) {
+      <p class="tool-denied">{{ item.denied }}</p>
+      } @if (item.permission?.resolved?.answers; as answers) {
+      <dl class="answers">
+        @for (answer of answers | keyvalue; track answer.key) {
+        <dt>{{ answer.key }}</dt>
+        <dd>{{ answer.value }}</dd>
+        }
+      </dl>
+      }
+      <pre class="tool-io">{{ inputJson(item.input) }}</pre>
+      @if (item.result; as result) {
+      <pre class="tool-io" [class.tool-error]="result.isError">
+{{ result.content }}@if (result.truncated) {
+…(truncated)}</pre
+      >
+      }
+    </div>
+  </details>
+</ng-template>
+
+<ng-template #toolExtras let-item>
+  @if (item.diff; as change) {
+  <app-file-diff-card
+    class="tool-diff"
+    [class.nested]="item.nested"
+    [diff]="change.diff"
+    [label]="sessionPath(change.diff.path)"
+    data-testid="tool-diff"
+  />
+  } @for (file of item.shown; track file.id) {
+  <app-shown-file-card
+    class="shown"
+    [class.nested]="item.nested"
+    [file]="file"
+    (open)="openFile.emit($event)"
+  />
+  } @for (preview of item.previews; track preview.id) {
+  <app-preview-card
+    class="shown"
+    [class.nested]="item.nested"
+    [preview]="current(preview)"
+    (embed)="embed.emit($event)"
+  />
+  } @if (item.permission; as permission) {
+  @if (permission.request.plan && permission.resolved) {
+  <details class="plan" [class.nested]="item.nested">
+    <summary>Plan</summary>
+    <div
+      class="markdown"
+      [innerHTML]="permission.request.plan | markdown"
+    ></div>
+  </details>
+  } }
+</ng-template>
+
+<ng-template #permissionLine let-item>
+  @if (item.permission?.resolved) {
+  <p
+    class="permission-line"
+    [class.permission-denied]="item.permission.resolved.decision === 'deny'"
+    [class.nested]="item.nested"
+    data-testid="permission-line"
+  >
+    {{ resolutionText(item.permission) }}
+  </p>
+  }
 </ng-template>

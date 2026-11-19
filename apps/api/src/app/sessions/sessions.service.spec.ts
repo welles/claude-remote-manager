@@ -30,6 +30,7 @@ import { SlashCommandsService } from './slash-commands.service';
 import { SessionRepository } from './session.repository';
 import {
   AUTOFIX_ASK_REASON,
+  BACKGROUND_TASKS_ENDED,
   QUEUE_WITHDRAWN,
   RESTART_NOTICE,
   SessionsService,
@@ -121,6 +122,7 @@ describe('SessionsService', () => {
       undefined,
       slashCommands,
     );
+    created.backgroundReportGraceMs = 0;
     await created.onModuleInit();
     created.events$.subscribe((event) => events.push(event));
     created.updates$.subscribe((update) => updates.push(update));
@@ -915,6 +917,7 @@ describe('SessionsService', () => {
       expect(runner.last.options.allowedTools).toEqual([
         'Bash(npm test:*)',
         'mcp__crm__set_session_title',
+        'mcp__crm__set_waiting_state',
       ]);
       // The task list tools are on, for the to-do list in the session view.
       expect(runner.last.options.env).toMatchObject({
@@ -1256,6 +1259,7 @@ describe('SessionsService', () => {
       expect(service.get(session.id).title).toBe('SSO token refresh');
       // It never asks, also not during an Autofix run.
       expect(READ_ONLY_TOOLS.has('mcp__crm__set_session_title')).toBe(true);
+      expect(READ_ONLY_TOOLS.has('mcp__crm__set_waiting_state')).toBe(true);
     });
 
     it('refuses a blank title', async () => {
@@ -2111,6 +2115,82 @@ describe('SessionsService', () => {
       expect(service.get(session.id).status).toBe('waiting');
     });
 
+    it('sends a message queued after Stop when the stopped turn ends', async () => {
+      const session = await startSession();
+      await service.interrupt(session.id);
+      await service.send(session.id, { id: MSG_2, text: 'Instead' });
+      expect(lastEvent('message.queued')).toMatchObject({ id: MSG_2 });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(1)).toEqual([
+        { id: MSG_2, text: 'Instead' },
+      ]);
+      expect(service.get(session.id).status).toBe('running');
+    });
+
+    it('stops the turn and sends all queued messages right away', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Now this' });
+      await service.send(session.id, { id: MSG_3, text: 'And that' });
+      await service.sendQueuedNow(session.id, null);
+      expect(runner.last.interrupted).toBe(1);
+      // Kept until the stopped turn ends.
+      expect(runner.last.sent).toHaveLength(1);
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(lastEvent('turn.result')).toMatchObject({ interrupted: true });
+      expect(runner.last.sent.slice(1)).toEqual([
+        { id: MSG_2, text: 'Now this' },
+        { id: MSG_3, text: 'And that' },
+      ]);
+      expect(service.get(session.id).status).toBe('running');
+      await expect(service.sendQueuedNow(session.id, null)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('sends one queued message right away, the others when its turn ends', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Later' });
+      await service.send(session.id, { id: MSG_3, text: 'Now' });
+      await service.sendQueuedNow(session.id, MSG_3);
+      // Asked twice: one interrupt.
+      await service.sendQueuedNow(session.id, MSG_3);
+      expect(runner.last.interrupted).toBe(1);
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(1)).toEqual([{ id: MSG_3, text: 'Now' }]);
+      expect(lastEvent('message.dequeued')).toMatchObject({
+        id: MSG_3,
+        outcome: 'sent',
+      });
+      expect(service.get(session.id).status).toBe('running');
+
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(2)).toEqual([{ id: MSG_2, text: 'Later' }]);
+    });
+
+    it('sends the rest when the message sent right away was removed meanwhile', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Rest' });
+      await service.send(session.id, { id: MSG_3, text: 'Gone' });
+      await service.sendQueuedNow(session.id, MSG_3);
+      await service.unqueue(session.id, MSG_3);
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(1)).toEqual([{ id: MSG_2, text: 'Rest' }]);
+      expect(service.get(session.id).status).toBe('running');
+    });
+
+    it('refuses to send a message right away that is not queued', async () => {
+      const session = await startSession();
+      await expect(service.sendQueuedNow(session.id, MSG_2)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(runner.last.interrupted).toBe(0);
+    });
+
     it('queues messages while an approval request waits', async () => {
       const session = await startSession();
       void runner.last.options.canUseTool(
@@ -2401,6 +2481,282 @@ describe('SessionsService', () => {
       await service.send(session.id, { id: MSG_2, text: 'Later' });
       await flush();
       expect(runner.runs).toHaveLength(2);
+    });
+
+    const backgroundTasks = (
+      ...tasks: { task_id: string; ambient?: boolean }[]
+    ) =>
+      ({
+        type: 'system',
+        subtype: 'background_tasks_changed',
+        tasks: tasks.map((task) => ({
+          task_type: 'local_bash',
+          description: task.task_id,
+          ...task,
+        })),
+      }) as never;
+
+    it('waits for background tasks after a turn and keeps the process for them', async () => {
+      config.sessionIdleTimeoutMs = 20;
+      service = await createService();
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks(
+          { task_id: 'agent' },
+          { task_id: 'shell' },
+          { task_id: 'watcher', ambient: true },
+        ),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'background',
+        backgroundTasks: 2,
+      });
+      expect(lastEvent('session.status')).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'background',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(runner.last.closed).toBe(false);
+
+      runner.last.emit(backgroundTasks({ task_id: 'agent' }));
+      await flush();
+      expect(updates.at(-1)).toMatchObject({
+        waitingFor: 'background',
+        backgroundTasks: 1,
+      });
+
+      runner.last.emit(backgroundTasks({ task_id: 'watcher', ambient: true }));
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'message',
+        backgroundTasks: 0,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(runner.last.closed).toBe(true);
+    });
+
+    it('runs a turn Claude Code starts on its own after a background task', async () => {
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks({ task_id: 'shell' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
+
+      runner.last.emit(backgroundTasks(), {
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'message_start', message: { id: 'm2' } },
+      } as never);
+      await flush();
+      expect(service.get(session.id).status).toBe('running');
+
+      // A message meanwhile waits for the end of that turn.
+      await service.send(session.id, { id: MSG_2, text: 'Also this' });
+      expect(lastEvent('message.queued')).toMatchObject({ id: MSG_2 });
+
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.at(-1)).toMatchObject({ id: MSG_2 });
+    });
+
+    it('waits a while for the turn a finished background task starts', async () => {
+      service.backgroundReportGraceMs = 40;
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks({ task_id: 'shell' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+
+      // The task reported back; Claude's answer takes a moment.
+      runner.last.emit(backgroundTasks());
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        waitingFor: 'background',
+        backgroundTasks: 0,
+      });
+      runner.last.emit({
+        type: 'stream_event',
+        parent_tool_use_id: null,
+        event: { type: 'message_start', message: { id: 'm2' } },
+      });
+      await flush();
+      expect(service.get(session.id).status).toBe('running');
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('message');
+
+      // No turn follows: ready after the grace period.
+      runner.last.emit(backgroundTasks({ task_id: 'agent' }));
+      runner.last.emit(backgroundTasks());
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(service.get(session.id).waitingFor).toBe('message');
+    });
+
+    it('takes no answer of another agent for a turn of its own', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      runner.last.emit({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        agent_id: 'teammate',
+        message: { id: 'm3', content: [] },
+      });
+      await flush();
+      expect(service.get(session.id).status).toBe('waiting');
+    });
+
+    const setWaitingState = (input: Record<string, unknown>) => {
+      const tool = runner.last.options.tools?.find(
+        (entry) => entry.name === 'set_waiting_state',
+      );
+      if (!tool) {
+        throw new Error('set_waiting_state is missing');
+      }
+      return tool.handler(input, { toolUseId: 'toolu_wait' });
+    };
+
+    it('lets Claude say that it goes on by itself, for a while', async () => {
+      config.sessionIdleTimeoutMs = 50;
+      service = await createService();
+      service.claudeWaitLimitMs = 300;
+      const session = await startSession();
+      await expect(
+        setWaitingState({ waiting_on: 'work', reason: ' CI of  PR #12 ' }),
+      ).resolves.toMatchObject({
+        text: expect.stringContaining('CI of PR #12'),
+      });
+      // Applies once the turn is over; the limit starts then.
+      expect(service.get(session.id).status).toBe('running');
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'background',
+        waitingReason: 'CI of PR #12',
+        backgroundTasks: 0,
+      });
+      // The process stays for Claude's wakeup.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(runner.last.closed).toBe(false);
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(service.get(session.id)).toMatchObject({
+        waitingFor: 'message',
+        waitingReason: null,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(runner.last.closed).toBe(true);
+    });
+
+    it('drops what Claude said when the turn does not simply end', async () => {
+      const session = await startSession();
+      await setWaitingState({ waiting_on: 'work', reason: 'CI' });
+      // A queued message follows as the next turn.
+      await service.send(session.id, { id: MSG_2, text: 'Also this' });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).status).toBe('running');
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('message');
+
+      // Stopped by the user.
+      await service.send(session.id, { id: MSG_3, text: 'Next' });
+      await setWaitingState({ waiting_on: 'work', reason: 'CI' });
+      await service.interrupt(session.id);
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('message');
+
+      // Outside a turn the tool does nothing.
+      await expect(
+        setWaitingState({ waiting_on: 'work', reason: 'CI' }),
+      ).resolves.toMatchObject({ isError: true });
+    });
+
+    it('stops the limit of a deleted session', async () => {
+      service.claudeWaitLimitMs = 30;
+      const session = await startSession();
+      await setWaitingState({ waiting_on: 'work', reason: 'CI' });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      service.forget(session.id);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(service.liveCount).toBe(0);
+    });
+
+    it("lets Claude say it is the user's turn despite background tasks", async () => {
+      const session = await startSession();
+      await setWaitingState({ waiting_on: 'user' });
+      runner.last.emit(
+        backgroundTasks({ task_id: 'dev-server' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        waitingFor: 'message',
+        backgroundTasks: 1,
+      });
+
+      // The next turn starts without it: the tasks decide again.
+      await service.send(session.id, { id: MSG_2, text: 'Go on' });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
+    });
+
+    it('waits for background tasks at most a while after the turn', async () => {
+      service.claudeWaitLimitMs = 60;
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks({ task_id: 'dev-server' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
+      // A task that never ends (a dev server) holds the session no longer.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(service.get(session.id)).toMatchObject({
+        waitingFor: 'message',
+        backgroundTasks: 1,
+      });
+      expect(runner.last.closed).toBe(false);
+    });
+
+    it('forgets background tasks when the process ends', async () => {
+      const session = await startSession();
+      runner.last.emit(
+        backgroundTasks({ task_id: 'shell' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
+
+      runner.last.crash(new Error('gone'));
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'message',
+        backgroundTasks: 0,
+      });
+      expect(lastEvent('session.status')).toMatchObject({
+        waitingFor: 'message',
+      });
+      expect(lastEvent('notice')).toMatchObject({
+        text: BACKGROUND_TASKS_ENDED,
+      });
     });
   });
 

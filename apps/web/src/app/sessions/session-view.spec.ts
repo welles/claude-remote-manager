@@ -13,7 +13,10 @@ import { words } from '../testing/text';
 import { WEBSOCKET_FACTORY } from './session-socket';
 import { SessionView } from './session-view';
 import { FakeWebSocket, fakeWebSocketFactory } from './testing/fake-websocket';
-import { permissionRequest } from './testing/permission-events';
+import {
+  permissionRequest,
+  permissionResolved,
+} from './testing/permission-events';
 import { sessionDto } from './testing/session-dto';
 import { preview } from '../previews/testing/preview';
 
@@ -105,7 +108,7 @@ describe('SessionView', () => {
     await harness.fixture.whenStable();
     expect(text('status')).toBe('Running');
     expect(text('usage')).toBe('1.5k tokens · $0.01 theoretical API cost');
-    expect(text('context')).toBe('Context 1.5k / 200k (0.8%)');
+    expect(text('context')).toBe('1.5k / 200k · 0.8%');
     expect(element.querySelector('.user-message')?.textContent).toBe(
       'Reply with pong',
     );
@@ -149,7 +152,7 @@ describe('SessionView', () => {
       'pong',
     );
     expect(element.textContent).not.toContain('not mine');
-    expect(text('status')).toBe('Waiting');
+    expect(text('status')).toBe('Ready');
     expect(text('interrupt')).toBeUndefined();
   });
 
@@ -357,6 +360,141 @@ describe('SessionView', () => {
     expect(element.querySelector('.tool-denied')?.textContent).toContain(
       'not implemented',
     );
+  });
+
+  it('folds a run of tool calls into one quiet row that opens to the calls', async () => {
+    const { harness, socket, element } = await open();
+    const call = (toolUseId: string, name = 'Bash') =>
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId,
+        name,
+        input: { command: `echo ${toolUseId}` },
+        parentToolUseId: null,
+      });
+    const result = (toolUseId: string, isError = false) =>
+      event({
+        type: 'tool.result',
+        toolUseId,
+        isError,
+        content: 'out',
+        truncated: false,
+        parentToolUseId: null,
+      });
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto(),
+      events: [
+        call('t1'),
+        result('t1'),
+        call('t2', 'Read'),
+        result('t2', true),
+        call('t3'),
+        result('t3'),
+        event({
+          type: 'assistant.text',
+          messageId: 'm2',
+          blockIndex: null,
+          text: 'Found it.',
+          parentToolUseId: null,
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const group = element.querySelector(
+      '[data-testid="tool-group"]',
+    ) as HTMLDetailsElement;
+    expect(group.open).toBe(false);
+    const summary = group
+      .querySelector('summary')
+      ?.textContent?.replace(/\s+/g, ' ');
+    expect(summary).toContain('3 tool calls');
+    expect(summary).toContain('Bash 2 · Read');
+    expect(summary).toContain('1 failed');
+    expect(group.querySelectorAll('.tool')).toHaveLength(3);
+    // Claude's text stays outside, after the group.
+    expect(group.nextElementSibling?.textContent).toContain('Found it.');
+  });
+
+  it("keeps a group's permission lines inside it and says what waits", async () => {
+    const { harness, socket, element } = await open();
+    const call = (toolUseId: string) =>
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId,
+        name: 'Bash',
+        input: { command: `rm ${toolUseId}` },
+        parentToolUseId: null,
+      });
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto({ status: 'waiting', waitingFor: 'permission' }),
+      events: [
+        call('t1'),
+        permissionRequest({ requestId: 'p1', toolUseId: 't1', seq: ++seq }),
+        permissionResolved({ requestId: 'p1', toolUseId: 't1', seq: ++seq }),
+        call('t2'),
+        permissionRequest({ requestId: 'p2', toolUseId: 't2', seq: ++seq }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const group = element.querySelector('[data-testid="tool-group"]');
+    expect(
+      group?.querySelectorAll('[data-testid="permission-line"]'),
+    ).toHaveLength(1);
+    expect(
+      element.querySelectorAll('[data-testid="permission-line"]'),
+    ).toHaveLength(1);
+    const summary = group
+      ?.querySelector('summary')
+      ?.textContent?.replace(/\s+/g, ' ');
+    expect(summary).toContain('Bash rm t2');
+    expect(summary).toContain('needs approval');
+  });
+
+  it("names a group's running call in its row", async () => {
+    const { harness, socket, element } = await open();
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto({ status: 'running' }),
+      events: [
+        ...['t1', 't2'].map((toolUseId) =>
+          event({
+            type: 'tool.call',
+            messageId: 'm',
+            toolUseId,
+            name: 'Bash',
+            input: { command: `ls ${toolUseId}` },
+            parentToolUseId: null,
+          }),
+        ),
+        event({
+          type: 'tool.result',
+          toolUseId: 't1',
+          isError: false,
+          content: 'out',
+          truncated: false,
+          parentToolUseId: null,
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const summary = element
+      .querySelector('[data-testid="tool-group"] summary')
+      ?.textContent?.replace(/\s+/g, ' ');
+    expect(summary).toContain('Bash ls t2');
+    expect(summary).toContain('running');
   });
 
   it('shows git commands the app ran for autofix with their real outcome', async () => {
@@ -723,7 +861,7 @@ describe('SessionView', () => {
   });
 
   it('shows queued messages, removes them and offers withdrawn ones again', async () => {
-    const { harness, socket, element } = await open();
+    const { harness, socket, element, text } = await open();
     history(socket, sessionDto({ status: 'running', waitingFor: null }), [
       event({ type: 'message.queued', id: 'q1', text: 'Also this' }),
       event({ type: 'message.queued', id: 'q2', text: 'Stopped one' }),
@@ -746,6 +884,26 @@ describe('SessionView', () => {
       sessionId: 's1',
       messageId: 'q1',
     });
+    (
+      element.querySelector(
+        '[data-testid="send-queued-message"]',
+      ) as HTMLButtonElement
+    ).click();
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'queue.send',
+      sessionId: 's1',
+      messageId: 'q1',
+    });
+    await harness.fixture.whenStable();
+    expect(text('queued-hint')).toBe('· sending now…');
+    // The only queued message is being sent already.
+    expect(
+      (
+        element.querySelector(
+          '[data-testid="send-queued"]',
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     expect(
       element.querySelector('[data-testid="withdrawn"]')?.textContent,
     ).toContain('Not sent: The turn was stopped.');
@@ -762,6 +920,48 @@ describe('SessionView', () => {
         ) as HTMLTextAreaElement
       ).value,
     ).toBe('Stopped one');
+  });
+
+  it('sends all queued messages right away', async () => {
+    const { harness, socket, element, text } = await open();
+    history(socket, sessionDto({ status: 'running', waitingFor: null }), [
+      event({ type: 'message.queued', id: 'q1', text: 'One' }),
+      event({ type: 'message.queued', id: 'q2', text: 'Two' }),
+    ]);
+    await harness.fixture.whenStable();
+    expect(text('queued-hint')).toBe('· sent when the turn ends');
+    (
+      element.querySelector('[data-testid="send-queued"]') as HTMLButtonElement
+    ).click();
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'queue.send',
+      sessionId: 's1',
+    });
+    expect(socket.sent.at(-1)).not.toHaveProperty('messageId');
+    await harness.fixture.whenStable();
+    expect(text('queued-hint')).toBe('· sending now…');
+    const buttons = element.querySelectorAll(
+      '[data-testid="send-queued-message"]',
+    );
+    expect(
+      [...buttons].every((button) => (button as HTMLButtonElement).disabled),
+    ).toBe(true);
+    // Refused (e.g. while Claude Code restarts): they wait again.
+    socket.receive({
+      type: 'error',
+      requestId: (socket.sent.at(-1) as { requestId: string }).requestId,
+      message: 'Claude Code is being restarted',
+    });
+    await harness.fixture.whenStable();
+    expect(text('queued-hint')).toBe('· sent when the turn ends');
+    expect(text('error')).toBe('Claude Code is being restarted');
+    expect(
+      (
+        element.querySelector(
+          '[data-testid="send-queued"]',
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 
   it('shows the images of messages', async () => {

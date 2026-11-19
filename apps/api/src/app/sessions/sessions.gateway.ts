@@ -199,6 +199,12 @@ export class SessionsGateway
       case 'message.unqueue':
         await this.sessions.unqueue(message.sessionId, message.messageId);
         return;
+      case 'queue.send':
+        await this.sessions.sendQueuedNow(
+          message.sessionId,
+          message.messageId ?? null,
+        );
+        return;
       case 'session.update':
         await this.sessions.update(
           message.sessionId,

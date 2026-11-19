@@ -301,7 +301,17 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   `running` (Claude works on a turn), `waiting` (waits for the user, whether or not a process
   is alive; `waitingFor` says for what: `message`, the next message; `permission`, an answer to
   an approval request, question or plan of the running turn; `setup`, a decision about the first
-  message after a failed setup script, see below), `finished`
+  message after a failed setup script, see below; `background`, nothing from the user: the
+  turn is over, but background tasks Claude started (subagents, background commands, monitors,
+  workflows; `background_tasks_changed` without ambient ones) still run, Claude Code continues
+  on its own when they report back (shown as running, for at most 30 minutes after the turn,
+  so a task that never ends such as a dev server does not hold it; the process is not closed for
+  idleness; after the last one ended the session stays `background` for up to 30 seconds for
+  the turn Claude Code starts with the report, which is `running`; "finished" is notified only
+  after that; Claude can also say it itself with the tool `set_waiting_state`: `user` makes it
+  `message` despite running tasks, `work` with a short reason (`waitingReason`, shown as the
+  status) makes it `background` until the next turn, for at most 30 minutes after the turn;
+  dropped after Stop, an error or a queued message), `finished`
   (ended with "End session", `POST /api/sessions/:id/end` or the `session.end` frame) and
   `failed` (a clone could not be created, or the process could not start or ended with an
   error during a turn). A message to a finished or failed session resumes it, unless its
@@ -365,6 +375,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   queued by the app (`message.queued`), not handed to Claude Code, and goes to Claude when the
   turn ends (all queued messages at once; Claude Code may take them as one turn). Until then it
   can be removed (`DELETE /api/sessions/:id/queued-messages/:messageId` or `message.unqueue`).
+  "Send now" (`POST /api/sessions/:id/queued-messages[/:messageId]/send` or `queue.send`) stops
+  the turn like Stop but keeps the queue: when the stopped turn ends, all queued messages (or
+  the one chosen, which moves to the front; the others wait for the end of its turn) go to Claude.
   Stop, ending the session, a failed process or a server stop withdraw the queue
   (`message.dequeued` with `withdrawn`); the view offers the text again. Claude Code's own queue
   would take messages into the running turn earlier, but the SDK has no public way to remove
@@ -411,6 +424,8 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `PATCH /api/sessions/:id`, `POST /api/sessions/:id/messages`,
 `DELETE /api/sessions/:id/queued-messages/:messageId`,
+`POST /api/sessions/:id/queued-messages/send`,
+`POST /api/sessions/:id/queued-messages/:messageId/send`,
 `GET /api/sessions/:id/permission-requests`,
 `POST /api/sessions/:id/permission-requests/:requestId`, `POST /api/sessions/:id/interrupt`,
 `POST /api/sessions/:id/end`, `POST /api/sessions/:id/pending-message/send`,

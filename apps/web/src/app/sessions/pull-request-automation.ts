@@ -88,7 +88,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       </span>
       @if (automation.attempts > 0) {
         <button
-          matButton
+          matButton="outlined"
           type="button"
           [disabled]="busy()"
           (click)="save({ resetAttempts: true })"
@@ -102,7 +102,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       <p class="note running" data-testid="autofix-running">
         Autofix run going on{{ trigger() ? ' for ' + trigger() : '' }}.
         <button
-          matButton
+          matButton="outlined"
           type="button"
           [disabled]="busy()"
           (click)="stop()"
@@ -156,7 +156,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       flex-wrap: wrap;
       align-items: center;
       gap: 4px 16px;
-      padding: 4px 0 0 4px;
+      padding-top: 4px;
     }
     .attempts,
     .note {
@@ -167,8 +167,15 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       display: inline-flex;
       margin-left: -8px;
     }
+    /* As small as the other actions of the details (touch screens keep 44 px). */
+    @media (pointer: fine) {
+      .limit-buttons .app-icon-btn {
+        width: 32px;
+        height: 32px;
+      }
+    }
     .note {
-      margin: 2px 0 2px 4px;
+      margin: 2px 0;
     }
     .running {
       color: var(--mat-sys-primary);

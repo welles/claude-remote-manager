@@ -5,6 +5,7 @@ import { AppPageBar } from '../ui/page-bar';
 import { StatusBadge } from '../ui/status-badge';
 import { AppSidePanel } from '../ui/side-panel';
 import { mediaQuery, WIDE_LIST, WIDE_PANEL } from '../ui/media';
+import { PaneResizer, PaneWidth } from '../ui/pane-resizer';
 import { LimitWindows } from '../limits/limit-windows';
 import { SessionList } from './session-list';
 import { SessionStrip, type DetailSection } from './session-strip';
@@ -52,7 +53,12 @@ import {
 } from './conversation';
 import { groupPreparation } from './preparation';
 import { formatCost, formatTokens, needLabel, totalTokens } from './format';
-import { ModelsStore, modelOptionsWith, normalizeModel } from './models-store';
+import {
+  ModelsStore,
+  modelLabel,
+  modelOptionsWith,
+  normalizeModel,
+} from './models-store';
 import { PermissionCard } from './permission-card';
 import { ContextMeter } from './context-meter';
 import { sessionGitHubRepositories } from '../github-references/references';
@@ -87,6 +93,7 @@ const MENTION_TOKEN = /^@(?:"[^"\n]{1,4096}"|[^\s"]{1,4096})$/;
     AddRepository,
     AdditionBanners,
     AppSidePanel,
+    PaneResizer,
     SessionConversation,
     LimitWindows,
     SessionList,
@@ -140,6 +147,19 @@ export class SessionView implements OnInit {
   protected readonly wideList = mediaQuery(WIDE_LIST);
   /** The details as a permanent column (wider screens). */
   protected readonly docked = mediaQuery(WIDE_PANEL);
+  /** Widths the user gave the session list and the docked details. */
+  protected readonly listWidth = new PaneWidth('crm.paneWidth.list', {
+    min: 240,
+    max: 560,
+    initial: 320,
+    windowShare: 0.3,
+  });
+  protected readonly detailsWidth = new PaneWidth('crm.paneWidth.details', {
+    min: 280,
+    max: 640,
+    initial: 340,
+    windowShare: 0.34,
+  });
   /** The details are open (phone and narrower desktops). */
   protected readonly panelOpen = signal(false);
   private readonly panel = viewChild(AppSidePanel);
@@ -165,6 +185,11 @@ export class SessionView implements OnInit {
   protected readonly requests = computed(() => pendingRequests(this.items()));
   /** IDs of requests whose answer is on its way. */
   protected readonly answering = signal(new Set<string>());
+  /**
+   * IDs of queued messages the user sent right away; until the stopped
+   * turn ends they show as being sent (cleared again if refused).
+   */
+  protected readonly sendingNow = signal<ReadonlySet<string>>(new Set());
   /** Messages waiting for the current turn to end. */
   protected readonly queued = computed(() =>
     this.items().filter(
@@ -180,14 +205,12 @@ export class SessionView implements OnInit {
     groupPreparation(this.items()),
   );
   /** Name of the session's model for the strip. */
-  protected readonly modelName = computed(() => {
-    const model = normalizeModel(this.session()?.model ?? null);
-    const label =
-      this.modelOptions().find((option) => option.value === model)?.label ??
-      model ??
-      'Default';
-    return label.replace(/\s*\(.*\)$/, '');
-  });
+  protected readonly modelName = computed(() =>
+    modelLabel(this.modelOptions(), this.session()?.model ?? null).replace(
+      /\s*\((?!1M\)).*\)$/,
+      '',
+    ),
+  );
   /**
    * The permission mode in effect, for the strip: the chosen one, or the
    * one the process runs in instead (e.g. "Ask (auto unavailable)").
@@ -315,6 +338,8 @@ export class SessionView implements OnInit {
   private readonly pending = new Set<string>();
   /** Frame request ID → approval request ID, for answers on their way. */
   private readonly answers = new Map<string, string>();
+  /** Frame request ID → IDs of queued messages sent right away. */
+  private readonly sendRequests = new Map<string, string[]>();
   /** How far this view has seen the session's log, for reconnects. */
   private position: LogPosition | null = null;
   /** Whether the page is scrolled to the end; then new content stays in view. */
@@ -444,6 +469,45 @@ export class SessionView implements OnInit {
     }
   }
 
+  /**
+   * Stops the turn and sends a queued message (`null`: all of them) right
+   * away.
+   */
+  protected sendQueuedNow(messageId: string | null): void {
+    const requestId = newId();
+    if (
+      this.socket.send({
+        type: 'queue.send',
+        sessionId: this.sessionId(),
+        ...(messageId ? { messageId } : {}),
+        requestId,
+      })
+    ) {
+      this.pending.add(requestId);
+      const ids = messageId
+        ? [messageId]
+        : this.queued().map((item) => item.id);
+      this.sendRequests.set(requestId, ids);
+      this.sendingNow.update((sending) => new Set([...sending, ...ids]));
+    } else {
+      this.error.set('Not connected to the server. Try again in a moment.');
+    }
+  }
+
+  /** Sending right away was refused: the messages wait again. */
+  private sendRefused(frameRequestId: string): void {
+    const ids = this.sendRequests.get(frameRequestId);
+    if (ids) {
+      this.sendingNow.update((sending) => {
+        const next = new Set(sending);
+        for (const id of ids) {
+          next.delete(id);
+        }
+        return next;
+      });
+    }
+  }
+
   /** Puts a message that was not sent back into the input. */
   protected edit(item: QueuedItem): void {
     this.composer()?.restore(
@@ -568,7 +632,8 @@ export class SessionView implements OnInit {
       target =
         [
           ...host.querySelectorAll<HTMLElement>(
-            '.user-message, .assistant-text',
+            // Not a subagent's text in a closed group of tool calls.
+            '.user-message, .assistant-text:not(.group-body > *)',
           ),
         ].find((element) =>
           (element.textContent ?? '').toLowerCase().includes(word),
@@ -721,6 +786,8 @@ export class SessionView implements OnInit {
       case 'error':
         if (message.requestId) {
           this.answered(message.requestId);
+          this.sendRefused(message.requestId);
+          this.sendRequests.delete(message.requestId);
         }
         if (message.requestId && this.pending.has(message.requestId)) {
           this.pending.delete(message.requestId);
@@ -732,6 +799,7 @@ export class SessionView implements OnInit {
       case 'ack':
         this.pending.delete(message.requestId);
         this.answered(message.requestId);
+        this.sendRequests.delete(message.requestId);
         return;
       default:
         return;

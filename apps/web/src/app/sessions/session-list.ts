@@ -57,6 +57,11 @@ interface SessionGroup {
 
 const RUNNING = new Set(['preparing', 'running']);
 
+/** Working: preparing, on a turn, or on background tasks Claude started. */
+function active(session: SessionDto): boolean {
+  return RUNNING.has(session.status) || session.waitingFor === 'background';
+}
+
 /**
  * Start page: the sessions, grouped by what they need (needs you, running,
  * recent), with search and filters; "New session" leads to `/new`. Query
@@ -127,7 +132,7 @@ export class SessionList implements OnInit {
     () => this.sessions().filter(needsUser).length,
   );
   protected readonly runningCount = computed(
-    () => this.sessions().filter((s) => RUNNING.has(s.status)).length,
+    () => this.sessions().filter(active).length,
   );
   protected readonly shown = computed(() => {
     const sessions = this.sessions();
@@ -135,7 +140,7 @@ export class SessionList implements OnInit {
       case 'waiting':
         return sessions.filter(needsUser);
       case 'running':
-        return sessions.filter((s) => RUNNING.has(s.status));
+        return sessions.filter(active);
       default:
         return sessions;
     }
@@ -152,11 +157,7 @@ export class SessionList implements OnInit {
       { key: 'recent', label: 'Recent', sessions: [] },
     ];
     for (const session of shown) {
-      const index = needsUser(session)
-        ? 0
-        : RUNNING.has(session.status)
-          ? 1
-          : 2;
+      const index = needsUser(session) ? 0 : active(session) ? 1 : 2;
       groups[index].sessions.push(session);
     }
     return groups.filter((group) => group.sessions.length > 0);
