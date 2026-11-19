@@ -1,4 +1,5 @@
 import { Component, input, output } from '@angular/core';
+import type { GitHubReferenceDetail } from '@claude-remote-manager/shared-types';
 import type { DraftReferences } from './draft-references';
 import { ReferenceChip } from './reference-chip';
 import { repositoryName, type ReferenceOptions } from './references';
@@ -19,8 +20,8 @@ import { repositoryName, type ReferenceOptions } from './references';
           @if (entry.kind === 'chip') {
             <app-reference-chip
               [chip]="entry.chip"
-              [editable]="true"
-              [showRepository]="showRepository()"
+              [editable]="!entry.pending"
+              [showRepository]="showRepository() && !entry.pending"
               (optionsChange)="
                 optionsChange.emit({ key: entry.key, options: $event })
               "
@@ -48,7 +49,21 @@ import { repositoryName, type ReferenceOptions } from './references';
                     '#' +
                     entry.number +
                     ': ' +
-                    candidate.detail.title
+                    candidate.detail.title +
+                    ' (' +
+                    stateOf(candidate.detail) +
+                    ')'
+                  "
+                  [attr.aria-label]="
+                    'Use ' +
+                    candidate.repository +
+                    '#' +
+                    entry.number +
+                    ': ' +
+                    candidate.detail.title +
+                    ' (' +
+                    stateOf(candidate.detail) +
+                    ')'
                   "
                   (click)="
                     repositoryChosen.emit({
@@ -63,6 +78,7 @@ import { repositoryName, type ReferenceOptions } from './references';
                     >{{ name(candidate.repository) }}#{{ entry.number }}</span
                   >
                   <span class="title">{{ candidate.detail.title }}</span>
+                  <span class="state">{{ stateOf(candidate.detail) }}</span>
                 </button>
               }
             </div>
@@ -132,6 +148,16 @@ import { repositoryName, type ReferenceOptions } from './references';
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .state {
+      flex-shrink: 0;
+      font: var(--mat-sys-body-small);
+      color: var(--mat-sys-on-surface-variant);
+    }
+    @media (pointer: coarse) {
+      .candidate {
+        min-height: 40px;
+      }
+    }
   `,
 })
 export class ReferenceChips {
@@ -143,4 +169,9 @@ export class ReferenceChips {
   readonly repositoryChosen = output<{ number: number; repository: string }>();
 
   protected readonly name = repositoryName;
+
+  /** `open`, `draft`, `merged` or `closed`. */
+  protected stateOf(detail: GitHubReferenceDetail): string {
+    return detail.draft && detail.state === 'open' ? 'draft' : detail.state;
+  }
 }

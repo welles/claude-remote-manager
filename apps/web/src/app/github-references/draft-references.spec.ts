@@ -91,7 +91,7 @@ describe('DraftReferences', () => {
       // The chips read the entries, which looks the references up.
       references.entries();
     };
-    return { references, type };
+    return { references, type, text };
   };
 
   it('asks which repository a #12 several repositories have means', () => {
@@ -121,7 +121,7 @@ describe('DraftReferences', () => {
     ]);
   });
 
-  it('waits for typing to pause before the references are known', () => {
+  it('reads #12 as the first repository when none has it', () => {
     const { references, type } = create(['acme/app', 'acme/lib']);
     type('Fix #3');
     answer();
@@ -129,6 +129,54 @@ describe('DraftReferences', () => {
     expect(references.requests('Fix #3')).toEqual([
       { token: '#3', repository: 'acme/app', number: 3 },
     ]);
+  });
+
+  it('reads #12 as the repository that answered when another could not', () => {
+    existing = new Set(['acme/lib#5']);
+    const { references, type } = create(['acme/app', 'acme/lib']);
+    type('Fix #5');
+    states
+      .get('acme/app#5')
+      ?.set({ status: 'failed', error: 'GitHub is not reachable' });
+    answer();
+    expect(references.requests('Fix #5')).toEqual([
+      { token: '#5', repository: 'acme/lib', number: 5 },
+    ]);
+  });
+
+  it('waits only for a #12 typed since the text settled', () => {
+    const { references, type, text } = create(['acme/app', 'acme/lib']);
+    type('Fix #3');
+    answer();
+    expect(references.unresolved()).toBe(false);
+    // More words: #3 is known, sending stays possible.
+    text.set('Fix #3 now');
+    expect(references.unresolved()).toBe(false);
+    // A new number: not known before typing pauses.
+    text.set('Fix #3 and #4');
+    expect(references.unresolved()).toBe(true);
+    type('Fix #3 and #4');
+    answer();
+    expect(references.unresolved()).toBe(false);
+  });
+
+  it('only asks about references that are sent', () => {
+    existing = new Set(['acme/app#12', 'acme/lib#12']);
+    const { references, type } = create(['acme/app', 'acme/lib']);
+    const named = Array.from({ length: 10 }, (_, i) => `acme/app#${i + 1}`);
+    type(`${named.join(' ')} and #12`);
+    answer();
+    // #12 is the eleventh reference: neither sent nor asked about.
+    expect(references.unresolved()).toBe(false);
+    expect(states.has('acme/lib#12')).toBe(false);
+    expect(references.entries()).toHaveLength(10);
+  });
+
+  it('shows a #12 being looked up without a repository', () => {
+    const { references, type } = create(['acme/app', 'acme/lib']);
+    type('Fix #3');
+    const [entry] = references.entries();
+    expect(entry.kind === 'chip' && entry.pending).toBe(true);
   });
 
   it('reads #12 as the only repository without asking GitHub first', () => {

@@ -574,8 +574,12 @@ of the session's GitHub repositories (in the form: the GitHub repositories chose
 number (prefix) or title words; nothing typed after `#` lists the most recently updated.
 `owner/repo#…` searches that repository instead, if the GitHub App's installations can
 access it. Sessions without a GitHub repository (scratch, local projects) offer nothing for a
-bare `#`. Choosing inserts `#12` for the session's first GitHub repository and
-`owner/repo#12` for others. Every reference in the text becomes a chip above the input
+bare `#`. Choosing inserts `#12` when the session has one GitHub repository, else
+`owner/repo#12`. With several, a typed `#12` means the repository that has that number; when
+several have it, the input lists them (title and state) instead of a chip, choosing one writes
+`owner/repo#12`, and the message cannot be sent until that is settled (nor while the number is
+still being looked up); when none has it or GitHub cannot answer, it means the first. Chips
+then show `repo#12`, in the input and the history. Every reference in the text becomes a chip above the input
 (title, state as colour: open, draft, merged, closed; "not found" or "unavailable" when
 GitHub cannot answer); its preview has author, labels, branch and size of a pull request, the
 start of the description (GitHub Markdown through the Markdown pipe: no remote images), the

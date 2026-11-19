@@ -40,7 +40,8 @@ export function referenceQuery(before: string): ReferenceQuery | null {
  * `#` autocomplete of a text field: searches the issues and pull requests
  * of the given repositories (or of `owner/repo` typed before `#`) by
  * number and title, and inserts `#12` when the session has one
- * repository, else `owner/repo#12`. Create it in a component's field initializer.
+ * repository, else `owner/repo#12`. Create it in a component's field
+ * initializer.
  */
 export class ReferenceAutocomplete {
   private readonly api = inject(ReferencesApi);

@@ -1,5 +1,6 @@
 import type { MessageReference } from '@claude-remote-manager/shared-types';
-import { messageSegments } from './message-text';
+import { TestBed } from '@angular/core/testing';
+import { MessageText, messageSegments } from './message-text';
 import { referenceQuery } from './reference-autocomplete';
 import {
   bareNumbers,
@@ -66,6 +67,24 @@ describe('GitHub references in the web app', () => {
     ).toEqual({ comments: false, diff: true });
   });
 
+  it('names the repository of #12 in a chip when there are several', async () => {
+    const fixture = TestBed.createComponent(MessageText);
+    fixture.componentRef.setInput('text', 'Fix #12 and acme/lib#3');
+    fixture.componentRef.setInput('references', [
+      reference('#12', 12),
+      reference('acme/lib#3', 3),
+    ]);
+    const tokens = () =>
+      [
+        ...(fixture.nativeElement as HTMLElement).querySelectorAll('.token'),
+      ].map((token) => token.textContent);
+    await fixture.whenStable();
+    expect(tokens()).toEqual(['#12', 'acme/lib#3']);
+    fixture.componentRef.setInput('showRepository', true);
+    await fixture.whenStable();
+    expect(tokens()).toEqual(['app#12', 'acme/lib#3']);
+  });
+
   it('puts chips where the references are in a sent message', () => {
     const segments = messageSegments('Fix #12 and acme/lib#3!', [
       reference('#12', 12),
@@ -101,13 +120,12 @@ describe('GitHub references in the web app', () => {
     expect(bareNumbers('#12, acme/lib#3, #12 and #4 but `#5`')).toEqual([
       12, 4,
     ]);
-    expect(
-      qualifyReference(
-        '#12 and (#12), acme/app#12, #120, `#12`',
-        12,
-        'acme/lib',
-      ),
-    ).toBe('acme/lib#12 and (acme/lib#12), acme/app#12, #120, `#12`');
+    const text = '#12 and (#12), acme/app#12, #120, `#12`';
+    expect(qualifyReference(text, 12, 'acme/lib', 9)).toEqual({
+      text: 'acme/lib#12 and (acme/lib#12), acme/app#12, #120, `#12`',
+      // The caret after "(" moves with the first #12 only.
+      caret: 9 + 'acme/lib'.length,
+    });
   });
 
   it('resolves #12 to the repository that has it, or asks', () => {

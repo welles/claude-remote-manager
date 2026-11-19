@@ -153,7 +153,8 @@ export class NewSessionForm implements OnInit {
   );
   /**
    * GitHub repositories chosen for the session, the main one first: `#`
-   * searches them, `#12` refers to the first.
+   * searches them; `#12` refers to the one that has it (or the first, see
+   * DraftReferences).
    */
   protected readonly githubRepositories = computed(() =>
     this.mode() === 'scratch'
@@ -412,9 +413,20 @@ export class NewSessionForm implements OnInit {
     number: number;
     repository: string;
   }): void {
-    this.setPrompt(
-      qualifyReference(this.prompt, choice.number, choice.repository),
+    const field = this.promptField()?.nativeElement;
+    const next = qualifyReference(
+      this.prompt,
+      choice.number,
+      choice.repository,
+      field?.selectionStart ?? this.prompt.length,
     );
+    this.setPrompt(next.text);
+    if (field) {
+      // The tap blurred the prompt: give it the caret back.
+      field.value = next.text;
+      field.focus();
+      field.setSelectionRange(next.caret, next.caret);
+    }
   }
 
   private setPrompt(value: string): void {

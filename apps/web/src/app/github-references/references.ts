@@ -67,7 +67,10 @@ export function repositoryName(fullName: string): string {
   return fullName.slice(fullName.indexOf('/') + 1);
 }
 
-/** GitHub repositories of a session, the main one first (for `#12`). */
+/**
+ * GitHub repositories of a session, the main one first (`#12` means it
+ * when no other repository has the number).
+ */
 export function sessionGitHubRepositories(
   session: SessionDto | null,
 ): string[] {
@@ -112,36 +115,55 @@ export function draftReferences(
   return references.slice(0, MAX_REFERENCES_PER_MESSAGE);
 }
 
-/** The numbers of the bare `#12` references of a text, each once. */
+/**
+ * The numbers of the bare `#12` references of a text, each once, among the
+ * first {@link MAX_REFERENCES_PER_MESSAGE} references (the ones sent).
+ */
 export function bareNumbers(text: string): number[] {
-  const numbers = new Set<number>();
+  const keys = new Set<string>();
+  const numbers: number[] = [];
   for (const parsed of parseReferences(text, null)) {
+    const key = parsed.repository
+      ? referenceKey(parsed.repository, parsed.number)
+      : `#${parsed.number}`;
+    if (keys.has(key)) {
+      continue;
+    }
+    if (keys.size === MAX_REFERENCES_PER_MESSAGE) {
+      break;
+    }
+    keys.add(key);
     if (!parsed.repository) {
-      numbers.add(parsed.number);
+      numbers.push(parsed.number);
     }
   }
-  return [...numbers].slice(0, MAX_REFERENCES_PER_MESSAGE);
+  return numbers;
 }
 
 /**
  * Writes every bare `#12` of a text as `owner/repo#12`, once the user
- * chose which repository it means.
+ * chose which repository it means; `caret` moves with the text before it.
  */
 export function qualifyReference(
   text: string,
   number: number,
   repository: string,
-): string {
+  caret = text.length,
+): { text: string; caret: number } {
   let result = text;
+  let moved = caret;
   for (const parsed of parseReferences(text, null).reverse()) {
     if (!parsed.repository && parsed.number === number) {
       result =
         result.slice(0, parsed.start) +
         `${repository}#${number}` +
         result.slice(parsed.end);
+      if (parsed.end <= caret) {
+        moved += repository.length;
+      }
     }
   }
-  return result;
+  return { text: result, caret: moved };
 }
 
 /** What a bare `#12` refers to in a session with several repositories. */

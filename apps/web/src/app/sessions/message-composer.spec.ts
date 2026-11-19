@@ -116,6 +116,38 @@ describe('MessageComposer', () => {
     ]);
   });
 
+  it('keeps the repository of a restored #12 when there are several', async () => {
+    fixture.componentRef.setInput('githubRepositories', [
+      'acme/app',
+      'acme/lib',
+    ]);
+    fixture.componentInstance.restore(
+      'm1',
+      'Fix #12',
+      [],
+      [
+        {
+          token: '#12',
+          repository: 'acme/lib',
+          number: 12,
+          comments: true,
+          diff: false,
+          status: 'resolved',
+          kind: 'issue',
+          title: 'Bug',
+          state: 'open',
+          draft: false,
+          url: 'https://github.com/acme/lib/issues/12',
+          error: null,
+          notes: [],
+        },
+      ],
+    );
+    await fixture.whenStable();
+    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.value).toBe('Fix acme/lib#12');
+  });
+
   it('sends a message that was not sent again under its ID', async () => {
     fixture.componentInstance.restore('m1', 'Again', [
       { id: 'a1', name: 'a.png', mediaType: 'image/png', size: 4 },
@@ -542,14 +574,17 @@ describe('MessageComposer', () => {
       ...element.querySelectorAll('[data-testid="reference-candidate"]'),
     ] as HTMLButtonElement[];
     expect(candidates.map((candidate) => words(candidate))).toEqual([
-      'app#12 Change in acme/app',
-      'lib#12 Change in acme/lib',
+      'app#12 Change in acme/app open',
+      'lib#12 Change in acme/lib open',
     ]);
     expect(button('send').disabled).toBe(true);
 
     candidates[1].click();
     await fixture.whenStable();
     expect(textarea.value).toBe('Fix acme/lib#12 and #7');
+    // The input keeps the caret, moved with the text.
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.selectionStart).toBe(14 + 'acme/lib'.length);
     await new Promise((resolve) => setTimeout(resolve, 450));
     await fixture.whenStable();
     expect(button('send').disabled).toBe(false);

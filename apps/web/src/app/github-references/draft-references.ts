@@ -22,7 +22,13 @@ import {
 
 /** A reference of the text being written, as the input shows it. */
 export type DraftReferenceEntry =
-  | { kind: 'chip'; key: string; chip: ReferenceChipModel }
+  | {
+      kind: 'chip';
+      key: string;
+      chip: ReferenceChipModel;
+      /** A `#12` still being looked up: its repository is not known yet. */
+      pending: boolean;
+    }
   | {
       /** `#12` exists in several repositories: the user picks one. */
       kind: 'ambiguous';
@@ -109,6 +115,7 @@ export class DraftReferences {
       entries.push({
         kind: 'chip',
         key,
+        pending: resolution?.status === 'pending',
         chip: draftChip(
           request,
           resolution?.status === 'pending'
@@ -121,21 +128,16 @@ export class DraftReferences {
   });
 
   /**
-   * A bare `#12` is not yet known to refer to one repository (still being
-   * looked up, or the user has to choose): the message waits.
+   * A bare `#12` is not yet known to refer to one repository (just typed,
+   * still being looked up, or the user has to choose): the message waits.
    */
   readonly unresolved = computed(() => {
     if (this.repositories().length < 2) {
       return false;
     }
-    const numbers = bareNumbers(this.text());
-    if (numbers.length === 0) {
-      return false;
-    }
-    if (this.settled() !== this.text()) {
-      return true;
-    }
+    // Numbers typed since the text settled are not in `bare` yet.
     const bare = this.bare();
+    const numbers = bareNumbers(this.text());
     return numbers.some((number) => bare.get(number)?.status !== 'resolved');
   });
 

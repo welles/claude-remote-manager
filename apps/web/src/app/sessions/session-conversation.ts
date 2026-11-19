@@ -173,9 +173,12 @@ export class SessionConversation {
     const states = group.tools.map((tool) => this.toolState(tool));
     const tones = states.map((state) => this.toolTone(state));
     const denied = states.filter((state) => state === 'denied').length;
-    const failed = tones.filter((tone) => tone === 'bad').length - denied;
+    const failed =
+      tones.filter((tone) => tone === 'bad').length - denied;
     const waiting = group.tools.find((_, index) => tones[index] === 'ask');
-    const running = group.tools.findLast((_, index) => tones[index] === 'busy');
+    const running = group.tools.findLast(
+      (_, index) => tones[index] === 'busy',
+    );
     const current = waiting ?? running;
     const problems = [
       failed > 0 ? `${failed} failed` : null,
