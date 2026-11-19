@@ -181,6 +181,18 @@ describe('MessageComposer', () => {
     expect(button('send').disabled).toBe(true);
   });
 
+  it('does not send the suggestion instead of an image that failed', async () => {
+    fixture.componentRef.setInput('suggestion', 'Run the tests');
+    await paste(png());
+    http
+      .expectOne('/api/attachments')
+      .flush('nope', { status: 500, statusText: 'Server Error' });
+    await fixture.whenStable();
+    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.placeholder).toBe('Message');
+    expect(button('send').disabled).toBe(true);
+  });
+
   it('completes @ references from the session’s files', async () => {
     fixture.componentRef.setInput('sessionId', 's1');
     fixture.componentRef.setInput('showRepository', true);

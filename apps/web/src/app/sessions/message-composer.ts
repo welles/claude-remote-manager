@@ -103,7 +103,7 @@ export class MessageComposer {
   /**
    * Claude Code's guess at the next message, as in the terminal: the
    * placeholder of the empty input; Tab (or the edit button) puts it into
-   * the input, Send sends it as it is.
+   * the input, Send sends it as it is (if it is wholly visible).
    */
   readonly suggestion = input<string | null>(null);
   /** Session whose files `@` offers; without, no autocomplete. */
@@ -121,25 +121,38 @@ export class MessageComposer {
   private readonly api = inject(SessionsApi);
   private readonly textarea =
     viewChild<ElementRef<HTMLTextAreaElement>>('textarea');
+  /** Hidden copy of the input that measures the suggestion. */
+  private readonly mirror =
+    viewChild<ElementRef<HTMLTextAreaElement>>('mirror');
+  /**
+   * The whole suggestion fits into the input (at most 8 lines): only then
+   * does Send send it, so that nothing unseen goes out.
+   */
+  protected readonly suggestionFits = signal(true);
   /**
    * Grows the textarea with its text, up to 8 lines (then it scrolls); also
-   * when the draft changes from outside (sent, restored).
+   * when the draft changes from outside (sent, restored). An empty input
+   * showing the suggestion grows to fit it, measured in the hidden mirror
+   * (writing the field's value would clear its undo history).
    */
   private readonly autosize = afterRenderEffect(() => {
     this.draft();
     const suggestion = this.offering() ? this.suggestion() : null;
     const field = this.textarea()?.nativeElement;
-    if (field) {
-      field.style.height = 'auto';
-      if (suggestion && field.value === '') {
-        // Room for the whole suggestion: measured as if it were the text.
-        field.value = suggestion;
-        field.style.height = `${Math.min(field.scrollHeight, MAX_INPUT_HEIGHT)}px`;
-        field.value = '';
-      } else {
-        field.style.height = `${Math.min(field.scrollHeight, MAX_INPUT_HEIGHT)}px`;
-      }
+    const mirror = this.mirror()?.nativeElement;
+    if (!field) {
+      return;
     }
+    field.style.height = 'auto';
+    let height = field.scrollHeight;
+    if (suggestion && field.value === '' && mirror) {
+      mirror.style.width = `${field.clientWidth}px`;
+      mirror.value = suggestion;
+      mirror.style.height = 'auto';
+      height = Math.max(height, mirror.scrollHeight);
+      this.suggestionFits.set(mirror.scrollHeight <= MAX_INPUT_HEIGHT);
+    }
+    field.style.height = `${Math.min(height, MAX_INPUT_HEIGHT)}px`;
   });
   /** Where the `@` reference being typed starts, and its text. */
   protected readonly mention = signal<{ start: number; query: string } | null>(
@@ -209,7 +222,7 @@ export class MessageComposer {
       !this.images.busy() &&
       (this.draft().trim() !== '' ||
         this.images.ids().length > 0 ||
-        this.offering()),
+        this.sendsSuggestion()),
   );
   /** The suggestion is offered: there is one and nothing was typed. */
   protected readonly offering = computed(
@@ -217,7 +230,15 @@ export class MessageComposer {
       !!this.suggestion() &&
       !this.disabled() &&
       this.draft() === '' &&
-      this.images.ids().length === 0,
+      this.images.images().length === 0,
+  );
+  /** Send sends the suggestion: offered and wholly visible. */
+  private readonly sendsSuggestion = computed(
+    () => this.offering() && this.suggestionFits(),
+  );
+  /** Text whose `#` references the chips show (the suggestion when offered). */
+  protected readonly referenceText = computed(() =>
+    this.offering() ? (this.suggestion() ?? '') : this.draft(),
   );
   /** ID of a message being sent again. */
   private reuseId: string | null = null;
@@ -277,7 +298,7 @@ export class MessageComposer {
       return;
     }
     // An empty input sends the suggestion it shows.
-    const text = this.offering()
+    const text = this.sendsSuggestion()
       ? (this.suggestion() ?? '').trim()
       : this.draft().trim();
     this.send.emit({

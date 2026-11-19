@@ -59,7 +59,7 @@
     (chosen)="references.choose($event, textarea)"
   />
   <app-reference-chips
-    [text]="draft()"
+    [text]="referenceText()"
     [repositories]="githubRepositories()"
     [options]="referenceOptions()"
     (optionsChange)="setReferenceOptions($event)"
@@ -116,9 +116,17 @@
       data-testid="message-input"
     ></textarea>
     @if (offering()) {
+    <textarea
+      #mirror
+      class="input mirror"
+      aria-hidden="true"
+      tabindex="-1"
+      rows="1"
+      readonly
+    ></textarea>
     <span id="prompt-suggestion" class="visually-hidden"
-      >Suggested: {{ suggestion() }}. Tab puts it into the input, Send sends
-      it.</span
+      >Suggested: {{ suggestion() }}. Tab puts it into the input{{
+      suggestionFits() ? ', Send sends it' : '' }}.</span
     >
     <button
       type="button"

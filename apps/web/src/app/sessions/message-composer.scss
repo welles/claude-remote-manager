@@ -107,6 +107,17 @@
   }
 }
 
+// Measures the suggestion as the placeholder shows it (in italics).
+.mirror {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  font-style: italic;
+}
+
 .send.ready {
   background: var(--mat-sys-primary);
   color: var(--mat-sys-on-primary);

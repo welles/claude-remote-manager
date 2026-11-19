@@ -520,7 +520,8 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   arriving after the next message was sent is dropped. It becomes the stored event
   `prompt.suggestion` (history keeps only the newest); as in the terminal, the web app shows
   it as placeholder (in italics) of the empty input until a message is sent or queued, and
-  not while a turn runs. Send (Ctrl+Enter) with the empty input sends it as it is; Tab or the
+  not while a turn runs; the input grows to show it whole. Send (Ctrl+Enter) with the empty
+  input sends it as it is, unless it is longer than the input's 8 lines; Tab or the
   edit button next to Send (touch screens) puts it into the input to change it. It comes from
   the conversation, which may contain untrusted content: once sent it is the user's message,
   with `@` expansion and slash commands.
