@@ -13,6 +13,9 @@ import {
 } from './session-agent-support';
 import { SessionAutomationHooks } from './session-automation-hooks';
 import { SessionGitController } from './session-git.controller';
+import { SessionGitHubTokensController } from './session-github-tokens.controller';
+import { SessionGitHubTokensService } from './session-github-tokens.service';
+import { SessionTokens } from './session-tokens';
 import { SessionGitService } from './session-git.service';
 import { AgentRunner } from '../agent/agent-runner';
 import { SdkAgentRunner } from '../agent/sdk-agent-runner';
@@ -65,6 +68,7 @@ import { SlashCommandsService } from './slash-commands.service';
     SessionManagementController,
     WorkspaceController,
     SessionGitController,
+    SessionGitHubTokensController,
     SessionDiffController,
     SessionFilesController,
     SessionBrowseController,
@@ -82,6 +86,8 @@ import { SlashCommandsService } from './slash-commands.service';
     SessionsGateway,
     { provide: ViewerPresence, useValue: new ViewerPresence() },
     SessionGitService,
+    { provide: SessionTokens, useValue: new SessionTokens() },
+    SessionGitHubTokensService,
     {
       provide: SessionAutomationHooks,
       useValue: new SessionAutomationHooks(),

@@ -119,6 +119,24 @@ jobs:
         id: commit
         run: echo "time=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
 
+      - name: Build for the smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: claude-remote-manager:smoke
+          # Same arguments as the push below, so it reuses this build.
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version != '' && startsWith(github.ref, 'refs/tags/v') && steps.meta.outputs.version || '0.0.0' }}
+            COMMIT=${{ github.sha }}
+            COMMIT_TIME=${{ steps.commit.outputs.time }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: docker/smoke-test.sh claude-remote-manager:smoke
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:

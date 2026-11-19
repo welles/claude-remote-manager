@@ -30,15 +30,21 @@ export const AUTH_MODES = ['cloudflare-access', 'none'] as const;
  * - the GitHub webhook (signature over the body with the webhook secret;
  *   see `pr-automation/webhook.controller.ts`). Sessions may not call it:
  *   they have no reason to.
- * `sessions`: processes of sessions may call it.
+ * - the GitHub token helper of session processes (the session's process
+ *   token; see `sessions/session-github-tokens.service.ts`). Only session
+ *   processes may call it.
+ * `sessions`: whether processes of sessions may call it (`'only'`: nobody
+ * else may).
  */
 export const AUTH_EXEMPT_ROUTES: readonly {
   method: string;
   path: string;
-  sessions: boolean;
+  sessions: boolean | 'only';
 }[] = [
   { method: 'GET', path: '/api/health', sessions: true },
   { method: 'POST', path: '/api/github/webhook', sessions: false },
+  { method: 'POST', path: '/api/session-tokens/git', sessions: 'only' },
+  { method: 'POST', path: '/api/session-tokens/gh', sessions: 'only' },
 ];
 
 export type AuthVerdict =
@@ -46,7 +52,10 @@ export type AuthVerdict =
   | {
       ok: false;
       status: 401 | 403;
-      reason: AccessFailure | 'session_process_refused';
+      reason:
+        | AccessFailure
+        | 'session_process_refused'
+        | 'session_process_only';
       message: string;
     };
 
@@ -133,7 +142,8 @@ export function accessToken(headers: IncomingHttpHeaders): string | null {
  *
  * 1. Connections from session processes (see {@link fromSessionProcess})
  *    are refused, except for the routes sessions may use (the health
- *    check). Sessions do not call the management API, e.g. to answer
+ *    check, the GitHub token helper); the token helper's routes refuse
+ *    everyone else. Sessions do not call the management API, e.g. to answer
  *    their own approval requests, whatever the auth mode.
  * 2. Exempt routes need no Access token.
  * 3. `cloudflare-access`: a valid Access token is required.
@@ -161,12 +171,25 @@ export class Authenticator {
     const exempt = AUTH_EXEMPT_ROUTES.find(
       (route) =>
         route.method === method.toUpperCase() &&
-        route.path === path.replace(/\/+$/, ''),
+        // Express matches routes case-insensitively.
+        route.path.toLowerCase() === path.replace(/\/+$/, '').toLowerCase(),
     );
-    if (
-      !exempt?.sessions &&
-      fromSessionProcess(this.isolation, socket, this.peer, this.startedByApi)
-    ) {
+    const fromSession = fromSessionProcess(
+      this.isolation,
+      socket,
+      this.peer,
+      this.startedByApi,
+    );
+    if (exempt?.sessions === 'only' && !fromSession) {
+      this.logger.warn(`Refused ${method} ${path}: not a session process`);
+      return {
+        ok: false,
+        status: 403,
+        reason: 'session_process_only',
+        message: 'Only processes of sessions may call this route',
+      };
+    }
+    if (!exempt?.sessions && fromSession) {
       this.logger.warn(`Refused ${method} ${path} from a session process`);
       return {
         ok: false,

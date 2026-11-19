@@ -1,0 +1,11 @@
+#!/bin/sh
+# gh for sessions: Debian's /usr/bin/gh with a short-lived, read-only
+# installation token of the GitHub App for the session's repositories, from
+# the session manager's API (see apps/api/src/assets/crm-github.cjs). It
+# execs gh, so signals and exit codes are gh's own.
+token="$(/usr/local/bin/node /app/assets/crm-github.cjs gh-token)"
+if [ -n "$token" ]; then
+  GH_TOKEN="$token"
+  export GH_TOKEN
+fi
+exec /usr/bin/gh "$@"

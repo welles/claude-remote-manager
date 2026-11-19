@@ -30,6 +30,7 @@ import {
 } from './app-tools';
 import { SessionAutomationHooks } from './session-automation-hooks';
 import { SessionGitService } from './session-git.service';
+import { SessionGitHubTokensService } from './session-github-tokens.service';
 import type { SessionRecord } from './session.repository';
 
 /** What a Claude Code process of a session gets besides its directories. */
@@ -98,6 +99,30 @@ export class NoSessionAgentSupport extends SessionAgentSupport {
   }
 }
 
+export const GITHUB_HELPER_SCRIPT = 'crm-github.cjs';
+
+/**
+ * Command line of the GitHub token helper: this Node.js and the script
+ * next to the API bundle in `assets/` (or `src/assets` from sources), as
+ * absolute paths, so a session's PATH does not matter.
+ */
+export function githubHelperCommand(node = process.execPath): string {
+  const candidates = [
+    join(__dirname, 'assets', GITHUB_HELPER_SCRIPT),
+    join(__dirname, '..', '..', 'assets', GITHUB_HELPER_SCRIPT),
+  ];
+  const script = candidates.find((candidate) => existsSync(candidate));
+  if (!script) {
+    throw new Error(`${GITHUB_HELPER_SCRIPT} not found`);
+  }
+  for (const path of [node, script]) {
+    if (path.includes("'")) {
+      throw new Error(`Unsupported path for the GitHub helper: ${path}`);
+    }
+  }
+  return `!'${node}' '${script}'`;
+}
+
 function errorText(error: unknown): string {
   if (error instanceof HttpException) {
     const response = error.getResponse();
@@ -122,8 +147,10 @@ function errorText(error: unknown): string {
  *
  * Git in session clones uses the user's own credentials (git
  * configuration, credential helpers such as `gh`, SSH keys), as in a
- * terminal; pushes need whatever approval the session's permission mode
- * asks for, like any command.
+ * terminal; in the container, where the session user has none, installation
+ * tokens of the app instead (see {@link SessionGitHubTokensService}).
+ * Pushes need whatever approval the session's permission mode asks for,
+ * like any command.
  */
 @Injectable()
 export class SessionAgentSupportService extends SessionAgentSupport {
@@ -140,6 +167,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     private readonly previews?: PreviewsService,
     @Optional()
     private readonly automation?: SessionAutomationHooks,
+    @Optional()
+    private readonly githubTokens?: SessionGitHubTokensService,
   ) {
     super();
   }
@@ -200,7 +229,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     const instructions = await this.instructions();
     return {
       ...(instructions ? { instructions } : {}),
-      env: {},
+      env: this.githubTokenEnvironment(record.id, githubClones.length > 0),
       tools: [
         this.showFileTool(record.id),
         ...(githubClones.length > 0
@@ -264,6 +293,44 @@ export class SessionAgentSupportService extends SessionAgentSupport {
 
   released(sessionId: string): void {
     this.pushes.delete(sessionId);
+    this.githubTokens?.release(sessionId);
+  }
+
+  /**
+   * In the container (`separate-users`) the session user has no GitHub
+   * credentials: `git` and `gh` get installation tokens of the session's
+   * repositories from the API instead (see
+   * {@link SessionGitHubTokensService}), through the helper
+   * `assets/crm-github.cjs`. The credential helper is configured through
+   * the environment (`GIT_CONFIG_*`), for every git command of the
+   * process, without touching the clones' config; `gh` is a wrapper in
+   * the image that runs the helper. On the NixOS service the user's own
+   * credentials apply instead.
+   */
+  private githubTokenEnvironment(
+    sessionId: string,
+    hasGitHubClones: boolean,
+  ): Record<string, string> {
+    if (!this.githubTokens || !this.git.launcher.separated) {
+      return {};
+    }
+    // A new process: tokens of an earlier one stop working.
+    this.githubTokens.release(sessionId);
+    if (!hasGitHubClones) {
+      return {};
+    }
+    return {
+      CRM_API_URL: this.config.internalApiUrl,
+      CRM_SESSION_TOKEN: this.githubTokens.processTokens.issue(sessionId),
+      GIT_CONFIG_COUNT: '3',
+      // An empty value first resets helpers from other config files.
+      GIT_CONFIG_KEY_0: 'credential.https://github.com.helper',
+      GIT_CONFIG_VALUE_0: '',
+      GIT_CONFIG_KEY_1: 'credential.https://github.com.helper',
+      GIT_CONFIG_VALUE_1: `${githubHelperCommand()} git-credential`,
+      GIT_CONFIG_KEY_2: 'credential.https://github.com.useHttpPath',
+      GIT_CONFIG_VALUE_2: 'true',
+    };
   }
 
   /**
