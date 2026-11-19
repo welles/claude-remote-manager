@@ -1,6 +1,7 @@
 import {
   PERMISSION_MODE_INFO,
   SET_SESSION_TITLE_TOOL_NAME,
+  SET_WAITING_STATE_TOOL_NAME,
   type AssistantDraft,
   type AttachmentDto,
   type FileDiff,
@@ -275,8 +276,12 @@ export function applyEvent(
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
     }
     case 'tool.call': {
-      // Not shown as a tool call: the change is a `settings.changed` line.
-      if (event.name === SET_SESSION_TITLE_TOOL_NAME) {
+      // Not shown as a tool call: the title change is a `settings.changed`
+      // line, the waiting state shows as the session's status.
+      if (
+        event.name === SET_SESSION_TITLE_TOOL_NAME ||
+        event.name === SET_WAITING_STATE_TOOL_NAME
+      ) {
         return items;
       }
       const key = `tool:${event.toolUseId}`;

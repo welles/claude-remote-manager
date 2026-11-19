@@ -66,7 +66,7 @@ describe('SessionList', () => {
         row.textContent?.replace(/\s+/g, ' ').trim(),
       );
     expect(rows()[0]).toContain('Reply with pong');
-    expect(rows()[0]).toContain('Waiting');
+    expect(rows()[0]).toContain('Ready');
     expect(rows()[0]).toContain('acme/app');
     expect(rows()[0]).toContain('1.5k tokens · $0.01');
     expect(rows()[1]).toContain('Finished');

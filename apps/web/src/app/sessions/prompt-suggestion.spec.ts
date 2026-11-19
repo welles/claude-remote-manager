@@ -42,4 +42,15 @@ describe('applySuggestion', () => {
       ].reduce(applySuggestion, null),
     ).toBeNull();
   });
+
+  it('drops the suggestion when a turn starts on its own', () => {
+    expect(
+      applySuggestion('x', {
+        type: 'session.status',
+        status: 'running',
+        seq: 2,
+        at,
+      }),
+    ).toBeNull();
+  });
 });

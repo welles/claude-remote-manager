@@ -15,7 +15,8 @@ import type { RepositoryAdditionDto } from './repository-additions';
  *   `running`; in `failed` if a clone could not be created (all of the
  *   session's directories are removed again then); or in `waiting` with
  *   `pendingMessage` set if a setup script failed.
- * - `running`: Claude is working on a turn.
+ * - `running`: Claude is working on a turn, also one Claude Code started
+ *   on its own (after a background task reported back).
  * - `waiting`: waits for the user; `waitingFor` (see {@link
  *   SessionWaitingFor}) says for what. With `waitingFor: 'permission'` a
  *   turn is in progress but blocked on an approval request (or a question,
@@ -40,9 +41,23 @@ export type SessionStatus =
  *   the running turn (`GET /api/sessions/:id/permission-requests`);
  * - `setup`: a decision about the first message, held back because a
  *   setup script failed (`pendingMessage` is set): send it anyway, run the
- *   failed setup scripts again, or end the session.
+ *   failed setup scripts again, or end the session;
+ * - `background`: the turn is over, but Claude goes on by itself: background
+ *   tasks it started (subagents, background commands, monitors, workflows)
+ *   still run and Claude Code continues when they report back
+ *   (`backgroundTasks` says how many), or Claude said it waits for
+ *   something (`waitingReason`, see the tool `set_waiting_state`). A message
+ *   can be sent meanwhile.
+ *
+ * What Claude says with `set_waiting_state` comes first: `user` makes a
+ * session with background tasks `message`, `work` one without them
+ * `background` (for at most `CLAUDE_WAIT_LIMIT_MINUTES`).
  */
-export type SessionWaitingFor = 'message' | 'permission' | 'setup';
+export type SessionWaitingFor =
+  | 'message'
+  | 'permission'
+  | 'setup'
+  | 'background';
 
 /**
  * Whether a session is blocked on the user: it waits for an answer to an
@@ -69,8 +84,17 @@ export function needsUser(
  */
 export type SessionTitleSource = 'prompt' | 'user' | 'claude';
 
+/** How long Claude's word that it waits for something holds at most. */
+export const CLAUDE_WAIT_LIMIT_MINUTES = 30;
+
 /** Name of Claude's tool that sets the title, as Claude Code reports it. */
 export const SET_SESSION_TITLE_TOOL_NAME = 'mcp__crm__set_session_title';
+
+/**
+ * Name of Claude's tool that says what the session waits for, as Claude
+ * Code reports it; its effect shows as the status.
+ */
+export const SET_WAITING_STATE_TOOL_NAME = 'mcp__crm__set_waiting_state';
 
 /**
  * Permission modes a session may use: the Agent SDK's modes. In `auto` a
@@ -284,6 +308,18 @@ export interface SessionDto {
    * otherwise. Absent from older servers.
    */
   pendingRequests?: PendingRequestSummary | null;
+  /**
+   * Background tasks of the session's Claude Code process that still run
+   * (subagents, background commands, monitors, workflows; not watchers);
+   * `0` without process. Absent from older servers.
+   */
+  backgroundTasks?: number;
+  /**
+   * With `waitingFor: 'background'`: what Claude said it waits for (e.g.
+   * "CI of PR #12"), when it did; `null` otherwise. Absent from older
+   * servers.
+   */
+  waitingReason?: string | null;
   /**
    * Readable unique name, used for the session's directories and branches;
    * `null` for sessions created before session clones existed.

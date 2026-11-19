@@ -21,21 +21,30 @@ export const STOP_PREVIEW_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${STOP_PREVIEW_TO
 export const SET_SESSION_TITLE_TOOL = 'set_session_title';
 export const SET_SESSION_TITLE_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SET_SESSION_TITLE_TOOL}`;
 /**
+ * The app's tool with which Claude says what the session waits for after
+ * the turn (no approval needed).
+ */
+export const SET_WAITING_STATE_TOOL = 'set_waiting_state';
+export const SET_WAITING_STATE_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SET_WAITING_STATE_TOOL}`;
+/**
  * The app's tools that never ask the user: showing a file (reads only the
  * session's directories), exposing or stopping a preview of the session's
  * own dev server (the owner decided so; the user sees each preview and can
- * stop it) and setting the session's title (never one the user chose).
+ * stop it), setting the session's title (never one the user chose) and
+ * saying what the session waits for.
  */
 export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
   SHOW_FILE_TOOL_NAME,
   EXPOSE_PORT_TOOL_NAME,
   STOP_PREVIEW_TOOL_NAME,
   SET_SESSION_TITLE_TOOL_NAME,
+  SET_WAITING_STATE_TOOL_NAME,
 ]);
 
 /**
  * Claude Code's tools that only read the session's files or keep its own
- * bookkeeping (also the session's title): they run unasked also during an
+ * bookkeeping (also the session's title and waiting state): they run
+ * unasked also during an
  * Autofix run. Everything
  * else asks there (also web access, which could send content away, and
  * subagents).
@@ -47,6 +56,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'LSP',
   'TodoWrite',
   SET_SESSION_TITLE_TOOL_NAME,
+  SET_WAITING_STATE_TOOL_NAME,
   'ToolSearch',
   'TaskGet',
   'TaskList',
