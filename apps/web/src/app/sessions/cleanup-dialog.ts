@@ -23,6 +23,7 @@ import type {
 import { errorMessage } from '../repositories/repositories-api';
 import { LossDetails } from './loss-details';
 import { AppDialog } from '../ui/dialog';
+import { Toasts } from '../ui/toasts';
 import { SessionsApi } from './sessions-api';
 
 export type CleanupMode = 'cleanup' | 'archive';
@@ -91,139 +92,117 @@ export function lossOf(
     >
       @if (open()) {
         <div>
-          @if (outcomes(); as outcomes) {
-            <ul class="outcomes" data-testid="cleanup-outcomes">
-              @for (outcome of outcomes; track outcome.position) {
-                <li [class.failed]="outcome.result === 'failed'">
-                  <strong>{{ outcome.name }}</strong
-                  >: {{ outcome.message }}
-                </li>
-              } @empty {
-                <li>The session was archived; nothing was cleaned up.</li>
-              }
-            </ul>
+          @if (mode() === 'archive') {
+            <p>
+              Archiving ends the session and hides it from the list. Its history
+              stays readable and searchable, and you can unarchive it later.
+              Choose what happens to its directories now:
+            </p>
           } @else {
-            @if (mode() === 'archive') {
-              <p>
-                Archiving ends the session and hides it from the list. Its
-                history stays readable and searchable, and you can unarchive it
-                later. Choose what happens to its directories now:
-              </p>
-            } @else {
-              <p>Choose what happens to each directory of the session:</p>
+            <p>Choose what happens to each directory of the session:</p>
+          }
+          @if (preview(); as preview) {
+            @if (blockedReason(); as reason) {
+              <p class="warning" role="alert">{{ reason }}.</p>
             }
-            @if (preview(); as preview) {
-              @if (blockedReason(); as reason) {
-                <p class="warning" role="alert">{{ reason }}.</p>
-              }
-              @if (hasClones()) {
-                <a
-                  matButton
-                  [routerLink]="['/sessions', sessionId(), 'changes']"
-                  data-testid="review-changes"
-                  >Review the changes first</a
-                >
-              }
-              @for (
-                directory of preview.directories;
-                track directory.position
-              ) {
-                <fieldset class="directory" data-testid="cleanup-directory">
-                  <legend>
-                    <strong>{{ directory.name }}</strong>
-                    @if (directory.branch) {
-                      <span class="muted"> · {{ directory.branch }}</span>
-                    }
-                  </legend>
-                  <p class="muted path">{{ directory.path }}</p>
-                  @if (directory.error) {
-                    <p class="warning">{{ directory.error }}</p>
+            @if (hasClones()) {
+              <a
+                matButton
+                [routerLink]="['/sessions', sessionId(), 'changes']"
+                data-testid="review-changes"
+                >Review the changes first</a
+              >
+            }
+            @for (directory of preview.directories; track directory.position) {
+              <fieldset class="directory" data-testid="cleanup-directory">
+                <legend>
+                  <strong>{{ directory.name }}</strong>
+                  @if (directory.branch) {
+                    <span class="muted"> · {{ directory.branch }}</span>
                   }
-                  <mat-radio-group
-                    class="choices"
-                    [value]="choice(directory)"
-                    (change)="choose(directory, $event.value)"
-                    [name]="'choice-' + directory.position"
-                    [attr.aria-label]="'What happens to ' + directory.name"
-                  >
-                    @for (action of directory.actions; track action) {
-                      <mat-radio-button
-                        [value]="action"
-                        [attr.data-testid]="'choice-' + action"
-                        >{{ actionLabel(action, directory) }}</mat-radio-button
-                      >
-                    }
-                  </mat-radio-group>
-                  @let loss = lossOf(choice(directory), directory);
-                  @if (choice(directory) !== 'keep') {
-                    @if (loss) {
-                      @if (!loss.clean) {
-                        <p class="warning">
-                          {{
-                            choice(directory) === 'discard'
-                              ? 'Removing it loses:'
-                              : 'Still lost afterwards:'
-                          }}
-                        </p>
-                      }
-                      <app-loss-details
-                        [loss]="loss"
-                        [scratch]="directory.kind === 'scratch'"
-                      />
-                      @if (!loss.clean) {
-                        <mat-checkbox
-                          [checked]="accepted().has(directory.position)"
-                          (change)="accept(directory, $event.checked)"
-                          data-testid="accept-loss"
-                          >Remove it anyway: I accept losing this</mat-checkbox
-                        >
-                      }
-                    } @else {
+                </legend>
+                <p class="muted path">{{ directory.path }}</p>
+                @if (directory.error) {
+                  <p class="warning">{{ directory.error }}</p>
+                }
+                <mat-radio-group
+                  class="choices"
+                  [value]="choice(directory)"
+                  (change)="choose(directory, $event.value)"
+                  [name]="'choice-' + directory.position"
+                  [attr.aria-label]="'What happens to ' + directory.name"
+                >
+                  @for (action of directory.actions; track action) {
+                    <mat-radio-button
+                      [value]="action"
+                      [attr.data-testid]="'choice-' + action"
+                      >{{ actionLabel(action, directory) }}</mat-radio-button
+                    >
+                  }
+                </mat-radio-group>
+                @let loss = lossOf(choice(directory), directory);
+                @if (choice(directory) !== 'keep') {
+                  @if (loss) {
+                    @if (!loss.clean) {
                       <p class="warning">
-                        What it holds is unknown, so it is kept.
+                        {{
+                          choice(directory) === 'discard'
+                            ? 'Removing it loses:'
+                            : 'Still lost afterwards:'
+                        }}
                       </p>
                     }
+                    <app-loss-details
+                      [loss]="loss"
+                      [scratch]="directory.kind === 'scratch'"
+                    />
+                    @if (!loss.clean) {
+                      <mat-checkbox
+                        [checked]="accepted().has(directory.position)"
+                        (change)="accept(directory, $event.checked)"
+                        data-testid="accept-loss"
+                        >Remove it anyway: I accept losing this</mat-checkbox
+                      >
+                    }
+                  } @else {
+                    <p class="warning">
+                      What it holds is unknown, so it is kept.
+                    </p>
                   }
-                </fieldset>
-              } @empty {
-                <p class="muted">The session has no directories left.</p>
-              }
-              @if (removes()) {
-                <p class="note" data-testid="no-resume-note">
-                  Afterwards the session can still be read, but not continued.
-                </p>
-              }
-            } @else if (!error()) {
-              <mat-progress-bar mode="indeterminate" />
+                }
+              </fieldset>
+            } @empty {
+              <p class="muted">The session has no directories left.</p>
             }
-            @if (error(); as text) {
-              <p class="warning" role="alert">{{ text }}</p>
+            @if (removes()) {
+              <p class="note" data-testid="no-resume-note">
+                Afterwards the session can still be read, but not continued.
+              </p>
             }
-            @if (busy()) {
-              <mat-progress-bar mode="indeterminate" />
-            }
+          } @else if (!error()) {
+            <mat-progress-bar mode="indeterminate" />
+          }
+          @if (error(); as text) {
+            <p class="warning" role="alert">{{ text }}</p>
+          }
+          @if (busy()) {
+            <mat-progress-bar mode="indeterminate" />
           }
         </div>
       }
       @if (open()) {
         <div dialog-actions>
-          @if (outcomes()) {
-            <button matButton="filled" type="button" (click)="close()">
-              Close
-            </button>
-          } @else {
-            <button matButton type="button" (click)="close()">Cancel</button>
-            <button
-              matButton="filled"
-              type="button"
-              [class.app-danger]="removes()"
-              [disabled]="!ready() || busy()"
-              (click)="confirm()"
-              data-testid="cleanup-confirm"
-            >
-              {{ confirmLabel() }}
-            </button>
-          }
+          <button matButton type="button" (click)="close()">Cancel</button>
+          <button
+            matButton="filled"
+            type="button"
+            [class.app-danger]="removes()"
+            [disabled]="!ready() || busy()"
+            (click)="confirm()"
+            data-testid="cleanup-confirm"
+          >
+            {{ confirmLabel() }}
+          </button>
         </div>
       }
     </app-dialog>
@@ -261,21 +240,17 @@ export function lossOf(
     p {
       margin: 4px 0;
     }
-    .warning,
-    .failed {
+    .warning {
       color: var(--mat-sys-error);
     }
     .note {
       font-weight: 500;
     }
-    .outcomes {
-      padding-left: 20px;
-      overflow-wrap: anywhere;
-    }
   `,
 })
 export class CleanupDialog {
   private readonly api = inject(SessionsApi);
+  private readonly toasts = inject(Toasts);
   private readonly dialog = viewChild.required(AppDialog);
 
   readonly sessionId = input.required<string>();
@@ -289,7 +264,6 @@ export class CleanupDialog {
   protected readonly preview = signal<CleanupPreview | null>(null);
   protected readonly choices = signal(new Map<number, CleanupAction>());
   protected readonly accepted = signal(new Set<number>());
-  protected readonly outcomes = signal<CleanupOutcome[] | null>(null);
   protected readonly error = signal<string | null>(null);
   protected readonly busy = signal(false);
 
@@ -350,7 +324,6 @@ export class CleanupDialog {
     this.preview.set(null);
     this.choices.set(new Map());
     this.accepted.set(new Set());
-    this.outcomes.set(null);
     this.error.set(null);
     this.busy.set(false);
     this.dialog().open();
@@ -408,13 +381,36 @@ export class CleanupDialog {
     request.subscribe({
       next: (result) => {
         this.busy.set(false);
-        this.outcomes.set(result.outcomes);
+        this.close();
+        this.report(result.outcomes);
         this.done.emit(result);
       },
       error: (error: unknown) => {
         this.busy.set(false);
         this.error.set(errorMessage(error, 'Nothing was changed.'));
       },
+    });
+  }
+
+  /** What happened, as a toast: it needs nothing from the user. */
+  private report(outcomes: CleanupOutcome[]): void {
+    const archive = this.mode() === 'archive';
+    const failed = outcomes.some((outcome) => outcome.result === 'failed');
+    this.toasts.show({
+      title: archive
+        ? failed
+          ? 'Session archived; the cleanup failed in part'
+          : 'Session archived'
+        : failed
+          ? 'The cleanup failed in part'
+          : 'Cleaned up',
+      lines:
+        outcomes.length > 0
+          ? outcomes.map((outcome) => `${outcome.name}: ${outcome.message}`)
+          : archive
+            ? ['Nothing was cleaned up.']
+            : [],
+      kind: failed ? 'error' : 'info',
     });
   }
 

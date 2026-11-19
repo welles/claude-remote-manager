@@ -1,3 +1,4 @@
+import { Toasts } from '../ui/toasts';
 import { provideHttpClient } from '@angular/common/http';
 import {
   HttpTestingController,
@@ -134,7 +135,15 @@ describe('session management', () => {
     expect(request.request.body).toEqual({ cleanup: [] });
     request.flush({ session: sessionDto(), outcomes: [] });
     view.fixture.detectChanges();
-    expect(view.all('cleanup-outcomes')[0]).toContain('nothing was cleaned up');
+    // The result needs nothing from the user: a toast, the dialog closes.
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      {
+        title: 'Session archived',
+        lines: ['Nothing was cleaned up.'],
+        kind: 'info',
+      },
+    ]);
+    expect(view.all('cleanup-confirm')).toEqual([]);
   });
 
   it('shows what a push leaves behind and needs the loss accepted', async () => {
@@ -174,7 +183,15 @@ describe('session management', () => {
       ],
     });
     view.fixture.detectChanges();
-    expect(view.all('cleanup-outcomes')[0]).toContain('acme/app : pushed');
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      {
+        title: 'Cleaned up',
+        lines: [
+          'acme/app: pushed claude/x (abcdef1), removed (lost 1 uncommitted file)',
+        ],
+        kind: 'info',
+      },
+    ]);
   });
 
   it('says why a running session cannot be cleaned up', async () => {

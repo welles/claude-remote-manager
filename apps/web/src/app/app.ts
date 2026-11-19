@@ -19,6 +19,7 @@ import { AccessSession } from './pwa/access-session';
 import { NeedsYouCount } from './pwa/needs-you';
 import { SessionSocket } from './sessions/session-socket';
 import { AppIcon, type IconName } from './ui/icon';
+import { AppToasts } from './ui/toasts';
 
 interface Destination {
   label: string;
@@ -80,7 +81,7 @@ function isTopLevel(url: string): boolean {
  * each page renders its own app bar (`app-page-bar`).
  */
 @Component({
-  imports: [AppIcon, RouterLink, RouterOutlet],
+  imports: [AppIcon, AppToasts, RouterLink, RouterOutlet],
   selector: 'app-root',
   templateUrl: './app.html',
   styleUrl: './app.scss',
