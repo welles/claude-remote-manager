@@ -216,7 +216,12 @@ describe('EnvironmentsPage', () => {
 
   it('shows why an environment cannot be deleted', async () => {
     const { fixture, element } = await render([
-      environment({ sessions: [{ id: 's1', title: 'Busy', archived: false }] }),
+      environment({
+        sessions: [
+          { id: 's1', title: 'Busy', archived: false },
+          { id: 's2', title: 'Old', archived: true },
+        ],
+      }),
     ]);
     click(element, 'environment-delete');
     await settle(fixture);
@@ -224,6 +229,8 @@ describe('EnvironmentsPage', () => {
       '[data-testid="environment-delete-dialog"]',
     );
     expect(dialog?.textContent).toContain('Busy');
+    expect(dialog?.textContent).toContain('Old');
+    expect(dialog?.textContent).toContain('(archived)');
     click(element, 'environment-delete-confirm');
     http
       .expectOne({ method: 'DELETE', url: '/api/environments/e1' })

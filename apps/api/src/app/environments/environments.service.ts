@@ -146,16 +146,23 @@ export class EnvironmentsService {
     return this.get(id);
   }
 
-  /** Deletes an environment no session uses that is not archived. */
+  /**
+   * Deletes an environment no session uses, archived ones included: their
+   * transcripts hold the secrets, which are masked only while the
+   * environment exists.
+   */
   remove(id: string): void {
     this.requireRow(id);
-    const users = this.sessionsOf(id).filter((session) => !session.archived);
+    const users = this.sessionsOf(id);
     if (users.length > 0) {
       const names = users
-        .map((session) => `"${session.title ?? session.id}"`)
+        .map(
+          (session) =>
+            `"${session.title ?? session.id}"${session.archived ? ' (archived)' : ''}`,
+        )
         .join(', ');
       throw new ConflictException(
-        `The environment is used by ${users.length === 1 ? 'the session' : 'the sessions'} ${names}; archive ${users.length === 1 ? 'it' : 'them'} first`,
+        `The environment is used by ${users.length === 1 ? 'the session' : 'the sessions'} ${names}; delete ${users.length === 1 ? 'it' : 'them'} first (their history holds the secrets, masked only while the environment exists)`,
       );
     }
     this.db.delete(environments).where(eq(environments.id, id)).run();

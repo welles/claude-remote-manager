@@ -729,7 +729,8 @@ session. It has:
   form (repositories, model, permission mode).
 
 Everything except the presets is read again at each process start, so a rotated key applies with
-the next process. An environment cannot be deleted while a session that is not archived uses it.
+the next process. An environment cannot be deleted while any session uses it, archived ones included: their
+transcripts hold the secrets, which are masked only while the environment exists.
 
 ## Managing sessions
 
