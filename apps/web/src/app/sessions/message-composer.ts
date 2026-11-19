@@ -288,6 +288,16 @@ export class MessageComposer {
     }
   }
 
+  /** Whether text or images wait in the input. */
+  hasContent(): boolean {
+    return this.draft().trim() !== '' || this.images.images().length > 0;
+  }
+
+  /** Puts the caret into the input. */
+  focus(): void {
+    this.textarea()?.nativeElement.focus();
+  }
+
   /** Empties the input after the message went out. */
   clear(): void {
     this.draft.set('');

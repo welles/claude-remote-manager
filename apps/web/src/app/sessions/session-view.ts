@@ -14,11 +14,14 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  afterNextRender,
   afterRenderEffect,
   computed,
   effect,
   inject,
+  Injector,
   signal,
+  untracked,
   viewChild,
   type OnInit,
 } from '@angular/core';
@@ -82,6 +85,7 @@ import { CleanupDialog } from './cleanup-dialog';
 import { SessionTitle } from './session-title';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { errorMessage } from '../repositories/repositories-api';
+import { Toasts } from '../ui/toasts';
 
 /** One session: the streamed conversation, input and usage. */
 /** One `@path` reference, as the file browser hands it over (`?mention=`). */
@@ -128,6 +132,7 @@ const MENTION_TOKEN = /^@(?:"[^"\n]{1,4096}"|[^\s"]{1,4096})$/;
 export class SessionView implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly socket = inject(SessionSocket);
+  private readonly toasts = inject(Toasts);
   private readonly destroyRef = inject(DestroyRef);
   private readonly modelsStore = inject(ModelsStore);
   private readonly host = inject(ElementRef);
@@ -327,9 +332,28 @@ export class SessionView implements OnInit {
       !this.running()
     );
   });
+  /**
+   * The user continues an ended session (Continue, text in the input, a
+   * withdrawn message taken back): the input shows. Reset when the session
+   * changes or ends again.
+   */
+  protected readonly continuing = signal(false);
+  /**
+   * An ended session that is not archived offers archiving instead of the
+   * input, with Continue when it can be continued.
+   */
+  protected readonly offerArchive = computed(
+    () =>
+      this.session()?.status === 'finished' &&
+      this.canArchive() &&
+      !this.continuing() &&
+      this.requests().length === 0 &&
+      this.queued().length === 0,
+  );
   protected readonly canDelete = computed(
     () => !!this.session()?.archivedAt || this.ended(),
   );
+  private readonly injector = inject(Injector);
   private readonly sessionsApi = inject(SessionsApi);
   private readonly router = inject(Router);
   private readonly drafts = inject(SessionDrafts);
@@ -352,6 +376,13 @@ export class SessionView implements OnInit {
       const text = this.draft();
       if (id) {
         this.drafts.set(id, text);
+      }
+    });
+    // Text in the input (a draft, a reference from the file browser) means
+    // the user continues: the input stays, also when it is emptied.
+    effect(() => {
+      if (this.draft().trim()) {
+        untracked(() => this.continuing.set(true));
       }
     });
     let revealed = false;
@@ -391,6 +422,7 @@ export class SessionView implements OnInit {
         const id = params.get('id') ?? '';
         this.sessionId.set(id);
         this.draft.set(this.drafts.get(id));
+        this.continuing.set(false);
         this.takeMention();
         this.session.set(null);
         this.items.set([]);
@@ -510,12 +542,40 @@ export class SessionView implements OnInit {
 
   /** Puts a message that was not sent back into the input. */
   protected edit(item: QueuedItem): void {
-    this.composer()?.restore(
-      item.id,
-      item.text,
-      item.attachments,
-      item.references,
+    this.continuing.set(true);
+    // The input may only now be rendered.
+    afterNextRender(
+      () =>
+        this.composer()?.restore(
+          item.id,
+          item.text,
+          item.attachments,
+          item.references,
+        ),
+      { injector: this.injector },
     );
+  }
+
+  /** A session that ends again offers archiving again. */
+  private endedAgain(status: SessionDto['status']): void {
+    const before = this.session()?.status;
+    // Not while something waits in the input: it would vanish mid-typing.
+    if (
+      status === 'finished' &&
+      before &&
+      before !== 'finished' &&
+      !this.composer()?.hasContent()
+    ) {
+      this.continuing.set(false);
+    }
+  }
+
+  /** Shows the input of an ended session instead of the archive offer. */
+  protected continueSession(): void {
+    this.continuing.set(true);
+    afterNextRender(() => this.composer()?.focus(), {
+      injector: this.injector,
+    });
   }
 
   /** Switches the model (`''`: default) or the permission mode. */
@@ -572,7 +632,12 @@ export class SessionView implements OnInit {
 
   protected unarchive(): void {
     this.sessionsApi.unarchive(this.sessionId()).subscribe({
-      next: (session) => this.session.set(session),
+      next: (session) => {
+        // Unarchived to continue it: the input shows, not the archive offer.
+        this.continuing.set(true);
+        this.session.set(session);
+        this.toasts.show({ title: 'Session unarchived' });
+      },
       error: (error: unknown) =>
         this.error.set(errorMessage(error, 'The session was not unarchived.')),
     });
@@ -717,6 +782,7 @@ export class SessionView implements OnInit {
     switch (message.type) {
       case 'session.history':
         if (message.session.id === id) {
+          this.endedAgain(message.session.status);
           this.session.set(message.session);
           let items = message.complete
             ? buildConversation(message.events)
@@ -761,6 +827,7 @@ export class SessionView implements OnInit {
           if (event.type === 'context.usage') {
             this.context.set(event.context);
           } else if (event.type === 'session.status') {
+            this.endedAgain(event.status);
             this.session.update((session) =>
               session
                 ? {
@@ -775,6 +842,7 @@ export class SessionView implements OnInit {
         return;
       case 'session.updated':
         if (message.session.id === id) {
+          this.endedAgain(message.session.status);
           this.session.set(message.session);
         }
         return;

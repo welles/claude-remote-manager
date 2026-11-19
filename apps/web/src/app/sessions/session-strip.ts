@@ -61,8 +61,9 @@ export type DetailSection =
         data-testid="strip-pr"
       >
         <app-icon name="pull-request" />#{{ p.number }}
-        <span class="pr-state pr-{{ p.state }}">{{
-          p.draft && p.state === 'open' ? 'draft' : p.state
+        @let state = p.draft && p.state === 'open' ? 'draft' : p.state;
+        <span class="pr-state pr-{{ state }}" data-testid="strip-pr-state">{{
+          state
         }}</span>
         @if (p.automation.autofix && p.state === 'open') {
           <span class="sub">· autofix</span>
@@ -188,6 +189,9 @@ export type DetailSection =
     }
     .pr-closed {
       color: var(--app-diff-del-fg);
+    }
+    .pr-draft {
+      color: var(--mat-sys-on-surface-variant);
     }
     .sub {
       color: var(--mat-sys-on-surface-variant);

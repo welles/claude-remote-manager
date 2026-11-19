@@ -17,6 +17,7 @@ import { formatCost } from './format';
 import { AppDialog } from '../ui/dialog';
 import { LossDetails } from './loss-details';
 import { SessionsApi } from './sessions-api';
+import { Toasts } from '../ui/toasts';
 
 /**
  * Confirms deleting a session for good: lists what goes (its directories
@@ -151,6 +152,7 @@ import { SessionsApi } from './sessions-api';
 })
 export class DeleteSessionDialog {
   private readonly api = inject(SessionsApi);
+  private readonly toasts = inject(Toasts);
   private readonly dialog = viewChild.required(AppDialog);
 
   readonly sessionId = input.required<string>();
@@ -199,11 +201,18 @@ export class DeleteSessionDialog {
     this.api.delete(this.sessionId(), this.acceptLoss()).subscribe({
       next: () => {
         this.close();
+        this.toasts.show({ title: 'Session deleted' });
         this.deleted.emit(this.sessionId());
       },
       error: (error: unknown) => {
-        this.busy.set(false);
-        this.error.set(errorMessage(error, 'The session was not deleted.'));
+        const message = errorMessage(error, 'The session was not deleted.');
+        if (this.open()) {
+          this.busy.set(false);
+          this.error.set(message);
+        } else {
+          // Closed meanwhile (Esc): the error must not get lost.
+          this.toasts.show({ title: message, kind: 'error' });
+        }
       },
     });
   }

@@ -8,6 +8,7 @@ import { provideRouter } from '@angular/router';
 import type { RepositoryDto } from '@claude-remote-manager/shared-types';
 import { words } from '../testing/text';
 import { ACTIVITY_POLL_MS, RepositoryList } from './repository-list';
+import { Toasts } from '../ui/toasts';
 
 const repository = (overrides: Partial<RepositoryDto> = {}): RepositoryDto => ({
   id: 'r1',
@@ -207,6 +208,24 @@ describe('RepositoryList', () => {
     fixture.detectChanges();
     expect(all('setup-input')).toHaveLength(0);
     expect(all('setup-script')).toEqual(['npm ci npm run build']);
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      { title: 'Setup script of acme/app saved' },
+    ]);
+
+    // Emptied: removed, and new clones get no setup.
+    list.editSetup(current);
+    list.setupDraft = '  ';
+    list.saveSetup(current);
+    const removal = http.expectOne({
+      method: 'PATCH',
+      url: '/api/repositories/r1',
+    });
+    expect(removal.request.body).toEqual({ setupScript: null });
+    removal.flush(repository({ setupScript: null }));
+    expect(TestBed.inject(Toasts).all().at(-1)).toMatchObject({
+      title: 'Setup script of acme/app removed',
+      lines: ['New session clones get no setup.'],
+    });
 
     list.fetch(current);
     http

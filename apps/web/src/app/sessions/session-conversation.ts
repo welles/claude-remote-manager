@@ -19,6 +19,7 @@ import { AppBanner } from '../ui/banner';
 import { AppIcon, type IconName } from '../ui/icon';
 import {
   progressText,
+  questionCard,
   resolutionText,
   toolSummary,
   type ConversationItem,
@@ -94,6 +95,7 @@ export class SessionConversation {
   protected readonly entries = computed(() => groupTools(this.items()));
 
   protected readonly resolutionText = resolutionText;
+  protected readonly questionCard = questionCard;
   protected readonly progressText = progressText;
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;

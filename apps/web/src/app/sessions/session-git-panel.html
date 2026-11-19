@@ -112,9 +112,11 @@
     <ul class="pulls">
       @for (pull of clone.pullRequests; track pull.id) {
       <li data-testid="pull-request">
-        <span class="state state-{{ pull.state }}"
-          >{{ pull.draft && pull.state === 'open' ? 'Draft' :
-          stateLabels[pull.state] }}</span
+        @let isDraft = pull.draft && pull.state === 'open';
+        <span
+          class="state state-{{ isDraft ? 'draft' : pull.state }}"
+          data-testid="pull-request-state"
+          >{{ isDraft ? 'Draft' : stateLabels[pull.state] }}</span
         >
         <a [href]="pull.url" target="_blank" rel="noopener"
           >#{{ pull.number }} {{ pull.title }}</a

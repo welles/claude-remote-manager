@@ -8,6 +8,7 @@ import {
   buildConversation,
   pendingRequests,
   progressText,
+  questionCard,
   resolutionText,
   toolSummary,
   type ConversationItem,
@@ -634,6 +635,91 @@ describe('approval requests, queue and settings in the conversation', () => {
     const question = permissionRequest({ kind: 'question' });
     expect(text(question, null)).toBe('Waiting for your answer');
     expect(text(question, { answers: { a: 'b' } })).toBe('Answered');
+  });
+
+  it('makes a card of a question with the answers given', () => {
+    const questions = [
+      {
+        question: 'Which?',
+        header: 'Pick',
+        options: [{ label: 'A', description: 'The first', preview: null }],
+        multiSelect: false,
+      },
+      { question: 'Why?', header: '', options: [], multiSelect: false },
+    ];
+    const request = permissionRequest({
+      toolName: 'AskUserQuestion',
+      kind: 'question',
+      questions,
+    });
+    const card = (resolved: ReturnType<typeof permissionResolved> | null) =>
+      questionCard(
+        buildConversation([
+          request,
+          ...(resolved ? [resolved] : []),
+        ])[0] as ConversationItem,
+      );
+    expect(card(null)).toEqual({
+      state: 'Waiting for your answer',
+      tone: 'open',
+      questions: [
+        { header: 'Pick', question: 'Which?', answer: null, description: null },
+        { header: '', question: 'Why?', answer: null, description: null },
+      ],
+      other: [],
+      problem: null,
+    });
+    expect(
+      card(permissionResolved({ answers: { 'Which?': 'A', 'Why?': ' Own ' } })),
+    ).toMatchObject({
+      tone: 'answered',
+      questions: [
+        { answer: 'A', description: 'The first' },
+        { answer: 'Own', description: null },
+      ],
+    });
+    expect(
+      card(permissionResolved({ decision: 'deny', message: 'Later' })),
+    ).toMatchObject({ state: 'Not answered: Later', tone: 'unanswered' });
+    expect(
+      card(permissionResolved({ decision: 'deny', cause: 'interrupted' })),
+    ).toMatchObject({
+      state: 'Cancelled: the turn was stopped',
+      tone: 'unanswered',
+    });
+    // Answers to no question of the request still show.
+    expect(
+      card(permissionResolved({ answers: { 'Which?': 'A', Other: 'B' } }))
+        ?.other,
+    ).toEqual([{ question: 'Other', answer: 'B' }]);
+    // Multi-select: the explanation of each chosen option.
+    const multi = permissionRequest({
+      toolName: 'AskUserQuestion',
+      kind: 'question',
+      questions: [
+        {
+          question: 'Which?',
+          header: '',
+          options: [
+            { label: 'A', description: 'First', preview: null },
+            { label: 'B', description: 'Second', preview: null },
+          ],
+          multiSelect: true,
+        },
+      ],
+    });
+    expect(
+      questionCard(
+        buildConversation([
+          multi,
+          permissionResolved({ answers: { 'Which?': 'A, B' } }),
+        ])[0],
+      )?.questions[0],
+    ).toMatchObject({ answer: 'A, B', description: 'First · Second' });
+    // Other tool calls are no cards.
+    expect(
+      questionCard(buildConversation([permissionRequest()])[0]),
+    ).toBeNull();
   });
 
   it('shows queued messages until they are sent, removed or withdrawn', () => {

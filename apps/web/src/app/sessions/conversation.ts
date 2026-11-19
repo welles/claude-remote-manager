@@ -705,6 +705,94 @@ export function buildConversation(events: SessionEvent[]): ConversationItem[] {
   return events.reduce(applyEvent, [] as ConversationItem[]);
 }
 
+type ToolItem = Extract<ConversationItem, { kind: 'tool' }>;
+
+/** Claude Code's tool for questions to the user. */
+export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion';
+
+/** A question Claude asked, with the user's answer. */
+export interface AnsweredQuestion {
+  header: string;
+  question: string;
+  /** `null` while waiting, or when it was not answered. */
+  answer: string | null;
+  /** The explanations of the chosen options (not for own words). */
+  description: string | null;
+}
+
+/**
+ * Whether a tool call is a question of Claude's to the user (by its name,
+ * so it is one from the call on, before the request arrives).
+ */
+export function isQuestion(item: ConversationItem): item is ToolItem {
+  return item.kind === 'tool' && item.name === ASK_USER_QUESTION_TOOL;
+}
+
+/** A question call as a card: its state and the answers given. */
+export interface QuestionCard {
+  /** E.g. `Answered`, `Waiting for your answer`, `Not answered: …`. */
+  state: string;
+  tone: 'open' | 'answered' | 'unanswered';
+  questions: AnsweredQuestion[];
+  /** Answers to no question of the request (`question: answer`). */
+  other: { question: string; answer: string }[];
+  /** Why the call failed or was denied, if it did. */
+  problem: string | null;
+}
+
+/**
+ * A question call as a card, `null` for any other tool call and for a
+ * question without readable questions (shown as a tool row then).
+ */
+export function questionCard(item: ConversationItem): QuestionCard | null {
+  if (
+    !isQuestion(item) ||
+    !item.permission ||
+    !item.permission.request.questions?.length
+  ) {
+    return null;
+  }
+  const { request, resolved } = item.permission;
+  const answers = resolved?.answers ?? {};
+  const questions = request.questions ?? [];
+  const asked = new Set(questions.map((question) => question.question));
+  return {
+    state: resolutionText(item.permission),
+    tone: !resolved
+      ? 'open'
+      : resolved.decision === 'allow'
+        ? 'answered'
+        : 'unanswered',
+    questions: questions.map((question) => {
+      const answer = answers[question.question]?.trim() || null;
+      // Multi-select: the labels joined with `, `.
+      const chosen = question.multiSelect
+        ? (answer?.split(', ') ?? [])
+        : [answer];
+      const descriptions = chosen
+        .map(
+          (label) =>
+            question.options
+              .find((option) => option.label === label)
+              ?.description.trim() ?? '',
+        )
+        .filter((text) => text !== '');
+      return {
+        header: question.header,
+        question: question.question,
+        answer,
+        description: descriptions.join(' · ') || null,
+      };
+    }),
+    other: Object.entries(answers)
+      .filter(([question]) => !asked.has(question))
+      .map(([question, answer]) => ({ question, answer })),
+    problem:
+      item.denied ??
+      (item.result?.isError ? item.result.content.trim() || 'Failed' : null),
+  };
+}
+
 const CANCELLED: Record<string, string> = {
   interrupted: 'Cancelled: the turn was stopped',
   ended: 'Cancelled: the session was ended',

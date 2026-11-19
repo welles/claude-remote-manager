@@ -10,6 +10,7 @@ import type {
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
 import { words } from '../testing/text';
+import { Toasts } from '../ui/toasts';
 import { WEBSOCKET_FACTORY } from './session-socket';
 import { SessionView } from './session-view';
 import { FakeWebSocket, fakeWebSocketFactory } from './testing/fake-websocket';
@@ -17,6 +18,7 @@ import {
   permissionRequest,
   permissionResolved,
 } from './testing/permission-events';
+import { pullRequestDto } from './testing/pull-request';
 import { sessionDto } from './testing/session-dto';
 import { preview } from '../previews/testing/preview';
 
@@ -858,6 +860,251 @@ describe('SessionView', () => {
     expect(element.querySelector('[data-testid="approvals"]')).toBeNull();
     expect(text('permission-line')).toBe('Allowed for this session');
     expect(text('status')).toBe('Running');
+  });
+
+  it('shows answered questions as a card outside the group of tool calls', async () => {
+    const { harness, socket, element, text } = await open();
+    const questions = [
+      {
+        question: 'Which database?',
+        header: 'Database',
+        options: [
+          { label: 'SQLite', description: 'One file', preview: null },
+          { label: 'Postgres', description: 'A server', preview: null },
+        ],
+        multiSelect: false,
+      },
+      {
+        question: 'Anything else?',
+        header: '',
+        options: [],
+        multiSelect: false,
+      },
+    ];
+    const call = (toolUseId: string, name: string) =>
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId,
+        name,
+        input: { command: 'ls' },
+        parentToolUseId: null,
+      });
+    history(socket, sessionDto({ status: 'waiting', waitingFor: null }), [
+      call('t0', 'Bash'),
+      call('t1', 'AskUserQuestion'),
+      event(
+        permissionRequest({
+          toolUseId: 't1',
+          toolName: 'AskUserQuestion',
+          kind: 'question',
+          questions,
+        }),
+      ),
+      event(
+        permissionResolved({
+          toolUseId: 't1',
+          answers: {
+            'Which database?': 'SQLite',
+            'Anything else?': 'Keep it small',
+          },
+        }),
+      ),
+      call('t2', 'Bash'),
+    ]);
+    await harness.fixture.whenStable();
+    // The question breaks the run: no group, two rows and the card.
+    expect(element.querySelector('[data-testid="tool-group"]')).toBeNull();
+    expect(element.querySelectorAll('.tool')).toHaveLength(2);
+    expect(text('question-card')).toContain('Claude asked · Answered');
+    const entries = [
+      ...element.querySelectorAll('[data-testid="question"]'),
+    ].map(words);
+    expect(entries).toEqual([
+      'Database Which database? SQLite One file',
+      'Anything else? Keep it small',
+    ]);
+  });
+
+  it('offers archiving instead of the input once the session has ended', async () => {
+    const { harness, socket, element, text } = await open();
+    history(socket, sessionDto({ status: 'finished', waitingFor: null }));
+    await harness.fixture.whenStable();
+    const composer = () => element.querySelector('app-message-composer');
+    expect(text('archive-offer')).toContain('The session has ended.');
+    expect(composer()).toBeNull();
+
+    // Archive… opens the dialog to archive.
+    (
+      element.querySelector(
+        '[data-testid="archive-offer-archive"]',
+      ) as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    // It reads what the clones hold, as for archiving from the details.
+    expect(
+      TestBed.inject(HttpTestingController).match(
+        (request) =>
+          request.method === 'GET' && request.url.endsWith('/s1/cleanup'),
+      ),
+    ).toHaveLength(1);
+
+    (
+      element.querySelector(
+        '[data-testid="archive-offer-continue"]',
+      ) as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+    expect(composer()).not.toBeNull();
+
+    // Continued, then ended again: the offer comes back.
+    live(socket, event({ type: 'session.status', status: 'running' }));
+    live(socket, event({ type: 'session.status', status: 'finished' }));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toContain('The session has ended.');
+
+    // Ending again with text in the input keeps the input.
+    (
+      element.querySelector(
+        '[data-testid="archive-offer-continue"]',
+      ) as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    const input = element.querySelector(
+      '[data-testid="message-input"]',
+    ) as HTMLTextAreaElement;
+    input.value = 'Next step';
+    input.dispatchEvent(new Event('input'));
+    live(socket, event({ type: 'session.status', status: 'running' }));
+    live(socket, event({ type: 'session.status', status: 'finished' }));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+    expect(composer()).not.toBeNull();
+
+    // Archived: no offer.
+    history(
+      socket,
+      sessionDto({
+        status: 'finished',
+        waitingFor: null,
+        archivedAt: '2026-01-02T00:00:00Z',
+      }),
+    );
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+  });
+
+  it('offers only archiving when the ended session cannot be continued', async () => {
+    const { harness, socket, element, text } = await open();
+    const session = sessionDto({ status: 'finished', waitingFor: null });
+    history(socket, {
+      ...session,
+      directories: session.directories.map((directory) => ({
+        ...directory,
+        state: 'removed' as const,
+      })),
+    });
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toContain('cannot be continued');
+    expect(
+      element.querySelector('[data-testid="archive-offer-continue"]'),
+    ).toBeNull();
+    expect(element.querySelector('app-message-composer')).toBeNull();
+  });
+
+  it('shows an open draft pull request grey in the strip', async () => {
+    const { harness, socket, element } = await open();
+    history(
+      socket,
+      sessionDto({ pullRequests: [pullRequestDto({ draft: true })] }),
+    );
+    await harness.fixture.whenStable();
+    const state = element.querySelector('[data-testid="strip-pr-state"]');
+    expect(state?.textContent?.trim()).toBe('draft');
+    expect(state?.classList).toContain('pr-draft');
+  });
+
+  it('confirms unarchiving with a toast', async () => {
+    const { harness, socket, element, text } = await open();
+    history(
+      socket,
+      sessionDto({
+        status: 'finished',
+        waitingFor: null,
+        archivedAt: '2026-01-02T00:00:00Z',
+      }),
+    );
+    await harness.fixture.whenStable();
+    (
+      element.querySelector(
+        '[data-testid="unarchive-banner"]',
+      ) as HTMLButtonElement
+    ).click();
+    TestBed.inject(HttpTestingController)
+      .expectOne('/api/sessions/s1/unarchive')
+      .flush(sessionDto({ status: 'finished', waitingFor: null }));
+    await harness.fixture.whenStable();
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      { title: 'Session unarchived' },
+    ]);
+    expect(text('archived-banner')).toBeUndefined();
+    // Unarchived to continue it: the input, not the archive offer.
+    expect(text('archive-offer')).toBeUndefined();
+    expect(element.querySelector('app-message-composer')).not.toBeNull();
+  });
+
+  it('makes no offer for failed sessions', async () => {
+    const { harness, socket, text } = await open();
+    history(socket, sessionDto({ status: 'failed', waitingFor: null }));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+  });
+
+  it('keeps the input of an ended session with text in it, also emptied', async () => {
+    const { harness, socket, element, text } = await open(
+      '/sessions/s1?mention=%40src%2Fmain.ts',
+    );
+    history(socket, sessionDto({ status: 'finished', waitingFor: null }));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+    const input = element.querySelector(
+      '[data-testid="message-input"]',
+    ) as HTMLTextAreaElement;
+    input.value = '';
+    input.dispatchEvent(new Event('input'));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+    expect(element.querySelector('[data-testid="message-input"]')).toBe(input);
+  });
+
+  it('takes a withdrawn message of an ended session back into the input', async () => {
+    const { harness, socket, element, text } = await open();
+    history(socket, sessionDto({ status: 'finished', waitingFor: null }), [
+      event({ type: 'message.queued', id: 'q1', text: 'Stopped one' }),
+      event({
+        type: 'message.dequeued',
+        id: 'q1',
+        outcome: 'withdrawn',
+        reason: 'The session was ended.',
+      }),
+    ]);
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toContain('The session has ended.');
+    (
+      element.querySelector(
+        '[data-testid="edit-withdrawn"]',
+      ) as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+    expect(
+      (
+        element.querySelector(
+          '[data-testid="message-input"]',
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe('Stopped one');
   });
 
   it('shows queued messages, removes them and offers withdrawn ones again', async () => {

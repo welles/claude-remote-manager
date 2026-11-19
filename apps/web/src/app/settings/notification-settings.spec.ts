@@ -9,6 +9,7 @@ import { NotificationSettings, PUSH_DEVICE } from './notification-settings';
 import type { DeviceEnvironment } from './push-device';
 import { isIos, pushSupport } from './push-device';
 import { notificationStatus } from './testing/notification-status';
+import { Toasts } from '../ui/toasts';
 
 const desktop: DeviceEnvironment = {
   userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0',
@@ -75,6 +76,37 @@ describe('NotificationSettings', () => {
     expect(words(find('test-result-ntfy') as HTMLElement)).toBe(
       'ntfy did not accept it: HTTP 401',
     );
+  });
+
+  it('removes a device and says so', async () => {
+    const status = notificationStatus();
+    const device = {
+      id: 'd1',
+      label: 'Chrome on Linux',
+      pushService: 'fcm.googleapis.com',
+      createdAt: '2026-01-01T00:00:00Z',
+      lastSuccessAt: null,
+      lastError: null,
+    };
+    const { fixture, find } = await render({
+      ...status,
+      webPush: { ...status.webPush, subscriptions: [device] },
+    });
+    find('remove-device')?.click();
+    http
+      .expectOne({
+        method: 'DELETE',
+        url: '/api/notifications/push-subscriptions/d1',
+      })
+      .flush(null);
+    http.expectOne('/api/notifications').flush(notificationStatus());
+    fixture.detectChanges();
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      {
+        title: 'Device removed',
+        lines: ['Chrome on Linux · fcm.googleapis.com'],
+      },
+    ]);
   });
 
   it('switches events per channel', async () => {

@@ -118,6 +118,12 @@
   background: var(--app-gh-merged);
 }
 
+// Like GitHub: a draft is grey, not green.
+.state-draft {
+  background: var(--app-gh-draft);
+  color: var(--app-gh-on-state);
+}
+
 .pull-checks,
 .pull-automation {
   flex-basis: 100%;

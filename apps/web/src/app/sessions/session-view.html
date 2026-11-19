@@ -174,7 +174,33 @@
       />
       } @if (error(); as message) {
       <p class="error" data-testid="error">{{ message }}</p>
-      }
+      } @if (offerArchive()) {
+      <app-banner data-testid="archive-offer">
+        @if (resumable()) { The session has ended. Archive it, or continue it
+        with a new message. } @else { The session has ended and cannot be
+        continued. Archive it to hide it from the session list. }
+        <div banner-actions>
+          <button
+            matButton="filled"
+            type="button"
+            (click)="cleanupDialog()?.show('archive')"
+            data-testid="archive-offer-archive"
+          >
+            <app-icon name="archive" />Archive…
+          </button>
+          @if (resumable()) {
+          <button
+            matButton="outlined"
+            type="button"
+            (click)="continueSession()"
+            data-testid="archive-offer-continue"
+          >
+            Continue
+          </button>
+          }
+        </div>
+      </app-banner>
+      } @else {
       <app-message-composer
         [(draft)]="draft"
         [label]="composerLabel()"
@@ -187,6 +213,7 @@
         (send)="send($event)"
         (interrupt)="interrupt()"
       />
+      }
     </footer>
   </div>
 

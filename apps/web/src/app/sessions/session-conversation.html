@@ -18,7 +18,41 @@
   [class.streaming]="item.streaming"
   [innerHTML]="item.text | markdown"
 ></div>
-} @case ('tool') {
+} @case ('tool') { @if (questionCard(item); as card) {
+<section
+  class="question-card question-{{ card.tone }}"
+  [class.nested]="item.nested"
+  data-testid="question-card"
+>
+  <p class="question-state">
+    <app-icon name="info" /><span>Claude asked · {{ card.state }}</span>
+  </p>
+  @for (entry of card.questions; track $index) {
+  <div class="qa" data-testid="question">
+    @if (entry.header) {
+    <span class="qa-header">{{ entry.header }}</span>
+    }
+    <p class="qa-question">{{ entry.question }}</p>
+    @if (entry.answer) {
+    <p class="qa-answer" data-testid="answer">
+      <app-icon name="check" /><span>{{ entry.answer }}</span>
+    </p>
+    @if (entry.description) {
+    <p class="qa-description">{{ entry.description }}</p>
+    } }
+  </div>
+  } @for (entry of card.other; track entry.question) {
+  <div class="qa" data-testid="question">
+    <p class="qa-question">{{ entry.question }}</p>
+    <p class="qa-answer" data-testid="answer">
+      <app-icon name="check" /><span>{{ entry.answer }}</span>
+    </p>
+  </div>
+  } @if (card.problem) {
+  <p class="tool-denied" data-testid="question-problem">{{ card.problem }}</p>
+  }
+</section>
+} @else {
 <ng-container
   [ngTemplateOutlet]="toolRow"
   [ngTemplateOutletContext]="{ $implicit: item }"
@@ -27,6 +61,7 @@
   [ngTemplateOutlet]="permissionLine"
   [ngTemplateOutletContext]="{ $implicit: item }"
 />
+}
 <ng-container
   [ngTemplateOutlet]="toolExtras"
   [ngTemplateOutletContext]="{ $implicit: item }"

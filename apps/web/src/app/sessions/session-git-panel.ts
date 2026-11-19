@@ -154,7 +154,11 @@ export class SessionGitPanel {
         .subscribe({
           next: (pull) => {
             this.composing.set(null);
-            done(`Pull request #${pull.number} is ${pull.state}`);
+            done(
+              pull.draft && pull.state === 'open'
+                ? `Pull request #${pull.number} is a draft`
+                : `Pull request #${pull.number} is ${pull.state}`,
+            );
           },
           error: (error: unknown) =>
             fail(errorMessage(error, 'The pull request could not be created.')),

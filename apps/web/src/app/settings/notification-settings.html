@@ -77,7 +77,12 @@
         <span class="error"> · {{ device.lastError }}</span>
         }
       </span>
-      <button matButton type="button" (click)="removeDevice(device.id)">
+      <button
+        matButton
+        type="button"
+        (click)="removeDevice(device)"
+        data-testid="remove-device"
+      >
         Remove
       </button>
     </li>

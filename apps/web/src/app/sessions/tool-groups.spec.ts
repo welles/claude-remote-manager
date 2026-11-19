@@ -4,6 +4,7 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { buildConversation } from './conversation';
 import { groupPreparation } from './preparation';
+import { permissionRequest } from './testing/permission-events';
 import { groupTools, shortToolName, toolCounts } from './tool-groups';
 
 let seq = 0;
@@ -63,6 +64,36 @@ describe('tool groups', () => {
       group.kind === 'tools' && group.tools.map((tool) => tool.key),
     ).toEqual(['tool:t1', 'tool:t2', 'tool:t3']);
     expect(group.key).toBe('tools:tool:t1');
+  });
+
+  it("shows Claude's questions on their own, between groups", () => {
+    const result = entries([
+      call('t1'),
+      call('t2'),
+      call('q', 'AskUserQuestion'),
+      event(
+        permissionRequest({
+          toolUseId: 'q',
+          toolName: 'AskUserQuestion',
+          kind: 'question',
+          questions: [
+            { question: 'Which?', header: '', options: [], multiSelect: false },
+          ],
+        }),
+      ),
+      call('t3'),
+    ]);
+    expect(result.map((entry) => entry.kind)).toEqual([
+      'tools',
+      'tool',
+      'tool',
+    ]);
+    expect(result[1].key).toBe('tool:q');
+  });
+
+  it('shows a question on its own from the call on', () => {
+    const result = entries([call('t1'), call('q', 'AskUserQuestion')]);
+    expect(result.map((entry) => entry.key)).toEqual(['tool:t1', 'tool:q']);
   });
 
   it("keeps a subagent's calls and text in the group", () => {

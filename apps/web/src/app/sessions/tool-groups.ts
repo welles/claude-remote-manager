@@ -1,4 +1,4 @@
-import type { ConversationItem } from './conversation';
+import { isQuestion, type ConversationItem } from './conversation';
 import type { ShownItem } from './preparation';
 
 type ToolItem = Extract<ConversationItem, { kind: 'tool' }>;
@@ -20,9 +20,16 @@ export interface ToolGroup {
 
 export type ConversationEntry = ShownItem | ToolGroup;
 
-/** Whether an item belongs to a run of tool calls. */
+/**
+ * Whether an item belongs to a run of tool calls. Claude's questions do
+ * not: they show as a card of their own, with the answers (decided by the
+ * tool's name, so a group does not fall apart when the request arrives).
+ */
 function inRun(item: ShownItem): item is ToolItem | AssistantItem {
-  return item.kind === 'tool' || (item.kind === 'assistant' && item.nested);
+  return (
+    (item.kind === 'tool' && !isQuestion(item)) ||
+    (item.kind === 'assistant' && item.nested)
+  );
 }
 
 /**
