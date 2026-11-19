@@ -703,6 +703,53 @@ describe('approval requests, queue and settings in the conversation', () => {
       'Mode: Plan (changed by Claude)',
     ]);
   });
+
+  it('notes title changes instead of the tool call that made them', () => {
+    const items = buildConversation([
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId: 't1',
+        name: 'mcp__crm__set_session_title',
+        input: { title: 'Login fails with SSO' },
+        parentToolUseId: null,
+      }),
+      event({
+        type: 'tool.result',
+        toolUseId: 't1',
+        isError: false,
+        content: 'The session is titled "Login fails with SSO".',
+        truncated: false,
+        parentToolUseId: null,
+      }),
+      event({
+        type: 'settings.changed',
+        title: 'Login fails with SSO',
+        cause: 'claude',
+      }),
+      event({ type: 'settings.changed', title: 'Mine', cause: 'user' }),
+    ]);
+    expect(items.map((item) => item.kind)).toEqual(['settings', 'settings']);
+    expect(
+      items.map((item) => (item.kind === 'settings' ? item.text : '')),
+    ).toEqual([
+      'Title: Login fails with SSO (changed by Claude)',
+      'Title: Mine',
+    ]);
+
+    // Should it ever be denied, that still shows.
+    const denied = buildConversation([
+      event({
+        type: 'permission.denied',
+        toolUseId: 't2',
+        toolName: 'mcp__crm__set_session_title',
+        input: { title: 'x' },
+        message: 'Denied by a rule',
+        reason: 'rule',
+      }),
+    ]);
+    expect(denied.map((item) => item.kind)).toEqual(['tool']);
+  });
 });
 
 describe('tool summaries', () => {

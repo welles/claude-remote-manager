@@ -76,6 +76,8 @@ import {
   APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
   READ_ONLY_TOOLS,
+  SET_SESSION_TITLE_TOOL,
+  SET_SESSION_TITLE_TOOL_NAME,
 } from './app-tools';
 import type { AgentTool } from '../agent/agent-runner';
 import { zeroTurnMessages } from '../agent/sdk-agent-runner';
@@ -142,6 +144,8 @@ import { sumUsage, UsageTracker } from './usage-tracker';
 
 const MAX_MESSAGE_LENGTH = 100_000;
 const MAX_TITLE_LENGTH = 200;
+/** Titles Claude sets are short: the user recognizes the session by them. */
+const MAX_CLAUDE_TITLE_LENGTH = 80;
 const MODEL_PATTERN = /^[\w.[\]-]{1,100}$/;
 /**
  * Environment every Claude Code process of a session gets. The task list
@@ -613,8 +617,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const body = requireObject(request);
     const { text: prompt, attachmentIds } = this.messageContent(body, 'prompt');
     const referenceRequests = parseReferenceRequests(body['references']);
+    const chosenTitle = optionalString(body, 'title', {
+      maxLength: MAX_TITLE_LENGTH,
+    })?.trim();
     const title =
-      optionalString(body, 'title', { maxLength: MAX_TITLE_LENGTH })?.trim() ||
+      chosenTitle ||
       titleFromPrompt(prompt) ||
       (attachmentIds.length === 1 ? 'Image' : 'Images');
     const model = optionalString(body, 'model')?.trim() || null;
@@ -635,6 +642,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       record = this.sessions.create({
         id: randomUUID(),
         title,
+        // A title the user chose is never replaced by Claude's.
+        titleSource: chosenTitle ? 'user' : 'prompt',
         model,
         permissionMode,
         status: 'preparing',
@@ -1025,7 +1034,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     if (title !== undefined && title !== record.title) {
       // Only the title: slug, branches and directories keep their names.
-      this.updates.next(this.toDto(this.sessions.update(sessionId, { title })));
+      // From now on Claude does not change it any more.
+      this.changeTitle(sessionId, title, 'user');
+    } else if (title !== undefined && record.titleSource !== 'user') {
+      // Confirmed as it is: still the user's choice from now on.
+      this.sessions.update(sessionId, { titleSource: 'user' });
     }
     if (Object.keys(changes).length === 0) {
       return this.get(sessionId);
@@ -1647,11 +1660,19 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           ...(await this.resumeTarget(record)),
           canUseTool: this.canUseTool(live),
           gate: (call) => this.autofixGate(live, call),
-          allowedTools: [...allowed.rules, ...(extras.allowedTools ?? [])],
+          allowedTools: [
+            ...allowed.rules,
+            ...(extras.allowedTools ?? []),
+            // Changes only the title, never one the user chose.
+            SET_SESSION_TITLE_TOOL_NAME,
+          ],
           env: { ...SESSION_ENV, ...extras.env },
-          tools: this.additions
-            ? [...extras.tools, this.addRepositoryTool(live)]
-            : extras.tools,
+          tools: [
+            ...extras.tools,
+            // A title the user chose stays: no tool to change it.
+            ...(record.titleSource === 'user' ? [] : [this.setTitleTool(live)]),
+            ...(this.additions ? [this.addRepositoryTool(live)] : []),
+          ],
           settings: extras.settings,
           ...(extras.instructions ? { instructions: extras.instructions } : {}),
         },
@@ -2218,6 +2239,23 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       live.publishedOverride = key;
       this.updates.next(this.toDto(record));
     }
+  }
+
+  /**
+   * Sets the title (a rename by the user, or Claude's tool), logs it and
+   * publishes the session.
+   */
+  private changeTitle(
+    sessionId: string,
+    title: string,
+    cause: 'user' | 'claude',
+  ): void {
+    const updated = this.sessions.update(sessionId, {
+      title,
+      titleSource: cause,
+    });
+    this.recordEvent(sessionId, { type: 'settings.changed', title, cause });
+    this.updates.next(this.toDto(updated));
   }
 
   /** Stores a model or mode change, logs it and publishes the session. */
@@ -2823,6 +2861,50 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): AgentUserMessage {
     const note = this.takeNote(live.id);
     return note ? { ...message, note } : message;
+  }
+
+  /**
+   * The tool `set_session_title`: Claude names the session once it knows
+   * what it is about and keeps the name up to date. No approval: it changes
+   * only the title, and never one the user chose (given when creating, or a
+   * rename).
+   */
+  private setTitleTool(live: LiveSession): AgentTool {
+    return {
+      name: SET_SESSION_TITLE_TOOL,
+      description:
+        'Set the title of this session: the user recognizes the session by it in the list of ' +
+        'sessions and in notifications. Set it once you know what the session is about, after ' +
+        'reading what the task refers to (an issue, a pull request, files, an error message): ' +
+        'name the actual subject, not the request (not "Work on issue #12", but what issue #12 ' +
+        'is about). Set it again when the topic of the session changes substantially (another ' +
+        'task, or the problem turned out to be a different one), not for each step. Short and ' +
+        'distinctive: about 3 to 6 words, no trailing period, no quotes, in the language the ' +
+        'user writes in. A title the user chose stays; the result says so.',
+      inputSchema: (z) => ({
+        title: z
+          .string()
+          .min(1)
+          .max(MAX_CLAUDE_TITLE_LENGTH)
+          .describe('The new title, e.g. "Dark mode for the settings page"'),
+      }),
+      handler: async (input) => {
+        const title = String(input['title']).replace(/\s+/g, ' ').trim();
+        if (!title) {
+          return { isError: true, text: 'The title must not be blank.' };
+        }
+        const record = this.requireRecord(live.id);
+        if (record.titleSource === 'user') {
+          return {
+            text: `The user chose the title "${record.title ?? ''}" themselves; it stays. Do not set the title in this session again.`,
+          };
+        }
+        if (title !== record.title) {
+          this.changeTitle(live.id, title, 'claude');
+        }
+        return { text: `The session is titled "${title}".` };
+      },
+    };
   }
 
   /**

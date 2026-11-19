@@ -1,5 +1,6 @@
 import {
   PERMISSION_MODE_INFO,
+  SET_SESSION_TITLE_TOOL_NAME,
   type AssistantDraft,
   type AttachmentDto,
   type FileDiff,
@@ -274,6 +275,10 @@ export function applyEvent(
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
     }
     case 'tool.call': {
+      // Not shown as a tool call: the change is a `settings.changed` line.
+      if (event.name === SET_SESSION_TITLE_TOOL_NAME) {
+        return items;
+      }
       const key = `tool:${event.toolUseId}`;
       const index = items.findIndex((item) => item.key === key);
       const existing = items[index];
@@ -615,6 +620,9 @@ export function settingsText(event: SettingsChangedEvent): string {
   }
   if (event.permissionMode) {
     parts.push(`Mode: ${PERMISSION_MODE_INFO[event.permissionMode].label}`);
+  }
+  if (event.title !== undefined) {
+    parts.push(`Title: ${event.title}`);
   }
   const by =
     event.cause === 'plan'

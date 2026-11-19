@@ -62,6 +62,17 @@ export function needsUser(
 }
 
 /**
+ * Where a session's title comes from: the first line of the first message
+ * (`prompt`), the user (`user`: given when creating, or a rename) or Claude
+ * with the tool `set_session_title` (`claude`). Claude keeps a title up to
+ * date unless the user chose it.
+ */
+export type SessionTitleSource = 'prompt' | 'user' | 'claude';
+
+/** Name of Claude's tool that sets the title, as Claude Code reports it. */
+export const SET_SESSION_TITLE_TOOL_NAME = 'mcp__crm__set_session_title';
+
+/**
  * Permission modes a session may use: the Agent SDK's modes. In `auto` a
  * model classifier of Claude Code approves or denies tool uses and asks the
  * user only when it cannot decide; `bypassPermissions` runs everything
