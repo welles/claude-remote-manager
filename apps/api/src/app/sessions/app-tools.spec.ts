@@ -1,4 +1,9 @@
-import { isGitPushCommand } from './app-tools';
+import { SET_SESSION_TITLE_TOOL_NAME as WEB_TITLE_TOOL_NAME } from '@claude-remote-manager/shared-types';
+import { SET_SESSION_TITLE_TOOL_NAME, isGitPushCommand } from './app-tools';
+
+it('names set_session_title as the web app knows it', () => {
+  expect(SET_SESSION_TITLE_TOOL_NAME).toBe(WEB_TITLE_TOOL_NAME);
+});
 
 describe('isGitPushCommand', () => {
   it.each([

@@ -24,6 +24,7 @@ import { SettingsService } from '../settings/settings.service';
 import { withTestIdentity } from '../workspaces/testing/workspace-harness';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { DENIED_STOP_MESSAGE } from './permission-requests';
+import { READ_ONLY_TOOLS } from './app-tools';
 import { SessionEventRepository } from './session-event.repository';
 import { SlashCommandsService } from './slash-commands.service';
 import { SessionRepository } from './session.repository';
@@ -873,7 +874,10 @@ describe('SessionsService', () => {
       await service.send(session.id, { id: MSG_2, text: 'Run the tests' });
       await flush();
       expect(runner.runs).toHaveLength(2);
-      expect(runner.last.options.allowedTools).toEqual(['Bash(npm test:*)']);
+      expect(runner.last.options.allowedTools).toEqual([
+        'Bash(npm test:*)',
+        'mcp__crm__set_session_title',
+      ]);
       // The task list tools are on, for the to-do list in the session view.
       expect(runner.last.options.env).toMatchObject({
         CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
@@ -1173,6 +1177,98 @@ describe('SessionsService', () => {
       });
       await flush();
       expect(service.get(session.id).permissionMode).toBe('plan');
+    });
+  });
+
+  describe('title', () => {
+    const setTitle = (title: string) => {
+      const tool = runner.last.options.tools?.find(
+        (entry) => entry.name === 'set_session_title',
+      );
+      if (!tool) {
+        throw new Error('set_session_title is missing');
+      }
+      return tool.handler({ title }, { toolUseId: 'toolu_title' });
+    };
+
+    it('lets Claude set and update the title, logged and published', async () => {
+      const session = await startSession({ prompt: 'Work on #12' });
+      expect(service.get(session.id).title).toBe('Work on #12');
+      await expect(
+        setTitle('  Login   fails with SSO '),
+      ).resolves.toMatchObject({
+        text: 'The session is titled "Login fails with SSO".',
+      });
+      expect(service.get(session.id).title).toBe('Login fails with SSO');
+      expect(updates.at(-1)?.title).toBe('Login fails with SSO');
+      expect(lastEvent('settings.changed')).toMatchObject({
+        title: 'Login fails with SSO',
+        cause: 'claude',
+      });
+
+      // Claude keeps it up to date; the same title again logs nothing.
+      await setTitle('SSO token refresh');
+      const logged = events.filter(
+        ({ event }) => event.type === 'settings.changed',
+      ).length;
+      await setTitle('SSO token refresh');
+      expect(
+        events.filter(({ event }) => event.type === 'settings.changed'),
+      ).toHaveLength(logged);
+      expect(service.get(session.id).title).toBe('SSO token refresh');
+      // It never asks, also not during an Autofix run.
+      expect(READ_ONLY_TOOLS.has('mcp__crm__set_session_title')).toBe(true);
+    });
+
+    it('refuses a blank title', async () => {
+      const session = await startSession({ prompt: 'p' });
+      await expect(setTitle('   ')).resolves.toMatchObject({ isError: true });
+      expect(service.get(session.id).title).toBe('p');
+    });
+
+    it('never offers to replace a title the user chose', async () => {
+      const session = await startSession({ prompt: 'p', title: 'Mine' });
+      expect(
+        runner.last.options.tools?.map((entry) => entry.name),
+      ).not.toContain('set_session_title');
+      expect(lastEvent('settings.changed')).toBeUndefined();
+      // Renamed to itself: nothing changes, nothing is logged.
+      await service.update(session.id, { title: 'Mine' });
+      expect(lastEvent('settings.changed')).toBeUndefined();
+    });
+
+    it('logs a rename of a session without process', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      runner.last.close();
+      await flush();
+      await service.update(session.id, { title: 'Later' });
+      expect(service.get(session.id).title).toBe('Later');
+      const history = await service.subscribe(session.id);
+      expect(
+        history.events.filter((event) => event.type === 'settings.changed'),
+      ).toEqual([expect.objectContaining({ title: 'Later', cause: 'user' })]);
+    });
+
+    it('stops after a rename, also one that keeps the title', async () => {
+      const session = await startSession();
+      await setTitle('From Claude');
+      await service.update(session.id, { title: 'Renamed' });
+      expect(lastEvent('settings.changed')).toMatchObject({
+        title: 'Renamed',
+        cause: 'user',
+      });
+      await expect(setTitle('Again from Claude')).resolves.toMatchObject({
+        text: expect.stringContaining('The user chose the title "Renamed"'),
+      });
+      expect(service.get(session.id).title).toBe('Renamed');
+
+      const other = await startSession();
+      await setTitle('From Claude');
+      await service.update(other.id, { title: 'From Claude' });
+      await setTitle('Again from Claude');
+      expect(service.get(other.id).title).toBe('From Claude');
     });
   });
 
