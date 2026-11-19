@@ -20,6 +20,7 @@ file change appears as a diff in the history and in approvals, and a changes pag
 whole session's diff per repository and file, a files page its directories (changed files
 marked); images can be attached to messages, files of the
 session referenced with `@`, Claude Code's slash commands and skills completed after `/`,
+Claude Code's suggested next message as placeholder of the input (Tab takes it, Send sends it),
 GitHub issues and pull requests with `#` (Claude gets their
 content as untrusted context), and Claude shows files to the user with `show_file`; session
 branches are pushed and pull requests created by button, or by Claude (as the session's
@@ -284,13 +285,13 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   and the next message starts it again with the SDK's resume option.
 - SDK messages are mapped to session events (`libs/shared-types/src/lib/session-events.ts`):
   streamed text deltas, complete text blocks, tool calls and results, permission denials,
-  notices, errors, turn results with usage, and context usage. The server keeps an event log
+  notices, errors, turn results with usage, context usage and prompt suggestions. The server keeps an event log
   per session while it has a process or subscribers. A client that subscribes gets the whole
   log, or after a reconnect only the events after its last position (`logId` and `seq`), plus
   the text of blocks still streaming; then live events.
 - History: conversation events come from Claude Code's transcript (`getSessionMessages`).
   Events the app produces itself (permission decisions, errors, notices, turn results,
-  context usage) are stored in the `session_events` table and merged in at their place in
+  context usage, prompt suggestions) are stored in the `session_events` table and merged in at their place in
   the transcript. Status changes and text deltas are live-only. The Agent SDK returns
   transcript messages without timestamps, so rebuilt conversation events have `at: null`.
   An unused session's log is released and rebuilt this way when it is opened again.
@@ -517,6 +518,20 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   runs the command; the transcript keeps it as tags, from which history rebuilt after a
   restart shows `/name args` again. The output of a command Claude Code runs itself (e.g.
   `/usage`) is shown live, but is not in the transcript and so missing after a reload.
+- Prompt suggestions: sessions run with the SDK's `promptSuggestions`, so after a turn Claude
+  Code may send its guess at the user's next message (`prompt_suggestion`, as the terminal
+  shows it in its input; not after the first turn, after API errors, in plan mode, near the
+  plan's limit, or when turned off with `promptSuggestionEnabled: false` in the user's settings
+  or `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, which wins over the setting). It is taken
+  only when the turn ended without a stop and the session waits for the user: a suggestion
+  arriving after the next message was sent is dropped. It becomes the stored event
+  `prompt.suggestion` (history keeps only the newest); as in the terminal, the web app shows
+  it as placeholder (in italics) of the empty input until a message is sent or queued, and
+  not while a turn runs; the input grows to show it whole. Send (Ctrl+Enter) with the empty
+  input sends it as it is, unless it is longer than the input's 8 lines; Tab or the
+  edit button next to Send (touch screens) puts it into the input to change it. It comes from
+  the conversation, which may contain untrusted content: once sent it is the user's message,
+  with `@` expansion and slash commands.
 - `show_file` (path, optional caption): reads the file as the session user, only inside the
   session's directories, and keeps a snapshot (up to 20 MB) in `FILES_DIR/shown`; larger
   files keep only their metadata and are served from the session while it exists

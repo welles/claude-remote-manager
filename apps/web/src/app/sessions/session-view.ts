@@ -61,6 +61,7 @@ import { currentPreview } from '../previews/previews-api';
 import { SessionPreviews } from '../previews/session-previews';
 import { FileViewer } from '../shown-files/file-viewer';
 import { MessageComposer, type ComposedMessage } from './message-composer';
+import { applySuggestion } from './prompt-suggestion';
 import { QueuedMessages } from './queued-messages';
 import { SessionDirectories } from './session-directories';
 import { AddRepository } from './add-repository';
@@ -149,6 +150,8 @@ export class SessionView implements OnInit {
   protected readonly session = signal<SessionDto | null>(null);
   protected readonly items = signal<ConversationItem[]>([]);
   protected readonly context = signal<ContextUsage | null>(null);
+  /** Claude Code's guess at the next message (until one is sent). */
+  protected readonly suggestion = signal<string | null>(null);
   protected readonly error = signal<string | null>(null);
   protected readonly loaded = signal(false);
   /** A turn is in progress (possibly waiting for an approval). */
@@ -367,6 +370,7 @@ export class SessionView implements OnInit {
         this.session.set(null);
         this.items.set([]);
         this.context.set(null);
+        this.suggestion.set(null);
         this.loaded.set(false);
         this.position = null;
         this.socket.subscribe(id, () => this.position);
@@ -396,6 +400,8 @@ export class SessionView implements OnInit {
     this.pending.add(requestId);
     this.error.set(null);
     this.composer()?.clear();
+    // The message answers the suggestion, whether taken or not.
+    this.suggestion.set(null);
     this.stickToBottom = true;
   }
 
@@ -652,6 +658,12 @@ export class SessionView implements OnInit {
             : message.events.reduce(applyEvent, this.items());
           items = message.drafts.reduce(applyDraft, items);
           this.items.set(items);
+          this.suggestion.set(
+            message.events.reduce(
+              applySuggestion,
+              message.complete ? null : this.suggestion(),
+            ),
+          );
           this.position = {
             logId: message.logId,
             seq: Math.max(
@@ -680,6 +692,7 @@ export class SessionView implements OnInit {
             this.position = { ...this.position, seq: event.seq };
           }
           this.items.update((items) => applyEvent(items, event));
+          this.suggestion.update((text) => applySuggestion(text, event));
           if (event.type === 'context.usage') {
             this.context.set(event.context);
           } else if (event.type === 'session.status') {

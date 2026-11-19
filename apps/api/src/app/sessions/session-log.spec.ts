@@ -160,6 +160,38 @@ describe('buildHistory', () => {
     ]);
   });
 
+  it('keeps only the newest prompt suggestion', () => {
+    const suggestion = (text: string, uuid: string): StoredEvent => ({
+      event: { type: 'prompt.suggestion', text },
+      anchor: { uuid, userId: null },
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    });
+    const items = buildHistory(
+      [user('u2', 'q2'), assistant('a2', 'r2')],
+      // The first one's entry was compacted away: it would go to the end.
+      [suggestion('old', 'gone'), suggestion('new', 'a2')],
+    );
+    expect(
+      items.flatMap(({ event }) =>
+        event.type === 'prompt.suggestion' ? [event.text] : [],
+      ),
+    ).toEqual(['new']);
+  });
+
+  it('drops a prompt suggestion whose turn is no longer in the transcript', () => {
+    const items = buildHistory(
+      [user('u2', 'q2'), assistant('a2', 'r2')],
+      [
+        {
+          event: { type: 'prompt.suggestion', text: 'answered' },
+          anchor: { uuid: 'gone', userId: 'gone-too' },
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+        },
+      ],
+    );
+    expect(texts(items)).toEqual(['q2', 'r2']);
+  });
+
   it('keeps stored events without a transcript', () => {
     expect(
       texts(buildHistory([], [stored('failed to start', 'x', 'x')])),

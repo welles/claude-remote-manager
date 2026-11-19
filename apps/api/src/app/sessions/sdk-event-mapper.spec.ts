@@ -293,6 +293,17 @@ describe('SdkEventMapper', () => {
     ]);
   });
 
+  it('maps prompt suggestions, dropping empty ones', () => {
+    expect(
+      mapper.map(
+        sdk({ type: 'prompt_suggestion', suggestion: ' Run the tests\n' }),
+      ),
+    ).toEqual([{ type: 'prompt.suggestion', text: 'Run the tests' }]);
+    expect(
+      mapper.map(sdk({ type: 'prompt_suggestion', suggestion: '  ' })),
+    ).toEqual([]);
+  });
+
   it('maps retries, compaction and permission denials', () => {
     expect(
       mapper.map(

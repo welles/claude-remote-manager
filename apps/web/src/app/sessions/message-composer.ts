@@ -83,8 +83,8 @@ export interface ComposedMessage {
  * session (autocomplete over all its directories), `#` references to
  * GitHub issues and pull requests (autocomplete, chips with the choice to
  * give Claude comments and diffs), `/` for Claude Code's slash commands and
- * skills at the start of a message (autocomplete) and the Send and Stop
- * buttons.
+ * skills at the start of a message (autocomplete), Claude Code's suggested
+ * next message as placeholder and the Send and Stop buttons.
  */
 @Component({
   selector: 'app-message-composer',
@@ -100,6 +100,12 @@ export class MessageComposer {
   readonly disabled = input(false);
   /** A turn runs: Stop is offered. */
   readonly running = input(false);
+  /**
+   * Claude Code's guess at the next message, as in the terminal: the
+   * placeholder of the empty input; Tab (or the edit button) puts it into
+   * the input, Send sends it as it is (if it is wholly visible).
+   */
+  readonly suggestion = input<string | null>(null);
   /** Session whose files `@` offers; without, no autocomplete. */
   readonly sessionId = input<string | null>(null);
   /** Name the repository of files (sessions with several directories). */
@@ -115,17 +121,38 @@ export class MessageComposer {
   private readonly api = inject(SessionsApi);
   private readonly textarea =
     viewChild<ElementRef<HTMLTextAreaElement>>('textarea');
+  /** Hidden copy of the input that measures the suggestion. */
+  private readonly mirror =
+    viewChild<ElementRef<HTMLTextAreaElement>>('mirror');
+  /**
+   * The whole suggestion fits into the input (at most 8 lines): only then
+   * does Send send it, so that nothing unseen goes out.
+   */
+  protected readonly suggestionFits = signal(true);
   /**
    * Grows the textarea with its text, up to 8 lines (then it scrolls); also
-   * when the draft changes from outside (sent, restored).
+   * when the draft changes from outside (sent, restored). An empty input
+   * showing the suggestion grows to fit it, measured in the hidden mirror
+   * (writing the field's value would clear its undo history).
    */
   private readonly autosize = afterRenderEffect(() => {
     this.draft();
+    const suggestion = this.offering() ? this.suggestion() : null;
     const field = this.textarea()?.nativeElement;
-    if (field) {
-      field.style.height = 'auto';
-      field.style.height = `${Math.min(field.scrollHeight, MAX_INPUT_HEIGHT)}px`;
+    const mirror = this.mirror()?.nativeElement;
+    if (!field) {
+      return;
     }
+    field.style.height = 'auto';
+    let height = field.scrollHeight;
+    if (suggestion && field.value === '' && mirror) {
+      mirror.style.width = `${field.clientWidth}px`;
+      mirror.value = suggestion;
+      mirror.style.height = 'auto';
+      height = Math.max(height, mirror.scrollHeight);
+      this.suggestionFits.set(mirror.scrollHeight <= MAX_INPUT_HEIGHT);
+    }
+    field.style.height = `${Math.min(height, MAX_INPUT_HEIGHT)}px`;
   });
   /** Where the `@` reference being typed starts, and its text. */
   protected readonly mention = signal<{ start: number; query: string } | null>(
@@ -193,7 +220,25 @@ export class MessageComposer {
     () =>
       !this.disabled() &&
       !this.images.busy() &&
-      (this.draft().trim() !== '' || this.images.ids().length > 0),
+      (this.draft().trim() !== '' ||
+        this.images.ids().length > 0 ||
+        this.sendsSuggestion()),
+  );
+  /** The suggestion is offered: there is one and nothing was typed. */
+  protected readonly offering = computed(
+    () =>
+      !!this.suggestion() &&
+      !this.disabled() &&
+      this.draft() === '' &&
+      this.images.images().length === 0,
+  );
+  /** Send sends the suggestion: offered and wholly visible. */
+  private readonly sendsSuggestion = computed(
+    () => this.offering() && this.suggestionFits(),
+  );
+  /** Text whose `#` references the chips show (the suggestion when offered). */
+  protected readonly referenceText = computed(() =>
+    this.offering() ? (this.suggestion() ?? '') : this.draft(),
   );
   /** ID of a message being sent again. */
   private reuseId: string | null = null;
@@ -224,6 +269,21 @@ export class MessageComposer {
     this.referenceOptions.set(new Map());
   }
 
+  /** Puts the suggestion into the input, the caret at its end. */
+  protected takeSuggestion(): void {
+    const text = this.suggestion();
+    const field = this.textarea()?.nativeElement;
+    if (!text || !this.offering()) {
+      return;
+    }
+    this.draft.set(text);
+    if (field) {
+      field.value = text;
+      field.focus();
+      field.setSelectionRange(text.length, text.length);
+    }
+  }
+
   protected setReferenceOptions(change: {
     key: string;
     options: ReferenceOptions;
@@ -237,12 +297,16 @@ export class MessageComposer {
     if (!this.canSend()) {
       return;
     }
+    // An empty input sends the suggestion it shows.
+    const text = this.sendsSuggestion()
+      ? (this.suggestion() ?? '').trim()
+      : this.draft().trim();
     this.send.emit({
       id: this.reuseId,
-      text: this.draft().trim(),
+      text,
       attachmentIds: this.images.ids(),
       references: draftReferences(
-        this.draft().trim(),
+        text,
         this.githubRepositories(),
         this.referenceOptions(),
       ),
@@ -262,6 +326,18 @@ export class MessageComposer {
       return;
     }
     if (this.references.keydown(event, event.target as HTMLTextAreaElement)) {
+      return;
+    }
+    if (
+      event.key === 'Tab' &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      this.offering()
+    ) {
+      event.preventDefault();
+      this.takeSuggestion();
       return;
     }
     if (this.suggestingCommands()) {

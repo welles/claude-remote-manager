@@ -25,6 +25,7 @@ export const STORED_EVENT_TYPES: ReadonlySet<SessionEventInput['type']> =
     'settings.changed',
     'turn.result',
     'context.usage',
+    'prompt.suggestion',
     'notice',
     'error',
     'prepare.progress',

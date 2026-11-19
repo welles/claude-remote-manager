@@ -100,6 +100,22 @@
   &::placeholder {
     color: var(--mat-sys-on-surface-variant);
   }
+
+  // Claude Code's suggested next message, as in the terminal.
+  &[data-suggestion]::placeholder {
+    font-style: italic;
+  }
+}
+
+// Measures the suggestion as the placeholder shows it (in italics).
+.mirror {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  font-style: italic;
 }
 
 .send.ready {

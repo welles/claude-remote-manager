@@ -108,6 +108,7 @@ describe('buildQueryOptions', () => {
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,
+      promptSuggestions: true,
       stderr,
     });
   });

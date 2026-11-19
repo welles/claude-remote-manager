@@ -59,7 +59,7 @@
     (chosen)="references.choose($event, textarea)"
   />
   <app-reference-chips
-    [text]="draft()"
+    [text]="referenceText()"
     [repositories]="githubRepositories()"
     [options]="referenceOptions()"
     (optionsChange)="setReferenceOptions($event)"
@@ -89,7 +89,7 @@
     <textarea
       class="input"
       [value]="draft()"
-      [placeholder]="label()"
+      [placeholder]="offering() ? suggestion() : label()"
       [attr.aria-label]="label()"
       (input)="onInput($event)"
       (keydown)="onKeydown($event)"
@@ -110,10 +110,37 @@
       "
       [attr.aria-expanded]="suggesting() || suggestingCommands()"
       [attr.aria-activedescendant]="activeCommandId()"
+      [attr.aria-describedby]="offering() ? 'prompt-suggestion' : null"
+      [attr.data-suggestion]="offering() ? '' : null"
       enterkeyhint="send"
       data-testid="message-input"
     ></textarea>
-    @if (running()) {
+    @if (offering()) {
+    <textarea
+      #mirror
+      class="input mirror"
+      aria-hidden="true"
+      tabindex="-1"
+      rows="1"
+      readonly
+    ></textarea>
+    <span id="prompt-suggestion" class="visually-hidden"
+      >Suggested: {{ suggestion() }}. Tab puts it into the input{{
+      suggestionFits() ? ', Send sends it' : '' }}.</span
+    >
+    <button
+      type="button"
+      class="app-icon-btn take"
+      (mousedown)="$event.preventDefault()"
+      (click)="takeSuggestion()"
+      title="Edit the suggestion (Tab)"
+      data-testid="take-suggestion"
+    >
+      <app-icon name="edit" /><span class="visually-hidden"
+        >Edit the suggestion</span
+      >
+    </button>
+    } @if (running()) {
     <button
       type="button"
       class="app-icon-btn stop"

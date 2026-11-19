@@ -309,6 +309,12 @@ interface LiveSession {
   subscribers: number;
   /** Position in the transcript that new stored events are anchored to. */
   anchor: EventAnchor;
+  /**
+   * Set when a turn ended and the session waits for the user: only then is
+   * Claude Code's prompt suggestion for that turn taken (it arrives a few
+   * seconds after the result; by then another message may have been sent).
+   */
+  suggestionOpen: boolean;
   context: ContextUsage | null;
   /** When the context usage was last requested during a turn. */
   contextRequestedAt: number;
@@ -1396,6 +1402,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       historyLoaded: null,
       subscribers: 0,
       anchor: { uuid: null, userId: null },
+      suggestionOpen: false,
       context: null,
       contextRequestedAt: 0,
       interruptRequested: null,
@@ -1849,6 +1856,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.handleResult(live, message);
       return;
     }
+    if (message.type === 'prompt_suggestion') {
+      const open =
+        live.suggestionOpen && this.requireRecord(live.id).status === 'waiting';
+      live.suggestionOpen = false;
+      if (!open) {
+        return;
+      }
+    }
     const events = live.mapper.map(message);
     if (
       (message.type === 'assistant' || message.type === 'user') &&
@@ -1949,6 +1964,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Usage changed even if the status did not.
       this.updates.next(this.toDto(this.requireRecord(live.id)));
     }
+    live.suggestionOpen = !queued && !interrupted;
     if (run) {
       void this.refreshContext(live, run, { force: true });
       void this.limits.refreshPlanUsage(() => run.planUsage());
@@ -3046,6 +3062,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     const updated = this.sessions.update(live.id, { status, lastError });
+    if (status !== 'waiting') {
+      live.suggestionOpen = false;
+    }
     if (status === 'waiting') {
       this.startIdleTimer(live);
     } else {
@@ -3194,6 +3213,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private appendUserMessage(live: LiveSession, message: UserMessage): void {
+    // A suggestion still to come belongs to the turn before.
+    live.suggestionOpen = false;
     this.append(live, {
       type: 'user.message',
       id: message.id,
