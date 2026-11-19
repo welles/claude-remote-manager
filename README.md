@@ -363,6 +363,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   queued by the app (`message.queued`), not handed to Claude Code, and goes to Claude when the
   turn ends (all queued messages at once; Claude Code may take them as one turn). Until then it
   can be removed (`DELETE /api/sessions/:id/queued-messages/:messageId` or `message.unqueue`).
+  "Send now" (`POST /api/sessions/:id/queued-messages[/:messageId]/send` or `queue.send`) stops
+  the turn like Stop but keeps the queue: when the stopped turn ends, all queued messages (or
+  the one chosen, which moves to the front; the others wait for the end of its turn) go to Claude.
   Stop, ending the session, a failed process or a server stop withdraw the queue
   (`message.dequeued` with `withdrawn`); the view offers the text again. Claude Code's own queue
   would take messages into the running turn earlier, but the SDK has no public way to remove
@@ -409,6 +412,8 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `PATCH /api/sessions/:id`, `POST /api/sessions/:id/messages`,
 `DELETE /api/sessions/:id/queued-messages/:messageId`,
+`POST /api/sessions/:id/queued-messages/send`,
+`POST /api/sessions/:id/queued-messages/:messageId/send`,
 `GET /api/sessions/:id/permission-requests`,
 `POST /api/sessions/:id/permission-requests/:requestId`, `POST /api/sessions/:id/interrupt`,
 `POST /api/sessions/:id/end`, `POST /api/sessions/:id/pending-message/send`,

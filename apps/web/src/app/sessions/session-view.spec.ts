@@ -723,7 +723,7 @@ describe('SessionView', () => {
   });
 
   it('shows queued messages, removes them and offers withdrawn ones again', async () => {
-    const { harness, socket, element } = await open();
+    const { harness, socket, element, text } = await open();
     history(socket, sessionDto({ status: 'running', waitingFor: null }), [
       event({ type: 'message.queued', id: 'q1', text: 'Also this' }),
       event({ type: 'message.queued', id: 'q2', text: 'Stopped one' }),
@@ -746,6 +746,26 @@ describe('SessionView', () => {
       sessionId: 's1',
       messageId: 'q1',
     });
+    (
+      element.querySelector(
+        '[data-testid="send-queued-message"]',
+      ) as HTMLButtonElement
+    ).click();
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'queue.send',
+      sessionId: 's1',
+      messageId: 'q1',
+    });
+    await harness.fixture.whenStable();
+    expect(text('queued-hint')).toBe('· sending now…');
+    // The only queued message is being sent already.
+    expect(
+      (
+        element.querySelector(
+          '[data-testid="send-queued"]',
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     expect(
       element.querySelector('[data-testid="withdrawn"]')?.textContent,
     ).toContain('Not sent: The turn was stopped.');
@@ -762,6 +782,48 @@ describe('SessionView', () => {
         ) as HTMLTextAreaElement
       ).value,
     ).toBe('Stopped one');
+  });
+
+  it('sends all queued messages right away', async () => {
+    const { harness, socket, element, text } = await open();
+    history(socket, sessionDto({ status: 'running', waitingFor: null }), [
+      event({ type: 'message.queued', id: 'q1', text: 'One' }),
+      event({ type: 'message.queued', id: 'q2', text: 'Two' }),
+    ]);
+    await harness.fixture.whenStable();
+    expect(text('queued-hint')).toBe('· sent when the turn ends');
+    (
+      element.querySelector('[data-testid="send-queued"]') as HTMLButtonElement
+    ).click();
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'queue.send',
+      sessionId: 's1',
+    });
+    expect(socket.sent.at(-1)).not.toHaveProperty('messageId');
+    await harness.fixture.whenStable();
+    expect(text('queued-hint')).toBe('· sending now…');
+    const buttons = element.querySelectorAll(
+      '[data-testid="send-queued-message"]',
+    );
+    expect(
+      [...buttons].every((button) => (button as HTMLButtonElement).disabled),
+    ).toBe(true);
+    // Refused (e.g. while Claude Code restarts): they wait again.
+    socket.receive({
+      type: 'error',
+      requestId: (socket.sent.at(-1) as { requestId: string }).requestId,
+      message: 'Claude Code is being restarted',
+    });
+    await harness.fixture.whenStable();
+    expect(text('queued-hint')).toBe('· sent when the turn ends');
+    expect(text('error')).toBe('Claude Code is being restarted');
+    expect(
+      (
+        element.querySelector(
+          '[data-testid="send-queued"]',
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 
   it('shows the images of messages', async () => {

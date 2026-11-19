@@ -652,6 +652,18 @@ export interface UnqueueMessage {
 }
 
 /**
+ * Send queued messages to Claude right away: stops the running turn and
+ * sends the message `messageId`, or all queued messages, when it ended.
+ */
+export interface SendQueuedNowMessage {
+  type: 'queue.send';
+  sessionId: string;
+  /** ID of the queued message; omitted for all of them. */
+  messageId?: string;
+  requestId?: string;
+}
+
+/**
  * Change the title, model or permission mode (see `UpdateSessionRequest`).
  */
 export interface UpdateSessionMessage {
@@ -719,6 +731,7 @@ export type ClientMessage =
   | RerunSetupMessage
   | PermissionResponseMessage
   | UnqueueMessage
+  | SendQueuedNowMessage
   | UpdateSessionMessage;
 
 // ---------------------------------------------------------------------------

@@ -2111,6 +2111,82 @@ describe('SessionsService', () => {
       expect(service.get(session.id).status).toBe('waiting');
     });
 
+    it('sends a message queued after Stop when the stopped turn ends', async () => {
+      const session = await startSession();
+      await service.interrupt(session.id);
+      await service.send(session.id, { id: MSG_2, text: 'Instead' });
+      expect(lastEvent('message.queued')).toMatchObject({ id: MSG_2 });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(1)).toEqual([
+        { id: MSG_2, text: 'Instead' },
+      ]);
+      expect(service.get(session.id).status).toBe('running');
+    });
+
+    it('stops the turn and sends all queued messages right away', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Now this' });
+      await service.send(session.id, { id: MSG_3, text: 'And that' });
+      await service.sendQueuedNow(session.id, null);
+      expect(runner.last.interrupted).toBe(1);
+      // Kept until the stopped turn ends.
+      expect(runner.last.sent).toHaveLength(1);
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(lastEvent('turn.result')).toMatchObject({ interrupted: true });
+      expect(runner.last.sent.slice(1)).toEqual([
+        { id: MSG_2, text: 'Now this' },
+        { id: MSG_3, text: 'And that' },
+      ]);
+      expect(service.get(session.id).status).toBe('running');
+      await expect(service.sendQueuedNow(session.id, null)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('sends one queued message right away, the others when its turn ends', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Later' });
+      await service.send(session.id, { id: MSG_3, text: 'Now' });
+      await service.sendQueuedNow(session.id, MSG_3);
+      // Asked twice: one interrupt.
+      await service.sendQueuedNow(session.id, MSG_3);
+      expect(runner.last.interrupted).toBe(1);
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(1)).toEqual([{ id: MSG_3, text: 'Now' }]);
+      expect(lastEvent('message.dequeued')).toMatchObject({
+        id: MSG_3,
+        outcome: 'sent',
+      });
+      expect(service.get(session.id).status).toBe('running');
+
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(2)).toEqual([{ id: MSG_2, text: 'Later' }]);
+    });
+
+    it('sends the rest when the message sent right away was removed meanwhile', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Rest' });
+      await service.send(session.id, { id: MSG_3, text: 'Gone' });
+      await service.sendQueuedNow(session.id, MSG_3);
+      await service.unqueue(session.id, MSG_3);
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(1)).toEqual([{ id: MSG_2, text: 'Rest' }]);
+      expect(service.get(session.id).status).toBe('running');
+    });
+
+    it('refuses to send a message right away that is not queued', async () => {
+      const session = await startSession();
+      await expect(service.sendQueuedNow(session.id, MSG_2)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(runner.last.interrupted).toBe(0);
+    });
+
     it('queues messages while an approval request waits', async () => {
       const session = await startSession();
       void runner.last.options.canUseTool(

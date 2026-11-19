@@ -145,6 +145,15 @@ export function parseClientFrame(raw: unknown): ClientMessage {
         messageId: requireUuid(frame, 'messageId'),
         ...base,
       };
+    case 'queue.send':
+      return {
+        type,
+        sessionId: requireUuid(frame, 'sessionId'),
+        ...(frame['messageId'] === undefined
+          ? {}
+          : { messageId: requireUuid(frame, 'messageId') }),
+        ...base,
+      };
     case 'session.update':
       // Validated by the session service, as for REST.
       return {

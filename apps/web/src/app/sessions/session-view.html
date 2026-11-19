@@ -132,6 +132,8 @@
         [messages]="queued()"
         [enabled]="connected()"
         (remove)="unqueue($event)"
+        [sending]="sendingNow()"
+        (sendNow)="sendQueuedNow($event)"
       />
       } @if (heldBack()) {
       <app-banner kind="attention" data-testid="held-back">

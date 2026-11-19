@@ -185,6 +185,11 @@ export class SessionView implements OnInit {
   protected readonly requests = computed(() => pendingRequests(this.items()));
   /** IDs of requests whose answer is on its way. */
   protected readonly answering = signal(new Set<string>());
+  /**
+   * IDs of queued messages the user sent right away; until the stopped
+   * turn ends they show as being sent (cleared again if refused).
+   */
+  protected readonly sendingNow = signal<ReadonlySet<string>>(new Set());
   /** Messages waiting for the current turn to end. */
   protected readonly queued = computed(() =>
     this.items().filter(
@@ -333,6 +338,8 @@ export class SessionView implements OnInit {
   private readonly pending = new Set<string>();
   /** Frame request ID → approval request ID, for answers on their way. */
   private readonly answers = new Map<string, string>();
+  /** Frame request ID → IDs of queued messages sent right away. */
+  private readonly sendRequests = new Map<string, string[]>();
   /** How far this view has seen the session's log, for reconnects. */
   private position: LogPosition | null = null;
   /** Whether the page is scrolled to the end; then new content stays in view. */
@@ -459,6 +466,45 @@ export class SessionView implements OnInit {
       })
     ) {
       this.pending.add(requestId);
+    }
+  }
+
+  /**
+   * Stops the turn and sends a queued message (`null`: all of them) right
+   * away.
+   */
+  protected sendQueuedNow(messageId: string | null): void {
+    const requestId = newId();
+    if (
+      this.socket.send({
+        type: 'queue.send',
+        sessionId: this.sessionId(),
+        ...(messageId ? { messageId } : {}),
+        requestId,
+      })
+    ) {
+      this.pending.add(requestId);
+      const ids = messageId
+        ? [messageId]
+        : this.queued().map((item) => item.id);
+      this.sendRequests.set(requestId, ids);
+      this.sendingNow.update((sending) => new Set([...sending, ...ids]));
+    } else {
+      this.error.set('Not connected to the server. Try again in a moment.');
+    }
+  }
+
+  /** Sending right away was refused: the messages wait again. */
+  private sendRefused(frameRequestId: string): void {
+    const ids = this.sendRequests.get(frameRequestId);
+    if (ids) {
+      this.sendingNow.update((sending) => {
+        const next = new Set(sending);
+        for (const id of ids) {
+          next.delete(id);
+        }
+        return next;
+      });
     }
   }
 
@@ -739,6 +785,8 @@ export class SessionView implements OnInit {
       case 'error':
         if (message.requestId) {
           this.answered(message.requestId);
+          this.sendRefused(message.requestId);
+          this.sendRequests.delete(message.requestId);
         }
         if (message.requestId && this.pending.has(message.requestId)) {
           this.pending.delete(message.requestId);
@@ -750,6 +798,7 @@ export class SessionView implements OnInit {
       case 'ack':
         this.pending.delete(message.requestId);
         this.answered(message.requestId);
+        this.sendRequests.delete(message.requestId);
         return;
       default:
         return;
