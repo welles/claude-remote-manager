@@ -19,6 +19,7 @@ const TAGS: Record<NotificationEventType, string> = {
   stalled: 'hourglass',
   failed: 'x',
   autofix_gave_up: 'wrench',
+  automerge: 'question',
   pull_request_closed: 'twisted_rightwards_arrows',
 };
 

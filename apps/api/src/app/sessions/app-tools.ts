@@ -27,11 +27,18 @@ export const SET_SESSION_TITLE_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SET_SESSIO
 export const SET_WAITING_STATE_TOOL = 'set_waiting_state';
 export const SET_WAITING_STATE_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SET_WAITING_STATE_TOOL}`;
 /**
+ * The app's tool with which Claude asks for the owner's decision on a
+ * review finding: it pauses automerge until the owner's next message.
+ */
+export const REQUEST_OWNER_DECISION_TOOL = 'request_owner_decision';
+export const REQUEST_OWNER_DECISION_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${REQUEST_OWNER_DECISION_TOOL}`;
+/**
  * The app's tools that never ask the user: showing a file (reads only the
  * session's directories), exposing or stopping a preview of the session's
  * own dev server (the owner decided so; the user sees each preview and can
- * stop it), setting the session's title (never one the user chose) and
- * saying what the session waits for.
+ * stop it), setting the session's title (never one the user chose),
+ * saying what the session waits for, and asking for the owner's decision
+ * (it only pauses automerge).
  */
 export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
   SHOW_FILE_TOOL_NAME,
@@ -39,12 +46,14 @@ export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
   STOP_PREVIEW_TOOL_NAME,
   SET_SESSION_TITLE_TOOL_NAME,
   SET_WAITING_STATE_TOOL_NAME,
+  REQUEST_OWNER_DECISION_TOOL_NAME,
 ]);
 
 /**
  * Claude Code's tools that only read the session's files or keep its own
- * bookkeeping (also the session's title and waiting state): they run
- * unasked also during an
+ * bookkeeping (also the session's title and waiting state, and asking for
+ * the owner's decision, which only pauses automerge): they run unasked
+ * also during an
  * Autofix run. Everything
  * else asks there (also web access, which could send content away, and
  * subagents).
@@ -57,6 +66,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'TodoWrite',
   SET_SESSION_TITLE_TOOL_NAME,
   SET_WAITING_STATE_TOOL_NAME,
+  REQUEST_OWNER_DECISION_TOOL_NAME,
   'ToolSearch',
   'TaskGet',
   'TaskList',

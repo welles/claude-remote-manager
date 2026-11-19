@@ -60,6 +60,69 @@ export interface ReviewFeedback {
   diffHunk: string | null;
 }
 
+/** An unresolved review thread of a pull request, with its first comment. */
+export interface ReviewThread {
+  author: string | null;
+  /** `User`, `Bot`, ... (from GraphQL's `__typename`). */
+  authorType: string | null;
+  body: string;
+  createdAt: string;
+  path: string | null;
+  line: number | null;
+  /** The code it refers to changed since. */
+  outdated: boolean;
+}
+
+/** Pages of 100 review threads read at most. */
+export const MAX_THREAD_PAGES = 5;
+
+const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          isResolved
+          isOutdated
+          path
+          line
+          originalLine
+          comments(first: 1) {
+            nodes { body createdAt author { __typename login } }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+interface RawThreadPage {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        reviewThreads?: {
+          pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+          nodes?: ({
+            isResolved?: boolean;
+            isOutdated?: boolean;
+            path?: string | null;
+            line?: number | null;
+            originalLine?: number | null;
+            comments?: {
+              nodes?: ({
+                body?: string | null;
+                createdAt?: string;
+                author?: { __typename?: string; login?: string } | null;
+              } | null)[];
+            };
+          } | null)[];
+        };
+      } | null;
+    } | null;
+  };
+  errors?: { message?: string }[];
+}
+
 /** Conclusions of check runs (and states of statuses) that are failures. */
 export const FAILED_CONCLUSIONS = new Set([
   'failure',
@@ -286,6 +349,70 @@ export class PullRequestFeedback {
         }),
       ),
     ];
+  }
+
+  /**
+   * The review threads of a pull request that are not resolved (GraphQL;
+   * REST has no resolution state). Throws when GitHub's answer is
+   * incomplete, so that nothing is taken for resolved by mistake.
+   */
+  async unresolvedThreads(
+    repository: FeedbackRepository,
+    number: number,
+  ): Promise<ReviewThread[]> {
+    const token = await this.token(repository);
+    const [owner, name] = repository.fullName.split('/');
+    const threads: ReviewThread[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < MAX_THREAD_PAGES; page++) {
+      const response: { data: RawThreadPage } =
+        await this.http.request<RawThreadPage>({
+          method: 'POST',
+          path: '/graphql',
+          token,
+          body: {
+            query: REVIEW_THREADS_QUERY,
+            variables: { owner, name, number, after },
+          },
+        });
+      const { data, errors } = response.data ?? {};
+      const connection = data?.repository?.pullRequest?.reviewThreads;
+      if ((errors && errors.length > 0) || !connection?.nodes) {
+        throw new Error(
+          `GitHub did not list the review threads${errors?.[0]?.message ? `: ${errors[0].message}` : ''}`,
+        );
+      }
+      for (const node of connection.nodes) {
+        if (!node || node.isResolved !== false) {
+          continue;
+        }
+        const first = node.comments?.nodes?.[0] ?? null;
+        const login = first?.author?.login ?? null;
+        threads.push({
+          // GraphQL names apps without the `[bot]` REST (and
+          // PR_TRUSTED_BOTS) use.
+          author:
+            login &&
+            first?.author?.__typename === 'Bot' &&
+            !login.endsWith('[bot]')
+              ? `${login}[bot]`
+              : login,
+          authorType: first?.author?.__typename ?? null,
+          body: first?.body ?? '',
+          createdAt: first?.createdAt ?? '',
+          path: node.path ?? null,
+          line: node.line ?? node.originalLine ?? null,
+          outdated: node.isOutdated === true,
+        });
+      }
+      if (!connection.pageInfo?.hasNextPage) {
+        return threads;
+      }
+      after = connection.pageInfo.endCursor ?? null;
+    }
+    throw new Error(
+      `The pull request has more than ${MAX_THREAD_PAGES * 100} review threads`,
+    );
   }
 
   /**

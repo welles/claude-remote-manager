@@ -90,8 +90,8 @@ export function deviceLabel(userAgent: string | undefined): string {
  * sent about a session that an active client shows (see ViewerPresence).
  *
  * Other parts of the app report their events here; the PR automation
- * (`pr-automation/`) calls {@link notifyAutofixGaveUp} and
- * {@link notifyPullRequestClosed}.
+ * (`pr-automation/`) calls {@link notifyAutofixGaveUp},
+ * {@link notifyAutomerge} and {@link notifyPullRequestClosed}.
  */
 @Injectable()
 export class NotificationsService implements OnModuleDestroy {
@@ -198,6 +198,37 @@ export class NotificationsService implements OnModuleDestroy {
       title: `Autofix gave up: ${pullRequestLabel(pullRequest)}`,
       body: [
         `${attempts} attempt${attempts === 1 ? '' : 's'}${reason ? `: ${shorten(reason, 120)}` : ''}`,
+        session ? sessionContext(session) : shorten(pullRequest.title, 80),
+      ].join('\n'),
+      path: `/sessions/${sessionId}`,
+      requestId: null,
+      actions: [],
+      urgent: false,
+      at: Date.now(),
+    });
+  }
+
+  /**
+   * PR automation: automerge of this pull request needs the owner: Claude
+   * asked for their decision (`held`), GitHub refused the merge
+   * (`failed`), or review threads nobody works on keep it from merging
+   * (`waiting`). `detail`: Claude's question, GitHub's reason, or what
+   * waits.
+   */
+  notifyAutomerge(
+    sessionId: string,
+    pullRequest: PullRequestDto,
+    kind: 'held' | 'failed' | 'waiting',
+    detail: string,
+  ): boolean {
+    const session = this.sessionOrNull(sessionId);
+    return this.notify({
+      type: 'automerge',
+      key: notificationKeys.automerge(pullRequest.id),
+      sessionId,
+      title: `${kind === 'held' ? 'Automerge waits for your decision' : kind === 'failed' ? 'Automerge could not merge' : 'Automerge is stuck'}: ${pullRequestLabel(pullRequest)}`,
+      body: [
+        shorten(detail, 160),
         session ? sessionContext(session) : shorten(pullRequest.title, 80),
       ].join('\n'),
       path: `/sessions/${sessionId}`,

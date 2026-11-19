@@ -152,6 +152,8 @@ export class WorkspaceHarness {
       this.sessionGit,
       this.git,
       this.shownFiles,
+      undefined,
+      this.hooks,
     );
     this.service = new SessionsService(
       this.config,

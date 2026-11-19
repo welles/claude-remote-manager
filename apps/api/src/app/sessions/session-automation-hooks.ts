@@ -29,4 +29,15 @@ export class SessionAutomationHooks {
         pushes: GitPushAnalysis[],
       ) => Promise<AutofixCommandOutcome | null>)
     | null = null;
+
+  /**
+   * The tool `request_owner_decision`: Claude asks for the owner's
+   * decision, which pauses automerge of the session's pull requests until
+   * the owner's next message. Returns what Claude is told.
+   */
+  holdAutomerge: ((sessionId: string, question: string) => string) | null =
+    null;
+
+  /** The owner sent the session a message (not the app). */
+  ownerMessage: ((sessionId: string) => void) | null = null;
 }

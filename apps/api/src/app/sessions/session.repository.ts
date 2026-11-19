@@ -117,6 +117,13 @@ export type PullRequestPatch = Partial<
       | 'autofixLastTrigger'
       | 'autofixRunning'
       | 'closeHandledAt'
+      | 'automerge'
+      | 'automergeHeldAt'
+      | 'automergeHoldReason'
+      | 'automergeFailedSha'
+      | 'automergeFailure'
+      | 'automergeWaiting'
+      | 'automergeNotifiedSha'
     >
 >;
 

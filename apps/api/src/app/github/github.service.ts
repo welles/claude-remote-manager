@@ -65,6 +65,19 @@ export interface RepositoryListing {
   fetchedAt: Date;
 }
 
+/** Ways GitHub merges a pull request. */
+export type MergeMethod = 'rebase' | 'squash' | 'merge';
+
+/**
+ * The order automerge tries (the owner's choice): rebase, else squash, a
+ * merge commit only when neither is possible.
+ */
+export const MERGE_METHODS: readonly MergeMethod[] = [
+  'rebase',
+  'squash',
+  'merge',
+];
+
 export interface PullRequestInfo {
   number: number;
   url: string;
@@ -435,6 +448,49 @@ export class GitHubService {
       token,
     });
     return toPullRequest(response.data);
+  }
+
+  /**
+   * Merges a pull request, exactly at `sha` (GitHub refuses when the head
+   * moved), trying the methods in order: a method the repository does not
+   * allow, or a rebase GitHub cannot do, goes on to the next one. Returns
+   * the method that merged; other refusals throw ({@link GitHubApiError}).
+   */
+  async mergePullRequest(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    number: number,
+    sha: string,
+    methods: readonly MergeMethod[] = MERGE_METHODS,
+  ): Promise<MergeMethod> {
+    const { token } = await this.repositoryToken(installationId, repositoryId, {
+      pull_requests: 'write',
+      contents: 'write',
+    });
+    let refusal: unknown = null;
+    for (const method of methods) {
+      try {
+        await this.http.request<{ merged?: boolean }>({
+          method: 'PUT',
+          path: `/repos/${repoPath(fullName)}/pulls/${number}/merge`,
+          token,
+          body: { sha, merge_method: method },
+        });
+        return method;
+      } catch (error) {
+        if (
+          error instanceof GitHubApiError &&
+          error.githubStatus === 405 &&
+          /not allowed|can(?:no|')t be rebased/i.test(error.message)
+        ) {
+          refusal = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw refusal ?? new Error('No merge method to try');
   }
 
   /**
