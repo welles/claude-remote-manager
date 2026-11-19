@@ -327,6 +327,24 @@ export class SessionView implements OnInit {
       !this.running()
     );
   });
+  /** The user chose to continue an ended session: the input shows. */
+  protected readonly continuing = signal(false);
+  /**
+   * An ended session that is not archived offers archiving instead of the
+   * input (unless text waits in it or the user chose to continue).
+   */
+  protected readonly offerArchive = computed(() => {
+    const session = this.session();
+    return (
+      session?.status === 'finished' &&
+      this.canArchive() &&
+      this.resumable() &&
+      !this.continuing() &&
+      this.requests().length === 0 &&
+      this.queued().length === 0 &&
+      this.draft().trim() === ''
+    );
+  });
   protected readonly canDelete = computed(
     () => !!this.session()?.archivedAt || this.ended(),
   );
@@ -391,6 +409,7 @@ export class SessionView implements OnInit {
         const id = params.get('id') ?? '';
         this.sessionId.set(id);
         this.draft.set(this.drafts.get(id));
+        this.continuing.set(false);
         this.takeMention();
         this.session.set(null);
         this.items.set([]);
@@ -510,12 +529,19 @@ export class SessionView implements OnInit {
 
   /** Puts a message that was not sent back into the input. */
   protected edit(item: QueuedItem): void {
+    this.continuing.set(true);
     this.composer()?.restore(
       item.id,
       item.text,
       item.attachments,
       item.references,
     );
+  }
+
+  /** Shows the input of an ended session instead of the archive offer. */
+  protected continueSession(): void {
+    this.continuing.set(true);
+    setTimeout(() => this.composer()?.focus());
   }
 
   /** Switches the model (`''`: default) or the permission mode. */

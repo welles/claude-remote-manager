@@ -705,6 +705,62 @@ export function buildConversation(events: SessionEvent[]): ConversationItem[] {
   return events.reduce(applyEvent, [] as ConversationItem[]);
 }
 
+type ToolItem = Extract<ConversationItem, { kind: 'tool' }>;
+
+/** A question Claude asked, with the user's answer. */
+export interface AnsweredQuestion {
+  header: string;
+  question: string;
+  /** `null` while waiting, or when it was not answered. */
+  answer: string | null;
+  /** The explanation of the chosen option (not for own words). */
+  description: string | null;
+}
+
+/** Whether a tool call is a question of Claude's to the user. */
+export function isQuestion(item: ConversationItem): item is ToolItem {
+  return (
+    item.kind === 'tool' &&
+    item.permission?.request.kind === 'question' &&
+    (item.permission.request.questions?.length ?? 0) > 0
+  );
+}
+
+/** A question call as a card: its state and the answers given. */
+export interface QuestionCard {
+  /** E.g. `Answered`, `Waiting for your answer`, `Not answered: …`. */
+  state: string;
+  tone: 'open' | 'answered' | 'unanswered';
+  questions: AnsweredQuestion[];
+}
+
+/** A question call as a card, `null` for any other tool call. */
+export function questionCard(item: ConversationItem): QuestionCard | null {
+  if (!isQuestion(item) || !item.permission) {
+    return null;
+  }
+  const { request, resolved } = item.permission;
+  const answers = resolved?.answers ?? {};
+  return {
+    state: resolutionText(item.permission),
+    tone: !resolved
+      ? 'open'
+      : resolved.decision === 'allow'
+        ? 'answered'
+        : 'unanswered',
+    questions: (request.questions ?? []).map((question) => {
+      const answer = answers[question.question]?.trim() || null;
+      const option = question.options.find((choice) => choice.label === answer);
+      return {
+        header: question.header,
+        question: question.question,
+        answer,
+        description: option?.description.trim() || null,
+      };
+    }),
+  };
+}
+
 const CANCELLED: Record<string, string> = {
   interrupted: 'Cancelled: the turn was stopped',
   ended: 'Cancelled: the session was ended',

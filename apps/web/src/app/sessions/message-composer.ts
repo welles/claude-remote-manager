@@ -288,6 +288,11 @@ export class MessageComposer {
     }
   }
 
+  /** Puts the caret into the input. */
+  focus(): void {
+    this.textarea()?.nativeElement.focus();
+  }
+
   /** Empties the input after the message went out. */
   clear(): void {
     this.draft.set('');

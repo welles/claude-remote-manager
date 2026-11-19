@@ -860,6 +860,113 @@ describe('SessionView', () => {
     expect(text('status')).toBe('Running');
   });
 
+  it('shows answered questions as a card outside the group of tool calls', async () => {
+    const { harness, socket, element, text } = await open();
+    const questions = [
+      {
+        question: 'Which database?',
+        header: 'Database',
+        options: [
+          { label: 'SQLite', description: 'One file', preview: null },
+          { label: 'Postgres', description: 'A server', preview: null },
+        ],
+        multiSelect: false,
+      },
+      {
+        question: 'Anything else?',
+        header: '',
+        options: [],
+        multiSelect: false,
+      },
+    ];
+    const call = (toolUseId: string, name: string) =>
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId,
+        name,
+        input: { command: 'ls' },
+        parentToolUseId: null,
+      });
+    history(socket, sessionDto({ status: 'waiting', waitingFor: null }), [
+      call('t0', 'Bash'),
+      call('t1', 'AskUserQuestion'),
+      event(
+        permissionRequest({
+          toolUseId: 't1',
+          toolName: 'AskUserQuestion',
+          kind: 'question',
+          questions,
+        }),
+      ),
+      event(
+        permissionResolved({
+          toolUseId: 't1',
+          answers: {
+            'Which database?': 'SQLite',
+            'Anything else?': 'Keep it small',
+          },
+        }),
+      ),
+      call('t2', 'Bash'),
+    ]);
+    await harness.fixture.whenStable();
+    // The question breaks the run: no group, two rows and the card.
+    expect(element.querySelector('[data-testid="tool-group"]')).toBeNull();
+    expect(element.querySelectorAll('.tool')).toHaveLength(2);
+    expect(text('question-card')).toContain('Claude asked · Answered');
+    const entries = [
+      ...element.querySelectorAll('[data-testid="question"]'),
+    ].map(words);
+    expect(entries).toEqual([
+      'Database Which database? SQLite One file',
+      'Anything else? Keep it small',
+    ]);
+  });
+
+  it('offers archiving instead of the input once the session has ended', async () => {
+    const { harness, socket, element, text } = await open();
+    history(socket, sessionDto({ status: 'finished', waitingFor: null }));
+    await harness.fixture.whenStable();
+    const composer = () =>
+      element.querySelector('app-message-composer') as HTMLElement;
+    expect(text('archive-offer')).toContain('The session has ended.');
+    expect(composer().classList).toContain('concealed');
+
+    (
+      element.querySelector(
+        '[data-testid="archive-offer-continue"]',
+      ) as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+    expect(composer().classList).not.toContain('concealed');
+
+    // Archived: no offer, the input says how to continue.
+    history(
+      socket,
+      sessionDto({
+        status: 'finished',
+        waitingFor: null,
+        archivedAt: '2026-01-02T00:00:00Z',
+      }),
+    );
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+  });
+
+  it('keeps the input of an ended session when text waits in it', async () => {
+    const { harness, socket, element, text } = await open(
+      '/sessions/s1?mention=%40src%2Fmain.ts',
+    );
+    history(socket, sessionDto({ status: 'finished', waitingFor: null }));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+    expect(
+      element.querySelector('app-message-composer')?.classList,
+    ).not.toContain('concealed');
+  });
+
   it('shows queued messages, removes them and offers withdrawn ones again', async () => {
     const { harness, socket, element, text } = await open();
     history(socket, sessionDto({ status: 'running', waitingFor: null }), [

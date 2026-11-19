@@ -174,8 +174,31 @@
       />
       } @if (error(); as message) {
       <p class="error" data-testid="error">{{ message }}</p>
+      } @if (offerArchive()) {
+      <app-banner data-testid="archive-offer">
+        The session has ended. Archive it, or continue it with a new message.
+        <div banner-actions>
+          <button
+            matButton="filled"
+            type="button"
+            (click)="cleanupDialog()?.show('archive')"
+            data-testid="archive-offer-archive"
+          >
+            <app-icon name="archive" />Archive…
+          </button>
+          <button
+            matButton="outlined"
+            type="button"
+            (click)="continueSession()"
+            data-testid="archive-offer-continue"
+          >
+            Continue
+          </button>
+        </div>
+      </app-banner>
       }
       <app-message-composer
+        [class.concealed]="offerArchive()"
         [(draft)]="draft"
         [label]="composerLabel()"
         [disabled]="!connected() || preparing() || heldBack() || !resumable()"

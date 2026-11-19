@@ -18,7 +18,32 @@
   [class.streaming]="item.streaming"
   [innerHTML]="item.text | markdown"
 ></div>
-} @case ('tool') {
+} @case ('tool') { @if (questionCard(item); as card) {
+<section
+  class="question-card question-{{ card.tone }}"
+  [class.nested]="item.nested"
+  data-testid="question-card"
+>
+  <p class="question-state">
+    <app-icon name="info" /><span>Claude asked · {{ card.state }}</span>
+  </p>
+  @for (entry of card.questions; track $index) {
+  <div class="qa" data-testid="question">
+    @if (entry.header) {
+    <span class="qa-header">{{ entry.header }}</span>
+    }
+    <p class="qa-question">{{ entry.question }}</p>
+    @if (entry.answer) {
+    <p class="qa-answer" data-testid="answer">
+      <app-icon name="check" /><span>{{ entry.answer }}</span>
+    </p>
+    @if (entry.description) {
+    <p class="qa-description">{{ entry.description }}</p>
+    } }
+  </div>
+  }
+</section>
+} @else {
 <ng-container
   [ngTemplateOutlet]="toolRow"
   [ngTemplateOutletContext]="{ $implicit: item }"
@@ -27,6 +52,7 @@
   [ngTemplateOutlet]="permissionLine"
   [ngTemplateOutletContext]="{ $implicit: item }"
 />
+}
 <ng-container
   [ngTemplateOutlet]="toolExtras"
   [ngTemplateOutletContext]="{ $implicit: item }"
@@ -255,8 +281,8 @@
     [preview]="current(preview)"
     (embed)="embed.emit($event)"
   />
-  } @if (item.permission; as permission) {
-  @if (permission.request.plan && permission.resolved) {
+  } @if (item.permission; as permission) { @if (permission.request.plan &&
+  permission.resolved) {
   <details class="plan" [class.nested]="item.nested">
     <summary>Plan</summary>
     <div
