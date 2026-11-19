@@ -808,6 +808,22 @@ describe('SessionView', () => {
     expect(
       [...buttons].every((button) => (button as HTMLButtonElement).disabled),
     ).toBe(true);
+    // Refused (e.g. while Claude Code restarts): they wait again.
+    socket.receive({
+      type: 'error',
+      requestId: (socket.sent.at(-1) as { requestId: string }).requestId,
+      message: 'Claude Code is being restarted',
+    });
+    await harness.fixture.whenStable();
+    expect(text('queued-hint')).toBe('· sent when the turn ends');
+    expect(text('error')).toBe('Claude Code is being restarted');
+    expect(
+      (
+        element.querySelector(
+          '[data-testid="send-queued"]',
+        ) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 
   it('shows the images of messages', async () => {

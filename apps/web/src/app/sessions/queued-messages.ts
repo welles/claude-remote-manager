@@ -24,15 +24,15 @@ import type { ConversationItem } from './conversation';
       >
         <span class="count">{{ messages().length }} queued</span>
         <span class="hint" data-testid="queued-hint">{{
-          sending() ? '· sending now…' : '· sent when the turn ends'
+          anySending() ? '· sending now…' : '· sent when the turn ends'
         }}</span>
         <app-icon [name]="expanded() ? 'chevron-down' : 'chevron-right'" />
       </button>
       <button
         type="button"
         class="send-all"
-        (click)="send(null)"
-        [disabled]="!enabled() || sendingAll()"
+        (click)="sendNow.emit(null)"
+        [disabled]="!enabled() || allSending()"
         title="Stop the turn and send the queued messages now"
         data-testid="send-queued"
       >
@@ -57,8 +57,8 @@ import type { ConversationItem } from './conversation';
           <button
             type="button"
             class="app-icon-btn"
-            (click)="send(item.id)"
-            [disabled]="!enabled() || isRequested(item.id)"
+            (click)="sendNow.emit(item.id)"
+            [disabled]="!enabled() || sending().has(item.id)"
             title="Stop the turn and send this message now"
             [attr.aria-label]="'Send now: ' + item.text"
             data-testid="send-queued-message"
@@ -86,29 +86,19 @@ export class QueuedMessages {
   readonly messages =
     input.required<Extract<ConversationItem, { kind: 'queued' }>[]>();
   readonly enabled = input(true);
+  /** IDs of the messages being sent right away. */
+  readonly sending = input<ReadonlySet<string>>(new Set());
   /** ID of the message to remove. */
   readonly remove = output<string>();
   /** ID of the message to send right away, `null` for all of them. */
   readonly sendNow = output<string | null>();
   protected readonly expanded = signal(false);
-  /** IDs of the messages the user sent right away. */
-  protected readonly requested = signal<ReadonlySet<string>>(new Set());
   /** Some queued message is being sent right away. */
-  protected readonly sending = computed(() =>
-    this.messages().some((item) => this.requested().has(item.id)),
+  protected readonly anySending = computed(() =>
+    this.messages().some((item) => this.sending().has(item.id)),
   );
   /** Every queued message is being sent right away. */
-  protected readonly sendingAll = computed(() =>
-    this.messages().every((item) => this.requested().has(item.id)),
+  protected readonly allSending = computed(() =>
+    this.messages().every((item) => this.sending().has(item.id)),
   );
-
-  protected isRequested(id: string): boolean {
-    return this.requested().has(id);
-  }
-
-  protected send(id: string | null): void {
-    const ids = id === null ? this.messages().map((item) => item.id) : [id];
-    this.requested.set(new Set([...this.requested(), ...ids]));
-    this.sendNow.emit(id);
-  }
 }

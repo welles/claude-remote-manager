@@ -120,6 +120,7 @@
         [messages]="queued()"
         [enabled]="connected()"
         (remove)="unqueue($event)"
+        [sending]="sendingNow()"
         (sendNow)="sendQueuedNow($event)"
       />
       } @if (heldBack()) {
