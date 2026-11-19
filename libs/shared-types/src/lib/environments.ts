@@ -32,6 +32,18 @@ export const RESERVED_ENVIRONMENT_VARIABLES: readonly string[] = [
   'ENV',
 ];
 
+/**
+ * GitHub tokens: `gh` in sessions uses a read-only token of the GitHub App
+ * (and git a credential helper); a token of the environment would replace
+ * it depending on the session, and with it the guarantee that sessions
+ * cannot approve or merge. A token under another name can still be passed
+ * on purpose, e.g. `GH_TOKEN=$GITHUB_PAT gh …`.
+ */
+export const GITHUB_TOKEN_VARIABLES: readonly string[] = [
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+];
+
 /** Prefixes of names an environment may not set. */
 export const RESERVED_ENVIRONMENT_PREFIXES: readonly string[] = [
   'CLAUDE_',
@@ -47,6 +59,9 @@ export const RESERVED_ENVIRONMENT_PREFIXES: readonly string[] = [
 export function environmentVariableNameProblem(name: string): string | null {
   if (!ENVIRONMENT_VARIABLE_NAME_PATTERN.test(name)) {
     return 'Use letters, digits and _, not starting with a digit';
+  }
+  if (GITHUB_TOKEN_VARIABLES.includes(name)) {
+    return `${name} would replace the session's own GitHub token; use another name, e.g. GITHUB_PAT, and pass it on purpose`;
   }
   if (RESERVED_ENVIRONMENT_VARIABLES.includes(name)) {
     return `${name} is set by the session itself`;

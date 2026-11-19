@@ -709,7 +709,7 @@ for a kind of work and is chosen in the new-session form (one can be the default
 session. It has:
 
 - **Variables**: any `NAME=value`, set in the Claude Code process and in the setup scripts. Names
-  the session or the app needs (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `NODE_OPTIONS`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `BASH_ENV`, `ENV`, `CLAUDE_*`,
+  the session or the app needs (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `NODE_OPTIONS`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `BASH_ENV`, `ENV`, `GH_TOKEN`, `GITHUB_TOKEN`, `CLAUDE_*`,
   `ANTHROPIC_*`, `CRM_*`, `GIT_CONFIG_*`) are refused.
 - **Files** (e.g. a service account JSON, a kubeconfig): written for each process into a directory of
   its own below `ENVIRONMENT_FILES_DIR` (`0700`, files `0600`, owned by the session user, outside the

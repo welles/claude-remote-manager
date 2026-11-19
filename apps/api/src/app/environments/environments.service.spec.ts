@@ -138,6 +138,8 @@ describe('EnvironmentsService', () => {
       'CRM_X',
       '1A',
       'A-B',
+      'GH_TOKEN',
+      'GITHUB_TOKEN',
     ]) {
       expect(() =>
         service.create({
