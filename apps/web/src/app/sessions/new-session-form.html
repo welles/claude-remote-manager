@@ -33,10 +33,10 @@
     />
   </div>
   <app-reference-chips
-    [text]="promptText()"
-    [repositories]="githubRepositories()"
-    [options]="referenceOptions()"
+    [references]="draftReferences"
+    [showRepository]="githubRepositories().length > 1"
     (optionsChange)="setReferenceOptions($event)"
+    (repositoryChosen)="chooseReferenceRepository($event)"
   />
   <div class="images">
     <app-draft-images [drafts]="images" />

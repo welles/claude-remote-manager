@@ -59,10 +59,10 @@
     (chosen)="references.choose($event, textarea)"
   />
   <app-reference-chips
-    [text]="referenceText()"
-    [repositories]="githubRepositories()"
-    [options]="referenceOptions()"
+    [references]="draftReferences"
+    [showRepository]="githubRepositories().length > 1"
     (optionsChange)="setReferenceOptions($event)"
+    (repositoryChosen)="chooseReferenceRepository($event)"
   />
   <app-draft-images [drafts]="images" />
   <div class="composer-row">

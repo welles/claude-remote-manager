@@ -413,16 +413,16 @@ describe('MessageComposer', () => {
       );
     key('Enter');
     await fixture.whenStable();
-    // The main repository's issues are written as #12.
-    expect(textarea.value).toBe('Fix #12 ');
-    await type('Fix #12 and #log');
+    // With several repositories, #12 could mean more than one item.
+    expect(textarea.value).toBe('Fix acme/app#12 ');
+    await type('Fix acme/app#12 and #log');
     http
       .expectOne((request) => request.url === '/api/github/references')
       .flush({ results: [summary('acme/lib', 3, 'Log helper')], errors: [] });
     await fixture.whenStable();
     key('Enter');
     await fixture.whenStable();
-    expect(textarea.value).toBe('Fix #12 and acme/lib#3 ');
+    expect(textarea.value).toBe('Fix acme/app#12 and acme/lib#3 ');
     expect(sent).toEqual([]);
 
     // The chips show what the references are.
@@ -446,7 +446,7 @@ describe('MessageComposer', () => {
     await fixture.whenStable();
     const chips = element.querySelectorAll('[data-testid="reference-chip"]');
     expect([...chips].map((chip) => words(chip))).toEqual([
-      '#12 Login fails',
+      'acme/app#12 Login fails',
       'acme/lib#3 not found',
     ]);
 
@@ -463,7 +463,7 @@ describe('MessageComposer', () => {
     comments.checked = true;
     comments.dispatchEvent(new Event('change'));
     await fixture.whenStable();
-    expect(words(chips[0])).toBe('#12 Login fails +comments');
+    expect(words(chips[0])).toBe('acme/app#12 Login fails +comments');
     const link = document.querySelector(
       '[data-testid="reference-link"]',
     ) as HTMLAnchorElement;
@@ -472,8 +472,91 @@ describe('MessageComposer', () => {
 
     button('send').click();
     expect(sent.at(-1)?.references).toEqual([
-      { token: '#12', repository: 'acme/app', number: 12, comments: true },
+      {
+        token: 'acme/app#12',
+        repository: 'acme/app',
+        number: 12,
+        comments: true,
+      },
       { token: 'acme/lib#3', repository: 'acme/lib', number: 3 },
+    ]);
+  });
+
+  it('asks which repository a #12 that several have means', async () => {
+    fixture.componentRef.setInput('githubRepositories', [
+      'acme/app',
+      'acme/lib',
+    ]);
+    await fixture.whenStable();
+    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    textarea.value = 'Fix #12 and #7';
+    textarea.setSelectionRange(14, 14);
+    textarea.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    // Not yet known which repository it is.
+    expect(button('send').disabled).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    // The # autocomplete looked for "7".
+    http
+      .expectOne((request) => request.url === '/api/github/references')
+      .flush({ results: [], errors: [] });
+    const detail = (repository: string, number: number) => ({
+      repository,
+      number,
+      kind: 'pull_request',
+      title: `Change in ${repository}`,
+      state: 'open',
+      draft: false,
+      url: `https://github.com/${repository}/pull/${number}`,
+      author: null,
+      updatedAt: null,
+      body: '',
+      bodyTruncated: false,
+      labels: [],
+      comments: 0,
+      createdAt: null,
+      closedAt: null,
+      pull: null,
+    });
+    const notFound = { status: 404, statusText: 'Not Found' };
+    http
+      .expectOne('/api/github/references/acme/app/12')
+      .flush(detail('acme/app', 12));
+    http
+      .expectOne('/api/github/references/acme/lib/12')
+      .flush(detail('acme/lib', 12));
+    http
+      .expectOne('/api/github/references/acme/app/7')
+      .flush({ message: 'Not found' }, notFound);
+    http
+      .expectOne('/api/github/references/acme/lib/7')
+      .flush(detail('acme/lib', 7));
+    await fixture.whenStable();
+    // #7 is only in acme/lib; #12 is in both.
+    expect(
+      [...element.querySelectorAll('[data-testid="reference-chip"]')].map(
+        (chip) => words(chip),
+      ),
+    ).toEqual(['lib#7 Change in acme/lib']);
+    const candidates = [
+      ...element.querySelectorAll('[data-testid="reference-candidate"]'),
+    ] as HTMLButtonElement[];
+    expect(candidates.map((candidate) => words(candidate))).toEqual([
+      'app#12 Change in acme/app',
+      'lib#12 Change in acme/lib',
+    ]);
+    expect(button('send').disabled).toBe(true);
+
+    candidates[1].click();
+    await fixture.whenStable();
+    expect(textarea.value).toBe('Fix acme/lib#12 and #7');
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    await fixture.whenStable();
+    expect(button('send').disabled).toBe(false);
+    button('send').click();
+    expect(sent.at(-1)?.references).toEqual([
+      { token: 'acme/lib#12', repository: 'acme/lib', number: 12 },
+      { token: '#7', repository: 'acme/lib', number: 7 },
     ]);
   });
 

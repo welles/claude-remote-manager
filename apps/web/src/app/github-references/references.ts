@@ -1,5 +1,6 @@
 import { Injectable, inject, signal, type Signal } from '@angular/core';
 import {
+  MAX_REFERENCES_PER_MESSAGE,
   parseReferences,
   referenceKey,
   referenceUrl,
@@ -61,6 +62,11 @@ export function stateLabel(chip: ReferenceChipModel): string {
   return chip.draft && chip.state === 'open' ? 'draft' : chip.state;
 }
 
+/** `name` of `owner/name`. */
+export function repositoryName(fullName: string): string {
+  return fullName.slice(fullName.indexOf('/') + 1);
+}
+
 /** GitHub repositories of a session, the main one first (for `#12`). */
 export function sessionGitHubRepositories(
   session: SessionDto | null,
@@ -72,20 +78,24 @@ export function sessionGitHubRepositories(
 
 /**
  * The references in a draft, each once, with the options chosen for it:
- * `#12` refers to the first repository, `owner/repo#12` to that one.
+ * `owner/repo#12` refers to that repository, `#12` to the one
+ * `repositoryOf` names (by default the first; `null` leaves it out).
  */
 export function draftReferences(
   text: string,
   repositories: string[],
   options: ReadonlyMap<string, ReferenceOptions>,
+  repositoryOf: (number: number) => string | null = () =>
+    repositories[0] ?? null,
 ): MessageReferenceRequest[] {
   const seen = new Set<string>();
   const references: MessageReferenceRequest[] = [];
-  for (const parsed of parseReferences(text, repositories[0] ?? null)) {
-    if (!parsed.repository) {
+  for (const parsed of parseReferences(text, null)) {
+    const repository = parsed.repository ?? repositoryOf(parsed.number);
+    if (!repository) {
       continue;
     }
-    const key = referenceKey(parsed.repository, parsed.number);
+    const key = referenceKey(repository, parsed.number);
     if (seen.has(key)) {
       continue;
     }
@@ -93,13 +103,82 @@ export function draftReferences(
     const chosen = options.get(key) ?? NO_OPTIONS;
     references.push({
       token: parsed.token,
-      repository: parsed.repository,
+      repository,
       number: parsed.number,
       ...(chosen.comments ? { comments: true } : {}),
       ...(chosen.diff ? { diff: true } : {}),
     });
   }
-  return references.slice(0, 10);
+  return references.slice(0, MAX_REFERENCES_PER_MESSAGE);
+}
+
+/** The numbers of the bare `#12` references of a text, each once. */
+export function bareNumbers(text: string): number[] {
+  const numbers = new Set<number>();
+  for (const parsed of parseReferences(text, null)) {
+    if (!parsed.repository) {
+      numbers.add(parsed.number);
+    }
+  }
+  return [...numbers].slice(0, MAX_REFERENCES_PER_MESSAGE);
+}
+
+/**
+ * Writes every bare `#12` of a text as `owner/repo#12`, once the user
+ * chose which repository it means.
+ */
+export function qualifyReference(
+  text: string,
+  number: number,
+  repository: string,
+): string {
+  let result = text;
+  for (const parsed of parseReferences(text, null).reverse()) {
+    if (!parsed.repository && parsed.number === number) {
+      result =
+        result.slice(0, parsed.start) +
+        `${repository}#${number}` +
+        result.slice(parsed.end);
+    }
+  }
+  return result;
+}
+
+/** What a bare `#12` refers to in a session with several repositories. */
+export type BareResolution =
+  | { status: 'pending' }
+  | { status: 'resolved'; repository: string }
+  | {
+      status: 'ambiguous';
+      candidates: { repository: string; detail: GitHubReferenceDetail }[];
+    };
+
+/**
+ * `#12` in a session with several repositories: the repository that has
+ * it, or the choice when several have it. When none has it (or GitHub
+ * cannot be asked), the first repository, as for one repository.
+ * `states` are the lookups of `#12` in `repositories`, in order.
+ */
+export function resolveBare(
+  repositories: string[],
+  states: DetailState[],
+): BareResolution {
+  if (states.some((state) => state.status === 'loading')) {
+    return { status: 'pending' };
+  }
+  const candidates = repositories.flatMap((repository, index) => {
+    const state = states[index];
+    return state?.status === 'resolved'
+      ? [{ repository, detail: state.detail }]
+      : [];
+  });
+  if (candidates.length > 1) {
+    return { status: 'ambiguous', candidates };
+  }
+  return {
+    status: 'resolved',
+    repository: candidates[0]?.repository ?? repositories[0],
+  };
 }
 
 /** Options of sent references, to put a message back into the input. */

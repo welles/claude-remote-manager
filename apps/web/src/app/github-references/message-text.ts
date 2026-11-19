@@ -61,7 +61,10 @@ export function messageSegments(
   // Whitespace matters: the text keeps its line breaks (pre-wrap).
   template: `@for (segment of segments(); track $index) {
     @if (segment.kind === 'chip') {
-      <app-reference-chip [chip]="segment.chip" />
+      <app-reference-chip
+        [chip]="segment.chip"
+        [showRepository]="showRepository()"
+      />
     } @else {
       <ng-container>{{ segment.text }}</ng-container>
     }
@@ -70,6 +73,8 @@ export function messageSegments(
 export class MessageText {
   readonly text = input.required<string>();
   readonly references = input<readonly MessageReference[]>([]);
+  /** Name the repository of `#12` (the session has several). */
+  readonly showRepository = input(false);
   protected readonly segments = computed(() =>
     messageSegments(this.text(), this.references()),
   );

@@ -34,8 +34,9 @@ import { AppIcon } from '../ui/icon';
 import { ReferenceAutocomplete } from '../github-references/reference-autocomplete';
 import { ReferenceChips } from '../github-references/reference-chips';
 import { ReferenceSuggestions } from '../github-references/reference-suggestions';
+import { DraftReferences } from '../github-references/draft-references';
 import {
-  draftReferences,
+  qualifyReference,
   type ReferenceOptions,
 } from '../github-references/references';
 import {
@@ -177,6 +178,13 @@ export class NewSessionForm implements OnInit {
     ReadonlyMap<string, ReferenceOptions>
   >(new Map());
 
+  /** The references of the prompt, for the chips and starting. */
+  protected readonly draftReferences = new DraftReferences(
+    () => this.promptText(),
+    () => this.githubRepositories(),
+    () => this.referenceOptions(),
+  );
+
   constructor() {
     effect(() => {
       const prefill = this.prefill();
@@ -292,7 +300,8 @@ export class NewSessionForm implements OnInit {
     if (
       (!this.prompt.trim() && this.images.ids().length === 0) ||
       this.images.busy() ||
-      this.creating()
+      this.creating() ||
+      this.draftReferences.unresolved()
     ) {
       return false;
     }
@@ -316,11 +325,7 @@ export class NewSessionForm implements OnInit {
         repositoryId: choice.repositoryId,
         ...(choice.baseBranch ? { baseBranch: choice.baseBranch } : {}),
       }));
-    const references = draftReferences(
-      this.prompt.trim(),
-      this.githubRepositories(),
-      this.referenceOptions(),
-    );
+    const references = this.draftReferences.requests(this.prompt.trim());
     const request: CreateSessionRequest = {
       prompt: this.prompt.trim(),
       ...(references.length > 0 ? { references } : {}),
@@ -399,6 +404,16 @@ export class NewSessionForm implements OnInit {
   }): void {
     this.referenceOptions.update((options) =>
       new Map(options).set(change.key, change.options),
+    );
+  }
+
+  /** The user chose which repository a `#12` means. */
+  protected chooseReferenceRepository(choice: {
+    number: number;
+    repository: string;
+  }): void {
+    this.setPrompt(
+      qualifyReference(this.prompt, choice.number, choice.repository),
     );
   }
 

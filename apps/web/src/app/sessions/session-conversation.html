@@ -3,7 +3,7 @@
 } @for (item of entries(); track item.key) { @switch (item.kind) { @case
 ('user') {
 <!-- prettier-ignore -->
-<div class="user-message" [class.app-message]="item.origin === 'app'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="message-origin" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" /></div>
+<div class="user-message" [class.app-message]="item.origin === 'app'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="message-origin" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" [showRepository]="multiRepository()" /></div>
 @if (item.contextLength) {
 <app-message-context
   [sessionId]="sessionId()"
@@ -70,7 +70,10 @@
 } } @case ('queued') { @if (item.state === 'withdrawn') {
 <div class="withdrawn" data-testid="withdrawn">
   <span class="withdrawn-text"
-    ><app-message-text [text]="item.text" [references]="item.references"
+    ><app-message-text
+      [text]="item.text"
+      [references]="item.references"
+      [showRepository]="multiRepository()"
   /></span>
   @if (item.attachments.length > 0) {
   <app-message-images [attachments]="item.attachments" />

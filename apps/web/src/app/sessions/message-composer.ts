@@ -24,9 +24,10 @@ import { AppIcon } from '../ui/icon';
 import { ReferenceAutocomplete } from '../github-references/reference-autocomplete';
 import { ReferenceChips } from '../github-references/reference-chips';
 import { ReferenceSuggestions } from '../github-references/reference-suggestions';
+import { DraftReferences } from '../github-references/draft-references';
 import {
-  draftReferences,
   optionsOf,
+  qualifyReference,
   type ReferenceOptions,
 } from '../github-references/references';
 import { AttachmentDrafts, imageFiles } from '../attachments/attachment-drafts';
@@ -220,6 +221,7 @@ export class MessageComposer {
     () =>
       !this.disabled() &&
       !this.images.busy() &&
+      !this.draftReferences.unresolved() &&
       (this.draft().trim() !== '' ||
         this.images.ids().length > 0 ||
         this.sendsSuggestion()),
@@ -239,6 +241,12 @@ export class MessageComposer {
   /** Text whose `#` references the chips show (the suggestion when offered). */
   protected readonly referenceText = computed(() =>
     this.offering() ? (this.suggestion() ?? '') : this.draft(),
+  );
+  /** The references of {@link referenceText}, for the chips and sending. */
+  protected readonly draftReferences = new DraftReferences(
+    () => this.referenceText(),
+    () => this.githubRepositories(),
+    () => this.referenceOptions(),
   );
   /** ID of a message being sent again. */
   private reuseId: string | null = null;
@@ -293,6 +301,16 @@ export class MessageComposer {
     );
   }
 
+  /** The user chose which repository a `#12` means. */
+  protected chooseReferenceRepository(choice: {
+    number: number;
+    repository: string;
+  }): void {
+    this.draft.set(
+      qualifyReference(this.referenceText(), choice.number, choice.repository),
+    );
+  }
+
   protected submit(): void {
     if (!this.canSend()) {
       return;
@@ -305,11 +323,7 @@ export class MessageComposer {
       id: this.reuseId,
       text,
       attachmentIds: this.images.ids(),
-      references: draftReferences(
-        text,
-        this.githubRepositories(),
-        this.referenceOptions(),
-      ),
+      references: this.draftReferences.requests(text),
     });
   }
 
