@@ -323,7 +323,8 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   `disableBypassPermissionsMode` setting still applies (the session then runs in `default`,
   override reason `bypass_unavailable`). Mode changes Claude Code makes itself (entering plan
   mode, approving a plan) are taken over from its `status`/`init` messages. Changes are logged
-  as `settings.changed` events.
+  as `settings.changed` events. The new-session form preselects `auto` and always sends the
+  chosen mode; a `POST /api/sessions` without `permissionMode` gets `default`.
 - Auto mode (`auto`): Claude Code's classifier approves or blocks each tool use and asks the
   user through `canUseTool` only when it cannot decide; plan mode stays without it
   (`useAutoModeDuringPlan: false`). The app adds no limits of its own: `git push`,
