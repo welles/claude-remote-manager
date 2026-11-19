@@ -590,7 +590,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(
           `Could not read the environment secrets of ${live.id}: ${String(error)}`,
         );
-        live.mask = NO_MASKING;
+        // Not kept: the next event tries again (e.g. after the key was fixed).
+        return NO_MASKING;
       }
     }
     return live.mask;
@@ -1747,6 +1748,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): void {
     const preparation = new AbortController();
     live.preparation = preparation;
+    // The scripts get the environment's current secrets: mask those.
+    live.mask = undefined;
     this.track(live, async () => {
       let outcome: SetupOutcome;
       try {
@@ -2945,6 +2948,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       });
       let outcome: AdditionOutcome;
       try {
+        live.mask = undefined;
         outcome = await this.workspaces.prepareAddition(
           live.id,
           directory.position,
