@@ -4,7 +4,11 @@ export const MASK = '***';
 
 /** Replaces secret values in strings and in JSON-like values. */
 export type SecretMasker = (<T>(value: T) => T) & {
-  /** Length of the longest masked string (0 without). */
+  /**
+   * How much streamed text is held back (see {@link StreamMasker}): the
+   * length of the longest single-line masked string, at most
+   * {@link MAX_STREAM_HOLD}; 0 without secrets.
+   */
   readonly longest: number;
   /** Masks one string. */
   readonly text: (text: string) => string;
@@ -17,6 +21,15 @@ function masker(
 ): SecretMasker {
   return Object.assign(<T>(value: T) => visit(value) as T, { longest, text });
 }
+
+/**
+ * Streamed text is held back by at most this many characters. Multi-line
+ * secrets (whole files, multi-line values) are masked whole only in
+ * complete texts; in streams their values and long lines are masked (see
+ * {@link maskedStrings}), so holding back the length of a whole file
+ * (which would stop streaming) is not needed.
+ */
+export const MAX_STREAM_HOLD = 4096;
 
 /** Masks nothing (sessions without environment or secrets). */
 export const NO_MASKING: SecretMasker = masker(
@@ -98,8 +111,9 @@ export function maskedStrings(
 ): string[] {
   const strings = new Set<string>();
   for (const secret of secrets) {
+    // A multi-line variable (e.g. a PEM key) is treated like a file.
     const candidates =
-      secret.kind === 'file'
+      secret.kind === 'file' || secret.value.trim().includes('\n')
         ? fileSecrets(secret.value)
         : [secret.value, secret.value.trim()];
     for (const candidate of candidates) {
@@ -176,7 +190,10 @@ export function secretMasker(strings: string[]): SecretMasker {
     }
     return value;
   };
-  return masker(visit, maskString, sorted[0].length);
+  const hold = sorted.find(
+    (text) => !text.includes('\n') && text.length <= MAX_STREAM_HOLD,
+  );
+  return masker(visit, maskString, hold?.length ?? 0);
 }
 
 /**
@@ -196,7 +213,8 @@ export class StreamMasker {
   /** The masked text to send for a new piece (may be empty). */
   push(key: string, piece: string, mask: SecretMasker): string {
     if (mask.longest === 0) {
-      return piece;
+      // Nothing to hold back (no secrets, or only multi-line ones).
+      return mask.text(piece);
     }
     const draft = this.drafts.get(key) ?? { raw: '', released: 0, sent: '' };
     draft.raw += piece;

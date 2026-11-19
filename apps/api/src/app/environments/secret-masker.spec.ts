@@ -77,6 +77,25 @@ describe('secret masking', () => {
     const rest = stream.flush('m:0', mask);
     expect(sent + rest).toBe(`The key is ${MASK} and more text here`);
     expect(stream.flush('m:0', mask)).toBe('');
+    // A whole secret file does not hold back streamed text by its length.
+    const file = `${'{"a": "x",\n'.repeat(200)}"private_key": "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"}`;
+    const fileMask = secretMasker(
+      maskedStrings([{ kind: 'file', value: file }]),
+    );
+    expect(fileMask.longest).toBeLessThan(40);
+    expect(
+      new StreamMasker().push('f', 'x'.repeat(100), fileMask),
+    ).toHaveLength(100 - (fileMask.longest - 1));
+    // A multi-line variable is masked like a file.
+    expect(
+      maskedStrings([
+        {
+          kind: 'variable',
+          value:
+            '-----BEGIN KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END KEY-----',
+        },
+      ]),
+    ).toContain('MIIEvQIBADANBgkqhkiG9w0BAQEFAASC');
     // Without secrets pieces pass as they are.
     expect(new StreamMasker().push('m:0', 'abc', NO_MASKING)).toBe('abc');
   });
