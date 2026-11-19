@@ -2551,17 +2551,18 @@ describe('SessionsService', () => {
     };
 
     it('lets Claude say that it goes on by itself, for a while', async () => {
-      config.sessionIdleTimeoutMs = 20;
+      config.sessionIdleTimeoutMs = 50;
       service = await createService();
-      service.claudeWaitLimitMs = 80;
+      service.claudeWaitLimitMs = 300;
       const session = await startSession();
       await expect(
         setWaitingState({ waiting_on: 'work', reason: ' CI of  PR #12 ' }),
       ).resolves.toMatchObject({
         text: expect.stringContaining('CI of PR #12'),
       });
-      // Applies once the turn is over.
+      // Applies once the turn is over; the limit starts then.
       expect(service.get(session.id).status).toBe('running');
+      await new Promise((resolve) => setTimeout(resolve, 350));
       runner.last.emit(resultMessage(1, 0));
       await flush();
       expect(service.get(session.id)).toMatchObject({
@@ -2571,16 +2572,53 @@ describe('SessionsService', () => {
         backgroundTasks: 0,
       });
       // The process stays for Claude's wakeup.
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await new Promise((resolve) => setTimeout(resolve, 150));
       expect(runner.last.closed).toBe(false);
 
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      await new Promise((resolve) => setTimeout(resolve, 250));
       expect(service.get(session.id)).toMatchObject({
         waitingFor: 'message',
         waitingReason: null,
       });
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await new Promise((resolve) => setTimeout(resolve, 150));
       expect(runner.last.closed).toBe(true);
+    });
+
+    it('drops what Claude said when the turn does not simply end', async () => {
+      const session = await startSession();
+      await setWaitingState({ waiting_on: 'work', reason: 'CI' });
+      // A queued message follows as the next turn.
+      await service.send(session.id, { id: MSG_2, text: 'Also this' });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).status).toBe('running');
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('message');
+
+      // Stopped by the user.
+      await service.send(session.id, { id: MSG_3, text: 'Next' });
+      await setWaitingState({ waiting_on: 'work', reason: 'CI' });
+      await service.interrupt(session.id);
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('message');
+
+      // Outside a turn the tool does nothing.
+      await expect(
+        setWaitingState({ waiting_on: 'work', reason: 'CI' }),
+      ).resolves.toMatchObject({ isError: true });
+    });
+
+    it('stops the limit of a deleted session', async () => {
+      service.claudeWaitLimitMs = 30;
+      const session = await startSession();
+      await setWaitingState({ waiting_on: 'work', reason: 'CI' });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      service.forget(session.id);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(service.liveCount).toBe(0);
     });
 
     it("lets Claude say it is the user's turn despite background tasks", async () => {

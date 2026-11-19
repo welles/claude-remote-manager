@@ -427,9 +427,12 @@ export const RESTART_NOTICE =
 export const PREPARATION_INTERRUPTED =
   'The preparation was interrupted because the server stopped; its directories were removed again. Start a new session.';
 
-/** Notice when the process ends while background tasks of Claude run. */
+/**
+ * Notice when the process ends while background tasks of Claude run or
+ * Claude said it goes on by itself.
+ */
 export const BACKGROUND_TASKS_ENDED =
-  'Claude Code ended, and with it the background tasks that were still running.';
+  'Claude Code ended, and with it the background work it was still doing or waiting for.';
 
 /**
  * How long a session still waits for background work after the last task
@@ -1380,6 +1383,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const live = this.live.get(sessionId);
     if (live) {
       this.clearIdleTimer(live);
+      this.clearBackgroundGrace(live);
+      this.clearClaudeWait(live);
       const run = live.run;
       // Detached first: the message loop then ends without looking for
       // the session's record.
@@ -1801,7 +1806,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // A held turn is over with its process.
     live.autoHold = null;
     live.heldTasks.clear();
-    const hadBackgroundTasks = live.backgroundTasks.size > 0;
+    const hadBackgroundTasks =
+      live.backgroundTasks.size > 0 || live.claudeWait?.on === 'work';
     live.backgroundTasks.clear();
     this.clearBackgroundGrace(live);
     this.clearClaudeWait(live);
@@ -2045,6 +2051,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // turn); after the user stopped the turn they were withdrawn already.
     const flushed = run && stop !== 'user' ? this.flushQueue(live, run) : 0;
     const queued = flushed > 0 || (result.queued_turn_count ?? 0) > 0;
+    if (queued || interrupted || result.is_error) {
+      // What Claude said comes after this turn does not: another turn
+      // follows, or the turn did not end as Claude planned.
+      this.clearClaudeWait(live);
+    }
     if (!this.setStatus(live, queued ? 'running' : 'waiting')) {
       // Usage changed even if the status did not.
       this.updates.next(this.toDto(this.requireRecord(live.id)));
@@ -3018,14 +3029,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       name: SET_WAITING_STATE_TOOL,
       description:
         'Say what this session waits for once your turn ends, so the user can tell whether they ' +
-        'need to act. Call it near the end of a turn when the answer is not obvious. "user": it ' +
+        'need to act. Only for the main conversation, never from a subagent. Call it near the ' +
+        'end of a turn after starting background work, or when you will continue on your ' +
+        'own. "user": it ' +
         "is the user's turn (you are done, asked something, or need a decision), also when " +
         'background work you started (such as a dev server) does not have to finish first. ' +
         '"work": you go on by yourself without the user: you wait for background tasks or ' +
         'agents, a scheduled wakeup, a monitor, or CI or a deploy you will check; give a short ' +
-        `reason (e.g. "CI of PR #12"). It holds until the next turn starts, "work" at most ` +
-        `${CLAUDE_WAIT_LIMIT_MINUTES} minutes. Without it, the session manager decides from the ` +
-        'background tasks still running.',
+        `reason (e.g. "CI of PR #12", at most ${MAX_WAITING_REASON_LENGTH} characters). It holds ` +
+        `until the next turn starts, "work" at most ${CLAUDE_WAIT_LIMIT_MINUTES} minutes after ` +
+        'the turn; after that an idle process may be closed, so a later wakeup may not fire. ' +
+        'Without it, the session manager decides from the background tasks still running.',
       inputSchema: (z) => ({
         waiting_on: z
           .enum(['user', 'work'])
@@ -3048,24 +3062,36 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
                 .replace(/\s+/g, ' ')
                 .trim() || null
             : null;
+        if (this.requireRecord(live.id).status !== 'running') {
+          return {
+            isError: true,
+            text: 'Only during a turn of the main conversation: it says what follows the turn.',
+          };
+        }
         this.clearClaudeWait(live);
-        const timer =
-          on === 'work'
-            ? setTimeout(
-                () => this.claudeWaitExpired(live),
-                this.claudeWaitLimitMs,
-              )
-            : null;
-        timer?.unref?.();
-        live.claudeWait = { on, reason, timer };
+        // The time limit starts when the turn ends.
+        live.claudeWait = { on, reason, timer: null };
         return {
           text:
             on === 'work'
-              ? `After this turn the session shows that you go on by yourself${reason ? ` (${reason})` : ''}, for at most ${CLAUDE_WAIT_LIMIT_MINUTES} minutes or until the next turn starts.`
+              ? `After this turn the session shows that you go on by yourself${reason ? ` (${reason})` : ''}, until the next turn starts, for at most ${CLAUDE_WAIT_LIMIT_MINUTES} minutes.`
               : "After this turn the session shows that the user's input is needed.",
         };
       },
     };
+  }
+
+  /** Starts the time limit of Claude's `work` once its turn is over. */
+  private startClaudeWaitTimer(live: LiveSession): void {
+    const wait = live.claudeWait;
+    if (wait?.on !== 'work' || wait.timer) {
+      return;
+    }
+    wait.timer = setTimeout(
+      () => this.claudeWaitExpired(live),
+      this.claudeWaitLimitMs,
+    );
+    wait.timer.unref?.();
   }
 
   /** Claude's word that it goes on by itself ran out: back to the tasks. */
@@ -3075,7 +3101,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     live.claudeWait.timer = null;
     this.clearClaudeWait(live);
-    if (this.requireRecord(live.id).status !== 'waiting' || live.closing) {
+    if (
+      this.live.get(live.id) !== live ||
+      this.sessions.get(live.id)?.status !== 'waiting' ||
+      live.closing
+    ) {
       return;
     }
     if (live.run && !live.idleTimer) {
@@ -3236,6 +3266,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.clearClaudeWait(live);
     }
     if (status === 'waiting') {
+      this.startClaudeWaitTimer(live);
       this.startIdleTimer(live);
     } else {
       this.clearIdleTimer(live);

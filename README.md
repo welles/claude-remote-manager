@@ -307,7 +307,8 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   the turn Claude Code starts with the report, which is `running`; "finished" is notified only
   after that; Claude can also say it itself with the tool `set_waiting_state`: `user` makes it
   `message` despite running tasks, `work` with a short reason (`waitingReason`, shown as the
-  status) makes it `background` until the next turn, for at most 30 minutes), `finished`
+  status) makes it `background` until the next turn, for at most 30 minutes after the turn;
+  dropped after Stop, an error or a queued message), `finished`
   (ended with "End session", `POST /api/sessions/:id/end` or the `session.end` frame) and
   `failed` (a clone could not be created, or the process could not start or ended with an
   error during a turn). A message to a finished or failed session resumes it, unless its
