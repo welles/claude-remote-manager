@@ -45,7 +45,7 @@ Instructions for Claude sessions working on this repository. What the app is and
 - Runs as a NixOS service on the owner's devbox, as the owner's user without sandbox (sessions
   are Claude Code of that user with `~/.claude`), behind a Cloudflare Tunnel and Access. The host
   configuration is the private repository `welles/nixos-config`
-  (`modules/claude-remote-manager.nix`, `hosts/nico-devbox-nixos`, Cloudflare in `cloudflare/`
+  (`modules/claude-remote-manager.nix`, the devbox host under `hosts/`, Cloudflare in `cloudflare/`
   with OpenTofu).
 - After a green CI run on `main`, the job `update-nixos-config` dispatches
   `update-claude-remote-manager.yml` in nixos-config, which updates the flake input; the owner
