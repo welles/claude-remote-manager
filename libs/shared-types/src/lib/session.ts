@@ -42,10 +42,16 @@ export type SessionStatus =
  * - `setup`: a decision about the first message, held back because a
  *   setup script failed (`pendingMessage` is set): send it anyway, run the
  *   failed setup scripts again, or end the session;
- * - `background`: the turn is over, but background tasks Claude started
- *   (subagents, background commands, monitors, workflows) still run;
- *   Claude Code continues on its own when they report back
- *   (`backgroundTasks` says how many). A message can be sent meanwhile.
+ * - `background`: the turn is over, but Claude goes on by itself: background
+ *   tasks it started (subagents, background commands, monitors, workflows)
+ *   still run and Claude Code continues when they report back
+ *   (`backgroundTasks` says how many), or Claude said it waits for
+ *   something (`waitingReason`, see the tool `set_waiting_state`). A message
+ *   can be sent meanwhile.
+ *
+ * What Claude says with `set_waiting_state` comes first: `user` makes a
+ * session with background tasks `message`, `work` one without them
+ * `background` (for at most `CLAUDE_WAIT_LIMIT_MINUTES`).
  */
 export type SessionWaitingFor =
   | 'message'
@@ -77,6 +83,9 @@ export function needsUser(
  * date unless the user chose it.
  */
 export type SessionTitleSource = 'prompt' | 'user' | 'claude';
+
+/** How long Claude's word that it waits for something holds at most. */
+export const CLAUDE_WAIT_LIMIT_MINUTES = 30;
 
 /** Name of Claude's tool that sets the title, as Claude Code reports it. */
 export const SET_SESSION_TITLE_TOOL_NAME = 'mcp__crm__set_session_title';
@@ -299,6 +308,12 @@ export interface SessionDto {
    * `0` without process. Absent from older servers.
    */
   backgroundTasks?: number;
+  /**
+   * With `waitingFor: 'background'`: what Claude said it waits for (e.g.
+   * "CI of PR #12"), when it did; `null` otherwise. Absent from older
+   * servers.
+   */
+  waitingReason?: string | null;
   /**
    * Readable unique name, used for the session's directories and branches;
    * `null` for sessions created before session clones existed.

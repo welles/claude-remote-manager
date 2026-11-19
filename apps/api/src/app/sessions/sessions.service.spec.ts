@@ -917,6 +917,7 @@ describe('SessionsService', () => {
       expect(runner.last.options.allowedTools).toEqual([
         'Bash(npm test:*)',
         'mcp__crm__set_session_title',
+        'mcp__crm__set_waiting_state',
       ]);
       // The task list tools are on, for the to-do list in the session view.
       expect(runner.last.options.env).toMatchObject({
@@ -1258,6 +1259,7 @@ describe('SessionsService', () => {
       expect(service.get(session.id).title).toBe('SSO token refresh');
       // It never asks, also not during an Autofix run.
       expect(READ_ONLY_TOOLS.has('mcp__crm__set_session_title')).toBe(true);
+      expect(READ_ONLY_TOOLS.has('mcp__crm__set_waiting_state')).toBe(true);
     });
 
     it('refuses a blank title', async () => {
@@ -2536,6 +2538,69 @@ describe('SessionsService', () => {
       });
       await flush();
       expect(service.get(session.id).status).toBe('waiting');
+    });
+
+    const setWaitingState = (input: Record<string, unknown>) => {
+      const tool = runner.last.options.tools?.find(
+        (entry) => entry.name === 'set_waiting_state',
+      );
+      if (!tool) {
+        throw new Error('set_waiting_state is missing');
+      }
+      return tool.handler(input, { toolUseId: 'toolu_wait' });
+    };
+
+    it('lets Claude say that it goes on by itself, for a while', async () => {
+      config.sessionIdleTimeoutMs = 20;
+      service = await createService();
+      service.claudeWaitLimitMs = 80;
+      const session = await startSession();
+      await expect(
+        setWaitingState({ waiting_on: 'work', reason: ' CI of  PR #12 ' }),
+      ).resolves.toMatchObject({
+        text: expect.stringContaining('CI of PR #12'),
+      });
+      // Applies once the turn is over.
+      expect(service.get(session.id).status).toBe('running');
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'background',
+        waitingReason: 'CI of PR #12',
+        backgroundTasks: 0,
+      });
+      // The process stays for Claude's wakeup.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(runner.last.closed).toBe(false);
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(service.get(session.id)).toMatchObject({
+        waitingFor: 'message',
+        waitingReason: null,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(runner.last.closed).toBe(true);
+    });
+
+    it("lets Claude say it is the user's turn despite background tasks", async () => {
+      const session = await startSession();
+      await setWaitingState({ waiting_on: 'user' });
+      runner.last.emit(
+        backgroundTasks({ task_id: 'dev-server' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id)).toMatchObject({
+        waitingFor: 'message',
+        backgroundTasks: 1,
+      });
+
+      // The next turn starts without it: the tasks decide again.
+      await service.send(session.id, { id: MSG_2, text: 'Go on' });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('background');
     });
 
     it('forgets background tasks when the process ends', async () => {

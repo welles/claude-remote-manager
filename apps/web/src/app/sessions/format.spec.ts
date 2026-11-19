@@ -45,5 +45,13 @@ describe('statusLabel', () => {
         backgroundTasks: 1,
       }),
     ).toBe('1 background task');
+    expect(
+      needLabel({
+        status: 'waiting',
+        waitingFor: 'background',
+        backgroundTasks: 1,
+        waitingReason: 'CI of PR #12',
+      }),
+    ).toBe('CI of PR #12');
   });
 });

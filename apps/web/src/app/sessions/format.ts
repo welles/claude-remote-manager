@@ -39,15 +39,27 @@ export function statusLabel(
 
 /**
  * What a session needs or waits for, as specific as known: `Approve
- * command`, `2 questions`, `Plan ready`, `Setup failed`, `2 background
- * tasks`; else the status label.
+ * command`, `2 questions`, `Plan ready`, `Setup failed`, what Claude said
+ * it waits for (`CI of PR #12`), `2 background tasks`; else the status
+ * label.
  */
 export function needLabel(
   session: Pick<
     SessionDto,
-    'status' | 'waitingFor' | 'pendingRequests' | 'backgroundTasks'
+    | 'status'
+    | 'waitingFor'
+    | 'pendingRequests'
+    | 'backgroundTasks'
+    | 'waitingReason'
   >,
 ): string {
+  if (
+    session.status === 'waiting' &&
+    session.waitingFor === 'background' &&
+    session.waitingReason
+  ) {
+    return session.waitingReason;
+  }
   if (
     session.status === 'waiting' &&
     session.waitingFor === 'background' &&
