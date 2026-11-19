@@ -176,7 +176,9 @@
       <p class="error" data-testid="error">{{ message }}</p>
       } @if (offerArchive()) {
       <app-banner data-testid="archive-offer">
-        The session has ended. Archive it, or continue it with a new message.
+        @if (resumable()) { The session has ended. Archive it, or continue it
+        with a new message. } @else { The session has ended and cannot be
+        continued. Archive it to hide it from the session list. }
         <div banner-actions>
           <button
             matButton="filled"
@@ -186,6 +188,7 @@
           >
             <app-icon name="archive" />Archive…
           </button>
+          @if (resumable()) {
           <button
             matButton="outlined"
             type="button"
@@ -194,11 +197,11 @@
           >
             Continue
           </button>
+          }
         </div>
       </app-banner>
-      }
+      } @else {
       <app-message-composer
-        [class.concealed]="offerArchive()"
         [(draft)]="draft"
         [label]="composerLabel()"
         [disabled]="!connected() || preparing() || heldBack() || !resumable()"
@@ -210,6 +213,7 @@
         (send)="send($event)"
         (interrupt)="interrupt()"
       />
+      }
     </footer>
   </div>
 

@@ -22,7 +22,8 @@ export type ConversationEntry = ShownItem | ToolGroup;
 
 /**
  * Whether an item belongs to a run of tool calls. Claude's questions do
- * not: they show as a card of their own, with the answers.
+ * not: they show as a card of their own, with the answers (decided by the
+ * tool's name, so a group does not fall apart when the request arrives).
  */
 function inRun(item: ShownItem): item is ToolItem | AssistantItem {
   return (

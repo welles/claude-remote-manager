@@ -70,7 +70,7 @@ describe('tool groups', () => {
     const result = entries([
       call('t1'),
       call('t2'),
-      call('q'),
+      call('q', 'AskUserQuestion'),
       event(
         permissionRequest({
           toolUseId: 'q',
@@ -89,6 +89,11 @@ describe('tool groups', () => {
       'tool',
     ]);
     expect(result[1].key).toBe('tool:q');
+  });
+
+  it('shows a question on its own from the call on', () => {
+    const result = entries([call('t1'), call('q', 'AskUserQuestion')]);
+    expect(result.map((entry) => entry.key)).toEqual(['tool:t1', 'tool:q']);
   });
 
   it("keeps a subagent's calls and text in the group", () => {

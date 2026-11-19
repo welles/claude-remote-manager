@@ -666,6 +666,8 @@ describe('approval requests, queue and settings in the conversation', () => {
         { header: 'Pick', question: 'Which?', answer: null, description: null },
         { header: '', question: 'Why?', answer: null, description: null },
       ],
+      other: [],
+      problem: null,
     });
     expect(
       card(permissionResolved({ answers: { 'Which?': 'A', 'Why?': ' Own ' } })),
@@ -679,6 +681,41 @@ describe('approval requests, queue and settings in the conversation', () => {
     expect(
       card(permissionResolved({ decision: 'deny', message: 'Later' })),
     ).toMatchObject({ state: 'Not answered: Later', tone: 'unanswered' });
+    expect(
+      card(permissionResolved({ decision: 'deny', cause: 'interrupted' })),
+    ).toMatchObject({
+      state: 'Cancelled: the turn was stopped',
+      tone: 'unanswered',
+    });
+    // Answers to no question of the request still show.
+    expect(
+      card(permissionResolved({ answers: { 'Which?': 'A', Other: 'B' } }))
+        ?.other,
+    ).toEqual([{ question: 'Other', answer: 'B' }]);
+    // Multi-select: the explanation of each chosen option.
+    const multi = permissionRequest({
+      toolName: 'AskUserQuestion',
+      kind: 'question',
+      questions: [
+        {
+          question: 'Which?',
+          header: '',
+          options: [
+            { label: 'A', description: 'First', preview: null },
+            { label: 'B', description: 'Second', preview: null },
+          ],
+          multiSelect: true,
+        },
+      ],
+    });
+    expect(
+      questionCard(
+        buildConversation([
+          multi,
+          permissionResolved({ answers: { 'Which?': 'A, B' } }),
+        ])[0],
+      )?.questions[0],
+    ).toMatchObject({ answer: 'A, B', description: 'First · Second' });
     // Other tool calls are no cards.
     expect(
       questionCard(buildConversation([permissionRequest()])[0]),

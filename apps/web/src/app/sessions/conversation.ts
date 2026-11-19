@@ -707,23 +707,25 @@ export function buildConversation(events: SessionEvent[]): ConversationItem[] {
 
 type ToolItem = Extract<ConversationItem, { kind: 'tool' }>;
 
+/** Claude Code's tool for questions to the user. */
+export const ASK_USER_QUESTION_TOOL = 'AskUserQuestion';
+
 /** A question Claude asked, with the user's answer. */
 export interface AnsweredQuestion {
   header: string;
   question: string;
   /** `null` while waiting, or when it was not answered. */
   answer: string | null;
-  /** The explanation of the chosen option (not for own words). */
+  /** The explanations of the chosen options (not for own words). */
   description: string | null;
 }
 
-/** Whether a tool call is a question of Claude's to the user. */
+/**
+ * Whether a tool call is a question of Claude's to the user (by its name,
+ * so it is one from the call on, before the request arrives).
+ */
 export function isQuestion(item: ConversationItem): item is ToolItem {
-  return (
-    item.kind === 'tool' &&
-    item.permission?.request.kind === 'question' &&
-    (item.permission.request.questions?.length ?? 0) > 0
-  );
+  return item.kind === 'tool' && item.name === ASK_USER_QUESTION_TOOL;
 }
 
 /** A question call as a card: its state and the answers given. */
@@ -732,15 +734,28 @@ export interface QuestionCard {
   state: string;
   tone: 'open' | 'answered' | 'unanswered';
   questions: AnsweredQuestion[];
+  /** Answers to no question of the request (`question: answer`). */
+  other: { question: string; answer: string }[];
+  /** Why the call failed or was denied, if it did. */
+  problem: string | null;
 }
 
-/** A question call as a card, `null` for any other tool call. */
+/**
+ * A question call as a card, `null` for any other tool call and for a
+ * question without readable questions (shown as a tool row then).
+ */
 export function questionCard(item: ConversationItem): QuestionCard | null {
-  if (!isQuestion(item) || !item.permission) {
+  if (
+    !isQuestion(item) ||
+    !item.permission ||
+    !item.permission.request.questions?.length
+  ) {
     return null;
   }
   const { request, resolved } = item.permission;
   const answers = resolved?.answers ?? {};
+  const questions = request.questions ?? [];
+  const asked = new Set(questions.map((question) => question.question));
   return {
     state: resolutionText(item.permission),
     tone: !resolved
@@ -748,16 +763,33 @@ export function questionCard(item: ConversationItem): QuestionCard | null {
       : resolved.decision === 'allow'
         ? 'answered'
         : 'unanswered',
-    questions: (request.questions ?? []).map((question) => {
+    questions: questions.map((question) => {
       const answer = answers[question.question]?.trim() || null;
-      const option = question.options.find((choice) => choice.label === answer);
+      // Multi-select: the labels joined with `, `.
+      const chosen = question.multiSelect
+        ? (answer?.split(', ') ?? [])
+        : [answer];
+      const descriptions = chosen
+        .map(
+          (label) =>
+            question.options
+              .find((option) => option.label === label)
+              ?.description.trim() ?? '',
+        )
+        .filter((text) => text !== '');
       return {
         header: question.header,
         question: question.question,
         answer,
-        description: option?.description.trim() || null,
+        description: descriptions.join(' · ') || null,
       };
     }),
+    other: Object.entries(answers)
+      .filter(([question]) => !asked.has(question))
+      .map(([question, answer]) => ({ question, answer })),
+    problem:
+      item.denied ??
+      (item.result?.isError ? item.result.content.trim() || 'Failed' : null),
   };
 }
 

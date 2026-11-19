@@ -928,10 +928,24 @@ describe('SessionView', () => {
     const { harness, socket, element, text } = await open();
     history(socket, sessionDto({ status: 'finished', waitingFor: null }));
     await harness.fixture.whenStable();
-    const composer = () =>
-      element.querySelector('app-message-composer') as HTMLElement;
+    const composer = () => element.querySelector('app-message-composer');
     expect(text('archive-offer')).toContain('The session has ended.');
-    expect(composer().classList).toContain('concealed');
+    expect(composer()).toBeNull();
+
+    // Archive… opens the dialog to archive.
+    (
+      element.querySelector(
+        '[data-testid="archive-offer-archive"]',
+      ) as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    // It reads what the clones hold, as for archiving from the details.
+    expect(
+      TestBed.inject(HttpTestingController).match(
+        (request) =>
+          request.method === 'GET' && request.url.endsWith('/s1/cleanup'),
+      ),
+    ).toHaveLength(1);
 
     (
       element.querySelector(
@@ -940,9 +954,15 @@ describe('SessionView', () => {
     ).click();
     await harness.fixture.whenStable();
     expect(text('archive-offer')).toBeUndefined();
-    expect(composer().classList).not.toContain('concealed');
+    expect(composer()).not.toBeNull();
 
-    // Archived: no offer, the input says how to continue.
+    // Continued, then ended again: the offer comes back.
+    live(socket, event({ type: 'session.status', status: 'running' }));
+    live(socket, event({ type: 'session.status', status: 'finished' }));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toContain('The session has ended.');
+
+    // Archived: no offer.
     history(
       socket,
       sessionDto({
@@ -955,16 +975,75 @@ describe('SessionView', () => {
     expect(text('archive-offer')).toBeUndefined();
   });
 
-  it('keeps the input of an ended session when text waits in it', async () => {
+  it('offers only archiving when the ended session cannot be continued', async () => {
+    const { harness, socket, element, text } = await open();
+    const session = sessionDto({ status: 'finished', waitingFor: null });
+    history(socket, {
+      ...session,
+      directories: session.directories.map((directory) => ({
+        ...directory,
+        state: 'removed' as const,
+      })),
+    });
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toContain('cannot be continued');
+    expect(
+      element.querySelector('[data-testid="archive-offer-continue"]'),
+    ).toBeNull();
+    expect(element.querySelector('app-message-composer')).toBeNull();
+  });
+
+  it('makes no offer for failed sessions', async () => {
+    const { harness, socket, text } = await open();
+    history(socket, sessionDto({ status: 'failed', waitingFor: null }));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+  });
+
+  it('keeps the input of an ended session with text in it, also emptied', async () => {
     const { harness, socket, element, text } = await open(
       '/sessions/s1?mention=%40src%2Fmain.ts',
     );
     history(socket, sessionDto({ status: 'finished', waitingFor: null }));
     await harness.fixture.whenStable();
     expect(text('archive-offer')).toBeUndefined();
+    const input = element.querySelector(
+      '[data-testid="message-input"]',
+    ) as HTMLTextAreaElement;
+    input.value = '';
+    input.dispatchEvent(new Event('input'));
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
+    expect(element.querySelector('[data-testid="message-input"]')).toBe(input);
+  });
+
+  it('takes a withdrawn message of an ended session back into the input', async () => {
+    const { harness, socket, element, text } = await open();
+    history(socket, sessionDto({ status: 'finished', waitingFor: null }), [
+      event({ type: 'message.queued', id: 'q1', text: 'Stopped one' }),
+      event({
+        type: 'message.dequeued',
+        id: 'q1',
+        outcome: 'withdrawn',
+        reason: 'The session was ended.',
+      }),
+    ]);
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toContain('The session has ended.');
+    (
+      element.querySelector(
+        '[data-testid="edit-withdrawn"]',
+      ) as HTMLButtonElement
+    ).click();
+    await harness.fixture.whenStable();
+    expect(text('archive-offer')).toBeUndefined();
     expect(
-      element.querySelector('app-message-composer')?.classList,
-    ).not.toContain('concealed');
+      (
+        element.querySelector(
+          '[data-testid="message-input"]',
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe('Stopped one');
   });
 
   it('shows queued messages, removes them and offers withdrawn ones again', async () => {

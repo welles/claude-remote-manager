@@ -41,6 +41,15 @@
     <p class="qa-description">{{ entry.description }}</p>
     } }
   </div>
+  } @for (entry of card.other; track entry.question) {
+  <div class="qa" data-testid="question">
+    <p class="qa-question">{{ entry.question }}</p>
+    <p class="qa-answer" data-testid="answer">
+      <app-icon name="check" /><span>{{ entry.answer }}</span>
+    </p>
+  </div>
+  } @if (card.problem) {
+  <p class="tool-denied" data-testid="question-problem">{{ card.problem }}</p>
   }
 </section>
 } @else {
@@ -281,8 +290,8 @@
     [preview]="current(preview)"
     (embed)="embed.emit($event)"
   />
-  } @if (item.permission; as permission) { @if (permission.request.plan &&
-  permission.resolved) {
+  } @if (item.permission; as permission) {
+  @if (permission.request.plan && permission.resolved) {
   <details class="plan" [class.nested]="item.nested">
     <summary>Plan</summary>
     <div

@@ -179,9 +179,3 @@
   font: var(--mat-sys-body-small);
   color: var(--mat-sys-error);
 }
-
-// The input of an ended session while archiving is offered: kept (not
-// removed) so "Edit and send again" can fill it.
-.dock > .concealed {
-  display: none;
-}

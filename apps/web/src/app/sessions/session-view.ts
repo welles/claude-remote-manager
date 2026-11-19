@@ -14,11 +14,14 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  afterNextRender,
   afterRenderEffect,
   computed,
   effect,
   inject,
+  Injector,
   signal,
+  untracked,
   viewChild,
   type OnInit,
 } from '@angular/core';
@@ -327,27 +330,28 @@ export class SessionView implements OnInit {
       !this.running()
     );
   });
-  /** The user chose to continue an ended session: the input shows. */
+  /**
+   * The user continues an ended session (Continue, text in the input, a
+   * withdrawn message taken back): the input shows. Reset when the session
+   * changes or ends again.
+   */
   protected readonly continuing = signal(false);
   /**
    * An ended session that is not archived offers archiving instead of the
-   * input (unless text waits in it or the user chose to continue).
+   * input, with Continue when it can be continued.
    */
-  protected readonly offerArchive = computed(() => {
-    const session = this.session();
-    return (
-      session?.status === 'finished' &&
+  protected readonly offerArchive = computed(
+    () =>
+      this.session()?.status === 'finished' &&
       this.canArchive() &&
-      this.resumable() &&
       !this.continuing() &&
       this.requests().length === 0 &&
-      this.queued().length === 0 &&
-      this.draft().trim() === ''
-    );
-  });
+      this.queued().length === 0,
+  );
   protected readonly canDelete = computed(
     () => !!this.session()?.archivedAt || this.ended(),
   );
+  private readonly injector = inject(Injector);
   private readonly sessionsApi = inject(SessionsApi);
   private readonly router = inject(Router);
   private readonly drafts = inject(SessionDrafts);
@@ -370,6 +374,13 @@ export class SessionView implements OnInit {
       const text = this.draft();
       if (id) {
         this.drafts.set(id, text);
+      }
+    });
+    // Text in the input (a draft, a reference from the file browser) means
+    // the user continues: the input stays, also when it is emptied.
+    effect(() => {
+      if (this.draft().trim()) {
+        untracked(() => this.continuing.set(true));
       }
     });
     let revealed = false;
@@ -530,18 +541,33 @@ export class SessionView implements OnInit {
   /** Puts a message that was not sent back into the input. */
   protected edit(item: QueuedItem): void {
     this.continuing.set(true);
-    this.composer()?.restore(
-      item.id,
-      item.text,
-      item.attachments,
-      item.references,
+    // The input may only now be rendered.
+    afterNextRender(
+      () =>
+        this.composer()?.restore(
+          item.id,
+          item.text,
+          item.attachments,
+          item.references,
+        ),
+      { injector: this.injector },
     );
+  }
+
+  /** A session that ends again offers archiving again. */
+  private endedAgain(status: SessionDto['status']): void {
+    const before = this.session()?.status;
+    if (status === 'finished' && before && before !== 'finished') {
+      this.continuing.set(false);
+    }
   }
 
   /** Shows the input of an ended session instead of the archive offer. */
   protected continueSession(): void {
     this.continuing.set(true);
-    setTimeout(() => this.composer()?.focus());
+    afterNextRender(() => this.composer()?.focus(), {
+      injector: this.injector,
+    });
   }
 
   /** Switches the model (`''`: default) or the permission mode. */
@@ -743,6 +769,7 @@ export class SessionView implements OnInit {
     switch (message.type) {
       case 'session.history':
         if (message.session.id === id) {
+          this.endedAgain(message.session.status);
           this.session.set(message.session);
           let items = message.complete
             ? buildConversation(message.events)
@@ -787,6 +814,7 @@ export class SessionView implements OnInit {
           if (event.type === 'context.usage') {
             this.context.set(event.context);
           } else if (event.type === 'session.status') {
+            this.endedAgain(event.status);
             this.session.update((session) =>
               session
                 ? {
@@ -801,6 +829,7 @@ export class SessionView implements OnInit {
         return;
       case 'session.updated':
         if (message.session.id === id) {
+          this.endedAgain(message.session.status);
           this.session.set(message.session);
         }
         return;
