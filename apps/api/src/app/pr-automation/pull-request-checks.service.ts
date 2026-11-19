@@ -34,8 +34,18 @@ export interface PullRequestChecksTiming {
   pollMs: number;
   /** Settled checks of a viewed session are read again after this time. */
   staleMs: number;
-  /** Webhook deliveries within this time cause one read. */
+  /** A read waits this long after the last webhook delivery... */
   debounceMs: number;
+  /** ...but no longer than this after the first one. */
+  maxWaitMs: number;
+  /**
+   * Running checks of a viewed session are read at every poll for this
+   * long after the head commit's checks were first read (then like
+   * settled ones: a status that never resolves costs no more requests).
+   */
+  runningWindowMs: number;
+  /** The same for a head commit without any checks (yet). */
+  emptyWindowMs: number;
 }
 
 export const PR_CHECKS_TIMING = Symbol('PR_CHECKS_TIMING');
@@ -44,7 +54,15 @@ export const DEFAULT_CHECKS_TIMING: PullRequestChecksTiming = {
   pollMs: 30_000,
   staleMs: 5 * 60_000,
   debounceMs: 3_000,
+  maxWaitMs: 10_000,
+  runningWindowMs: 60 * 60_000,
+  emptyWindowMs: 5 * 60_000,
 };
+
+/** Checks kept per pull request (the most important first). */
+export const MAX_CHECKS = 200;
+/** Characters of a check name kept. */
+export const MAX_CHECK_NAME = 200;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -83,7 +101,10 @@ export function checkState(check: CheckResult): PullRequestCheckState {
   }
 }
 
-/** The checks of a head commit as the view shows them, sorted. */
+/**
+ * The checks of a head commit as the view shows them, sorted, at most
+ * {@link MAX_CHECKS}. `readAt`: when the read started.
+ */
 export function checksDto(
   headSha: string,
   checks: CheckResult[],
@@ -92,7 +113,7 @@ export function checksDto(
   const list = checks
     .map(
       (check): PullRequestCheckDto => ({
-        name: check.name,
+        name: check.name.slice(0, MAX_CHECK_NAME),
         state: checkState(check),
         url: safeUrl(check.url),
       }),
@@ -101,7 +122,8 @@ export function checksDto(
       (a, b) =>
         STATE_ORDER.indexOf(a.state) - STATE_ORDER.indexOf(b.state) ||
         a.name.localeCompare(b.name),
-    );
+    )
+    .slice(0, MAX_CHECKS);
   return { headSha, readAt: readAt.toISOString(), checks: list };
 }
 
@@ -127,12 +149,20 @@ function sameChecks(
   );
 }
 
+interface ScheduledRead {
+  timer: ReturnType<typeof setTimeout>;
+  /** First and last request of this batch (ms). */
+  firstAt: number;
+  lastAt: number;
+}
+
 /**
  * Keeps the CI checks of open session pull requests up to date for the
  * view (`PullRequestDto.checks`), for every open pull request, with or
  * without automation: read when a pull request is created or re-read with
- * a new head commit, on webhook deliveries about checks and statuses, by
- * the PR automation's own reads, and every {@link
+ * a new head commit, on webhook deliveries about checks and statuses
+ * (debounced; skipped when the PR automation read them meanwhile), by the
+ * PR automation's own reads, and every {@link
  * PullRequestChecksTiming.pollMs} for sessions someone looks at while
  * checks run (settled ones after {@link PullRequestChecksTiming.staleMs}).
  * Changes are published as session updates.
@@ -141,9 +171,14 @@ function sameChecks(
 export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PullRequestChecksService.name);
   private readonly timing: PullRequestChecksTiming;
-  private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
+  private readonly timers = new Map<number, ScheduledRead>();
   private readonly reading = new Map<number, Promise<void>>();
   private readonly again = new Set<number>();
+  /** When the checks of a pull request's head commit were first read. */
+  private readonly firstRead = new Map<
+    number,
+    { headSha: string; at: number }
+  >();
   private subscription: Subscription | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private polling: Promise<void> | null = null;
@@ -183,8 +218,8 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
     }
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer);
+    for (const scheduled of this.timers.values()) {
+      clearTimeout(scheduled.timer);
     }
     this.timers.clear();
   }
@@ -205,36 +240,57 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Checks the PR automation read for a pull request's head commit anyway:
-   * stored without another request.
+   * Checks the PR automation read (starting at `readAt`) for a pull
+   * request's head commit anyway: stored without another request.
    */
-  store(pullRequestId: number, headSha: string, checks: CheckResult[]): void {
+  store(
+    pullRequestId: number,
+    headSha: string,
+    checks: CheckResult[],
+    readAt: Date,
+  ): void {
     const pull = this.records.pullRequest(pullRequestId);
     if (!pull || pull.state !== 'open' || pull.headSha !== headSha) {
       return;
     }
-    this.save(pull, checksDto(headSha, checks, new Date()));
+    this.save(pull, checksDto(headSha, checks, readAt));
   }
 
-  /** Reads a pull request's checks after a short delay (calls join). */
-  schedule(pullRequestId: number, delayMs = this.timing.debounceMs): void {
-    if (this.stopped || this.timers.has(pullRequestId)) {
+  /**
+   * Reads a pull request's checks once requests stop coming for {@link
+   * PullRequestChecksTiming.debounceMs} (at most {@link
+   * PullRequestChecksTiming.maxWaitMs} after the first). The read is
+   * skipped when checks read after the last request are stored by then.
+   */
+  schedule(pullRequestId: number): void {
+    if (this.stopped) {
       return;
     }
+    const now = Date.now();
+    const scheduled = this.timers.get(pullRequestId);
+    const firstAt = scheduled?.firstAt ?? now;
+    if (scheduled) {
+      clearTimeout(scheduled.timer);
+    }
+    const delay = Math.max(
+      0,
+      Math.min(this.timing.debounceMs, firstAt + this.timing.maxWaitMs - now),
+    );
     const timer = setTimeout(() => {
       this.timers.delete(pullRequestId);
-      void this.read(pullRequestId);
-    }, delayMs);
+      void this.read(pullRequestId, now);
+    }, delay);
     timer.unref?.();
-    this.timers.set(pullRequestId, timer);
+    this.timers.set(pullRequestId, { timer, firstAt, lastAt: now });
   }
 
   /**
    * Reads the checks of a pull request's head commit from GitHub and
-   * publishes them when they changed. One read per pull request at a time;
-   * one asked for meanwhile runs afterwards. Errors are logged.
+   * publishes them when they changed; with `after` (ms) only when the
+   * stored ones were read before that. One read per pull request at a
+   * time; one asked for meanwhile runs afterwards. Errors are logged.
    */
-  read(pullRequestId: number): Promise<void> {
+  read(pullRequestId: number, after?: number): Promise<void> {
     const running = this.reading.get(pullRequestId);
     if (running) {
       this.again.add(pullRequestId);
@@ -242,9 +298,11 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     }
     const task = (async () => {
       try {
+        let skipIfReadAfter = after;
         do {
           this.again.delete(pullRequestId);
-          await this.readOnce(pullRequestId);
+          await this.readOnce(pullRequestId, skipIfReadAfter);
+          skipIfReadAfter = undefined;
         } while (this.again.has(pullRequestId) && !this.stopped);
       } catch (error) {
         if (error instanceof GitHubRateLimitError) {
@@ -263,17 +321,20 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Viewed sessions: their open pull requests are re-read from GitHub (at
-   * most once a minute, for a new head commit), and checks that run, were
-   * never read or are older than {@link PullRequestChecksTiming.staleMs}
-   * are read again.
+   * most once a minute, for a new head commit), and their checks when
+   * {@link due}. Errors are logged.
    */
   poll(): Promise<void> {
     if (!this.polling) {
-      const polling = this.pollOnce().finally(() => {
-        if (this.polling === polling) {
-          this.polling = null;
-        }
-      });
+      const polling = this.pollOnce()
+        .catch((error: unknown) =>
+          this.logger.warn(`Polling checks failed: ${errorText(error)}`),
+        )
+        .finally(() => {
+          if (this.polling === polling) {
+            this.polling = null;
+          }
+        });
       this.polling = polling;
     }
     return this.polling;
@@ -291,10 +352,24 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
       if (!session?.pullRequests.some((pull) => pull.state === 'open')) {
         continue;
       }
-      // A new head commit (or a merge) shows up here; `refreshed$` then
-      // schedules a read of its checks.
-      await this.sessionGit.refreshPullRequests(sessionId);
+      try {
+        // A new head commit (or a merge) shows up here; `refreshed$` then
+        // schedules a read of its checks.
+        await this.sessionGit.refreshPullRequests(sessionId);
+      } catch (error) {
+        // E.g. the session was deleted meanwhile.
+        this.logger.warn(
+          `Polling session ${sessionId} failed: ${errorText(error)}`,
+        );
+        continue;
+      }
+      if (this.stopped) {
+        return;
+      }
       for (const pull of this.records.get(sessionId)?.pullRequests ?? []) {
+        if (this.stopped) {
+          return;
+        }
         if (pull.state === 'open' && this.due(pull)) {
           await this.read(pull.id);
         }
@@ -302,7 +377,10 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async readOnce(pullRequestId: number): Promise<void> {
+  private async readOnce(
+    pullRequestId: number,
+    skipIfReadAfter?: number,
+  ): Promise<void> {
     if (
       !this.github.configured ||
       this.stopped ||
@@ -314,11 +392,20 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     if (!pull || pull.state !== 'open' || !pull.headSha) {
       return;
     }
+    if (
+      skipIfReadAfter !== undefined &&
+      pull.checks?.headSha === pull.headSha &&
+      Date.parse(pull.checks.readAt) >= skipIfReadAfter
+    ) {
+      // The PR automation read them after the request came.
+      return;
+    }
     const repository = this.repositories.get(pull.repositoryId);
     if (!repository || !isGitHubRepository(repository)) {
       return;
     }
     const headSha = pull.headSha;
+    const startedAt = new Date();
     const checks = await this.feedback.checks(
       {
         installationId: repository.githubInstallationId,
@@ -327,18 +414,38 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
       },
       headSha,
     );
+    if (this.stopped) {
+      return;
+    }
     // The head may have moved meanwhile: then these are an older commit's.
     const current = this.records.pullRequest(pullRequestId);
     if (current?.state === 'open' && current.headSha === headSha) {
-      this.save(current, checksDto(headSha, checks, new Date()));
+      this.save(current, checksDto(headSha, checks, startedAt));
     }
   }
 
-  /** Stores the checks; a change is published as a session update. */
+  /**
+   * Stores the checks unless newer ones of the same commit are stored (an
+   * overlapping read finished first); a change is published as a session
+   * update.
+   */
   private save(pull: PullRequestRecord, checks: PullRequestChecksDto): void {
-    const changed = !sameChecks(pull.checks ?? null, checks);
+    const stored = pull.checks ?? null;
+    if (
+      stored?.headSha === checks.headSha &&
+      Date.parse(stored.readAt) > Date.parse(checks.readAt)
+    ) {
+      return;
+    }
+    const first = this.firstRead.get(pull.id);
+    if (first?.headSha !== checks.headSha) {
+      this.firstRead.set(pull.id, {
+        headSha: checks.headSha,
+        at: Date.parse(checks.readAt),
+      });
+    }
     this.records.setPullRequestChecks(pull.id, checks);
-    if (changed) {
+    if (!sameChecks(stored, checks)) {
       this.sessions.publishUpdate(pull.sessionId);
     }
   }
@@ -352,15 +459,32 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  /** A viewed pull request's checks should be read again. */
+  /**
+   * A viewed pull request's checks should be read again: never read for
+   * the head commit; running (or none yet) and within their window; or
+   * older than {@link PullRequestChecksTiming.staleMs}.
+   */
   private due(pull: PullRequestRecord): boolean {
     const checks = pull.checks;
+    if (!checks || this.outdated(pull)) {
+      return true;
+    }
+    const now = Date.now();
+    let first = this.firstRead.get(pull.id);
+    if (first?.headSha !== checks.headSha) {
+      // Not read since a restart: the window starts now.
+      first = { headSha: checks.headSha, at: now };
+      this.firstRead.set(pull.id, first);
+    }
+    const window =
+      checks.checks.length === 0
+        ? this.timing.emptyWindowMs
+        : checks.checks.some((check) => check.state === 'pending')
+          ? this.timing.runningWindowMs
+          : 0;
     return (
-      this.outdated(pull) ||
-      !checks ||
-      checks.checks.length === 0 ||
-      checks.checks.some((check) => check.state === 'pending') ||
-      Date.now() - Date.parse(checks.readAt) >= this.timing.staleMs
+      now - first.at < window ||
+      now - Date.parse(checks.readAt) >= this.timing.staleMs
     );
   }
 }

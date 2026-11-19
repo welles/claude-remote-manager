@@ -335,6 +335,7 @@ export class SessionGitService {
       pull.title !== info.title ||
       pull.draft !== info.draft;
     // Reading the same state again does not move the session up the list.
+    const touch = changed || pull.headSha !== info.headSha;
     this.sessions.updatePullRequest(
       pull.id,
       {
@@ -347,7 +348,7 @@ export class SessionGitService {
         mergedAt: info.mergedAt,
         syncedAt: new Date(),
       },
-      { touch: changed },
+      { touch },
     );
     const updated = this.sessions.pullRequest(pull.id) ?? null;
     if (changed) {

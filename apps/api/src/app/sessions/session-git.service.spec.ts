@@ -200,6 +200,32 @@ describe('SessionGitService', () => {
     });
   });
 
+  it('moves a session up the list only when a re-read pull request changed', async () => {
+    const repository = await githubRepository();
+    const session = await startSession(repository.id);
+    await commitFile(session.cwd, 'work.txt', 'w');
+    const pull = await service.createPullRequest(
+      session.id,
+      repository.id,
+      {},
+      'user',
+    );
+    const updatedAt = () => harness.service.get(session.id).updatedAt;
+    const refreshed: number[] = [];
+    const subscription = service.refreshed$.subscribe((entry) =>
+      refreshed.push(entry.id),
+    );
+    const before = updatedAt();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await service.refreshPullRequests(session.id, true);
+    expect(updatedAt()).toBe(before);
+    expect(refreshed).toEqual([pull.id]);
+    harness.github.pulls[0].title = 'Renamed';
+    await service.refreshPullRequests(session.id, true);
+    subscription.unsubscribe();
+    expect(updatedAt() > before).toBe(true);
+  });
+
   it('pushes repositories registered by URL with the server credentials', async () => {
     const repository = await harness.addRepository('acme', 'plain');
     const session = await startSession(repository.id);

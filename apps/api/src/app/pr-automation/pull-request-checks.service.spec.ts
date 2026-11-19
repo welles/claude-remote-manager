@@ -9,6 +9,7 @@ import {
   checksDto,
   checkState,
   PullRequestChecksService,
+  type PullRequestChecksTiming,
 } from './pull-request-checks.service';
 import { PullRequestFeedback, type CheckResult } from './pull-request-feedback';
 
@@ -75,6 +76,7 @@ describe('PullRequestChecksService', () => {
   let harness: WorkspaceHarness;
   let presence: ViewerPresence;
   let checks: PullRequestChecksService;
+  let timing: PullRequestChecksTiming;
   let remote: FakeRepository;
   let repositoryId: string;
 
@@ -96,6 +98,14 @@ describe('PullRequestChecksService', () => {
         .toString()
         .trim();
     presence = new ViewerPresence();
+    timing = {
+      pollMs: 0,
+      staleMs: 60_000,
+      debounceMs: 5,
+      maxWaitMs: 50,
+      runningWindowMs: 60_000,
+      emptyWindowMs: 0,
+    };
     checks = new PullRequestChecksService(
       harness.sessions,
       harness.repositoryRecords,
@@ -104,7 +114,7 @@ describe('PullRequestChecksService', () => {
       harness.github.service,
       new PullRequestFeedback(harness.github.service, harness.github.http),
       presence,
-      { pollMs: 0, staleMs: 60_000, debounceMs: 5 },
+      timing,
     );
     checks.onModuleInit();
   });
@@ -254,14 +264,104 @@ describe('PullRequestChecksService', () => {
     });
   });
 
-  it('stores checks the automation read only for the current head', async () => {
+  it('stores checks the automation read only for the current head and in read order', async () => {
     const { pull, head } = await sessionWithPullRequest();
     await waitFor(() => checksOf(pull) !== null);
-    checks.store(pull.id, 'b'.repeat(40), [result({ name: 'old' })]);
+    const now = Date.now();
+    checks.store(
+      pull.id,
+      'b'.repeat(40),
+      [result({ name: 'old' })],
+      new Date(now + 1000),
+    );
     expect(checksOf(pull)?.checks).toEqual([]);
-    checks.store(pull.id, head, [result({ name: 'new' })]);
+    checks.store(
+      pull.id,
+      head,
+      [result({ name: 'new' })],
+      new Date(now + 2000),
+    );
     expect(checksOf(pull)?.checks).toEqual([
       { name: 'new', state: 'success', url: null },
     ]);
+    // A read that started earlier but finished later is dropped.
+    checks.store(
+      pull.id,
+      head,
+      [result({ name: 'older' })],
+      new Date(now + 1500),
+    );
+    expect(checksOf(pull)?.checks[0].name).toBe('new');
+  });
+
+  it('skips a delivery read when the automation stored newer checks meanwhile', async () => {
+    const { pull, head } = await sessionWithPullRequest();
+    await waitFor(() => checksOf(pull) !== null);
+    const reads = checkReads();
+    checks.onDelivery(remote.id);
+    checks.store(
+      pull.id,
+      head,
+      [result({ name: 'auto' })],
+      new Date(Date.now() + 1000),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(checkReads()).toBe(reads);
+    expect(checksOf(pull)?.checks[0].name).toBe('auto');
+  });
+
+  it('reads once for a burst of deliveries (statuses name no pull request)', async () => {
+    const { pull } = await sessionWithPullRequest();
+    await waitFor(() => checksOf(pull) !== null);
+    const reads = checkReads();
+    for (let i = 0; i < 5; i++) {
+      checks.onDelivery(remote.id);
+    }
+    await waitFor(() => checkReads() > reads);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(checkReads()).toBe(reads + 1);
+  });
+
+  it('drops checks read for a head commit that moved meanwhile', async () => {
+    const { pull, head } = await sessionWithPullRequest();
+    await waitFor(() => checksOf(pull) !== null);
+    harness.github.checkRuns.set(head, [
+      {
+        id: 3,
+        name: 'test',
+        status: 'completed',
+        conclusion: 'success',
+        app: 'github-actions',
+      },
+    ]);
+    harness.github.intercept = (request) => {
+      if (/\/check-runs$/.test(request.path)) {
+        harness.sessions.updatePullRequest(pull.id, {
+          headSha: 'c'.repeat(40),
+        });
+      }
+      return undefined;
+    };
+    await checks.read(pull.id);
+    harness.github.intercept = null;
+    expect(checksOf(pull)?.checks).toEqual([]);
+  });
+
+  it('polls a viewed pull request without checks only within its window', async () => {
+    const { sessionId, pull } = await sessionWithPullRequest();
+    await waitFor(() => checksOf(pull) !== null);
+    presence.update({}, sessionId, true);
+    let reads = checkReads();
+    await checks.poll();
+    expect(checkReads()).toBe(reads);
+    timing.emptyWindowMs = 60_000;
+    reads = checkReads();
+    await checks.poll();
+    expect(checkReads()).toBe(reads + 1);
+  });
+
+  it('keeps polling going when a viewed session is gone', async () => {
+    presence.update({}, 'missing', true);
+    await expect(checks.poll()).resolves.toBeUndefined();
   });
 });

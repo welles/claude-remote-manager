@@ -937,11 +937,12 @@ export class PrAutomationService
     repository: FeedbackRepository,
   ): Promise<Triggers> {
     const headSha = pull.headSha;
+    const readAt = new Date();
     const checks = headSha
       ? await this.feedback.checks(repository, headSha)
       : [];
     if (headSha) {
-      this.checksView?.store(pull.id, headSha, checks);
+      this.checksView?.store(pull.id, headSha, checks, readAt);
     }
     const pending = pendingChecks(checks);
     const failures =

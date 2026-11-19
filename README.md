@@ -1160,7 +1160,8 @@ web build runs it first):
   session's directories; the preparation as one row) and a dock at the bottom: the pending
   approval, question or plan with its buttons always in view (long content scrolls inside
   the card), queued messages collapsed to a count, and a one-row composer. Everything else
-  (status, context, tasks, repositories, push and pull requests with their automation,
+  (status, context, tasks, repositories, push and pull requests with their CI checks and
+  automation,
   previews, model and permissions, usage, plan limits, end, clean up, archive, delete) is in
   the session details: full screen on phones, a drawer on desktops, a permanent column from
   1360 px. From 1100 px the session list stays on the left of an open session.
@@ -1251,7 +1252,8 @@ its branches and tags, and points the existing session clones' `origin` there (s
   going on, when the merge or close was handled; for automerge: `automerge`, the hold
   (`automerge_held_at`, `automerge_hold_reason`: Claude's question), the head commit GitHub
   refused to merge and why, what a green, approved head commit waits for
-  (`automerge_waiting`), and the head commit the owner was told about stuck threads for.
+  (`automerge_waiting`), and the head commit the owner was told about stuck threads for;
+  `checks`: the CI checks of the head commit as last read, for the view (JSON).
 - `sessions.autoclosed_at`: when autoclose ended the session; clones still `ready`
   afterwards were kept because they hold work that is not on GitHub.
 - `webhook_deliveries`: IDs of processed webhook deliveries (a week), so redeliveries do
@@ -1441,7 +1443,8 @@ Permissions the app needs (repository permissions):
 | Issues         | read       | `#` references: issues, comments, search                                |
 
 Checks, Commit statuses and Actions (read) are for the PR automation (check runs and
-statuses of a pull request's head commit, logs of failed GitHub Actions jobs). Install the app
+statuses of a pull request's head commit, logs of failed GitHub Actions jobs) and the checks
+shown with each open pull request. Install the app
 on your account and
 on organizations and choose the repositories there; the Settings page lists the
 installations with their repository counts and links to install the app on further accounts.
@@ -1508,6 +1511,17 @@ Both work two ways:
    requests come from the tool `create_pull_request` (repository, title, body, base branch,
    draft), which never pushes and makes the pull request with the GitHub App, so the session
    shows it and the PR automation follows it. Claude may use `gh` as well.
+
+**CI checks**: every open pull request of a session shows the checks of its head commit
+(check runs and commit statuses), with or without PR automation: one line with the overall
+state and counts ("Checks: 1 failed, 2 running, 5 passed") that opens the list of single
+checks (state, name, link to the details), failed first, then running. The API stores them
+per pull request (`PullRequestDto.checks`) and reads them when a pull request is created or
+read with a new head commit, on webhook deliveries about checks and statuses (debounced,
+skipped when the PR automation read them meanwhile), with the PR automation's own reads, and
+every 30 s for sessions an active client shows: running checks for an hour after the commit's
+checks were first read, a commit without checks for 5 minutes, otherwise every 5 minutes.
+Neither check changes nor re-reading an unchanged pull request move the session up the list.
 
 Approval: both are tool uses like any other; whether they ask depends on the session's
 permission mode and rules (see [Approval requests](#approval-requests)): `default` asks for

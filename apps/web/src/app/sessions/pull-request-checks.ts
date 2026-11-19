@@ -63,6 +63,8 @@ export function checksSummary(checks: PullRequestChecksDto): string {
   return `Checks: ${parts.join(', ')}`;
 }
 
+let nextId = 0;
+
 /**
  * The CI checks of a pull request's head commit: one line with the state
  * of all of them and the counts, which opens the list of single checks
@@ -73,46 +75,48 @@ export function checksSummary(checks: PullRequestChecksDto): string {
   imports: [AppIcon],
   template: `
     @let all = checks();
-    <button
-      type="button"
-      class="summary state-{{ overall() ?? 'none' }}"
-      [attr.aria-expanded]="all.checks.length > 0 ? open() : null"
-      [disabled]="all.checks.length === 0"
-      (click)="open.set(!open())"
-      data-testid="pr-checks-summary"
-    >
-      @if (overall(); as state) {
-        <app-icon class="state-icon" [name]="icons[state]" />
-      }
-      <span class="text">{{ summary() }}</span>
-      @if (all.checks.length > 0) {
+    @if (all.checks.length === 0) {
+      <span class="summary" data-testid="pr-checks-summary">{{
+        summary()
+      }}</span>
+    } @else {
+      <button
+        type="button"
+        class="summary state-{{ overall() }}"
+        [attr.aria-expanded]="open()"
+        [attr.aria-controls]="listId"
+        (click)="open.set(!open())"
+        data-testid="pr-checks-summary"
+      >
+        @if (overall(); as state) {
+          <app-icon class="state-icon" [name]="icons[state]" />
+        }
+        <span class="text">{{ summary() }}</span>
         <app-icon
           class="chevron"
           [name]="open() ? 'chevron-down' : 'chevron-right'"
         />
+      </button>
+      @if (open()) {
+        <ul class="list" [id]="listId" data-testid="pr-checks-list">
+          @for (check of all.checks; track $index) {
+            <li class="state-{{ check.state }}" data-testid="pr-check">
+              <app-icon class="state-icon" [name]="icons[check.state]" />
+              @if (check.url) {
+                <a
+                  [href]="check.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >{{ check.name }}</a
+                >
+              } @else {
+                <span class="name">{{ check.name }}</span>
+              }
+              <span class="label">{{ labels[check.state] }}</span>
+            </li>
+          }
+        </ul>
       }
-    </button>
-    @if (open() && all.checks.length > 0) {
-      <ul class="list" data-testid="pr-checks-list">
-        @for (check of all.checks; track $index) {
-          <li class="state-{{ check.state }}" data-testid="pr-check">
-            <app-icon
-              class="state-icon"
-              [name]="icons[check.state]"
-              [attr.aria-label]="labels[check.state]"
-              role="img"
-            />
-            @if (check.url) {
-              <a [href]="check.url" target="_blank" rel="noopener noreferrer">{{
-                check.name
-              }}</a>
-            } @else {
-              <span>{{ check.name }}</span>
-            }
-            <span class="label">{{ labels[check.state] }}</span>
-          </li>
-        }
-      </ul>
     }
   `,
   styles: `
@@ -137,10 +141,10 @@ export function checksSummary(checks: PullRequestChecksDto): string {
       text-align: left;
       cursor: pointer;
     }
-    .summary:disabled {
+    span.summary {
       cursor: default;
     }
-    .summary:not(:disabled):hover .text {
+    button.summary:hover .text {
       text-decoration: underline;
     }
     .list {
@@ -157,8 +161,15 @@ export function checksSummary(checks: PullRequestChecksDto): string {
       gap: 6px;
       min-width: 0;
     }
+    /* Fingers need bigger targets than the small text. */
+    @media (pointer: coarse) {
+      .summary,
+      .list li {
+        min-height: 36px;
+      }
+    }
     .list a,
-    .list li > span:not(.label) {
+    .list .name {
       flex: 1 1 auto;
       min-width: 0;
       overflow: hidden;
@@ -200,6 +211,7 @@ export class PullRequestChecks {
   protected readonly icons = CHECK_STATE_ICONS;
   protected readonly labels = CHECK_STATE_LABELS;
   protected readonly open = signal(false);
+  protected readonly listId = `pr-checks-${nextId++}`;
   protected readonly overall = computed(() => overallCheckState(this.checks()));
   protected readonly summary = computed(() => checksSummary(this.checks()));
 }
