@@ -1712,8 +1712,12 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   `auto` mode) Claude could approve as the owner or resolve threads itself. That Claude must
   not do so is only an instruction in the app's messages, not enforced. Where that matters,
   keep the session user without GitHub credentials or leave automerge off. In the container
-  it is enforced: sessions have only the app's tokens, `gh`'s are read only, and approvals by
-  bots count only when listed in `PR_TRUSTED_BOTS` (never list the app's own bot there).
+  sessions cannot approve or resolve threads (`gh`'s token is read only, approvals by bots
+  count only when listed in `PR_TRUSTED_BOTS`; never list the app's own bot there), but the
+  `git` token's `contents: write` can merge a pull request or push to the default branch
+  directly (e.g. with `curl` and the token from `git credential fill`). The gate therefore
+  holds only together with branch protection on GitHub (required reviews and checks, no
+  bypass for the app).
 
 ### git during autofix
 
@@ -1870,7 +1874,7 @@ What a session process can and cannot reach (checked in the container):
 
 - cannot: read the GitHub App key, the database, `/data/git` (the API's SSH key and git
   configuration), the API's `/proc/<pid>/environ`; get GitHub tokens for repositories that are
-  not its own clones, or `gh` tokens that can write; write or delete in the mirrors; call the
+  not clones of a running session, or `gh` tokens that can write; write or delete in the mirrors; call the
   management API (refused by peer user, see [Authentication](#authentication)); become
   another user (`setpriv`/`su` fail);
 - can: its clones, `/data/claude` (login, settings, MCP servers, transcripts, memory), `/nix`,
@@ -1896,19 +1900,30 @@ Claude's own `git` and `gh` get short-lived installation tokens of the app from 
   ready clone of the session, with `contents: write` (plus `workflows: write` when the session
   branch changes `.github/workflows`). Whether a `git push` runs is the session's permission
   mode's decision, as for any command; the approval dialog shows what it would update. The
-  token can write the whole repository, so protect important branches on GitHub.
-- `gh`: `/usr/local/bin/gh` wraps Debian's `/usr/bin/gh` and passes a token as `GH_TOKEN`
+  token can write the whole repository (any branch, tags, releases, merging pull requests
+  through the API), so protect the default branch on GitHub; that is required for the
+  automerge gate (see [PR automation](#pr-automation)). `workflows: write` is added only when
+  the session branch changes workflow files.
+- `gh`: `/usr/local/bin/gh` (`docker/gh`) gets a token from the helper and execs Debian's
+  `/usr/bin/gh` with it as `GH_TOKEN`
   for all of the session's repositories in the installation of the working directory's
   `origin` (or of the session's first GitHub repository), read only: metadata, contents, pull
   requests, issues, checks, statuses, Actions. It cannot comment, approve, merge, resolve
-  review threads or change settings, so the automerge gate holds. Outside a session it runs
-  `gh` without a token.
+  review threads or change settings. Outside a session it runs `gh` without a token. A `gh`
+  from a Nix shell comes first on the PATH and gets no token; commands that need a user
+  (`gh pr status`, `gh auth status`) do not work with installation tokens.
 - Tokens are minted for the session alone (never the API's cached ones), reused for at most
-  ten minutes and revoked when the process ends. Only session processes may call the routes
+  ten minutes, and all of them are revoked when the process ends (also replaced ones; a
+  request still waiting when the process ends gets none). Only session processes may call the routes
   (by peer user, see [Authentication](#authentication)), and only with a valid process token.
 
 Repositories registered by clone URL (not GitHub) get nothing: Claude asks the user to push
 with the button.
+
+Known limit: all sessions run as the one user `claude`, so a session can read another running
+session's process token from its environment (`/proc/<pid>/environ`) and get tokens for that
+session's repositories. The boundary is "repositories of the running sessions", not "of this
+session"; binding requests to the session's process tree would close it.
 
 ### Volumes
 

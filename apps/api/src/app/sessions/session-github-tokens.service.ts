@@ -82,16 +82,25 @@ type GitHubRepository = RepositoryRecord & {
  *   ({@link GH_PERMISSIONS}).
  *
  * Tokens are minted for the session alone (never the API's cached ones),
- * reused for at most ten minutes and revoked when the session's process
- * ends.
+ * reused for at most ten minutes and all revoked when the session's
+ * process ends.
+ *
+ * Limits: the `git` token's `contents: write` can also merge pull
+ * requests and push to any branch, so the automerge gate holds only with
+ * branch protection on GitHub. All sessions run as one OS user, so a
+ * session can read another running session's process token (its
+ * environment) and get tokens for that session's repositories.
  */
 @Injectable()
 export class SessionGitHubTokensService {
   private readonly logger = new Logger(SessionGitHubTokensService.name);
+  /** Tokens to reuse, by session and kind. */
   private readonly handedOut = new Map<
     string,
     Map<string, { minted: number; token: Promise<InstallationToken> }>
   >();
+  /** Every token minted for a session's process, to revoke at its end. */
+  private readonly minted = new Map<string, Promise<InstallationToken>[]>();
 
   constructor(
     readonly processTokens: SessionTokens,
@@ -110,7 +119,7 @@ export class SessionGitHubTokensService {
     authorization: string | undefined,
     request: unknown,
   ): Promise<SessionGitHubToken> {
-    const session = this.authenticate(authorization);
+    const { session, processToken } = this.authenticate(authorization);
     const body = requireObject(request);
     const protocol = requireString(body, 'protocol', { maxLength: 20 });
     const host = requireString(body, 'host', { maxLength: 255 });
@@ -129,7 +138,7 @@ export class SessionGitHubTokensService {
     );
     if (!found) {
       this.logger.warn(
-        `Session ${session.id} asked for a token for ${path}, which is not one of its repositories`,
+        `Session ${session.id} asked for a token for ${JSON.stringify(path)}, which is not one of its repositories`,
       );
       throw new ForbiddenException(
         `${path} is not a GitHub repository of this session`,
@@ -152,6 +161,7 @@ export class SessionGitHubTokensService {
     };
     const token = await this.handOut(
       session.id,
+      processToken,
       `git|${repository.id}|${workflows}`,
       () =>
         this.repositoryCredentials.token(repository, permissions, {
@@ -170,7 +180,7 @@ export class SessionGitHubTokensService {
     authorization: string | undefined,
     request: unknown,
   ): Promise<SessionGitHubToken> {
-    const session = this.authenticate(authorization);
+    const { session, processToken } = this.authenticate(authorization);
     const body = requireObject(request);
     const name = optionalString(body, 'repository', { maxLength: 300 })
       ?.trim()
@@ -199,6 +209,7 @@ export class SessionGitHubTokensService {
     ].sort((a, b) => a - b);
     const token = await this.handOut(
       session.id,
+      processToken,
       `gh|${chosen.githubInstallationId}|${ids.join(',')}`,
       () => {
         if (!this.github.configured) {
@@ -218,23 +229,32 @@ export class SessionGitHubTokensService {
   /** The session's process ended: its tokens stop working. */
   release(sessionId: string): void {
     this.processTokens.revoke(sessionId);
-    const tokens = this.handedOut.get(sessionId);
     this.handedOut.delete(sessionId);
-    for (const entry of tokens?.values() ?? []) {
-      void entry.token
-        .then((token) => this.github.tokens.revoke(token.token))
+    const minted = this.minted.get(sessionId) ?? [];
+    this.minted.delete(sessionId);
+    for (const token of minted) {
+      void token
+        .then((entry) => this.github.tokens.revoke(entry.token))
         .catch(() => undefined);
     }
   }
 
-  private authenticate(authorization: string | undefined): SessionRecord {
+  private authenticate(authorization: string | undefined): {
+    session: SessionRecord;
+    processToken: string;
+  } {
     const token = /^Bearer (\S+)$/.exec(authorization ?? '')?.[1];
     const sessionId = this.processTokens.resolve(token);
     const session = sessionId ? this.sessions.get(sessionId) : undefined;
-    if (!session) {
+    if (!session || !token) {
       throw new UnauthorizedException('Unknown or expired session token');
     }
-    return session;
+    return { session, processToken: token };
+  }
+
+  /** Whether the process token still belongs to the session. */
+  private stillValid(sessionId: string, processToken: string): boolean {
+    return this.processTokens.resolve(processToken) === sessionId;
   }
 
   /** Ready clones of the session's GitHub repositories. */
@@ -259,9 +279,14 @@ export class SessionGitHubTokensService {
 
   private async handOut(
     sessionId: string,
+    processToken: string,
     key: string,
     mint: () => Promise<InstallationToken>,
   ): Promise<InstallationToken> {
+    // The process may have ended while the request waited (e.g. for git).
+    if (!this.stillValid(sessionId, processToken)) {
+      throw new UnauthorizedException('Unknown or expired session token');
+    }
     let tokens = this.handedOut.get(sessionId);
     if (!tokens) {
       tokens = new Map();
@@ -274,11 +299,18 @@ export class SessionGitHubTokensService {
         return token;
       }
     }
-    const entry = { minted: this.now(), token: mint() };
+    const minting = mint();
+    const entry = { minted: this.now(), token: minting };
     tokens.set(key, entry);
+    let all = this.minted.get(sessionId);
+    if (!all) {
+      all = [];
+      this.minted.set(sessionId, all);
+    }
+    all.push(minting);
     try {
-      const token = await entry.token;
-      if (this.handedOut.get(sessionId) !== tokens) {
+      const token = await minting;
+      if (!this.stillValid(sessionId, processToken)) {
         // Released while minting: the process is gone.
         void this.github.tokens.revoke(token.token).catch(() => undefined);
         throw new UnauthorizedException('The session process ended');

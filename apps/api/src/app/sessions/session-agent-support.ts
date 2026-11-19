@@ -147,8 +147,10 @@ function errorText(error: unknown): string {
  *
  * Git in session clones uses the user's own credentials (git
  * configuration, credential helpers such as `gh`, SSH keys), as in a
- * terminal; pushes need whatever approval the session's permission mode
- * asks for, like any command.
+ * terminal; in the container, where the session user has none, installation
+ * tokens of the app instead (see {@link SessionGitHubTokensService}).
+ * Pushes need whatever approval the session's permission mode asks for,
+ * like any command.
  */
 @Injectable()
 export class SessionAgentSupportService extends SessionAgentSupport {

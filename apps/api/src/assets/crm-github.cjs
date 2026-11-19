@@ -11,14 +11,14 @@
  *   crm-github.cjs git-credential get   git's credential helper
  *                                       (gitcredentials(7)); `store` and
  *                                       `erase` are ignored
- *   crm-github.cjs gh [args...]         runs the real gh (CRM_GH, default
- *                                       /usr/bin/gh) with GH_TOKEN
+ *   crm-github.cjs gh-token             prints a read-only token for gh
+ *                                       (used by the wrapper docker/gh)
  *
  * Plain Node.js without dependencies.
  */
 'use strict';
 
-const { spawn, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 
 const apiUrl = process.env.CRM_API_URL;
 const sessionToken = process.env.CRM_SESSION_TOKEN;
@@ -115,32 +115,21 @@ function originRepository() {
   return match ? match[1] : null;
 }
 
-async function gh(args) {
-  const real = process.env.CRM_GH || '/usr/bin/gh';
-  // gh keeps CRM_SESSION_TOKEN: what it runs (git fetch in
-  // `gh pr checkout`) needs the credential helper too.
-  const env = { ...process.env };
+/**
+ * Prints a token for gh on stdout (empty when there is none; the reason
+ * goes to stderr). The wrapper docker/gh passes it as GH_TOKEN and then
+ * becomes gh itself, so signals and exit codes are gh's.
+ */
+async function ghToken() {
   try {
     const repository = originRepository();
     const answer = await requestToken('gh', repository ? { repository } : {});
-    env.GH_TOKEN = answer.token;
+    process.stdout.write(answer.token);
   } catch (error) {
     process.stderr.write(
       `crm gh: no GitHub token (${error.message}); running gh without one\n`,
     );
   }
-  const child = spawn(real, args, { stdio: 'inherit', env });
-  child.on('error', (error) => {
-    process.stderr.write(`crm gh: cannot run ${real}: ${error.message}\n`);
-    process.exit(127);
-  });
-  child.on('exit', (code, signal) => {
-    if (signal) {
-      process.kill(process.pid, signal);
-    } else {
-      process.exit(code ?? 1);
-    }
-  });
 }
 
 const [mode, ...rest] = process.argv.slice(2);
@@ -149,11 +138,9 @@ if (mode === 'git-credential') {
     process.stderr.write(`crm credential helper: ${error.message}\n`);
     process.stdout.write('quit=1\n');
   });
-} else if (mode === 'gh') {
-  gh(rest);
+} else if (mode === 'gh-token') {
+  ghToken();
 } else {
-  process.stderr.write(
-    'usage: crm-github.cjs git-credential get | gh [args...]\n',
-  );
+  process.stderr.write('usage: crm-github.cjs git-credential get | gh-token\n');
   process.exit(2);
 }

@@ -31,8 +31,12 @@ sessions.
 
 - `git` and `gh` get short-lived tokens of the session manager's GitHub App for this
   session's repositories, nothing else; you have no SSH key or token of your own.
-- `git push` to `https://github.com/...` works for this session's repositories (the token can
-  write the whole repository, so push only the session branch unless the user asks for more).
+- `git push` to `https://github.com/...` works for this session's repositories. The token can
+  write the whole repository: push only the session branch unless the user asks for more, and
+  never merge pull requests or push to the default branch with it. Pushing workflow changes
+  works only on the session branch.
 - `gh` can read: pull requests, reviews and comments, issues, checks, Actions runs and logs.
   It cannot comment, approve, merge, resolve review threads or change settings; create pull
-  requests with the tool `create_pull_request`, and tell the user what else needs doing.
+  requests with the tool `create_pull_request`, and tell the user what else needs doing. Use the
+  image's `gh` (a `gh` from a Nix shell gets no token); commands that need a user, such as
+  `gh pr status`, do not work.

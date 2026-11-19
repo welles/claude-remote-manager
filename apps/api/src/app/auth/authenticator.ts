@@ -171,7 +171,8 @@ export class Authenticator {
     const exempt = AUTH_EXEMPT_ROUTES.find(
       (route) =>
         route.method === method.toUpperCase() &&
-        route.path === path.replace(/\/+$/, ''),
+        // Express matches routes case-insensitively.
+        route.path.toLowerCase() === path.replace(/\/+$/, '').toLowerCase(),
     );
     const fromSession = fromSessionProcess(
       this.isolation,

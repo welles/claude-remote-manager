@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Authenticator } from '../auth/authenticator';
 import type { ProcessIsolation } from '../common/process-isolation';
+import { GitService } from '../git/git.service';
 import { git } from '../git/testing/git-fixtures';
 import { GitHubAppCredentials } from '../github/github-app-credentials';
 import { GITHUB_FETCH } from '../github/github-http';
@@ -74,11 +75,10 @@ function fill(
   });
 }
 
-/** Runs the gh wrapper with a fake gh that prints its token and args. */
-function gh(
+/** Runs the helper's `gh-token` mode like the wrapper docker/gh. */
+function ghToken(
   cwd: string,
   env: Record<string, string>,
-  fakeGh: string,
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const [node, script] = githubHelperCommand()
     .slice(1)
@@ -87,8 +87,8 @@ function gh(
   return new Promise((resolve) => {
     execFile(
       node,
-      [script, 'gh', 'pr', 'view'],
-      { cwd, env: baseEnv({ ...env, CRM_GH: fakeGh }) },
+      [script, 'gh-token'],
+      { cwd, env: baseEnv(env) },
       (error, stdout, stderr) =>
         resolve({
           stdout,
@@ -106,7 +106,6 @@ describe('GitHub tokens for session processes', () => {
   let repoLib: FakeRepository;
   let clone: string;
   let env: Record<string, string>;
-  let fakeGh: string;
   let peerUid: number | null;
 
   beforeEach(async () => {
@@ -208,10 +207,6 @@ describe('GitHub tokens for session processes', () => {
     session(OTHER, [
       directory(join(app.dir, 'sessions', 'o', 'alice', 'other'), REPO_OTHER),
     ]);
-    const [node] = githubHelperCommand()
-      .slice(1)
-      .split(' ')
-      .map((part) => part.replace(/^'|'$/g, ''));
     env = {
       CRM_API_URL: `http://127.0.0.1:${app.port}`,
       CRM_SESSION_TOKEN: app.app.get(SessionTokens).issue(SESSION),
@@ -221,12 +216,6 @@ describe('GitHub tokens for session processes', () => {
       GIT_CONFIG_KEY_1: 'credential.https://github.com.useHttpPath',
       GIT_CONFIG_VALUE_1: 'true',
     };
-    fakeGh = join(app.dir, 'fake-gh');
-    await writeFile(
-      fakeGh,
-      `#!${node}\nprocess.stdout.write(JSON.stringify({ token: process.env.GH_TOKEN ?? null, args: process.argv.slice(2) }));\n`,
-    );
-    await chmod(fakeGh, 0o755);
   });
   afterEach(() => app.close());
 
@@ -323,33 +312,53 @@ describe('GitHub tokens for session processes', () => {
     expect(after.values['password']).toBeUndefined();
   });
 
-  it('runs gh with a read-only token for the repositories of the working directory’s installation', async () => {
-    const fromApp = await gh(clone, env, fakeGh);
+  it('gives gh a read-only token for the repositories of the working directory’s installation', async () => {
+    const fromApp = await ghToken(clone, env);
     expect(fromApp.code).toBe(0);
-    const output = JSON.parse(fromApp.stdout) as {
-      token: string;
-      args: string[];
-    };
-    expect(output.args).toEqual(['pr', 'view']);
-    expect(minted(output.token)).toMatchObject({
+    expect(minted(fromApp.stdout)).toMatchObject({
       repositoryIds: [repoApp.id],
       permissions: GH_PERMISSIONS,
     });
 
-    const fromLib = await gh(
+    const fromLib = await ghToken(
       join(app.dir, 'sessions', 's', 'bob', 'lib'),
       env,
-      fakeGh,
     );
-    const lib = JSON.parse(fromLib.stdout) as { token: string };
-    expect(minted(lib.token)?.repositoryIds).toEqual([repoLib.id]);
+    expect(minted(fromLib.stdout)?.repositoryIds).toEqual([repoLib.id]);
   });
 
-  it('runs gh without a token outside a session', async () => {
-    const result = await gh(clone, { ...env, CRM_SESSION_TOKEN: '' }, fakeGh);
+  it('gives gh no token outside a session', async () => {
+    const result = await ghToken(clone, { ...env, CRM_SESSION_TOKEN: '' });
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ token: null });
+    expect(result.stdout).toBe('');
     expect(result.stderr).toContain('no GitHub token');
+  });
+
+  it('revokes also tokens replaced after the reuse window', async () => {
+    const service = app.app.get(SessionGitHubTokensService);
+    let now = Date.now();
+    service.now = () => now;
+    const first = await fill(clone, env);
+    now += 11 * 60_000;
+    const second = await fill(clone, env);
+    expect(second.values['password']).not.toBe(first.values['password']);
+    service.release(SESSION);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(minted(first.values['password'])?.revoked).toBe(true);
+    expect(minted(second.values['password'])?.revoked).toBe(true);
+  });
+
+  it('hands out nothing when the process ends while the request waits', async () => {
+    const service = app.app.get(SessionGitHubTokensService);
+    const git = app.app.get(GitService);
+    const original = git.localBranchCommit.bind(git);
+    jest.spyOn(git, 'localBranchCommit').mockImplementation(async (...args) => {
+      service.release(SESSION);
+      return original(...args);
+    });
+    const result = await fill(clone, env);
+    expect(result.values['password']).toBeUndefined();
+    expect(github.tokens).toHaveLength(0);
   });
 
   it('ships the helper script', () => {

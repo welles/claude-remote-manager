@@ -42,13 +42,16 @@ post_token() { # <user> [token]
 
 # The session user: refused by the management API, let through to the token
 # helper's route (where an unknown process token is refused).
-docker exec -u claude "$name" curl -s http://127.0.0.1:8080/api/sessions \
-  | grep -q session_process_refused \
+# (Output captured first: with pipefail, grep -q could break curl's pipe.)
+answer="$(docker exec -u claude "$name" curl -s http://127.0.0.1:8080/api/sessions)"
+grep -q session_process_refused <<<"$answer" \
   || fail 'the session user reached the management API'
-post_token claude | grep -q 'Unknown or expired session token' \
+answer="$(post_token claude)"
+grep -q 'Unknown or expired session token' <<<"$answer" \
   || fail 'the session user did not reach the token route'
 # Everyone else: refused at the token route.
-post_token crm | grep -q session_process_only \
+answer="$(post_token crm)"
+grep -q session_process_only <<<"$answer" \
   || fail 'the API user reached the token route'
 # The session user cannot read the API's data.
 if docker exec -u claude "$name" ls /data/db >/dev/null 2>&1; then
