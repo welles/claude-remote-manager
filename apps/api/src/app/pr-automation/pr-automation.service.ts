@@ -1314,20 +1314,24 @@ export class PrAutomationService
     if (!turnOver) {
       return;
     }
+    // Free for a run (see `idle`): waits for a message, or only for what
+    // Claude said it goes on with by itself.
+    const free =
+      session.status === 'waiting' &&
+      (session.waitingFor === 'message' ||
+        (session.waitingFor === 'background' &&
+          this.sessions.acceptsAppMessage(session.id)));
     let changed = false;
     for (const pull of session.pullRequests) {
       if (pull.automation.running) {
         this.records.updatePullRequest(pull.id, { autofixRunning: false });
         changed = true;
-        if (
-          pull.automation.automerge.enabled &&
-          session.waitingFor === 'message'
-        ) {
+        if (pull.automation.automerge.enabled && free) {
           // Nothing left to fix may mean ready to merge now.
           this.schedule(pull.id, this.timing.idleRecheckMs);
         }
       }
-      if (this.deferred.has(pull.id) && session.waitingFor === 'message') {
+      if (this.deferred.has(pull.id) && free) {
         this.deferred.delete(pull.id);
         this.schedule(pull.id, this.timing.idleRecheckMs);
       }
@@ -1337,15 +1341,19 @@ export class PrAutomationService
     }
   }
 
-  /** Whether an autofix run may start now: the session waits for a message. */
+  /**
+   * Whether an autofix run may start now: the session waits for a message,
+   * or only because Claude said it goes on by itself (`set_waiting_state`
+   * with `work`, typically "CI and review of PR #12") without background
+   * tasks still running. Claude then waits for what the run brings: holding
+   * the run back until Claude's word runs out would make both wait.
+   */
   private idle(session: SessionRecord): boolean {
     if (session.status !== 'waiting' || session.pendingMessage) {
       return false;
     }
-    const dto = this.sessions.get(session.id);
     return (
-      dto.status === 'waiting' &&
-      dto.waitingFor === 'message' &&
+      this.sessions.acceptsAppMessage(session.id) &&
       session.directories.every(
         (directory) =>
           !isActiveDirectory(directory) || directory.state === 'ready',
