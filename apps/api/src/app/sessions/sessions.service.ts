@@ -36,6 +36,7 @@ import {
   type PullRequestCall,
   type RepositoryAddedBy,
   type SessionDto,
+  type SessionEnvironmentDto,
   type SessionEvent,
   type SessionDirectoryDto,
   type SessionEventInput,
@@ -143,7 +144,11 @@ import {
   type SessionRecord,
 } from './session.repository';
 import { EnvironmentsService } from '../environments/environments.service';
-import { NO_MASKING, type SecretMasker } from '../environments/secret-masker';
+import {
+  NO_MASKING,
+  StreamMasker,
+  type SecretMasker,
+} from '../environments/secret-masker';
 import { EMPTY_USAGE, UsageRepository } from './usage.repository';
 import { sumUsage, UsageTracker } from './usage-tracker';
 
@@ -367,6 +372,8 @@ interface LiveSession {
    * first use and again for each process (see {@link SessionsService.maskFor}).
    */
   mask?: SecretMasker;
+  /** Streamed text held back until it cannot be part of a secret. */
+  stream: StreamMasker;
   /**
    * `add_repository` calls the user approved, by tool use ID: what the
    * user saw and allowed, used once by the tool (calls that did not ask
@@ -559,6 +566,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     @Optional()
     private readonly environments?: EnvironmentsService,
   ) {}
+
+  private environmentOf(record: SessionRecord): SessionEnvironmentDto | null {
+    const summary = this.environments?.summary(record.environmentId);
+    return summary
+      ? { ...summary, setupStatus: record.environmentSetupStatus }
+      : null;
+  }
 
   /**
    * The masker of a session's environment secrets, cached on the live
@@ -1559,6 +1573,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       mapper: new SdkEventMapper(),
       tracker: new UsageTracker(),
       log: new SessionLog(),
+      stream: new StreamMasker(),
       historyLoaded: null,
       subscribers: 0,
       anchor: { uuid: null, userId: null },
@@ -1934,6 +1949,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.reportedMode = null;
     this.clearIdleTimer(live);
     live.log.clearDrafts();
+    live.stream.clear();
     const status = this.requireRecord(live.id).status;
     if (hadBackgroundTasks && status === 'waiting') {
       this.append(live, {
@@ -2506,6 +2522,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     title: string,
     cause: 'user' | 'claude',
   ): void {
+    const live = this.live.get(sessionId);
+    if (cause === 'claude' && live) {
+      title = this.maskFor(live).text(title);
+    }
     const updated = this.sessions.update(sessionId, {
       title,
       titleSource: cause,
@@ -3382,7 +3402,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.reportedMode = null;
     this.approver.cancelSession(live.id, 'process_exit');
     this.withdrawQueue(live, QUEUE_WITHDRAWN.failed);
-    const message = errorMessage(error, run);
+    // Claude Code's stderr may hold the environment's secrets.
+    const message = this.maskFor(live).text(errorMessage(error, run));
     this.logger.error(`Session ${live.id} failed: ${message}`);
     this.append(live, { type: 'error', message });
     this.setStatus(live, 'failed', message);
@@ -3398,7 +3419,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     error?: string,
   ): boolean {
     const record = this.requireRecord(live.id);
-    const lastError = status === 'failed' ? (error ?? record.lastError) : null;
+    const lastError =
+      status === 'failed'
+        ? error !== undefined
+          ? this.maskFor(live).text(error)
+          : record.lastError
+        : null;
     if (record.status === status && record.lastError === lastError) {
       return false;
     }
@@ -3693,7 +3719,25 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): void {
     // Secrets of the environment never reach the log, the database, the
     // clients or the hooks (notifications, search).
-    const input = this.maskFor(live)(unmasked);
+    const mask = this.maskFor(live);
+    let input = mask(unmasked);
+    if (unmasked.type === 'assistant.delta') {
+      // Pieces of streamed text are masked together (see StreamMasker).
+      const text = live.stream.push(
+        `${unmasked.messageId}:${unmasked.blockIndex}`,
+        unmasked.text,
+        mask,
+      );
+      if (!text) {
+        return;
+      }
+      input = { ...unmasked, text };
+    } else if (
+      unmasked.type === 'assistant.text' &&
+      unmasked.blockIndex !== null
+    ) {
+      live.stream.end(`${unmasked.messageId}:${unmasked.blockIndex}`);
+    }
     const event = live.log.append(input);
     this.eventAppended?.(live.id, input);
     if (store && STORED_EVENT_TYPES.has(input.type)) {
@@ -3967,7 +4011,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       autoclosedAt: record.autoclosedAt?.toISOString() ?? null,
       previews: this.previews?.forSession(record.id) ?? [],
       archivedAt: record.archivedAt?.toISOString() ?? null,
-      environment: this.environments?.summary(record.environmentId) ?? null,
+      environment: this.environmentOf(record),
     };
   }
 }

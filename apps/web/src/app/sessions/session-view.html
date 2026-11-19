@@ -330,7 +330,20 @@
       @if (s.environment; as environment) {
       <p class="environment" data-testid="session-environment">
         <span class="muted">Environment</span>
-        <a routerLink="/environments">{{ environment.name }}</a>
+        <a
+          routerLink="/environments"
+          [queryParams]="{ id: environment.id }"
+          data-testid="session-environment-link"
+          >{{ environment.name }}</a
+        >
+        @if (environment.setupStatus && environment.setupStatus !== 'none' &&
+        environment.setupStatus !== 'succeeded') {
+        <span
+          class="tag tag-setup-{{ environment.setupStatus }}"
+          data-testid="session-environment-setup"
+          >setup {{ environment.setupStatus.replace('_', ' ') }}</span
+        >
+        }
       </p>
       }
     </section>

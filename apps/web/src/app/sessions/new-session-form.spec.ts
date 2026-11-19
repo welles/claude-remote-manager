@@ -59,6 +59,7 @@ interface FormInternals {
   images: AttachmentDrafts;
   environmentId(): string;
   chooseEnvironment(id: string): void;
+  touched: boolean;
 }
 
 import type { AttachmentDrafts } from '../attachments/attachment-drafts';
@@ -470,5 +471,72 @@ describe('NewSessionForm', () => {
     const request = http.expectOne({ method: 'POST', url: '/api/sessions' });
     expect(request.request.body.environmentId).toBeUndefined();
     request.flush(sessionDto({ id: 'new', status: 'preparing' }));
+  });
+
+  /** Starts the form and answers the model list; the rest is up to the test. */
+  const start = () => {
+    const fixture = TestBed.createComponent(NewSessionForm);
+    fixture.detectChanges();
+    http.expectOne('/api/models').flush({
+      models: [],
+      source: 'claude-code',
+      updatedAt: null,
+    });
+    const form = fixture.componentInstance as unknown as FormInternals;
+    return { fixture, form };
+  };
+
+  it('does not apply the default environment over choices the user made', async () => {
+    const { fixture, form } = start();
+    http.expectOne('/api/repositories').flush({
+      repositories: [
+        repository('r1', 'acme/app'),
+        repository('r2', 'acme/lib'),
+      ],
+      strayDirectories: [],
+    });
+    form.chooseRepository(0, 'r1');
+    http
+      .expectOne('/api/repositories/r1/branches')
+      .flush({ defaultBranch: 'main', branches: ['main'] });
+    http.expectOne('/api/environments').flush({
+      environments: [
+        environment({
+          isDefault: true,
+          model: 'haiku',
+          repositories: [{ repositoryId: 'r2' }],
+        }),
+      ],
+    });
+    await fixture.whenStable();
+    expect(form.touched).toBe(true);
+    expect(form.environmentId()).toBe('');
+    expect(form.model).toBe('');
+    expect(form.choices()).toEqual([{ repositoryId: 'r1', baseBranch: '' }]);
+  });
+
+  it('drops preset repositories that are no longer registered', async () => {
+    const { fixture, form } = start();
+    http.expectOne('/api/environments').flush({
+      environments: [
+        environment({
+          isDefault: true,
+          repositories: [{ repositoryId: 'gone' }, { repositoryId: 'r1' }],
+        }),
+      ],
+    });
+    http
+      .expectOne('/api/repositories/gone/branches')
+      .flush({ message: 'x' }, { status: 404, statusText: 'x' });
+    http
+      .expectOne('/api/repositories/r1/branches')
+      .flush({ defaultBranch: 'main', branches: ['main'] });
+    expect(form.environmentId()).toBe('e1');
+    http.expectOne('/api/repositories').flush({
+      repositories: [repository('r1', 'acme/app')],
+      strayDirectories: [],
+    });
+    await fixture.whenStable();
+    expect(form.choices()).toEqual([{ repositoryId: 'r1', baseBranch: '' }]);
   });
 });

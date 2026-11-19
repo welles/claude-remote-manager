@@ -82,7 +82,7 @@
             [name]="'variable-value-' + entry.key"
             [ngModel]="entry.value"
             (ngModelChange)="updateEntry('variables', entry.key, { value: $event })"
-            autocomplete="off"
+            [attr.autocomplete]="entry.secret ? 'new-password' : 'off'"
             autocapitalize="off"
             spellcheck="false"
             data-testid="variable-value"

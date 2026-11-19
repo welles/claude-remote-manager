@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { handOverToSession } from '../common/ownership';
 import type { ProcessLauncher } from '../common/process-isolation';
@@ -68,21 +68,16 @@ export class EnvironmentFiles {
   }
 
   private async ensureRoot(): Promise<void> {
-    // The session user only passes through the root to its own directories.
-    await mkdir(this.root, {
-      recursive: true,
-      mode: this.launcher.separated ? 0o711 : 0o700,
-    });
+    await mkdir(this.root, { recursive: true, mode: 0o700 });
     const stats = await lstat(this.root);
     const uid = process.getuid?.();
-    if (
-      !stats.isDirectory() ||
-      (uid !== undefined && stats.uid !== uid) ||
-      (stats.mode & 0o022) !== 0
-    ) {
+    if (!stats.isDirectory() || (uid !== undefined && stats.uid !== uid)) {
       throw new Error(
-        `${this.root} is not a private directory of the app; environment files are not written`,
+        `${this.root} is not a directory of the app; environment files are not written`,
       );
     }
+    // Explicitly, whatever the umask: the session user only passes
+    // through the root to its own directories.
+    await chmod(this.root, this.launcher.separated ? 0o711 : 0o700);
   }
 }

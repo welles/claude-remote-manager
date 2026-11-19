@@ -8,7 +8,7 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import type { EnvironmentDto } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { AppDialog } from '../ui/dialog';
@@ -42,6 +42,9 @@ import { EnvironmentsApi } from './environments-api';
 export class EnvironmentsPage implements OnInit {
   private readonly api = inject(EnvironmentsApi);
   private readonly toasts = inject(Toasts);
+  private readonly route = inject(ActivatedRoute);
+  /** `?id=`: the environment to open once the list is loaded. */
+  private requested: string | null = null;
   private readonly deleteDialog = viewChild.required(AppDialog);
 
   protected readonly environments = signal<EnvironmentDto[]>([]);
@@ -60,6 +63,7 @@ export class EnvironmentsPage implements OnInit {
   protected readonly deleteError = signal<string | null>(null);
 
   ngOnInit(): void {
+    this.requested = this.route.snapshot.queryParamMap.get('id');
     this.load();
   }
 
@@ -70,6 +74,11 @@ export class EnvironmentsPage implements OnInit {
       next: ({ environments }) => {
         this.environments.set(environments);
         this.loading.set(false);
+        const requested = this.requested;
+        this.requested = null;
+        if (requested && environments.some((entry) => entry.id === requested)) {
+          this.edit(requested);
+        }
       },
       error: (error: unknown) => {
         this.loading.set(false);
