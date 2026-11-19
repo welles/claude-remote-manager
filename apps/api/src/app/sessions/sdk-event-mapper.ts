@@ -143,7 +143,13 @@ export function userContentEvents(
   if (includeText && parentToolUseId === null) {
     // Interruptions are shown through the stored turn result instead.
     const typed = texts
-      .map((text) => typedSlashCommand(text) ?? text)
+      // Only Claude Code's own entries (starting with a tag), never text
+      // the user typed that happens to contain such a tag.
+      .map((text) =>
+        GENERATED_USER_TEXT.test(text)
+          ? (typedSlashCommand(text) ?? text)
+          : text,
+      )
       .filter((text) => !GENERATED_USER_TEXT.test(text) && text.trim());
     for (const text of typed) {
       events.push({ type: 'user.message', id, text });

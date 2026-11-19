@@ -482,7 +482,7 @@ describe('transcriptEntries', () => {
 });
 
 describe('userContentEvents', () => {
-  it('shows slash commands as typed, from the transcript\'s tags', () => {
+  it("shows slash commands as typed, from the transcript's tags", () => {
     expect(
       userContentEvents(
         'u1',
@@ -494,14 +494,39 @@ describe('userContentEvents', () => {
     expect(
       userContentEvents(
         'u2',
-        [{ type: 'text', text: '<command-name>/usage</command-name>\n<command-args></command-args>' }],
+        [
+          {
+            type: 'text',
+            text: '<command-name>/usage</command-name>\n<command-args></command-args>',
+          },
+        ],
         null,
         true,
       ),
     ).toEqual([{ type: 'user.message', id: 'u2', text: '/usage' }]);
+    // Typed text that only contains such a tag stays as typed.
+    expect(
+      userContentEvents(
+        'u4',
+        'Why is <command-name>/foo</command-name> not shown?',
+        null,
+        true,
+      ),
+    ).toEqual([
+      {
+        type: 'user.message',
+        id: 'u4',
+        text: 'Why is <command-name>/foo</command-name> not shown?',
+      },
+    ]);
     // Other generated text stays out.
     expect(
-      userContentEvents('u3', '<local-command-stdout>x</local-command-stdout>', null, true),
+      userContentEvents(
+        'u3',
+        '<local-command-stdout>x</local-command-stdout>',
+        null,
+        true,
+      ),
     ).toEqual([]);
   });
 });
