@@ -4,7 +4,7 @@ import {
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import type { EnvironmentDto } from '@claude-remote-manager/shared-types';
 import { EnvironmentsPage } from './environments-page';
 
@@ -196,6 +196,22 @@ describe('EnvironmentsPage', () => {
     http
       .expectOne('/api/environments')
       .flush({ environments: [environment()] });
+  });
+
+  it('opens the environment named in the address', async () => {
+    await TestBed.inject(Router).navigateByUrl('/?id=e1');
+    const { fixture, element } = await render([
+      environment({
+        variables: [
+          { id: 'v1', name: 'KEY', secret: true, value: null, length: 12 },
+        ],
+      }),
+    ]);
+    flushEditor();
+    await settle(fixture);
+    expect(
+      element.querySelector('[data-testid="variable-stored"]'),
+    ).not.toBeNull();
   });
 
   it('shows why an environment cannot be deleted', async () => {

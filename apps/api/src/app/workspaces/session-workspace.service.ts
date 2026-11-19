@@ -19,8 +19,14 @@ import type {
   SetupResultEvent,
   SetupStatus,
 } from '@claude-remote-manager/shared-types';
-import { EnvironmentFiles } from '../environments/environment-files';
-import { EnvironmentsService } from '../environments/environments.service';
+import {
+  EnvironmentFiles,
+  type WrittenFiles,
+} from '../environments/environment-files';
+import {
+  EnvironmentsService,
+  type LaunchEnvironment,
+} from '../environments/environments.service';
 import {
   isUuid,
   optionalString,
@@ -970,36 +976,79 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
     const clones = session.directories.filter(
       (entry) => isClone(entry) && select(entry),
     );
-    const environment = this.environments?.forLaunch(session.environmentId);
+    const environmentSelected = selectEnvironment(
+      session.environmentSetupStatus,
+    );
+    const cloneScripts = clones.some(
+      (directory) =>
+        !!this.repositories.require(directory.repositoryId as string)
+          .setupScript,
+    );
+    // The environment's variables and files, for every script. A problem
+    // with them (e.g. the key changed) fails the environment's setup, not
+    // the repositories' scripts, which run without them.
+    let environment: LaunchEnvironment | null = null;
+    let written: WrittenFiles | null = null;
+    let problem: string | null = null;
+    if (
+      session.environmentId &&
+      this.environments &&
+      (environmentSelected || cloneScripts)
+    ) {
+      try {
+        environment = this.environments.forLaunch(session.environmentId);
+        if (
+          environment &&
+          this.environmentFiles &&
+          (cloneScripts || (environmentSelected && environment.setupScript))
+        ) {
+          written = await this.environmentFiles.write(
+            sessionId,
+            environment.files,
+          );
+        }
+      } catch (error) {
+        problem = errorText(error);
+      }
+    }
+    const environmentName = `environment ${
+      environment?.name ??
+      this.environments?.summary(session.environmentId)?.name ??
+      ''
+    }`.trim();
     const environmentScript =
-      selectEnvironment(session.environmentSetupStatus) &&
-      environment?.setupScript
+      environmentSelected && environment?.setupScript
         ? environment.setupScript
         : null;
     if (
-      selectEnvironment(session.environmentSetupStatus) &&
+      environmentSelected &&
       !environmentScript &&
+      !problem &&
       session.environmentSetupStatus !== 'none'
     ) {
       // The script was removed from the environment meanwhile.
       this.sessions.update(sessionId, { environmentSetupStatus: 'none' });
     }
-    const needsScripts =
-      environmentScript !== null ||
-      clones.some(
-        (directory) =>
-          !!this.repositories.require(directory.repositoryId as string)
-            .setupScript,
-      );
-    // The environment's variables and files, for every script.
-    const written =
-      environment && needsScripts && this.environmentFiles
-        ? await this.environmentFiles.write(sessionId, environment.files)
-        : null;
-    const environmentEnv = {
-      ...(environment?.variables ?? {}),
-      ...(written?.env ?? {}),
-    };
+    if (problem && environmentSelected) {
+      this.sessions.update(sessionId, { environmentSetupStatus: 'failed' });
+      failed.push(environmentName);
+    }
+    if (problem) {
+      emit({
+        type: 'setup.result',
+        repository: environmentName,
+        path: workingDirectoryOf(session),
+        state: 'failed',
+        exitCode: null,
+        signal: null,
+        durationMs: null,
+        message: `The variables and files of the environment could not be prepared: ${problem}`,
+        outputTail: null,
+      });
+    }
+    const environmentEnv = problem
+      ? {}
+      : { ...(environment?.variables ?? {}), ...(written?.env ?? {}) };
     try {
       for (const directory of clones) {
         const repository = this.repositories.require(
@@ -1028,8 +1077,8 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
           failed.push(name);
         }
       }
-      if (environmentScript && environment) {
-        const name = `environment ${environment.name}`;
+      if (environmentScript && environment && !problem) {
+        const name = environmentName;
         const cwd = workingDirectoryOf(session);
         const outcome = await this.runScript({
           name,

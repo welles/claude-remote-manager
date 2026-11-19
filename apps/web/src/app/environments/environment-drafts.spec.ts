@@ -74,6 +74,34 @@ describe('environment drafts', () => {
     });
   });
 
+  it('asks for the value again when a stored secret is turned plain', () => {
+    const draft = draftOf(saved);
+    // What the editor's switch does for a stored secret.
+    draft.variables[0] = {
+      ...draft.variables[0],
+      secret: false,
+      replacing: true,
+      value: '',
+    };
+    draft.files[0] = {
+      ...draft.files[0],
+      secret: false,
+      replacing: true,
+      value: '',
+    };
+    const problems = draftProblems(draft);
+    expect(problems.get(`variable-${draft.variables[0].key}`)).toBe(
+      'Enter the value again',
+    );
+    expect(problems.get(`file-${draft.files[0].key}`)).toBe(
+      'Enter the content again',
+    );
+    draft.variables[0].value = 'now plain';
+    expect(draftProblems(draft).has(`variable-${draft.variables[0].key}`)).toBe(
+      false,
+    );
+  });
+
   it('checks names, duplicates, file names and the environment name', () => {
     const draft = emptyDraft();
     const reserved = { ...newEntry(), name: 'PATH', value: 'x' };

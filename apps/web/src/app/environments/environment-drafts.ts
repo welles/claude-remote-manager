@@ -179,6 +179,12 @@ export function draftProblems(draft: EnvironmentDraft): Map<string, string> {
       if (entry.secret && entry.value === '') {
         return field === 'file' ? 'Enter the content' : 'Enter a value';
       }
+      if (entry.stored && !entry.secret && entry.value === '') {
+        // A secret turned plain: its stored value is never revealed.
+        return field === 'file'
+          ? 'Enter the content again'
+          : 'Enter the value again';
+      }
       if (entry.value.length > maxLength) {
         return `At most ${maxLength} characters`;
       }

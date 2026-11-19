@@ -1,6 +1,7 @@
 import type {
   SessionPermissionMode,
   SessionRepositoryRequest,
+  SetupStatus,
 } from './session';
 
 /**
@@ -23,6 +24,12 @@ export const RESERVED_ENVIRONMENT_VARIABLES: readonly string[] = [
   'USER',
   'LOGNAME',
   'SHELL',
+  // Would change how Claude Code (Node.js) or every shell starts.
+  'NODE_OPTIONS',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'BASH_ENV',
+  'ENV',
 ];
 
 /** Prefixes of names an environment may not set. */
@@ -171,4 +178,9 @@ export interface SaveEnvironmentRequest {
 export interface SessionEnvironmentDto {
   id: string;
   name: string;
+  /**
+   * The environment's setup script for this session. Absent from older
+   * servers.
+   */
+  setupStatus?: SetupStatus;
 }

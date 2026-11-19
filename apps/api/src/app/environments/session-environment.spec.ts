@@ -52,7 +52,11 @@ describe('sessions with an environment', () => {
       repositories: [{ repositoryId: repository.id }],
       environmentId: env.id,
     });
-    expect(session.environment).toEqual({ id: env.id, name: 'Payments' });
+    expect(session.environment).toEqual({
+      id: env.id,
+      name: 'Payments',
+      setupStatus: 'pending',
+    });
     await harness.prepared(session.id);
 
     // Both scripts ran with the environment; their output is masked.
@@ -95,6 +99,52 @@ describe('sessions with an environment', () => {
     expect(texts).toContain('The token is ***.');
     expect(texts).not.toContain(SECRET);
 
+    // Streamed text is masked although the secret comes in pieces.
+    const delta = (text: string) => ({
+      type: 'stream_event',
+      event: {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text },
+      },
+      parent_tool_use_id: null,
+      uuid: 'u',
+      session_id: 's',
+    });
+    harness.runner.last.emit(
+      {
+        type: 'stream_event',
+        event: { type: 'message_start', message: { id: 'm2' } },
+        parent_tool_use_id: null,
+        uuid: 'u',
+        session_id: 's',
+      } as never,
+      {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'text', text: '' },
+        },
+        parent_tool_use_id: null,
+        uuid: 'u',
+        session_id: 's',
+      } as never,
+      delta('Key: sk_live_') as never,
+      delta('abcdef123 done, more words follow') as never,
+    );
+    await flush();
+    const deltas = harness.events
+      .filter((envelope) => envelope.sessionId === session.id)
+      .map((envelope) => envelope.event)
+      .filter((event) => event.type === 'assistant.delta');
+    expect(deltas.length).toBeGreaterThan(0);
+    const streamed = deltas
+      .map((event) => (event as { text: string }).text)
+      .join('');
+    expect(streamed).toContain('Key: ***');
+    expect(streamed).not.toContain('sk_live_');
+
     // The files go with the process.
     await harness.service.end(session.id);
     await waitFor(() => !existsSync(file));
@@ -134,6 +184,49 @@ describe('sessions with an environment', () => {
       'succeeded',
     );
     expect(harness.runner.runs).toHaveLength(1);
+  });
+
+  it('masks secrets in the error of a failed process', async () => {
+    const env = environment(null);
+    const session = await harness.service.create({
+      prompt: 'Work',
+      scratch: true,
+      environmentId: env.id,
+    });
+    await harness.prepared(session.id);
+    harness.runner.last.crash(new Error(`crashed with ${SECRET}`));
+    await waitFor(
+      () => harness.sessions.require(session.id).status === 'failed',
+    );
+    const lastError = harness.sessions.require(session.id).lastError ?? '';
+    expect(lastError).toContain('crashed with ***');
+    expect(lastError).not.toContain(SECRET);
+  });
+
+  it("runs the repositories' scripts when the environment cannot be prepared", async () => {
+    const repository = await harness.addRepository(
+      'alice',
+      'app',
+      'echo "repo [$API_TOKEN]"',
+    );
+    const env = environment('true');
+    // As if the key had changed: the secrets cannot be decrypted.
+    jest.spyOn(harness.environments, 'forLaunch').mockImplementation(() => {
+      throw new Error('could not be decrypted');
+    });
+    const session = await harness.service.create({
+      prompt: 'Work',
+      repositories: [{ repositoryId: repository.id }],
+      environmentId: env.id,
+    });
+    await harness.prepared(session.id);
+    expect(outputs(session.id)).toContain('repo []');
+    const record = harness.sessions.require(session.id);
+    expect(record.directories[0].setupStatus).toBe('succeeded');
+    expect(record.environmentSetupStatus).toBe('failed');
+    expect(harness.service.get(session.id).environment?.setupStatus).toBe(
+      'failed',
+    );
   });
 
   it('rejects an unknown environment', async () => {

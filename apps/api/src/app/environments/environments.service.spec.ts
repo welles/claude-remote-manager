@@ -165,6 +165,23 @@ describe('EnvironmentsService', () => {
     expect(() => service.create({ name: 'X' })).toThrow(ConflictException);
   });
 
+  it('rejects an entry ID given twice', () => {
+    const created = service.create({
+      name: 'A',
+      variables: [{ name: 'TOKEN', secret: true, value: 'secret-value' }],
+    });
+    const id = created.variables[0].id;
+    expect(() =>
+      service.update(created.id, {
+        name: 'A',
+        variables: [
+          { id, name: 'ONE', secret: true },
+          { id, name: 'TWO', secret: true },
+        ],
+      }),
+    ).toThrow(BadRequestException);
+  });
+
   it('has at most one default', () => {
     const a = service.create({ name: 'A', isDefault: true });
     const b = service.create({ name: 'B', isDefault: true });

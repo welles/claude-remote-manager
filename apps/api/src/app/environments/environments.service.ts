@@ -283,6 +283,17 @@ export class EnvironmentsService {
         `An environment can have at most ${MAX_ENVIRONMENT_ENTRIES} variables and files`,
       );
     }
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      if (entry.id !== undefined) {
+        if (ids.has(entry.id)) {
+          throw new BadRequestException(
+            `The entry ${entry.id} is given more than once`,
+          );
+        }
+        ids.add(entry.id);
+      }
+    }
     const names = new Set<string>();
     const fileNames = new Set<string>();
     for (const entry of entries) {

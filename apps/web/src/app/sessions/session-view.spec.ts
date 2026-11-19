@@ -1030,6 +1030,28 @@ describe('SessionView', () => {
     history(socket, sessionDto({ environment: { id: 'e1', name: 'Staging' } }));
     await harness.fixture.whenStable();
     expect(text('session-environment')).toContain('Staging');
+    expect(
+      harness.fixture.nativeElement
+        .querySelector('[data-testid="session-environment-link"]')
+        ?.getAttribute('href'),
+    ).toBe('/environments?id=e1');
+    expect(
+      harness.fixture.nativeElement.querySelector(
+        '[data-testid="session-environment-setup"]',
+      ),
+    ).toBeNull();
+  });
+
+  it('shows a failed setup script of the environment', async () => {
+    const { harness, socket, text } = await open();
+    history(
+      socket,
+      sessionDto({
+        environment: { id: 'e1', name: 'Staging', setupStatus: 'timed_out' },
+      }),
+    );
+    await harness.fixture.whenStable();
+    expect(text('session-environment-setup')).toContain('setup timed out');
   });
 
   it('confirms unarchiving with a toast', async () => {

@@ -149,6 +149,11 @@ export class NewSessionForm implements OnInit {
   protected readonly environments = signal<EnvironmentDto[]>([]);
   /** Chosen environment; `''` for none. */
   protected readonly environmentId = signal('');
+  /**
+   * The user changed the workspace, model, mode or environment: the default
+   * environment's presets no longer apply over it.
+   */
+  protected touched = false;
   protected readonly mode = signal<SessionMode>('repository');
   protected readonly choices = signal<RepositoryChoice[]>([emptyChoice()]);
   protected readonly creating = signal(false);
@@ -221,6 +226,7 @@ export class NewSessionForm implements OnInit {
       next: ({ repositories }) => {
         this.repositories.set(repositories);
         this.repositoriesLoaded.set(true);
+        this.dropUnknownRepositories();
         if (repositories.length === 0) {
           this.setMode('project');
         }
@@ -231,12 +237,45 @@ export class NewSessionForm implements OnInit {
       next: ({ environments }) => {
         this.environments.set(environments);
         const preset = environments.find((entry) => entry.isDefault);
-        // Not over a choice the user made while the list loaded.
-        if (preset && !this.environmentId()) {
+        // Not over choices the user made while the list loaded.
+        if (preset && !this.touched && !this.environmentId()) {
           this.chooseEnvironment(preset.id);
         }
       },
       error: () => undefined,
+    });
+  }
+
+  /** The user picked an environment (see {@link chooseEnvironment}). */
+  protected pickEnvironment(id: string): void {
+    this.touched = true;
+    this.chooseEnvironment(id);
+  }
+
+  /** The user picked a mode (see {@link setMode}). */
+  protected pickMode(mode: SessionMode): void {
+    this.touched = true;
+    this.setMode(mode);
+  }
+
+  /**
+   * Removes chosen repositories that are not registered (e.g. presets of
+   * an environment whose repository was removed), once the list is known.
+   */
+  private dropUnknownRepositories(): void {
+    const known = new Set(
+      this.repositories().map((repository) => repository.id),
+    );
+    this.choices.update((choices) => {
+      const kept = choices.filter(
+        (choice) => !choice.repositoryId || known.has(choice.repositoryId),
+      );
+      if (kept.length === choices.length) {
+        return choices;
+      }
+      return kept.length === 0 && this.mode() === 'repository'
+        ? [emptyChoice()]
+        : kept;
     });
   }
 
@@ -291,14 +330,17 @@ export class NewSessionForm implements OnInit {
   }
 
   protected addRepository(): void {
+    this.touched = true;
     this.choices.update((choices) => [...choices, emptyChoice()]);
   }
 
   protected removeRepository(index: number): void {
+    this.touched = true;
     this.choices.update((choices) => choices.filter((_, i) => i !== index));
   }
 
   protected chooseRepository(index: number, repositoryId: string): void {
+    this.touched = true;
     this.updateChoice(index, { repositoryId, baseBranch: '' });
     this.loadBranches(repositoryId);
   }
@@ -320,6 +362,7 @@ export class NewSessionForm implements OnInit {
    * empty slot or is added as a further repository.
    */
   protected addFromGitHub(repository: RepositoryDto): void {
+    this.touched = true;
     this.repositories.update((list) =>
       list.some((entry) => entry.id === repository.id)
         ? list
@@ -339,6 +382,7 @@ export class NewSessionForm implements OnInit {
   }
 
   protected chooseBaseBranch(index: number, baseBranch: string): void {
+    this.touched = true;
     this.updateChoice(index, { baseBranch });
   }
 

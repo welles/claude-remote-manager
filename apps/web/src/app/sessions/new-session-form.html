@@ -69,7 +69,7 @@
         class="app-chip"
         [class.on]="mode() === 'repository'"
         [attr.aria-pressed]="mode() === 'repository'"
-        (click)="setMode('repository')"
+        (click)="pickMode('repository')"
         data-testid="mode-repository"
       >
         Repository
@@ -79,7 +79,7 @@
         class="app-chip"
         [class.on]="mode() === 'project'"
         [attr.aria-pressed]="mode() === 'project'"
-        (click)="setMode('project')"
+        (click)="pickMode('project')"
         data-testid="mode-project"
       >
         New project
@@ -89,7 +89,7 @@
         class="app-chip"
         [class.on]="mode() === 'scratch'"
         [attr.aria-pressed]="mode() === 'scratch'"
-        (click)="setMode('scratch')"
+        (click)="pickMode('scratch')"
         data-testid="mode-scratch"
       >
         No repository
@@ -216,7 +216,7 @@
       <mat-label>Environment</mat-label>
       <mat-select
         [value]="environmentId()"
-        (selectionChange)="chooseEnvironment($event.value)"
+        (selectionChange)="pickEnvironment($event.value)"
         data-testid="environment-select"
       >
         <mat-option value="">None</mat-option>
@@ -232,7 +232,12 @@
       subscriptSizing="dynamic"
     >
       <mat-label>Model</mat-label>
-      <mat-select name="model" [(ngModel)]="model" data-testid="model">
+      <mat-select
+        name="model"
+        [(ngModel)]="model"
+        (ngModelChange)="touched = true"
+        data-testid="model"
+      >
         @for (option of modelOptions(); track option.value) {
         <mat-option [value]="option.value" [title]="option.description"
           >{{ option.label }}</mat-option
@@ -245,6 +250,7 @@
       <mat-select
         name="permissionMode"
         [(ngModel)]="permissionMode"
+        (ngModelChange)="touched = true"
         data-testid="permission-mode"
       >
         @for (option of modeOptions; track option.value) {

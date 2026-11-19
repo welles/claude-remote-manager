@@ -182,7 +182,23 @@
 
 .environment {
   display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
   gap: 8px;
   margin: 4px 0 0;
   overflow-wrap: anywhere;
+
+  .tag {
+    padding: 0 6px;
+    border-radius: var(--mat-sys-corner-extra-small);
+    background: var(--mat-sys-surface-container-highest);
+    color: var(--mat-sys-on-surface-variant);
+    font: var(--mat-sys-label-small);
+  }
+
+  .tag-setup-failed,
+  .tag-setup-timed_out {
+    background: var(--mat-sys-error-container);
+    color: var(--mat-sys-on-error-container);
+  }
 }
