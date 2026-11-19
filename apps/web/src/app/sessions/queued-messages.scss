@@ -47,7 +47,15 @@
   }
 }
 
+.hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .count {
+  flex: none;
   color: var(--mat-sys-primary);
   font-weight: 600;
 }

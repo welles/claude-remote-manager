@@ -938,6 +938,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     this.requireRecord(sessionId);
     const live = this.live.get(sessionId);
+    if (live?.starting) {
+      await live.starting;
+    }
     const index = messageId
       ? (live?.queue.findIndex((queued) => queued.id === messageId) ?? -1)
       : (live?.queue.length ?? 0) - 1;
@@ -947,6 +950,20 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           ? 'The message is not queued: it was sent to Claude already or withdrawn'
           : 'No message is queued',
       );
+    }
+    const run = live.run;
+    if (this.requireRecord(sessionId).status !== 'running') {
+      if (live.closing || live.reopen) {
+        throw new ConflictException(
+          'Claude Code is being restarted: the queued messages are sent after its next turn',
+        );
+      }
+      // No turn to stop: they go to Claude now.
+      const only = messageId ? new Set([messageId]) : null;
+      if (this.flushQueue(live, run, only) > 0) {
+        this.setStatus(live, 'running');
+      }
+      return;
     }
     if (messageId) {
       const [message] = live.queue.splice(index, 1);
@@ -963,7 +980,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     live.interruptRequested = 'send';
     this.approver.cancelSession(sessionId, 'interrupted');
-    await live.run.interrupt();
+    await run.interrupt();
   }
 
   /** Pending approval requests of a session, oldest first. */
@@ -2001,17 +2018,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.releaseAutoHold(live);
     }
     if (live.reopen && (result.queued_turn_count ?? 0) === 0) {
-      // An added repository needs a new process: it continues there.
+      // An added repository needs a new process: it continues there, with
+      // the first queued message (one sent right away is at the front;
+      // with all sent right away, the others wait for that turn's end).
       this.setStatus(live, 'waiting');
       this.reopenAfterTurn(live);
       return;
     }
     const run = live.run;
     // Queued messages go to Claude now (Claude Code may take them as one
-    // turn); after the user stopped the turn they were withdrawn already.
-    // Sent right away: only those, the others wait for this turn's end.
-    const flushed =
-      run && stop !== 'user' ? this.flushQueue(live, run, sendNow) : 0;
+    // turn). Stop withdrew the queue: what is queued now was sent after
+    // it. Sent right away: only those, the others wait for this turn's end.
+    const flushed = run ? this.flushQueue(live, run, sendNow) : 0;
     const queued = flushed > 0 || (result.queued_turn_count ?? 0) > 0;
     if (!this.setStatus(live, queued ? 'running' : 'waiting')) {
       // Usage changed even if the status did not.
@@ -2267,13 +2285,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const tasks = [...live.heldTasks];
     live.heldTasks.clear();
     for (const taskId of tasks) {
-      void run
-        ?.stopTask(taskId)
-        .catch((error: unknown) =>
-          this.logger.warn(
-            `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
-          ),
-        );
+      void run?.stopTask(taskId).catch((error: unknown) =>
+        this.logger.warn(
+          `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
+        ),
+      );
     }
     const mode = this.requireRecord(live.id).permissionMode;
     if (run && heldForUntrusted(mode)) {

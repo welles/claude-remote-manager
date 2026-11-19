@@ -316,12 +316,7 @@ describe('SessionsService', () => {
     it("offers the user's commands first, then what the session reported", async () => {
       runner.probeCommands = () => [
         { name: 'review', description: 'Review', argumentHint: '' },
-        {
-          name: 'doctor',
-          description: 'Doctor',
-          argumentHint: '',
-          builtin: true,
-        },
+        { name: 'doctor', description: 'Doctor', argumentHint: '', builtin: true },
       ];
       const session = await startSession();
       await expect(slashCommands.forSession(session.id)).resolves.toEqual({
@@ -340,13 +335,7 @@ describe('SessionsService', () => {
       runner.last.commands = [
         { name: 'deploy', description: 'Project skill', argumentHint: '<env>' },
         { name: 'statusline', description: 'Terminal', argumentHint: '' },
-        {
-          name: 'compact',
-          description: 'Compact',
-          argumentHint: '',
-          builtin: true,
-          aliases: ['c'],
-        },
+        { name: 'compact', description: 'Compact', argumentHint: '', builtin: true, aliases: ['c'] },
       ];
       runner.last.emit({
         type: 'system',
@@ -361,10 +350,7 @@ describe('SessionsService', () => {
         'deploy',
         'compact',
       ]);
-      expect(reported.commands[1]).toMatchObject({
-        builtin: true,
-        aliases: ['c'],
-      });
+      expect(reported.commands[1]).toMatchObject({ builtin: true, aliases: ['c'] });
 
       // A change replaces the list.
       runner.last.emit({
@@ -374,9 +360,7 @@ describe('SessionsService', () => {
       } as never);
       await flush();
       expect(
-        (await slashCommands.forSession(session.id)).commands.map(
-          (c) => c.name,
-        ),
+        (await slashCommands.forSession(session.id)).commands.map((c) => c.name),
       ).toEqual(['fresh']);
     });
   });
@@ -2125,6 +2109,19 @@ describe('SessionsService', () => {
       await flush();
       expect(runner.last.sent).toHaveLength(1);
       expect(service.get(session.id).status).toBe('waiting');
+    });
+
+    it('sends a message queued after Stop when the stopped turn ends', async () => {
+      const session = await startSession();
+      await service.interrupt(session.id);
+      await service.send(session.id, { id: MSG_2, text: 'Instead' });
+      expect(lastEvent('message.queued')).toMatchObject({ id: MSG_2 });
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(runner.last.sent.slice(1)).toEqual([
+        { id: MSG_2, text: 'Instead' },
+      ]);
+      expect(service.get(session.id).status).toBe('running');
     });
 
     it('stops the turn and sends all queued messages right away', async () => {

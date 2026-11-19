@@ -1,4 +1,4 @@
-import { Component, input, output, signal } from '@angular/core';
+import { Component, computed, input, output, signal } from '@angular/core';
 import { AppIcon } from '../ui/icon';
 import type { ConversationItem } from './conversation';
 
@@ -6,7 +6,8 @@ import type { ConversationItem } from './conversation';
  * Messages waiting for the running turn to end, collapsed to one line
  * ("2 queued · sent when the turn ends") that expands to the list, where
  * each can be removed. "Send now" (all, or one in the list) stops the turn
- * and sends them right away.
+ * and sends them right away; until the stopped turn ends, they show as
+ * being sent.
  */
 @Component({
   selector: 'app-queued-messages',
@@ -22,14 +23,16 @@ import type { ConversationItem } from './conversation';
         data-testid="queued-toggle"
       >
         <span class="count">{{ messages().length }} queued</span>
-        <span class="hint">· sent when the turn ends</span>
+        <span class="hint" data-testid="queued-hint">{{
+          sending() ? '· sending now…' : '· sent when the turn ends'
+        }}</span>
         <app-icon [name]="expanded() ? 'chevron-down' : 'chevron-right'" />
       </button>
       <button
         type="button"
         class="send-all"
-        (click)="sendNow.emit(null)"
-        [disabled]="!enabled()"
+        (click)="send(null)"
+        [disabled]="!enabled() || sendingAll()"
         title="Stop the turn and send the queued messages now"
         data-testid="send-queued"
       >
@@ -54,14 +57,13 @@ import type { ConversationItem } from './conversation';
           <button
             type="button"
             class="app-icon-btn"
-            (click)="sendNow.emit(item.id)"
-            [disabled]="!enabled()"
+            (click)="send(item.id)"
+            [disabled]="!enabled() || isRequested(item.id)"
             title="Stop the turn and send this message now"
+            [attr.aria-label]="'Send now: ' + item.text"
             data-testid="send-queued-message"
           >
-            <app-icon name="send" /><span class="visually-hidden"
-              >Send now</span
-            >
+            <app-icon name="send" />
           </button>
           <button
             type="button"
@@ -69,9 +71,10 @@ import type { ConversationItem } from './conversation';
             (click)="remove.emit(item.id)"
             [disabled]="!enabled()"
             title="Remove from the queue"
+            [attr.aria-label]="'Remove: ' + item.text"
             data-testid="unqueue"
           >
-            <app-icon name="close" /><span class="visually-hidden">Remove</span>
+            <app-icon name="close" />
           </button>
         </li>
       }
@@ -88,4 +91,24 @@ export class QueuedMessages {
   /** ID of the message to send right away, `null` for all of them. */
   readonly sendNow = output<string | null>();
   protected readonly expanded = signal(false);
+  /** IDs of the messages the user sent right away. */
+  protected readonly requested = signal<ReadonlySet<string>>(new Set());
+  /** Some queued message is being sent right away. */
+  protected readonly sending = computed(() =>
+    this.messages().some((item) => this.requested().has(item.id)),
+  );
+  /** Every queued message is being sent right away. */
+  protected readonly sendingAll = computed(() =>
+    this.messages().every((item) => this.requested().has(item.id)),
+  );
+
+  protected isRequested(id: string): boolean {
+    return this.requested().has(id);
+  }
+
+  protected send(id: string | null): void {
+    const ids = id === null ? this.messages().map((item) => item.id) : [id];
+    this.requested.set(new Set([...this.requested(), ...ids]));
+    this.sendNow.emit(id);
+  }
 }
