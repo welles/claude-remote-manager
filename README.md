@@ -1685,6 +1685,12 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   files the app may not merge), the head commit and GitHub's reason are stored, the history says so, the owner is
   notified once, and the session's ready message says it was refused. A new head commit, or
   turning automerge off and on, tries again.
+- **Known limit (decided)**: the approval and the resolved threads are the gate, and the
+  owner's own approval counts. Sessions run as the owner's user, with the owner's GitHub
+  credentials (`gh`) where the machine has them, so in a turn outside an Autofix run (e.g. in
+  `auto` mode) Claude could approve as the owner or resolve threads itself. That Claude must
+  not do so is only an instruction in the app's messages, not enforced. Where that matters,
+  keep the session user without GitHub credentials or leave automerge off.
 
 ### git during autofix
 
