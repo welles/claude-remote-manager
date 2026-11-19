@@ -151,6 +151,10 @@ export interface SessionRecord {
   autoclosedAt: Date | null;
   /** When the session was archived; `null` while it is not. */
   archivedAt: Date | null;
+  /** Environment chosen at creation; `null` without or after deletion. */
+  environmentId: string | null;
+  /** The environment's setup script for this session. */
+  environmentSetupStatus: SetupStatus;
 }
 
 export type NewSessionDirectory = Pick<
@@ -174,6 +178,8 @@ export interface NewSession {
   slug: string | null;
   pendingMessage: { id: string; text: string } | null;
   directories: NewSessionDirectory[];
+  environmentId?: string | null;
+  environmentSetupStatus?: SetupStatus;
 }
 
 export type SessionPatch = Partial<
@@ -189,6 +195,7 @@ export type SessionPatch = Partial<
     | 'permissionMode'
     | 'autoclosedAt'
     | 'archivedAt'
+    | 'environmentSetupStatus'
   >
 >;
 

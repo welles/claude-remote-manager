@@ -1,4 +1,4 @@
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { normalizeTeamDomain } from '../auth/access-jwt';
 import { AUTH_MODES, type AuthConfig } from '../auth/authenticator';
 import {
@@ -69,6 +69,18 @@ export interface AppConfig {
    * shared by all sessions of a repository.
    */
   memoryDir: string;
+  /**
+   * Key of the environments' secrets (`ENVIRONMENT_KEY_FILE`, else
+   * `<dbDir>/environment.key`, created on first use), unless the secret
+   * variable `CRM_SECRET_ENVIRONMENT_KEY` holds it. See `SecretCipher`.
+   */
+  environmentKeyFile: string;
+  /**
+   * Files of environments, per session process
+   * (`ENVIRONMENT_FILES_DIR`, else `crm-environment-files` in the
+   * temporary directory, so they do not outlive a reboot).
+   */
+  environmentFilesDir: string;
   /** GitHub App; `null` when not configured. */
   github: GitHubAppConfig | null;
   /** Who runs the session processes, see ProcessIsolation. */
@@ -171,6 +183,8 @@ export interface VapidConfig {
 export const NTFY_TOKEN_VARIABLE = 'CRM_SECRET_NTFY_TOKEN';
 /** Secret variable with the VAPID private key, as alternative to a file. */
 export const VAPID_PRIVATE_KEY_VARIABLE = 'CRM_SECRET_VAPID_PRIVATE_KEY';
+/** Secret variable with the key of the environments' secrets. */
+export const ENVIRONMENT_KEY_VARIABLE = 'CRM_SECRET_ENVIRONMENT_KEY';
 
 /**
  * GitHub App settings. The private key itself is not part of the
@@ -265,6 +279,12 @@ export function loadAppConfig(
         (claudeConfigDir
           ? join(claudeConfigDir, 'repository-memory')
           : join(devDataDir, 'memory')),
+    ),
+    environmentKeyFile: resolve(
+      value('ENVIRONMENT_KEY_FILE') ?? join(dbDir, 'environment.key'),
+    ),
+    environmentFilesDir: resolve(
+      value('ENVIRONMENT_FILES_DIR') ?? join(tmpdir(), 'crm-environment-files'),
     ),
     github: appId
       ? {
@@ -572,6 +592,8 @@ export function testAppConfig(
     legacyClaudeConfigDir: null,
     apiGitConfigGlobal: null,
     memoryDir: join(dir, 'memory'),
+    environmentKeyFile: join(dir, 'environment.key'),
+    environmentFilesDir: join(dir, 'environment-files'),
     github: null,
     isolation: { mode: 'single-user' },
     auth: { mode: 'none' },

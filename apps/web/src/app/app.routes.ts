@@ -33,6 +33,13 @@ export const appRoutes: Route[] = [
       import('./repositories/repository-list').then((m) => m.RepositoryList),
   },
   {
+    path: 'environments',
+    loadComponent: () =>
+      import('./environments/environments-page').then(
+        (m) => m.EnvironmentsPage,
+      ),
+  },
+  {
     path: 'settings',
     loadComponent: () =>
       import('./settings/settings-page').then((m) => m.SettingsPage),

@@ -327,6 +327,12 @@
         >
         }
       </mat-form-field>
+      @if (s.environment; as environment) {
+      <p class="environment" data-testid="session-environment">
+        <span class="muted">Environment</span>
+        <a routerLink="/environments">{{ environment.name }}</a>
+      </p>
+      }
     </section>
     <section class="panel-section" id="details-usage">
       <h3 class="app-section-label">Usage</h3>

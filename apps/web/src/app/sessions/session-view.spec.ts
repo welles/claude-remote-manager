@@ -1025,6 +1025,13 @@ describe('SessionView', () => {
     expect(state?.classList).toContain('pr-draft');
   });
 
+  it('shows the environment of the session in its details', async () => {
+    const { harness, socket, text } = await open();
+    history(socket, sessionDto({ environment: { id: 'e1', name: 'Staging' } }));
+    await harness.fixture.whenStable();
+    expect(text('session-environment')).toContain('Staging');
+  });
+
   it('confirms unarchiving with a toast', async () => {
     const { harness, socket, element, text } = await open();
     history(

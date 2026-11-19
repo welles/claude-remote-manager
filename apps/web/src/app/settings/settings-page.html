@@ -127,6 +127,26 @@
     </mat-card-actions>
   </mat-card>
 
+  <section class="maintenance" aria-labelledby="sessions-title">
+    <h2 class="app-section-label" id="sessions-title">Sessions</h2>
+    <nav class="links">
+      <a
+        class="link"
+        routerLink="/environments"
+        data-testid="settings-environments"
+      >
+        <app-icon name="key" />
+        <span class="text">
+          <span class="name">Environments</span>
+          <span class="hint"
+            >Secrets, variables, files, instructions and presets for new
+            sessions</span
+          >
+        </span>
+        <app-icon name="chevron-right" />
+      </a>
+    </nav>
+  </section>
   <section class="maintenance" aria-labelledby="maintenance-title">
     <h2 class="app-section-label" id="maintenance-title">Maintenance</h2>
     <nav class="links">

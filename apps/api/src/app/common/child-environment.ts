@@ -71,6 +71,7 @@ export const APP_CONFIG_VARIABLES: ReadonlySet<string> = new Set([
   'FILES_DIR',
   'WORKSPACE_DIR',
   'MEMORY_DIR',
+  'ENVIRONMENT_FILES_DIR',
   'PROCESS_ISOLATION',
   'SESSION_USER',
   'SESSION_PATH',
@@ -103,6 +104,7 @@ export const APP_CONFIG_VARIABLES: ReadonlySet<string> = new Set([
   'GITHUB_WEBHOOK_SECRET_FILE',
   'NTFY_TOKEN_FILE',
   'VAPID_PRIVATE_KEY_FILE',
+  'ENVIRONMENT_KEY_FILE',
   // Set by the package's wrapper.
   'WEB_ROOT',
   'APP_VERSION',

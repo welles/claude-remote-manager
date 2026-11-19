@@ -32,6 +32,11 @@ import { SessionAutomationHooks } from './session-automation-hooks';
 import { SessionGitService } from './session-git.service';
 import { SessionGitHubTokensService } from './session-github-tokens.service';
 import type { SessionRecord } from './session.repository';
+import { EnvironmentFiles } from '../environments/environment-files';
+import {
+  EnvironmentsService,
+  type LaunchEnvironment,
+} from '../environments/environments.service';
 
 /** What a Claude Code process of a session gets besides its directories. */
 export interface LaunchExtras {
@@ -99,6 +104,38 @@ export class NoSessionAgentSupport extends SessionAgentSupport {
   }
 }
 
+/**
+ * What Claude is told about the session's environment: its instructions,
+ * and the names (never the values) of its variables and files.
+ */
+export function environmentInstructions(
+  environment: LaunchEnvironment,
+): string {
+  const parts = [`# Environment "${environment.name}"`];
+  if (environment.instructions?.trim()) {
+    parts.push(environment.instructions.trim());
+  }
+  const variables = Object.keys(environment.variables);
+  if (variables.length > 0) {
+    parts.push(
+      `The session's environment sets these variables: ${variables.map((name) => `\`${name}\``).join(', ')}.`,
+    );
+  }
+  if (environment.files.length > 0) {
+    parts.push(
+      `Files of the environment, each path in a variable: ${environment.files
+        .map((file) => `\`$${file.variable}\` (${file.fileName})`)
+        .join(', ')}. They exist only while this Claude Code process runs.`,
+    );
+  }
+  if (variables.length > 0 || environment.files.length > 0) {
+    parts.push(
+      'Use them through the variables. Do not print secret values or write them into files that may be committed or shared; the session manager shows secret values as *** to the user.',
+    );
+  }
+  return parts.join('\n\n');
+}
+
 export const GITHUB_HELPER_SCRIPT = 'crm-github.cjs';
 
 /**
@@ -157,6 +194,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   private readonly logger = new Logger(SessionAgentSupportService.name);
   /** Running `git push` commands of Claude's, by session. */
   private readonly pushes = new Map<string, Set<string>>();
+  /** Directory of the environment files of the running process, by session. */
+  private readonly filesByProcess = new Map<string, string>();
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -169,6 +208,10 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     private readonly automation?: SessionAutomationHooks,
     @Optional()
     private readonly githubTokens?: SessionGitHubTokensService,
+    @Optional()
+    private readonly environments?: EnvironmentsService,
+    @Optional()
+    private readonly environmentFiles?: EnvironmentFiles,
   ) {
     super();
   }
@@ -226,10 +269,17 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       settings['autoMemoryDirectory'] = memory;
     }
     const previews = this.previews?.enabled ? this.previews : null;
-    const instructions = await this.instructions();
+    const environment = await this.environmentFor(record);
+    const instructions = [await this.instructions(), environment.instructions]
+      .filter((text): text is string => !!text)
+      .join('\n\n');
     return {
       ...(instructions ? { instructions } : {}),
-      env: this.githubTokenEnvironment(record.id, githubClones.length > 0),
+      env: {
+        // The app's own variables win (an environment cannot set them).
+        ...environment.env,
+        ...this.githubTokenEnvironment(record.id, githubClones.length > 0),
+      },
       tools: [
         this.showFileTool(record.id),
         ...(githubClones.length > 0
@@ -294,6 +344,44 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   released(sessionId: string): void {
     this.pushes.delete(sessionId);
     this.githubTokens?.release(sessionId);
+    this.releaseEnvironmentFiles(sessionId);
+  }
+
+  /**
+   * Variables, files and instructions of the session's environment for a
+   * new process. The files of an earlier process are removed first.
+   */
+  private async environmentFor(
+    record: SessionRecord,
+  ): Promise<{ env: Record<string, string>; instructions: string | null }> {
+    this.releaseEnvironmentFiles(record.id);
+    const environment = this.environments?.forLaunch(record.environmentId);
+    if (!environment || !this.environmentFiles) {
+      return { env: {}, instructions: null };
+    }
+    const written = await this.environmentFiles.write(
+      record.id,
+      environment.files,
+    );
+    if (written) {
+      this.filesByProcess.set(record.id, written.dir);
+    }
+    return {
+      env: { ...environment.variables, ...(written?.env ?? {}) },
+      instructions: environmentInstructions(environment),
+    };
+  }
+
+  private releaseEnvironmentFiles(sessionId: string): void {
+    const dir = this.filesByProcess.get(sessionId);
+    if (dir) {
+      this.filesByProcess.delete(sessionId);
+      this.environmentFiles?.remove(dir).catch((error: unknown) => {
+        this.logger.warn(
+          `Could not remove the environment files ${dir}: ${errorText(error)}`,
+        );
+      });
+    }
   }
 
   /**
