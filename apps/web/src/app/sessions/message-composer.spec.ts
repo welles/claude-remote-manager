@@ -196,6 +196,61 @@ describe('MessageComposer', () => {
     await type('plain text');
     http.expectNone('/api/sessions/s1/files');
   });
+  it('completes slash commands at the start of a message', async () => {
+    fixture.componentRef.setInput('sessionId', 's1');
+    await fixture.whenStable();
+    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const type = async (value: string) => {
+      textarea.value = value;
+      textarea.setSelectionRange(value.length, value.length);
+      textarea.dispatchEvent(new Event('input'));
+      await fixture.whenStable();
+    };
+    const command = (name: string, extra: object = {}) => ({
+      name,
+      description: `${name} it`,
+      argumentHint: '',
+      aliases: [],
+      builtin: false,
+      ...extra,
+    });
+    await type('/re');
+    http.expectOne('/api/sessions/s1/slash-commands').flush({
+      source: 'session',
+      commands: [
+        command('compact', { builtin: true }),
+        command('review', { argumentHint: '<pr>' }),
+        command('pre-review'),
+        command('usage', { aliases: ['cost'] }),
+      ],
+    });
+    await fixture.whenStable();
+    const names = () =>
+      [...element.querySelectorAll('[data-testid="command"] .command-name')].map(
+        (option) => words(option),
+      );
+    // Starting with what was typed first, then containing it.
+    expect(names()).toEqual(['/review <pr>', '/pre-review']);
+    expect(textarea.getAttribute('aria-controls')).toBe('command-list');
+    // Aliases count.
+    await type('/co');
+    expect(names()).toEqual(['/compact', '/usage']);
+    await type('/re');
+    textarea.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }),
+    );
+    await fixture.whenStable();
+    expect(textarea.value).toBe('/review ');
+    expect(element.querySelector('[data-testid="commands"]')).toBeNull();
+    expect(sent).toEqual([]);
+
+    // Only at the start of the message, before a space.
+    await type('Run /re');
+    await type('/review now');
+    expect(element.querySelector('[data-testid="commands"]')).toBeNull();
+    http.expectNone('/api/sessions/s1/slash-commands');
+  });
+
   it('completes # references from GitHub and sends them with the chosen extras', async () => {
     fixture.componentRef.setInput('githubRepositories', [
       'acme/app',

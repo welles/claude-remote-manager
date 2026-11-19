@@ -4,6 +4,7 @@ import type {
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
   SDKMessage,
+  SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionPermissionMode } from '@claude-remote-manager/shared-types';
 import type * as Zod from 'zod';
@@ -146,6 +147,8 @@ export interface AgentRun {
   setPermissionMode(mode: SessionPermissionMode): Promise<void>;
   /** Switches the model for the next requests; `null`: the default. */
   setModel(model: string | null): Promise<void>;
+  /** The slash commands and skills of the process (its project's too). */
+  supportedCommands(): Promise<SlashCommand[]>;
   /** Stops a task of the process (a subagent or background command). */
   stopTask(taskId: string): Promise<void>;
   /**
@@ -181,6 +184,8 @@ export abstract class AgentRunner {
 export interface AgentProbe {
   /** Models Claude Code offers for the logged-in account. */
   supportedModels(): Promise<ModelInfo[]>;
+  /** The user's slash commands and skills, and Claude Code's own. */
+  supportedCommands(): Promise<SlashCommand[]>;
   /** Plan rate limits (experimental SDK API, may change). */
   planUsage(): Promise<SDKControlGetUsageResponse>;
 }

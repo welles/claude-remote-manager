@@ -17,6 +17,7 @@ import type {
   SessionDiffResponse,
   SessionDto,
   SessionListResponse,
+  SlashCommandsResponse,
   UpdatePullRequestAutomationRequest,
 } from '@claude-remote-manager/shared-types';
 
@@ -121,6 +122,13 @@ export class SessionsApi {
     return this.http.get<FileMentionsResponse>(
       `${sessionPath(sessionId)}/files`,
       { params: { query } },
+    );
+  }
+
+  /** Slash commands and skills for `/` autocomplete. */
+  slashCommands(sessionId: string): Observable<SlashCommandsResponse> {
+    return this.http.get<SlashCommandsResponse>(
+      `${sessionPath(sessionId)}/slash-commands`,
     );
   }
 

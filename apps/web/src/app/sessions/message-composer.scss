@@ -36,6 +36,29 @@
   font: var(--app-font-code);
 }
 
+.commands li {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.command-name {
+  font: var(--app-font-code);
+}
+
+.command-hint {
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.command-description {
+  font: var(--mat-sys-body-small);
+  color: var(--mat-sys-on-surface-variant);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 .mention-repository {
   flex-shrink: 0;
   font: var(--mat-sys-body-small);

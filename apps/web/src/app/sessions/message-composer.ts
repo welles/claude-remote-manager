@@ -18,6 +18,7 @@ import {
   type FileMention,
   type MessageReference,
   type MessageReferenceRequest,
+  type SlashCommandOption,
 } from '@claude-remote-manager/shared-types';
 import { AppIcon } from '../ui/icon';
 import { ReferenceAutocomplete } from '../github-references/reference-autocomplete';
@@ -35,6 +36,33 @@ import { SessionsApi } from './sessions-api';
 
 /** The `@` reference being typed before the caret: `@` then no spaces. */
 const MENTION = /(?:^|\s)@([^\s"@]*)$/;
+
+/** A slash command being typed: the message starts with `/`, no space yet. */
+const SLASH = /^\/(\S*)$/;
+
+/** At most this many commands are listed. */
+const MAX_COMMANDS = 50;
+
+/**
+ * Commands matching what was typed after `/`: names and aliases starting
+ * with it first, then names containing it.
+ */
+export function matchCommands(
+  commands: readonly SlashCommandOption[],
+  query: string,
+): SlashCommandOption[] {
+  const typed = query.toLowerCase();
+  const starts = commands.filter(
+    (command) =>
+      command.name.toLowerCase().startsWith(typed) ||
+      command.aliases.some((alias) => alias.toLowerCase().startsWith(typed)),
+  );
+  const contains = commands.filter(
+    (command) =>
+      !starts.includes(command) && command.name.toLowerCase().includes(typed),
+  );
+  return [...starts, ...contains].slice(0, MAX_COMMANDS);
+}
 
 /** Eight lines of the composer's text plus its padding. */
 const MAX_INPUT_HEIGHT = 8 * 22 + 20;
@@ -54,7 +82,9 @@ export interface ComposedMessage {
  * uploaded right away and removable), `@` references to files of the
  * session (autocomplete over all its directories), `#` references to
  * GitHub issues and pull requests (autocomplete, chips with the choice to
- * give Claude comments and diffs) and the Send and Stop buttons.
+ * give Claude comments and diffs), `/` for Claude Code's slash commands and
+ * skills at the start of a message (autocomplete) and the Send and Stop
+ * buttons.
  */
 @Component({
   selector: 'app-message-composer',
@@ -107,6 +137,18 @@ export class MessageComposer {
     () => this.mention() !== null && this.suggestions().length > 0,
   );
   private readonly queries = new Subject<string>();
+  /** What was typed after a leading `/`, while choosing a command. */
+  protected readonly slash = signal<string | null>(null);
+  /** The session's commands, loaded when `/` is typed. */
+  private readonly commands = signal<readonly SlashCommandOption[]>([]);
+  private commandsOf: string | null = null;
+  protected readonly commandMatches = computed(() => {
+    const query = this.slash();
+    return query === null ? [] : matchCommands(this.commands(), query);
+  });
+  protected readonly suggestingCommands = computed(
+    () => this.commandMatches().length > 0,
+  );
   /** `#` autocomplete. */
   protected readonly references = new ReferenceAutocomplete(
     () => this.githubRepositories(),
@@ -214,6 +256,28 @@ export class MessageComposer {
     if (this.references.keydown(event, event.target as HTMLTextAreaElement)) {
       return;
     }
+    if (this.suggestingCommands()) {
+      const count = this.commandMatches().length;
+      switch (event.key) {
+        case 'ArrowDown':
+          event.preventDefault();
+          this.active.update((index) => (index + 1) % count);
+          return;
+        case 'ArrowUp':
+          event.preventDefault();
+          this.active.update((index) => (index - 1 + count) % count);
+          return;
+        case 'Enter':
+        case 'Tab':
+          event.preventDefault();
+          this.chooseCommand(this.commandMatches()[this.active()]);
+          return;
+        case 'Escape':
+          event.preventDefault();
+          this.slash.set(null);
+          return;
+      }
+    }
     if (!this.suggesting()) {
       return;
     }
@@ -274,9 +338,69 @@ export class MessageComposer {
   protected closeSuggestions(): void {
     this.closeMention();
     this.references.close();
+    this.slash.set(null);
+  }
+
+  /** Replaces the command being typed with the chosen one. */
+  protected chooseCommand(command: SlashCommandOption): void {
+    const field = this.textarea()?.nativeElement;
+    if (this.slash() === null || !field) {
+      return;
+    }
+    const value = this.draft();
+    const typed = SLASH.exec(value.slice(0, field.selectionStart))?.[0] ?? '/';
+    const inserted = `/${command.name} `;
+    const next = inserted + value.slice(typed.length).replace(/^\S*\s?/, '');
+    field.value = next;
+    this.draft.set(next);
+    field.setSelectionRange(inserted.length, inserted.length);
+    field.focus();
+    this.slash.set(null);
+  }
+
+  /** A message starting with `/` and no space before the caret: commands. */
+  private findCommand(field: HTMLTextAreaElement): boolean {
+    const id = this.sessionId();
+    const match =
+      id && field.selectionStart === field.selectionEnd
+        ? SLASH.exec(field.value.slice(0, field.selectionStart))
+        : null;
+    if (!id || !match) {
+      this.slash.set(null);
+      return false;
+    }
+    if (this.slash() === null) {
+      this.active.set(0);
+      this.loadCommands(id);
+    } else if (this.slash() !== match[1]) {
+      this.active.set(0);
+    }
+    this.slash.set(match[1]);
+    return true;
+  }
+
+  /** Asks for the session's commands each time `/` opens the list. */
+  private loadCommands(id: string): void {
+    if (this.commandsOf !== id) {
+      this.commands.set([]);
+      this.commandsOf = id;
+    }
+    this.api
+      .slashCommands(id)
+      .pipe(catchError(() => of({ commands: [], source: 'user' as const })))
+      .subscribe((result) => {
+        if (this.commandsOf === id) {
+          this.commands.set(result.commands);
+        }
+      });
   }
 
   private findMention(field: HTMLTextAreaElement): void {
+    if (this.findCommand(field)) {
+      this.closeMention();
+      this.references.close();
+      return;
+    }
     if (this.references.update(field)) {
       this.closeMention();
       return;

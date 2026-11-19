@@ -184,7 +184,7 @@ Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
 
 - **Dateibrowser:** Verzeichnisbaum der Klone einer Sitzung, Dateien mit Syntax-Highlighting ansehen, geänderte Dateien markiert, Dateien per Klick als Referenz in den Prompt übernehmen.
 
-* **MCP-Server, Slash-Commands und Skills:** Kommen bereits wie im Terminal aus dem `~/.claude` des Benutzers und den Repos; später Autovervollständigung im Eingabefeld.
+* **MCP-Server, Slash-Commands und Skills:** Kommen bereits wie im Terminal aus dem `~/.claude` des Benutzers und den Repos. **Umsetzung (entschieden):** Autovervollständigung im Eingabefeld der Sitzung, wenn die Nachricht mit `/` beginnt: die Befehle und Skills, die Claude Code der Sitzung meldet (vor dem ersten Prozess die des Benutzers und die eigenen von Claude Code), ohne die an ein Terminal gebundenen; die Nachricht geht unverändert an Claude Code, das den Befehl ausführt.
 
 ## Offene Entscheidungen
 

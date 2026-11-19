@@ -444,6 +444,7 @@ export class SdkAgentRunner implements AgentRunner {
       setPermissionMode: (mode) => query.setPermissionMode(mode),
       setModel: (model) => query.setModel(model ?? undefined),
       stopTask: (taskId) => query.stopTask(taskId),
+      supportedCommands: () => query.supportedCommands(),
       close: () => {
         input.close();
         query.close();
@@ -485,6 +486,7 @@ export class SdkAgentRunner implements AgentRunner {
     try {
       return await task({
         supportedModels: () => query.supportedModels(),
+        supportedCommands: () => query.supportedCommands(),
         planUsage: () =>
           query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
             skipBehaviors: true,

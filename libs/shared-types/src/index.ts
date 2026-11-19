@@ -21,4 +21,5 @@ export * from './lib/session-events';
 export * from './lib/settings';
 export * from './lib/usage';
 export * from './lib/shown-files';
+export * from './lib/slash-commands';
 export * from './lib/workspace';
