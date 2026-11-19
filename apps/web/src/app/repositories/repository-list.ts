@@ -29,6 +29,7 @@ import { GitHubRepositoryPicker } from '../github/github-repository-picker';
 import { RepositoriesApi, errorMessage } from './repositories-api';
 import { AppIcon } from '../ui/icon';
 import { AppPageBar } from '../ui/page-bar';
+import { Toasts } from '../ui/toasts';
 
 /** How often the page reloads while a clone or fetch runs. */
 export const ACTIVITY_POLL_MS = 2000;
@@ -66,6 +67,7 @@ export const cloneSlug = (path: string) =>
 })
 export class RepositoryList implements OnInit {
   private readonly api = inject(RepositoriesApi);
+  private readonly toasts = inject(Toasts);
   private readonly github = inject(GitHubApi);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -259,6 +261,12 @@ export class RepositoryList implements OnInit {
         this.saving.set(false);
         this.editing.set(null);
         this.upsert(updated);
+        this.toasts.show({
+          title: script
+            ? `Setup script of ${updated.fullName} saved`
+            : `Setup script of ${updated.fullName} removed`,
+          lines: ['It runs for new session clones.'],
+        });
       },
       error: (error: unknown) => {
         this.saving.set(false);

@@ -8,6 +8,7 @@ import { provideRouter } from '@angular/router';
 import type { RepositoryDto } from '@claude-remote-manager/shared-types';
 import { words } from '../testing/text';
 import { ACTIVITY_POLL_MS, RepositoryList } from './repository-list';
+import { Toasts } from '../ui/toasts';
 
 const repository = (overrides: Partial<RepositoryDto> = {}): RepositoryDto => ({
   id: 'r1',
@@ -207,6 +208,9 @@ describe('RepositoryList', () => {
     fixture.detectChanges();
     expect(all('setup-input')).toHaveLength(0);
     expect(all('setup-script')).toEqual(['npm ci npm run build']);
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      { title: 'Setup script of acme/app saved' },
+    ]);
 
     list.fetch(current);
     http

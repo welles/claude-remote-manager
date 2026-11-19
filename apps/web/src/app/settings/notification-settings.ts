@@ -27,6 +27,7 @@ import {
   pushSupport,
   type PushSupport,
 } from './push-device';
+import { Toasts } from '../ui/toasts';
 
 /** Seam for tests: the browser's push functions. */
 export const PUSH_DEVICE = {
@@ -59,6 +60,7 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
 })
 export class NotificationSettings implements OnInit {
   private readonly api = inject(NotificationsApi);
+  private readonly toasts = inject(Toasts);
 
   protected readonly eventTypes = NOTIFICATION_EVENT_TYPES;
   protected readonly eventInfo = NOTIFICATION_EVENT_INFO;
@@ -162,9 +164,12 @@ export class NotificationSettings implements OnInit {
     }
   }
 
-  protected removeDevice(id: string): void {
-    this.api.removeDevice(id).subscribe({
-      next: () => this.load(),
+  protected removeDevice(device: { id: string; label: string }): void {
+    this.api.removeDevice(device.id).subscribe({
+      next: () => {
+        this.toasts.show({ title: 'Device removed', lines: [device.label] });
+        this.load();
+      },
       error: (error: unknown) =>
         this.deviceMessage.set({
           text: errorMessage(error, 'The device could not be removed.'),
