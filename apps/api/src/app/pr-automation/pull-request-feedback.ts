@@ -52,6 +52,8 @@ export interface ReviewFeedback {
   createdAt: string;
   /** Reviews: `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, ... */
   state: string | null;
+  /** Reviews: the commit that was reviewed. */
+  commitId: string | null;
   /** Review comments: file and line. */
   path: string | null;
   line: number | null;
@@ -115,6 +117,7 @@ interface RawReview {
   body?: string | null;
   state?: string;
   submitted_at?: string | null;
+  commit_id?: string | null;
 }
 
 interface RawIssueComment {
@@ -244,6 +247,7 @@ export class PullRequestFeedback {
           body: comment.body ?? '',
           createdAt: comment.created_at,
           state: null,
+          commitId: null,
           path: null,
           line: null,
           diffHunk: null,
@@ -260,6 +264,7 @@ export class PullRequestFeedback {
             body: review.body ?? '',
             createdAt: review.submitted_at as string,
             state: review.state ?? null,
+            commitId: review.commit_id ?? null,
             path: null,
             line: null,
             diffHunk: null,
@@ -274,6 +279,7 @@ export class PullRequestFeedback {
           body: comment.body ?? '',
           createdAt: comment.created_at,
           state: null,
+          commitId: null,
           path: comment.path ?? null,
           line: comment.line ?? comment.original_line ?? null,
           diffHunk: comment.diff_hunk ?? null,

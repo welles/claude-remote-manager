@@ -144,6 +144,7 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `VAPID_SUBJECT`                     | `PUBLIC_URL` if https, else a placeholder `mailto:`                                              | Contact for the push services (`mailto:` or `https:`)                                                    |
 | `GITHUB_WEBHOOK_SECRET_FILE`        | none (webhook refuses everything)                                                                | File with the GitHub App's webhook secret (at least 16 characters), e.g. a Docker secret                 |
 | `CRM_SECRET_GITHUB_WEBHOOK_SECRET`  | none                                                                                             | The webhook secret itself, instead of the file                                                           |
+| `PR_TRUSTED_BOTS`                   | none                                                                                             | Bot logins (`name[bot]`, comma-separated) that count like write access (autofix)                         |
 | `PR_POLL_INTERVAL_SECONDS`          | `120` without webhook secret, `900` with one                                                     | How often open pull requests with automation are read from GitHub; `0` off, else >= 30                   |
 | `PREVIEW_URL`                       | none (previews off; `npm start`: `http://preview.localhost:3000`)                                | Base of preview host names, e.g. `https://preview.example.com`, see [Previews](#previews-of-dev-servers) |
 | `PREVIEW_ACCESS_AUD`                | none, required with `cloudflare-access` and `PREVIEW_URL`                                        | Audience tag(s) of the previews' own Access application; never one of `CF_ACCESS_AUD`                    |
@@ -1542,14 +1543,25 @@ at a time; one asked for meanwhile runs afterwards.
   review comments and comments in the pull request's conversation created after autofix was
   turned on (or after the last run), by users
   whose permission on the repository is admin, maintain or write
-  (`GET /repos/{owner}/{repo}/collaborators/{user}/permission`); bots (the app itself,
-  Actions, other apps) and everybody else never start a run. Approvals and empty reviews ask
-  for nothing and are skipped.
+  (`GET /repos/{owner}/{repo}/collaborators/{user}/permission`), or by a bot listed in
+  `PR_TRUSTED_BOTS` (e.g. a reviewer bot); other bots (the app itself, Actions, other apps)
+  and everybody else never start a run. Approvals and empty reviews ask for nothing and start
+  no run; the text of an approval goes along as context of the next message.
 - **Coalescing**: one run handles everything that is current: all failed checks of the head
-  commit (the run waits until the commit's other checks have finished, at most 30 minutes
-  after the first failure) and all new reviews and comments, also when a review comes with
-  ten comments or both arrive together. A head commit's failures start at most one run;
-  feedback is new only once.
+  commit and all new reviews and comments, also when a review comes with ten comments or both
+  arrive together. While other checks of the head commit are still queued or running, failures
+  and feedback wait for them (at most 30 minutes after they were first seen), so a reviewer
+  bot's comments, posted while its own check still runs, end up in the same run as the
+  checks' results. A head commit's failures start at most one run; feedback is new only once.
+- **Ready to merge**: once all checks of the head commit have finished without failure and
+  the commit is approved (the latest approving or change-requesting review of someone who
+  counts as above approves exactly the head commit, and nobody who counts requests changes),
+  the app tells the session so in its own words, once per head commit
+  (`autofix_ready_sha`). New reviews and comments go along as untrusted context; the message
+  asks Claude to address what should be changed, or else to merge if the user asked for that
+  (merging still needs the owner's approval, as the turn runs like an autofix run), or to tell
+  the user. Such a message is no attempt and is sent also when the limit is reached; the last
+  trigger shows as "ready to merge".
 - **Busy sessions**: a run starts only while the session waits for a message (not while a
   turn runs, an approval, question or plan waits, the first message is held back, or the
   session is finished or failed). Events meanwhile are not queued: when the session waits for
@@ -1964,6 +1976,7 @@ topic or token, a GitHub key without App ID, secret files in the Nix store or as
 | `github.appId`                             | `null`                           | `GITHUB_APP_ID`                                                          |
 | `github.privateKeyFile`                    | `null`                           | Secret file: the GitHub App's private key                                |
 | `github.webhookSecretFile`                 | `null`                           | Secret file: the webhook secret                                          |
+| `github.trustedBots`                       | `[ ]`                            | `PR_TRUSTED_BOTS`                                                        |
 | `vapid.privateKeyFile`                     | `null`                           | Secret file: own VAPID private key (otherwise generated into `db/`)      |
 | `vapid.publicKey`, `vapid.subject`         | `null`                           | `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT`                                      |
 | `environment`                              | `{ }`                            | Further variables of the service and its sessions; never secrets         |

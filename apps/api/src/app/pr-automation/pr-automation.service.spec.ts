@@ -571,6 +571,239 @@ describe('PrAutomationService', () => {
     });
   });
 
+  describe('ready to merge', () => {
+    const REVIEWER = 'team-reviewer[bot]';
+
+    /** Restarts the automation with a trusted reviewer bot. */
+    const trustReviewer = () => {
+      automation.onModuleDestroy();
+      harness.config.prAutomation = {
+        ...harness.config.prAutomation,
+        trustedBots: [REVIEWER],
+      };
+      createAutomation();
+    };
+
+    const readyMessages = () =>
+      harness.runner.runs.flatMap((run) =>
+        run.sent.filter((message) => message.text.startsWith('Pull request')),
+      );
+
+    const green = (
+      commit: string,
+      reviewStatus: 'completed' | 'in_progress' = 'completed',
+    ) =>
+      harness.github.checkRuns.set(commit, [
+        {
+          id: 81,
+          name: 'test',
+          status: 'completed',
+          conclusion: 'success',
+          app: 'github-actions',
+        },
+        {
+          id: 82,
+          name: 'review',
+          status: reviewStatus,
+          conclusion: reviewStatus === 'completed' ? 'success' : null,
+          app: 'github-actions',
+        },
+      ]);
+
+    it('tells the session once that the head commit passed and a trusted bot approved it', async () => {
+      trustReviewer();
+      const { session, pull } = await sessionWithPullRequest();
+      const head = fakePull(pull.number).headSha;
+      enableAutofix(session.id, pull);
+      green(head);
+      addReview(pull, {
+        kind: 'review',
+        author: REVIEWER,
+        authorType: 'Bot',
+        state: 'APPROVED',
+        body: 'No open findings.',
+        commitId: head,
+      });
+      addReview(pull, {
+        kind: 'comment',
+        author: REVIEWER,
+        authorType: 'Bot',
+        body: 'Summary: looks good.',
+      });
+
+      await automation.check(pull.id);
+
+      expect(appMessages()).toHaveLength(0);
+      const messages = readyMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0].text).toContain('alice/app#1');
+      expect(messages[0].text).toContain('is ready to merge');
+      expect(messages[0].text).toContain('merging needs the approval');
+      expect(messages[0].text).not.toContain('@');
+      const context = messages[0].context?.text ?? '';
+      expect(context).toContain('No open findings.');
+      expect(context).toContain('Summary: looks good.');
+      expect(record(pull)).toMatchObject({
+        autofixAttempts: 0,
+        autofixLastTrigger: 'ready',
+        autofixReadySha: head,
+        autofixRunning: true,
+      });
+
+      // Once per head commit.
+      harness.runner.last.emit(resultMessage(60, 0.06));
+      await waitFor(() => !record(pull).autofixRunning);
+      await automation.check(pull.id);
+      expect(readyMessages()).toHaveLength(1);
+    });
+
+    it('waits for running checks, so that a bot review and its comments become one message', async () => {
+      trustReviewer();
+      const { session, pull } = await sessionWithPullRequest();
+      const head = fakePull(pull.number).headSha;
+      enableAutofix(session.id, pull);
+      // The reviewer posted while its own check still runs.
+      green(head, 'in_progress');
+      addReview(pull, {
+        kind: 'comment',
+        author: REVIEWER,
+        authorType: 'Bot',
+        body: 'Summary: no findings.',
+      });
+      addReview(pull, {
+        kind: 'review',
+        author: REVIEWER,
+        authorType: 'Bot',
+        state: 'APPROVED',
+        body: 'Approved.',
+        commitId: head,
+      });
+
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(0);
+      expect(readyMessages()).toHaveLength(0);
+
+      green(head);
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(0);
+      expect(readyMessages()).toHaveLength(1);
+      expect(readyMessages()[0].context?.text ?? '').toContain(
+        'Summary: no findings.',
+      );
+      expect(record(pull).autofixAttempts).toBe(0);
+    });
+
+    it('counts approvals of people with write access, without context when they wrote nothing', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      const head = fakePull(pull.number).headSha;
+      enableAutofix(session.id, pull);
+      green(head);
+      addReview(pull, {
+        kind: 'review',
+        author: 'maintainer',
+        state: 'APPROVED',
+        body: '',
+        commitId: head,
+      });
+
+      await automation.check(pull.id);
+
+      const messages = readyMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0].context).toBeFalsy();
+      expect(messages[0].text).not.toContain('untrusted context');
+    });
+
+    it('is not ready without a counting approval of the head commit, with changes requested, or with failed checks', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      const head = fakePull(pull.number).headSha;
+      enableAutofix(session.id, pull);
+      green(head);
+      // An approval of an older commit, and approvals that do not count.
+      addReview(pull, {
+        kind: 'review',
+        author: 'owner',
+        state: 'APPROVED',
+        body: '',
+        commitId: sha('d'),
+      });
+      addReview(pull, {
+        kind: 'review',
+        author: 'reader',
+        state: 'APPROVED',
+        body: '',
+        commitId: head,
+      });
+      addReview(pull, {
+        kind: 'review',
+        author: 'helper[bot]',
+        authorType: 'Bot',
+        state: 'APPROVED',
+        body: '',
+        commitId: head,
+      });
+      await automation.check(pull.id);
+      expect(readyMessages()).toHaveLength(0);
+
+      // Approved, but someone with write access requests changes.
+      addReview(pull, {
+        kind: 'review',
+        author: 'maintainer',
+        state: 'APPROVED',
+        body: '',
+        commitId: head,
+      });
+      addReview(pull, {
+        kind: 'review',
+        author: 'owner',
+        state: 'CHANGES_REQUESTED',
+        body: '',
+        commitId: head,
+      });
+      await automation.check(pull.id);
+      expect(readyMessages()).toHaveLength(0);
+
+      // Changes no longer requested, but a check failed.
+      addReview(pull, {
+        kind: 'review',
+        author: 'owner',
+        state: 'APPROVED',
+        body: '',
+        commitId: head,
+        createdAt: later(10),
+      });
+      harness.github.statuses.set(head, [
+        { context: 'ci/legacy', state: 'failure', description: 'Broken' },
+      ]);
+      await automation.check(pull.id);
+      expect(readyMessages()).toHaveLength(0);
+      expect(appMessages()).toHaveLength(1);
+    });
+
+    it('starts autofix runs for review feedback of a trusted bot', async () => {
+      trustReviewer();
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      addReview(pull, {
+        kind: 'review',
+        author: REVIEWER,
+        authorType: 'Bot',
+        state: 'CHANGES_REQUESTED',
+        body: 'The new function lacks a test.',
+      });
+
+      await automation.check(pull.id);
+
+      const messages = appMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0].context?.text ?? '').toContain('lacks a test');
+      expect(record(pull)).toMatchObject({
+        autofixAttempts: 1,
+        autofixLastTrigger: 'review',
+      });
+    });
+  });
+
   describe('git during autofix', () => {
     const ask = (command: string) =>
       harness.runner.last.options.canUseTool(

@@ -251,6 +251,8 @@ export const pullRequests = sqliteTable(
     autofixGaveUpAt: timestamp('autofix_gave_up_at'),
     /** Head commit whose failed checks a run was started for already. */
     autofixCiHandledSha: text('autofix_ci_handled_sha'),
+    /** Head commit the session was told is ready to merge (green, approved). */
+    autofixReadySha: text('autofix_ready_sha'),
     /** Reviews and review comments after this time are new. */
     autofixReviewsAfter: timestamp('autofix_reviews_after'),
     /** Last autofix run: start and what triggered it (`ci`, `review`). */

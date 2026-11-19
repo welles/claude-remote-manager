@@ -119,6 +119,12 @@ export interface PrAutomationConfig {
    * minutes (as backstop for lost deliveries) with one.
    */
   pollIntervalMs: number | null;
+  /**
+   * GitHub logins of bots (e.g. `my-reviewer[bot]`) whose reviews and
+   * comments count like those of people with write access: they start
+   * autofix runs, and their approvals count for "ready to merge".
+   */
+  trustedBots: string[];
 }
 
 /** Secret variable with the GitHub webhook secret, as alternative to a file. */
@@ -402,11 +408,23 @@ function loadPrAutomation(
     }
     pollIntervalMs = seconds * 1000;
   }
+  const trustedBots = list(value('PR_TRUSTED_BOTS'));
+  for (const login of trustedBots) {
+    if (!TRUSTED_BOT_LOGIN.test(login)) {
+      throw new Error(
+        `PR_TRUSTED_BOTS must list GitHub logins of bots ending in [bot], e.g. my-reviewer[bot]; got ${JSON.stringify(login)}`,
+      );
+    }
+  }
   return {
     webhookSecretFile: file ? resolve(file) : null,
     pollIntervalMs,
+    trustedBots,
   };
 }
+
+/** A bot's GitHub login, as reviews and comments name their author. */
+const TRUSTED_BOT_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\[bot\]$/;
 
 /** `http(s)` URL without trailing slash, or an error naming the variable. */
 function httpUrl(name: string, raw: string): string {
@@ -563,7 +581,11 @@ export function testAppConfig(
       ntfy: null,
       vapid: { publicKey: null, privateKeyFile: null, subject: null },
     },
-    prAutomation: { webhookSecretFile: null, pollIntervalMs: 0 },
+    prAutomation: {
+      webhookSecretFile: null,
+      pollIntervalMs: 0,
+      trustedBots: [],
+    },
     previews: null,
     ...overrides,
   };
