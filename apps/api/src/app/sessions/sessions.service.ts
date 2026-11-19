@@ -85,6 +85,7 @@ import {
   type ResolvedAddition,
 } from '../workspaces/repository-additions';
 import { sessionAllows, unresolvedRequests } from './permission-requests';
+import { SlashCommandsService } from './slash-commands.service';
 import { PreviewsService } from '../previews/previews.service';
 import {
   SessionAutomationHooks,
@@ -474,6 +475,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // get the tool.
     @Optional()
     private readonly additions?: RepositoryAdditions,
+    // Keeps what each session's Claude Code reports for `/` autocomplete.
+    @Optional()
+    private readonly slashCommands?: SlashCommandsService,
   ) {}
 
   /**
@@ -1308,6 +1312,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * all clients are told. Call after the database rows are gone.
    */
   forget(sessionId: string): void {
+    this.slashCommands?.forget(sessionId);
     const live = this.live.get(sessionId);
     if (live) {
       this.clearIdleTimer(live);
@@ -1754,6 +1759,31 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Asks the process for its slash commands and skills (the project's
+   * included) once it is initialized; a failure leaves the last list.
+   */
+  private loadSlashCommands(live: LiveSession, terminal: string[]): void {
+    const commands = this.slashCommands;
+    const run = live.run;
+    if (!commands || !run) {
+      return;
+    }
+    commands.terminalCommands(terminal);
+    run
+      .supportedCommands()
+      .then((list) => {
+        if (live.run === run) {
+          commands.remember(live.id, list);
+        }
+      })
+      .catch((error: unknown) =>
+        this.logger.warn(
+          `Listing the slash commands of ${live.id} failed: ${errorMessage(error)}`,
+        ),
+      );
+  }
+
   private handleMessage(live: LiveSession, message: SDKMessage): void {
     if (message.type === 'system' && message.subtype === 'init') {
       const record = this.requireRecord(live.id);
@@ -1767,6 +1797,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (message.permissionMode) {
         this.syncPermissionMode(live, message.permissionMode);
       }
+      this.loadSlashCommands(live, message.terminal_slash_commands ?? []);
+      return;
+    }
+    if (message.type === 'system' && message.subtype === 'commands_changed') {
+      this.slashCommands?.remember(live.id, message.commands);
       return;
     }
     if (message.type === 'system' && message.subtype === 'task_started') {

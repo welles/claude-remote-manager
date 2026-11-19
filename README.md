@@ -18,7 +18,8 @@ are chosen per session and switchable while it runs; messages sent while Claude 
 queued; Claude's task list, the context window and the account's plan limits are shown; every
 file change appears as a diff in the history and in approvals, and a changes page shows the
 whole session's diff per repository and file; images can be attached to messages, files of the
-session referenced with `@`, GitHub issues and pull requests with `#` (Claude gets their
+session referenced with `@`, Claude Code's slash commands and skills completed after `/`,
+GitHub issues and pull requests with `#` (Claude gets their
 content as untrusted context), and Claude shows files to the user with `show_file`; session
 branches are pushed and pull requests created by button, or by Claude (as the session's
 permission mode allows, up to `bypassPermissions`); usage is recorded per request. Sessions notify the user over Web Push and ntfy
@@ -463,7 +464,7 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   side by side (kept per browser; unified by default on narrow screens); the cleanup dialog
   links to it ("Review the changes first").
 
-### Images, `@` references and shown files
+### Images, `@` references, `/` commands and shown files
 
 - Images: pasted, dropped or picked in the input (or the new-session form), each uploaded
   right away (`POST /api/attachments`, body = the image; PNG, JPEG, GIF or WebP checked by
@@ -482,6 +483,18 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   directory), `@/absolute/path` for other directories, quoted as `@"..."` with spaces. Claude
   Code expands these itself when the message arrives (it reads the files into the turn as
   attachments; checked with the bundled Claude Code for relative and absolute quoted paths).
+- `/` commands: a message starting with `/` offers Claude Code's slash commands and skills
+  (`GET /api/sessions/:id/slash-commands`), names and aliases starting with what was typed
+  first, then names containing it; choosing inserts `/name `. The list is what the session's
+  Claude Code reported (`supportedCommands()` after its `init`, replaced by
+  `commands_changed`; with the project's and plugins' commands, one row per name), kept in
+  memory after the process ends; before the session's first process in the API's lifetime,
+  the user's commands and Claude Code's own from a short-lived process without prompt
+  (cached 10 min, 20 s timeout). Commands Claude Code marks as bound to a terminal
+  (`terminal_slash_commands`) are left out. The message goes to Claude Code as typed, which
+  runs the command; the transcript keeps it as tags, from which history rebuilt after a
+  restart shows `/name args` again. The output of a command Claude Code runs itself (e.g.
+  `/usage`) is shown live, but is not in the transcript and so missing after a reload.
 - `show_file` (path, optional caption): reads the file as the session user, only inside the
   session's directories, and keeps a snapshot (up to 20 MB) in `FILES_DIR/shown`; larger
   files keep only their metadata and are served from the session while it exists

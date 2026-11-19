@@ -25,6 +25,7 @@ import { withTestIdentity } from '../workspaces/testing/workspace-harness';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { DENIED_STOP_MESSAGE } from './permission-requests';
 import { SessionEventRepository } from './session-event.repository';
+import { SlashCommandsService } from './slash-commands.service';
 import { SessionRepository } from './session.repository';
 import {
   AUTOFIX_ASK_REASON,
@@ -71,6 +72,7 @@ describe('SessionsService', () => {
   let transcripts: FakeTranscriptReader;
   let limits: LimitsService;
   let service: SessionsService;
+  let slashCommands: SlashCommandsService;
   let events: SessionEventEnvelope[];
   let updates: SessionDto[];
   let attachments: AttachmentStore;
@@ -113,6 +115,10 @@ describe('SessionsService', () => {
         new GitHubIssues(github.service, github.http),
       ),
       new MessageContextRepository(db),
+      undefined,
+      undefined,
+      undefined,
+      slashCommands,
     );
     await created.onModuleInit();
     created.events$.subscribe((event) => events.push(event));
@@ -175,6 +181,7 @@ describe('SessionsService', () => {
       setupScript: null,
     });
     runner = new FakeAgentRunner();
+    slashCommands = new SlashCommandsService(runner);
     transcripts = new FakeTranscriptReader();
     limits = new LimitsService();
     events = [];
@@ -301,6 +308,59 @@ describe('SessionsService', () => {
         lastError: 'Native CLI binary not found',
       });
       expect(lastEvent('error')?.message).toBe('Native CLI binary not found');
+    });
+  });
+
+  describe('slash commands', () => {
+    it("offers the user's commands first, then what the session reported", async () => {
+      runner.probeCommands = () => [
+        { name: 'review', description: 'Review', argumentHint: '' },
+        { name: 'doctor', description: 'Doctor', argumentHint: '', builtin: true },
+      ];
+      const session = await startSession();
+      await expect(slashCommands.forSession(session.id)).resolves.toEqual({
+        source: 'user',
+        commands: [
+          {
+            name: 'review',
+            description: 'Review',
+            argumentHint: '',
+            aliases: [],
+            builtin: false,
+          },
+        ],
+      });
+
+      runner.last.commands = [
+        { name: 'deploy', description: 'Project skill', argumentHint: '<env>' },
+        { name: 'statusline', description: 'Terminal', argumentHint: '' },
+        { name: 'compact', description: 'Compact', argumentHint: '', builtin: true, aliases: ['c'] },
+      ];
+      runner.last.emit({
+        type: 'system',
+        subtype: 'init',
+        session_id: 'sdk-1',
+        terminal_slash_commands: ['statusline'],
+      } as never);
+      await flush();
+      const reported = await slashCommands.forSession(session.id);
+      expect(reported.source).toBe('session');
+      expect(reported.commands.map((command) => command.name)).toEqual([
+        'deploy',
+        'compact',
+      ]);
+      expect(reported.commands[1]).toMatchObject({ builtin: true, aliases: ['c'] });
+
+      // A change replaces the list.
+      runner.last.emit({
+        type: 'system',
+        subtype: 'commands_changed',
+        commands: [{ name: 'fresh', description: '', argumentHint: '' }],
+      } as never);
+      await flush();
+      expect(
+        (await slashCommands.forSession(session.id)).commands.map((c) => c.name),
+      ).toEqual(['fresh']);
     });
   });
 

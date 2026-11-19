@@ -4,6 +4,7 @@ import type {
   SDKControlGetUsageResponse,
   SDKMessage,
   SessionMessage,
+  SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AgentProbe,
@@ -106,6 +107,13 @@ export class FakeRun implements AgentRun {
     this.switches.push({ model });
   }
 
+  /** What `supportedCommands` answers. */
+  commands: SlashCommand[] = [];
+
+  async supportedCommands(): Promise<SlashCommand[]> {
+    return this.commands;
+  }
+
   /** Tasks the app stopped. */
   readonly stoppedTasks: string[] = [];
 
@@ -153,6 +161,7 @@ export class FakeAgentRunner implements AgentRunner {
   probeUsage: () => SDKControlGetUsageResponse = () => {
     throw new Error('not available in tests');
   };
+  probeCommands: () => SlashCommand[] = () => [];
   probes = 0;
 
   async probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T> {
@@ -160,6 +169,7 @@ export class FakeAgentRunner implements AgentRunner {
     return task({
       supportedModels: async () => this.probeModels(),
       planUsage: async () => this.probeUsage(),
+      supportedCommands: async () => this.probeCommands(),
     });
   }
 

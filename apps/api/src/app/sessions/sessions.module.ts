@@ -45,6 +45,8 @@ import { UserToolApprover } from './user-tool-approver';
 import { ViewerPresence } from './viewer-presence';
 import { ModelsController } from './models.controller';
 import { ModelsService } from './models.service';
+import { SlashCommandsController } from './slash-commands.controller';
+import { SlashCommandsService } from './slash-commands.service';
 
 @Module({
   imports: [
@@ -63,6 +65,7 @@ import { ModelsService } from './models.service';
     SessionDiffController,
     SessionFilesController,
     ModelsController,
+    SlashCommandsController,
   ],
   providers: [
     SessionRepository,
@@ -82,6 +85,7 @@ import { ModelsService } from './models.service';
     { provide: SessionAgentSupport, useClass: SessionAgentSupportService },
     { provide: ToolApprover, useValue: new UserToolApprover() },
     ModelsService,
+    SlashCommandsService,
     SessionWorkspaceService,
     RepositoryAdditions,
     SetupScriptRunner,
