@@ -1,5 +1,5 @@
 import { DecimalPipe, KeyValuePipe, NgTemplateOutlet } from '@angular/common';
-import { Component, input, output } from '@angular/core';
+import { Component, computed, input, output } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import type {
@@ -26,16 +26,24 @@ import { formatCost, formatTokens, totalTokens } from './format';
 import { MarkdownPipe } from './markdown.pipe';
 import type { ShownItem } from './preparation';
 import { relativePaths, sessionPath } from './session-directories';
+import {
+  groupTools,
+  shortToolName,
+  toolCounts,
+  type ToolGroup,
+} from './tool-groups';
 
 type ToolItem = Extract<ConversationItem, { kind: 'tool' }>;
+type Tone = 'ok' | 'bad' | 'ask' | 'busy' | 'quiet';
 type SetupItem = Extract<ConversationItem, { kind: 'setup' }>;
 export type QueuedItem = Extract<ConversationItem, { kind: 'queued' }>;
 
 /**
  * The conversation of a session: messages, Claude's text (Markdown), tool
- * calls as compact rows with the paths shortened to the session's
- * directories, their diffs, shown files and previews, one row for the
- * preparation, turn footers, and the state at the end.
+ * calls as quiet rows with the paths shortened to the session's
+ * directories (a run of them folded into one row), their diffs, shown
+ * files and previews, one row for the preparation, turn footers, and the
+ * state at the end.
  */
 @Component({
   selector: 'app-session-conversation',
@@ -75,6 +83,9 @@ export class SessionConversation {
   readonly embed = output<PreviewDto>();
   /** A message that was not sent goes back into the input. */
   readonly edit = output<QueuedItem>();
+
+  /** The items with each run of tool calls folded into a group. */
+  protected readonly entries = computed(() => groupTools(this.items()));
 
   protected readonly resolutionText = resolutionText;
   protected readonly progressText = progressText;
@@ -143,8 +154,36 @@ export class SessionConversation {
     return item.result.isError ? 'error' : 'done';
   }
 
+  /**
+   * What a group's row says: whether a call waits for the user, runs or
+   * failed, the call that runs (or the tools used), and how many failed.
+   */
+  protected groupState(group: ToolGroup): {
+    tone: Tone;
+    current: string | null;
+    counts: string;
+    state: string | null;
+  } {
+    const tones = group.tools.map((tool) =>
+      this.toolTone(this.toolState(tool)),
+    );
+    const failed = tones.filter((tone) => tone === 'bad').length;
+    const waiting = group.tools.find((_, index) => tones[index] === 'ask');
+    const running = group.tools.findLast((_, index) => tones[index] === 'busy');
+    const current = waiting ?? running;
+    const failures = failed > 0 ? `${failed} failed` : null;
+    return {
+      tone: waiting ? 'ask' : running ? 'busy' : failed > 0 ? 'bad' : 'quiet',
+      current: current
+        ? `${shortToolName(current.name)} ${this.toolLine(current)}`.trim()
+        : null,
+      counts: toolCounts(group.tools),
+      state: waiting ? this.toolState(waiting) : running ? 'running' : failures,
+    };
+  }
+
   /** Colour group of a tool row's state. */
-  protected toolTone(state: string): 'ok' | 'bad' | 'ask' | 'busy' | 'quiet' {
+  protected toolTone(state: string): Tone {
     switch (state) {
       case 'done':
       case 'done by the app':

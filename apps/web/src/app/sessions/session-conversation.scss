@@ -50,48 +50,122 @@
   border-left: 2px solid var(--mat-sys-outline-variant);
 }
 
-// Tool calls: compact rows; consecutive ones form one bordered group.
-.tool {
-  border: 1px solid var(--mat-sys-outline-variant);
+// Tool calls: quiet rows without a frame, so Claude's text and the user's
+// messages stand out; a run of them is one row (`.tool-group`).
+.tool,
+.tool-group {
   border-radius: var(--mat-sys-corner-small);
-  background: var(--mat-sys-surface-container-low);
+  color: var(--mat-sys-on-surface-variant);
   font: var(--mat-sys-body-small);
 
   &.nested {
     margin-left: 12px;
     padding-left: 0;
-    border-left-width: 2px;
+    border-left: 2px solid var(--mat-sys-outline-variant);
+    border-radius: 0;
   }
 
-  summary {
+  > summary {
     display: grid;
-    grid-template-columns: 16px auto minmax(0, 1fr) auto;
+    grid-template-columns: 14px auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
-    min-height: 34px;
-    padding: 0 10px;
+    min-height: 26px;
+    padding: 0 6px;
+    border-radius: var(--mat-sys-corner-small);
     cursor: pointer;
     list-style: none;
 
     &::-webkit-details-marker {
       display: none;
     }
+
+    &:hover {
+      background: var(--mat-sys-surface-container-low);
+    }
+  }
+
+  &[open] {
+    background: var(--mat-sys-surface-container-low);
   }
 }
 
-.tool + .tool {
-  margin-top: -11px;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+.group-chevron {
+  --app-icon-size: 14px;
+  --app-icon-stroke: 2.2;
+
+  transition: transform 120ms ease;
+
+  .tool-group[open] > summary > & {
+    transform: rotate(90deg);
+  }
+
+  .tool-busy > summary > & {
+    color: var(--app-status-running);
+  }
+
+  .tool-ask > summary > & {
+    color: var(--app-status-attention);
+  }
 }
 
-.tool:has(+ .tool) {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
+.group-count {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.group-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+
+  &.group-current {
+    font: var(--app-font-code);
+    font-size: 12px;
+  }
+}
+
+.group-state {
+  white-space: nowrap;
+
+  .tool-bad > summary > & {
+    color: var(--mat-sys-error);
+  }
+
+  .tool-busy > summary > & {
+    color: var(--app-status-running);
+  }
+
+  .tool-ask > summary > & {
+    color: var(--app-status-attention);
+    font-weight: 600;
+  }
+}
+
+.group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 6px 13px;
+
+  > .tool {
+    margin-left: 0;
+  }
+
+  > .tool[open] {
+    background: var(--mat-sys-surface-container);
+  }
+
+  > .assistant-text {
+    margin: 2px 0;
+    font: var(--mat-sys-body-medium);
+    color: var(--mat-sys-on-surface-variant);
+  }
 }
 
 .tool-icon {
-  --app-icon-size: 15px;
+  --app-icon-size: 14px;
   --app-icon-stroke: 2.2;
 
   color: var(--mat-sys-on-surface-variant);
@@ -114,7 +188,7 @@
 }
 
 .tool-name {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .tool-summary {
@@ -123,7 +197,7 @@
   white-space: nowrap;
   font: var(--app-font-code);
   font-size: 12px;
-  color: var(--mat-sys-on-surface-variant);
+  opacity: 0.8;
 }
 
 .tool-state,
@@ -144,7 +218,7 @@
 }
 
 .tool-body {
-  padding: 0 10px 8px;
+  padding: 0 6px 8px;
 }
 
 .prep {

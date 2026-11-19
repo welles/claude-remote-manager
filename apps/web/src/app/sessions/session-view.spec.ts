@@ -359,6 +359,101 @@ describe('SessionView', () => {
     );
   });
 
+  it('folds a run of tool calls into one quiet row that opens to the calls', async () => {
+    const { harness, socket, element } = await open();
+    const call = (toolUseId: string, name = 'Bash') =>
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId,
+        name,
+        input: { command: `echo ${toolUseId}` },
+        parentToolUseId: null,
+      });
+    const result = (toolUseId: string, isError = false) =>
+      event({
+        type: 'tool.result',
+        toolUseId,
+        isError,
+        content: 'out',
+        truncated: false,
+        parentToolUseId: null,
+      });
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto(),
+      events: [
+        call('t1'),
+        result('t1'),
+        call('t2', 'Read'),
+        result('t2', true),
+        call('t3'),
+        result('t3'),
+        event({
+          type: 'assistant.text',
+          messageId: 'm2',
+          blockIndex: null,
+          text: 'Found it.',
+          parentToolUseId: null,
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const group = element.querySelector(
+      '[data-testid="tool-group"]',
+    ) as HTMLDetailsElement;
+    expect(group.open).toBe(false);
+    const summary = group
+      .querySelector('summary')
+      ?.textContent?.replace(/\s+/g, ' ');
+    expect(summary).toContain('3 tool calls');
+    expect(summary).toContain('Bash 2 · Read');
+    expect(summary).toContain('1 failed');
+    expect(group.querySelectorAll('.tool')).toHaveLength(3);
+    // Claude's text stays outside, after the group.
+    expect(group.nextElementSibling?.textContent).toContain('Found it.');
+  });
+
+  it("names a group's running call in its row", async () => {
+    const { harness, socket, element } = await open();
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto({ status: 'running' }),
+      events: [
+        ...['t1', 't2'].map((toolUseId) =>
+          event({
+            type: 'tool.call',
+            messageId: 'm',
+            toolUseId,
+            name: 'Bash',
+            input: { command: `ls ${toolUseId}` },
+            parentToolUseId: null,
+          }),
+        ),
+        event({
+          type: 'tool.result',
+          toolUseId: 't1',
+          isError: false,
+          content: 'out',
+          truncated: false,
+          parentToolUseId: null,
+        }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const summary = element
+      .querySelector('[data-testid="tool-group"] summary')
+      ?.textContent?.replace(/\s+/g, ' ');
+    expect(summary).toContain('Bash ls t2');
+    expect(summary).toContain('running');
+  });
+
   it('shows git commands the app ran for autofix with their real outcome', async () => {
     const { harness, socket, element } = await open();
     const call = (toolUseId: string) =>
