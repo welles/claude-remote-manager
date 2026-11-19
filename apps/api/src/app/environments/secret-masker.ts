@@ -6,8 +6,12 @@ export const MASK = '***';
 export type SecretMasker = (<T>(value: T) => T) & {
   /**
    * How much streamed text is held back (see {@link StreamMasker}): the
-   * length of the longest single-line masked string, at most
-   * {@link MAX_STREAM_HOLD}; 0 without secrets.
+   * length of the longest single-line masked string; 0 without secrets.
+   * Multi-line secrets (whole files, multi-line values) do not count: in
+   * streams they are masked through their values and long lines (see
+   * {@link maskedStrings}), in complete texts also as a whole, so a whole
+   * file does not stop streaming. A long single-line secret does hold
+   * back that much: correctness before streaming.
    */
   readonly longest: number;
   /** Masks one string. */
@@ -21,15 +25,6 @@ function masker(
 ): SecretMasker {
   return Object.assign(<T>(value: T) => visit(value) as T, { longest, text });
 }
-
-/**
- * Streamed text is held back by at most this many characters. Multi-line
- * secrets (whole files, multi-line values) are masked whole only in
- * complete texts; in streams their values and long lines are masked (see
- * {@link maskedStrings}), so holding back the length of a whole file
- * (which would stop streaming) is not needed.
- */
-export const MAX_STREAM_HOLD = 4096;
 
 /** Masks nothing (sessions without environment or secrets). */
 export const NO_MASKING: SecretMasker = masker(
@@ -190,9 +185,7 @@ export function secretMasker(strings: string[]): SecretMasker {
     }
     return value;
   };
-  const hold = sorted.find(
-    (text) => !text.includes('\n') && text.length <= MAX_STREAM_HOLD,
-  );
+  const hold = sorted.find((text) => !text.includes('\n'));
   return masker(visit, maskString, hold?.length ?? 0);
 }
 

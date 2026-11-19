@@ -86,6 +86,18 @@ describe('secret masking', () => {
     expect(
       new StreamMasker().push('f', 'x'.repeat(100), fileMask),
     ).toHaveLength(100 - (fileMask.longest - 1));
+    // A long single-line secret is held back whole.
+    const long = 'k'.repeat(6000);
+    const longMask = secretMasker(
+      maskedStrings([{ kind: 'variable', value: long }]),
+    );
+    expect(longMask.longest).toBe(6000);
+    const longStream = new StreamMasker();
+    const streamed = [long.slice(0, 5000), long.slice(5000), ' end']
+      .map((piece) => longStream.push('l', piece, longMask))
+      .join('');
+    expect(streamed + longStream.flush('l', longMask)).toBe(`${MASK} end`);
+    expect(streamed).not.toContain('k');
     // A multi-line variable is masked like a file.
     expect(
       maskedStrings([
