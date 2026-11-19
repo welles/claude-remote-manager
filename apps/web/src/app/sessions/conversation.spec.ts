@@ -750,6 +750,28 @@ describe('approval requests, queue and settings in the conversation', () => {
     ]);
     expect(denied.map((item) => item.kind)).toEqual(['tool']);
   });
+
+  it('leaves out the waiting state Claude sets: the status shows it', () => {
+    const items = buildConversation([
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId: 't1',
+        name: 'mcp__crm__set_waiting_state',
+        input: { waiting_on: 'work', reason: 'CI of PR #12' },
+        parentToolUseId: null,
+      }),
+      event({
+        type: 'tool.result',
+        toolUseId: 't1',
+        isError: false,
+        content: 'After this turn…',
+        truncated: false,
+        parentToolUseId: null,
+      }),
+    ]);
+    expect(items).toEqual([]);
+  });
 });
 
 describe('tool summaries', () => {

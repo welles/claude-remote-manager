@@ -91,6 +91,12 @@ export const CLAUDE_WAIT_LIMIT_MINUTES = 30;
 export const SET_SESSION_TITLE_TOOL_NAME = 'mcp__crm__set_session_title';
 
 /**
+ * Name of Claude's tool that says what the session waits for, as Claude
+ * Code reports it; its effect shows as the status.
+ */
+export const SET_WAITING_STATE_TOOL_NAME = 'mcp__crm__set_waiting_state';
+
+/**
  * Permission modes a session may use: the Agent SDK's modes. In `auto` a
  * model classifier of Claude Code approves or denies tool uses and asks the
  * user only when it cannot decide; `bypassPermissions` runs everything
