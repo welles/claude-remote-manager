@@ -59,6 +59,14 @@ export interface SessionFileContent {
   truncated: boolean;
 }
 
+/** A file opened for streaming. */
+export interface OpenedSessionFile {
+  path: string;
+  size: number;
+  truncated: boolean;
+  content: Readable;
+}
+
 const TIMEOUT_MS = 30_000;
 /** Serving a live file may take longer (slow clients). */
 const STREAM_TIMEOUT_MS = 10 * 60_000;
@@ -119,12 +127,7 @@ export class SessionFileAccess {
     roots: string[],
     path: string,
     maxBytes: number,
-  ): Promise<{
-    path: string;
-    size: number;
-    truncated: boolean;
-    content: Readable;
-  }> {
+  ): Promise<OpenedSessionFile> {
     const command = this.launcher.command('session', process.execPath, [
       sessionFilesScript(),
       'read',

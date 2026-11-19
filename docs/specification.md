@@ -182,7 +182,7 @@ Die Anbindung läuft über eine eigene GitHub App.
 
 Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
 
-- **Dateibrowser:** Verzeichnisbaum der Klone einer Sitzung, Dateien mit Syntax-Highlighting ansehen, geänderte Dateien markiert, Dateien per Klick als Referenz in den Prompt übernehmen.
+- **Dateibrowser:** Verzeichnisbaum der Klone einer Sitzung, Dateien mit Syntax-Highlighting ansehen, geänderte Dateien markiert, Dateien per Klick als Referenz in den Prompt übernehmen. **Umsetzung (entschieden):** Eigene Seite „Files“ der Sitzung mit einem Baum pro Verzeichnis (die Dateien wie für `@`: von git verfolgte und unverfolgte, ohne ignorierte), Filter über alle Pfade, von der Sitzung geänderte Dateien (wie auf der Changes-Seite) markiert, Ordner mit Änderungen darunter mit Punkt; Dateien öffnen im vorhandenen Dateiviewer (Highlighting, Markdown, Bilder, PDF, HTML in Sandbox); „Reference in message“ führt zurück in die Sitzung mit `@pfad` im Eingabefeld. Gelesen wird nur innerhalb des Verzeichnisses (auch über Symlinks nicht hinaus).
 
 * **MCP-Server, Slash-Commands und Skills:** Kommen bereits wie im Terminal aus dem `~/.claude` des Benutzers und den Repos. **Umsetzung (entschieden):** Autovervollständigung im Eingabefeld der Sitzung, wenn die Nachricht mit `/` beginnt: die Befehle und Skills, die Claude Code der Sitzung meldet (vor dem ersten Prozess die des Benutzers und die eigenen von Claude Code), ohne die an ein Terminal gebundenen; die Nachricht geht unverändert an Claude Code, das den Befehl ausführt.
 

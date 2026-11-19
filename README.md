@@ -17,7 +17,8 @@ where Claude's approval requests, questions and plans are answered; model and pe
 are chosen per session and switchable while it runs; messages sent while Claude works are
 queued; Claude's task list, the context window and the account's plan limits are shown; every
 file change appears as a diff in the history and in approvals, and a changes page shows the
-whole session's diff per repository and file; images can be attached to messages, files of the
+whole session's diff per repository and file, a files page its directories (changed files
+marked); images can be attached to messages, files of the
 session referenced with `@`, Claude Code's slash commands and skills completed after `/`,
 GitHub issues and pull requests with `#` (Claude gets their
 content as untrusted context), and Claude shows files to the user with `show_file`; session
@@ -464,7 +465,7 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   side by side (kept per browser; unified by default on narrow screens); the cleanup dialog
   links to it ("Review the changes first").
 
-### Images, `@` references, `/` commands and shown files
+### Images, `@` references, `/` commands, files and shown files
 
 - Images: pasted, dropped or picked in the input (or the new-session form), each uploaded
   right away (`POST /api/attachments`, body = the image; PNG, JPEG, GIF or WebP checked by
@@ -483,6 +484,20 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   directory), `@/absolute/path` for other directories, quoted as `@"..."` with spaces. Claude
   Code expands these itself when the message arrives (it reads the files into the turn as
   attachments; checked with the bundled Claude Code for relative and absolute quoted paths).
+- File browser (`/sessions/:id/files`): `GET /api/sessions/:id/browse` lists each ready
+  directory of the session with its files (the same listing as for `@`: in clones git's
+  tracked and untracked, not ignored files; at most 20,000 per directory), shown as a tree per
+  directory with a filter over all paths; files the session changed (from the session diff)
+  are marked, folders with changes below them get a dot. A file opens in the file viewer:
+  `GET .../browse/file?directory=&path=` says what it is (kind, media type, language, size,
+  its `@` mention; from its first 8 KB), `GET .../browse/content?directory=&path=` serves it
+  like a shown file's live content (read as the session user through the same helper, only
+  inside that directory, also not through symlinks; relative paths without `..`; up to
+  50 MB; never sniffed; HTML, SVG and text sandboxed by CSP, PDFs in the browser's viewer
+  as for shown files). A directory that cannot be listed (gone) shows an error, the others
+  stay; folders show 300 files until "more". "Reference in message" returns to the session
+  with `?mention=@path`; the input takes one such reference (anything else in the parameter
+  is dropped) after the text already typed, which the app keeps per session while it runs.
 - `/` commands: a message starting with `/` offers Claude Code's slash commands and skills
   (`GET /api/sessions/:id/slash-commands`), names and aliases starting with what was typed
   first, then names containing it; choosing inserts `/name `. The list is what the session's

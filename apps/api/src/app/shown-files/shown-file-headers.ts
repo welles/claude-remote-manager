@@ -41,7 +41,7 @@ export function contentDisposition(
  * everything else, and every `download`, as attachment. Never sniffed.
  */
 export function shownFileHeaders(
-  file: ShownFileDto,
+  file: Pick<ShownFileDto, 'kind' | 'mediaType' | 'name'>,
   size: number,
   download: boolean,
 ): Record<string, string> {

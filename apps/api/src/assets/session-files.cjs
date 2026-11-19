@@ -113,7 +113,10 @@ function read(maxBytes, requested, rootList) {
       } catch {
         // The directory does not exist either.
       }
-      if (!parent || !inside(parent, roots)) {
+      // A missing parent directory below a root (by name): not found too.
+      if (
+        parent ? !inside(parent, roots) : !inside(path.resolve(target), roots)
+      ) {
         fail('outside', `${requested} is not inside the session's directories`);
         return;
       }

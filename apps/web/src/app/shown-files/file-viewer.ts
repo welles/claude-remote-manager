@@ -43,19 +43,34 @@ export class FileViewer implements OnInit {
   private readonly sanitizer = inject(DomSanitizer);
 
   readonly file = input.required<ShownFileDto>();
+  /**
+   * Where the content is, for files that are not shown files (the file
+   * browser); always a URL of this app.
+   */
+  readonly contentUrl = input<string | null>(null);
+  readonly contentDownloadUrl = input<string | null>(null);
+  /** An extra action in the head (e.g. "Reference in message"). */
+  readonly actionLabel = input<string | null>(null);
   readonly closed = output<void>();
+  readonly action = output<void>();
 
-  protected readonly url = computed(() => shownFileUrl(this.file()));
-  protected readonly downloadUrl = computed(() =>
-    shownFileUrl(this.file(), { download: true }),
+  protected readonly url = computed(
+    () => this.contentUrl() ?? shownFileUrl(this.file()),
+  );
+  protected readonly downloadUrl = computed(
+    () =>
+      this.contentDownloadUrl() ??
+      shownFileUrl(this.file(), { download: true }),
   );
   protected readonly size = computed(() => formatSize(this.file().size));
   /** The frame's source: only ever this app's own content URL. */
-  protected readonly frameUrl = computed<SafeResourceUrl | null>(() =>
-    UUID.test(this.file().id)
+  protected readonly frameUrl = computed<SafeResourceUrl | null>(() => {
+    const own = this.contentUrl();
+    return (own !== null && own.startsWith('/api/sessions/')) ||
+      (own === null && UUID.test(this.file().id))
       ? this.sanitizer.bypassSecurityTrustResourceUrl(this.url())
-      : null,
-  );
+      : null;
+  });
   protected readonly text = signal<string | null>(null);
   protected readonly highlighted = signal<string | null>(null);
   protected readonly loading = signal(false);

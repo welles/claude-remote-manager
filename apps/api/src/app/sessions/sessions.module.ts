@@ -29,7 +29,10 @@ import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { SessionDiffController } from '../diffs/session-diff.controller';
 import { SessionDiffService } from '../diffs/session-diff.service';
 import { FileMentionsService } from '../files/file-mentions.service';
-import { SessionFilesController } from '../files/files.controller';
+import {
+  SessionBrowseController,
+  SessionFilesController,
+} from '../files/files.controller';
 import { SessionFileAccess } from '../files/session-file-access';
 import { SessionEventRepository } from './session-event.repository';
 import { SessionRepository } from './session.repository';
@@ -64,6 +67,7 @@ import { SlashCommandsService } from './slash-commands.service';
     SessionGitController,
     SessionDiffController,
     SessionFilesController,
+    SessionBrowseController,
     ModelsController,
     SlashCommandsController,
   ],

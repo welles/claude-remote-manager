@@ -7,6 +7,8 @@ import {
   Optional,
 } from '@nestjs/common';
 import type {
+  BrowseResponse,
+  BrowsedFileDto,
   FileMention,
   FileMentionsResponse,
 } from '@claude-remote-manager/shared-types';
@@ -21,7 +23,11 @@ import {
   SessionRepository,
   type SessionDirectoryRecord,
 } from '../sessions/session.repository';
-import { SessionFileAccess } from './session-file-access';
+import { classifyFile } from '../shown-files/file-kind';
+import {
+  SessionFileAccess,
+  type OpenedSessionFile,
+} from './session-file-access';
 
 /** Files listed per directory at most. */
 export const MAX_LISTED_FILES = 200_000;
@@ -29,6 +35,13 @@ export const MAX_LISTED_FILES = 200_000;
 export const LISTING_TTL_MS = 30_000;
 export const MAX_MENTION_RESULTS = 50;
 const MAX_QUERY_LENGTH = 200;
+/** Files the browser gets per directory at most. */
+export const MAX_BROWSED_FILES = 20_000;
+/** Bytes read to tell what kind of file it is. */
+const SNIFF_BYTES = 8192;
+/** The browser serves files up to this size. */
+export const MAX_BROWSED_BYTES = 50 * 1024 * 1024;
+const MAX_PATH_LENGTH = 4096;
 
 interface Listing {
   paths: string[];
@@ -137,6 +150,113 @@ export class FileMentionsService {
       files: matches.slice(0, count).map((match) => match.mention),
       truncated: truncated || matches.length > count,
     };
+  }
+
+  /**
+   * The session's ready directories with their files (as for `@`, at most
+   * {@link MAX_BROWSED_FILES} each), for the file browser.
+   */
+  async browse(sessionId: string): Promise<BrowseResponse> {
+    const directories: BrowseResponse['directories'] = [];
+    for (const directory of this.readyDirectories(sessionId)) {
+      const entry = {
+        directory: directory.position,
+        repository: directory.repositoryName,
+        path: directory.path,
+      };
+      try {
+        const listing = await this.listing(directory);
+        const files = [...listing.paths].sort();
+        directories.push({
+          ...entry,
+          files: files.slice(0, MAX_BROWSED_FILES),
+          truncated: listing.truncated || files.length > MAX_BROWSED_FILES,
+          error: null,
+        });
+      } catch {
+        // One directory that cannot be listed (gone) hides no other.
+        directories.push({
+          ...entry,
+          files: [],
+          truncated: false,
+          error: 'The directory could not be listed.',
+        });
+      }
+    }
+    return { directories };
+  }
+
+  /** What kind of file it is (read inside its directory only). */
+  async browsedFile(
+    sessionId: string,
+    position: number,
+    path: string,
+  ): Promise<BrowsedFileDto> {
+    const directory = this.browsable(sessionId, position, path);
+    const file = await this.files.read([directory.path], path, SNIFF_BYTES);
+    const name = path.split('/').at(-1) ?? path;
+    return {
+      directory: position,
+      path,
+      name,
+      ...classifyFile(name, file.data, !file.truncated),
+      size: file.size,
+      mention: mentionText(
+        position === 0 ? path : `${directory.path.replace(/\/+$/, '')}/${path}`,
+      ),
+    };
+  }
+
+  /** Opens the file for serving, up to {@link MAX_BROWSED_BYTES}. */
+  async openBrowsed(
+    sessionId: string,
+    position: number,
+    path: string,
+  ): Promise<OpenedSessionFile> {
+    const directory = this.browsable(sessionId, position, path);
+    return this.files.stream([directory.path], path, MAX_BROWSED_BYTES);
+  }
+
+  /**
+   * The directory a browsed path belongs to: a relative path without `..`
+   * in one of the session's ready directories (the helper also refuses
+   * real paths outside it, e.g. through symlinks).
+   */
+  private browsable(
+    sessionId: string,
+    position: number,
+    path: string,
+  ): SessionDirectoryRecord {
+    if (
+      !path ||
+      path.length > MAX_PATH_LENGTH ||
+      path.startsWith('/') ||
+      path.includes('\0') ||
+      path.split('/').some((part) => part === '..' || part === '')
+    ) {
+      throw new BadRequestException(
+        'path must be a relative path in the directory',
+      );
+    }
+    const directory = this.readyDirectories(sessionId).find(
+      (candidate) => candidate.position === position,
+    );
+    if (!directory || !isAbsolute(directory.path)) {
+      throw new NotFoundException('No such directory in the session');
+    }
+    return directory;
+  }
+
+  private readyDirectories(sessionId: string): SessionDirectoryRecord[] {
+    const record = this.sessions.get(sessionId);
+    if (!record) {
+      throw new NotFoundException(`Session ${sessionId} not found`);
+    }
+    // Repositories being added (or held) are not Claude's yet.
+    return record.directories.filter(
+      (directory) =>
+        directory.state === 'ready' && isActiveDirectory(directory),
+    );
   }
 
   /** The files of a directory (cached for {@link LISTING_TTL_MS}). */

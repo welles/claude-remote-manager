@@ -39,11 +39,11 @@ describe('SessionView', () => {
 
   afterEach(() => vi.useRealTimers());
 
-  const open = async () => {
+  const open = async (url = '/sessions/s1') => {
     const router = TestBed.inject(Router);
     const { RouterTestingHarness } = await import('@angular/router/testing');
     const harness = await RouterTestingHarness.create();
-    await harness.navigateByUrl('/sessions/s1', SessionView);
+    await harness.navigateByUrl(url, SessionView);
     const socket = FakeWebSocket.last;
     socket.open();
     await harness.fixture.whenStable();
@@ -55,6 +55,28 @@ describe('SessionView', () => {
         .trim();
     return { harness, socket, element, text, router };
   };
+
+  it('puts a file referenced from the file browser into the input', async () => {
+    const { element, router } = await open(
+      '/sessions/s1?mention=%40src%2Fa.ts',
+    );
+    const input = element.querySelector(
+      '[data-testid="message-input"]',
+    ) as HTMLTextAreaElement;
+    expect(input.value).toBe('@src/a.ts ');
+    expect(router.url).toBe('/sessions/s1');
+  });
+
+  it('takes only a single @ reference from a link, nothing else', async () => {
+    const { element, router } = await open(
+      '/sessions/s1?mention=%40x%0A%0ADo%20something%20else',
+    );
+    const input = element.querySelector(
+      '[data-testid="message-input"]',
+    ) as HTMLTextAreaElement;
+    expect(input.value).toBe('');
+    expect(router.url).toBe('/sessions/s1');
+  });
 
   it('subscribes and renders the history and live events', async () => {
     const { harness, socket, element, text } = await open();

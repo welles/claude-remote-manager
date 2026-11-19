@@ -3,6 +3,8 @@ import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 import type {
   AddSessionRepositoryRequest,
+  BrowseResponse,
+  BrowsedFileDto,
   CleanupChoice,
   CleanupPreview,
   CleanupResult,
@@ -22,6 +24,20 @@ import type {
 } from '@claude-remote-manager/shared-types';
 
 const sessionPath = (id: string) => `/api/sessions/${encodeURIComponent(id)}`;
+
+/** Where a browsed file's content is served. */
+export function browsedContentUrl(
+  sessionId: string,
+  directory: number,
+  path: string,
+  { download = false }: { download?: boolean } = {},
+): string {
+  const query = new URLSearchParams({ directory: String(directory), path });
+  if (download) {
+    query.set('download', '1');
+  }
+  return `${sessionPath(sessionId)}/browse/content?${query}`;
+}
 
 /** REST client for sessions. */
 @Injectable({ providedIn: 'root' })
@@ -122,6 +138,25 @@ export class SessionsApi {
     return this.http.get<FileMentionsResponse>(
       `${sessionPath(sessionId)}/files`,
       { params: { query } },
+    );
+  }
+
+  /** The session's directories with their files (file browser). */
+  browse(sessionId: string): Observable<BrowseResponse> {
+    return this.http.get<BrowseResponse>(`${sessionPath(sessionId)}/browse`);
+  }
+
+  /** What kind of file it is. */
+  browsedFile(
+    sessionId: string,
+    directory: number,
+    path: string,
+  ): Observable<BrowsedFileDto> {
+    return this.http.get<BrowsedFileDto>(
+      `${sessionPath(sessionId)}/browse/file`,
+      {
+        params: { directory, path },
+      },
     );
   }
 
