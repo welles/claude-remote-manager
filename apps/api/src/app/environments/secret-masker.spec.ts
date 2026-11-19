@@ -73,6 +73,10 @@ describe('secret masking', () => {
     expect(sent).not.toContain('sk-12');
     expect(sent).toContain(`is ${MASK} and`);
     expect(`The key is ${MASK} and more text here`.startsWith(sent)).toBe(true);
+    // What was held back comes with the end of the stream.
+    const rest = stream.flush('m:0', mask);
+    expect(sent + rest).toBe(`The key is ${MASK} and more text here`);
+    expect(stream.flush('m:0', mask)).toBe('');
     // Without secrets pieces pass as they are.
     expect(new StreamMasker().push('m:0', 'abc', NO_MASKING)).toBe('abc');
   });

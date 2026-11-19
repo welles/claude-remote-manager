@@ -1,3 +1,4 @@
+import { SessionEventRepository } from '../sessions/session-event.repository';
 import { existsSync, readFileSync } from 'node:fs';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import { flush, waitFor } from '../sessions/testing/fake-agent';
@@ -227,6 +228,35 @@ describe('sessions with an environment', () => {
     expect(harness.service.get(session.id).environment?.setupStatus).toBe(
       'failed',
     );
+  });
+
+  it('masks a secret split across chunks of setup output', async () => {
+    // Prints the token in two parts with a pause, so they come in two chunks.
+    const env = environment(
+      'printf "a %s" "${API_TOKEN:0:8}"; sleep 0.4; printf "%s b\\n" "${API_TOKEN:8}"',
+    );
+    const session = await harness.service.create({
+      prompt: 'Work',
+      scratch: true,
+      environmentId: env.id,
+    });
+    await harness.prepared(session.id);
+    const events = harness.events
+      .filter((envelope) => envelope.sessionId === session.id)
+      .map((envelope) => envelope.event);
+    const output = outputs(session.id);
+    expect(output).toContain('a *** b');
+    expect(output).not.toContain(SECRET.slice(0, 8));
+    expect(output).not.toContain(SECRET.slice(8));
+    const stored = JSON.stringify(
+      new SessionEventRepository(harness.db).list(session.id),
+    );
+    expect(stored).toContain('a *** b');
+    expect(stored).not.toContain(SECRET.slice(8));
+    const result = events.find(
+      (event) => event.type === 'setup.result' && event.state === 'succeeded',
+    ) as { outputTail: string | null } | undefined;
+    expect(result?.outputTail ?? '').not.toContain(SECRET.slice(8));
   });
 
   it('rejects an unknown environment', async () => {
