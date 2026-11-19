@@ -53,7 +53,12 @@ import {
 } from './conversation';
 import { groupPreparation } from './preparation';
 import { formatCost, formatTokens, needLabel, totalTokens } from './format';
-import { ModelsStore, modelOptionsWith, normalizeModel } from './models-store';
+import {
+  ModelsStore,
+  modelLabel,
+  modelOptionsWith,
+  normalizeModel,
+} from './models-store';
 import { PermissionCard } from './permission-card';
 import { ContextMeter } from './context-meter';
 import { sessionGitHubRepositories } from '../github-references/references';
@@ -195,14 +200,12 @@ export class SessionView implements OnInit {
     groupPreparation(this.items()),
   );
   /** Name of the session's model for the strip. */
-  protected readonly modelName = computed(() => {
-    const model = normalizeModel(this.session()?.model ?? null);
-    const label =
-      this.modelOptions().find((option) => option.value === model)?.label ??
-      model ??
-      'Default';
-    return label.replace(/\s*\(.*\)$/, '');
-  });
+  protected readonly modelName = computed(() =>
+    modelLabel(this.modelOptions(), this.session()?.model ?? null).replace(
+      /\s*\((?!1M\)).*\)$/,
+      '',
+    ),
+  );
   /**
    * The permission mode in effect, for the strip: the chosen one, or the
    * one the process runs in instead (e.g. "Ask (auto unavailable)").
