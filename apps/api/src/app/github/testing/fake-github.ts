@@ -779,7 +779,8 @@ export class FakeGitHub {
                       createdAt: thread.createdAt ?? '2026-01-01T00:00:00Z',
                       author: {
                         __typename: thread.authorType ?? 'User',
-                        login: thread.author,
+                        // GraphQL names apps without `[bot]`.
+                        login: thread.author.replace(/\[bot\]$/, ''),
                       },
                     },
                   ],

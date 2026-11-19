@@ -387,8 +387,16 @@ export class PullRequestFeedback {
           continue;
         }
         const first = node.comments?.nodes?.[0] ?? null;
+        const login = first?.author?.login ?? null;
         threads.push({
-          author: first?.author?.login ?? null,
+          // GraphQL names apps without the `[bot]` REST (and
+          // PR_TRUSTED_BOTS) use.
+          author:
+            login &&
+            first?.author?.__typename === 'Bot' &&
+            !login.endsWith('[bot]')
+              ? `${login}[bot]`
+              : login,
           authorType: first?.author?.__typename ?? null,
           body: first?.body ?? '',
           createdAt: first?.createdAt ?? '',
