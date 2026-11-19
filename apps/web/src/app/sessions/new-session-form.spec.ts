@@ -136,6 +136,8 @@ describe('NewSessionForm', () => {
       repository('r2', 'acme/lib', 'trunk'),
     ]);
     expect(form.mode()).toBe('repository');
+    // New sessions start in auto mode.
+    expect(form.permissionMode).toBe('auto');
     expect(element.textContent).toContain('Main repository');
     form.prompt = ' Add the export ';
     expect(form.canStart()).toBe(false);
@@ -195,6 +197,7 @@ describe('NewSessionForm', () => {
       http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
     ).toEqual({
       prompt: 'Build a tool',
+      permissionMode: 'auto',
       repositories: [{ repositoryId: 'r1' }],
       newProject: { name: 'new-tool' },
     });
@@ -246,7 +249,11 @@ describe('NewSessionForm', () => {
     form.create();
     expect(
       http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
-    ).toEqual({ prompt: 'Quick question', scratch: true });
+    ).toEqual({
+      prompt: 'Quick question',
+      permissionMode: 'auto',
+      scratch: true,
+    });
   });
 
   it('marks local projects in the repository list', async () => {
@@ -283,7 +290,12 @@ describe('NewSessionForm', () => {
     form.create();
     expect(
       http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
-    ).toEqual({ prompt: '', attachmentIds: ['a1'], scratch: true });
+    ).toEqual({
+      prompt: '',
+      attachmentIds: ['a1'],
+      permissionMode: 'auto',
+      scratch: true,
+    });
   });
   it('completes # references from the chosen GitHub repositories and sends them', async () => {
     const { fixture, form, element } = await render([
