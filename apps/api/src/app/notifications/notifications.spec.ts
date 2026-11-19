@@ -553,6 +553,12 @@ describe('notifications', () => {
       automation: {
         autofix: true,
         autoclose: true,
+        automerge: {
+          enabled: false,
+          held: null,
+          failure: null,
+          waiting: null,
+        },
         attempts: 3,
         maxAttempts: 3,
         gaveUp: true,

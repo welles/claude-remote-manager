@@ -20,12 +20,15 @@ import {
   CREATE_PULL_REQUEST_TOOL,
   EXPOSE_PORT_TOOL,
   EXPOSE_PORT_TOOL_NAME,
+  REQUEST_OWNER_DECISION_TOOL,
+  REQUEST_OWNER_DECISION_TOOL_NAME,
   SHOW_FILE_TOOL,
   SHOW_FILE_TOOL_NAME,
   STOP_PREVIEW_TOOL,
   STOP_PREVIEW_TOOL_NAME,
   isGitPushCommand,
 } from './app-tools';
+import { SessionAutomationHooks } from './session-automation-hooks';
 import { SessionGitService } from './session-git.service';
 import type { SessionRecord } from './session.repository';
 
@@ -135,6 +138,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     private readonly shownFiles: ShownFilesService,
     @Optional()
     private readonly previews?: PreviewsService,
+    @Optional()
+    private readonly automation?: SessionAutomationHooks,
   ) {
     super();
   }
@@ -199,7 +204,10 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       tools: [
         this.showFileTool(record.id),
         ...(githubClones.length > 0
-          ? [this.createPullRequestTool(record.id)]
+          ? [
+              this.createPullRequestTool(record.id),
+              this.requestOwnerDecisionTool(record.id),
+            ]
           : []),
         ...(previews
           ? [
@@ -213,6 +221,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       // previews forward only the session user's own ports.
       allowedTools: [
         SHOW_FILE_TOOL_NAME,
+        // Only pauses automerge.
+        ...(githubClones.length > 0 ? [REQUEST_OWNER_DECISION_TOOL_NAME] : []),
         ...(previews ? [EXPOSE_PORT_TOOL_NAME, STOP_PREVIEW_TOOL_NAME] : []),
       ],
     };
@@ -452,6 +462,48 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         return {
           text: `Pull request #${pull.number} (${pull.state}) of ${pull.repository}: ${pull.url}`,
         };
+      },
+    };
+  }
+
+  /**
+   * The tool `request_owner_decision`: Claude asks for the owner's
+   * decision on a review finding; automerge of the session's pull requests
+   * pauses until the owner's next message, and the owner is notified. No
+   * approval: it only stops the app from merging.
+   */
+  requestOwnerDecisionTool(sessionId: string): AgentTool {
+    return {
+      name: REQUEST_OWNER_DECISION_TOOL,
+      description:
+        'Ask the user to decide before a pull request of this session is merged automatically. ' +
+        'Use it when automerge is on and a review finding (or a CI failure) needs the decision ' +
+        'of the user instead of yours: a product or design decision, a trade-off, a change of ' +
+        'scope, or a finding you think is wrong and would leave unresolved. It pauses automerge ' +
+        "of the session's pull requests until the user's next message and notifies the user. " +
+        'Then ask your question in your reply and end your turn. Do not use it for findings ' +
+        'you can simply fix.',
+      inputSchema: (z) => ({
+        question: z
+          .string()
+          .min(1)
+          .max(1000)
+          .describe(
+            'What the user should decide, in one or two sentences; shown in the notification',
+          ),
+      }),
+      handler: async (input) => {
+        const question = String(input['question']).replace(/\s+/g, ' ').trim();
+        if (!question) {
+          return { isError: true, text: 'The question must not be blank.' };
+        }
+        const hold = this.automation?.holdAutomerge;
+        if (!hold) {
+          return {
+            text: 'Automerge is not available on this server. Ask the user in your reply.',
+          };
+        }
+        return { text: hold(sessionId, question) };
       },
     };
   }

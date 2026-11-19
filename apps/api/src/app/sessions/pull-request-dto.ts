@@ -24,6 +24,20 @@ export function pullRequestDto(pull: PullRequestRecord): PullRequestDto {
     automation: {
       autofix: pull.autofix,
       autoclose: pull.autoclose,
+      automerge: {
+        enabled: pull.automerge,
+        held: pull.automergeHeldAt
+          ? {
+              since: pull.automergeHeldAt.toISOString(),
+              reason: pull.automergeHoldReason ?? '',
+            }
+          : null,
+        failure:
+          pull.automergeFailedSha && pull.automergeFailedSha === pull.headSha
+            ? pull.automergeFailure
+            : null,
+        waiting: pull.automergeWaiting,
+      },
       attempts: pull.autofixAttempts,
       maxAttempts: pull.autofixMaxAttempts,
       gaveUp: pull.autofixGaveUpAt !== null,

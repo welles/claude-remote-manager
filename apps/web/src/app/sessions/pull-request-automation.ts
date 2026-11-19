@@ -23,9 +23,10 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
 };
 
 /**
- * Autofix and autoclose of one open pull request: the switches, attempts
- * and limit, what started the last run, and Stop while a run goes on.
- * Changes arrive back as session updates over the WebSocket.
+ * Autofix, autoclose and automerge of one open pull request: the switches,
+ * attempts and limit, what started the last run, Stop while a run goes on,
+ * and what automerge waits for. Changes arrive back as session updates
+ * over the WebSocket.
  */
 @Component({
   selector: 'app-pull-request-automation',
@@ -46,6 +47,14 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
         (change)="toggle('autoclose', $event)"
         data-testid="autoclose-toggle"
         >Autoclose</mat-slide-toggle
+      >
+      <mat-slide-toggle
+        [checked]="automation.automerge.enabled"
+        [disabled]="busy()"
+        (change)="toggle('automerge', $event)"
+        title="Merge by itself once all checks pass, the head commit is approved and no review thread is unresolved (turns autofix on)"
+        data-testid="automerge-toggle"
+        >Automerge</mat-slide-toggle
       >
       <span
         class="attempts"
@@ -113,6 +122,30 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
         {{ trigger() }}.
       </p>
     }
+    @if (automation.automerge.enabled) {
+      @let automerge = automation.automerge;
+      @if (automerge.held; as held) {
+        <p class="note warn" data-testid="automerge-held">
+          Automerge paused: Claude asks for your decision ({{ held.reason }}).
+          Your next message lets it continue.
+        </p>
+      } @else if (automerge.failure) {
+        <p class="note warn" data-testid="automerge-failure">
+          GitHub refused the merge: {{ automerge.failure }}. Automerge tries
+          again with the next commit, or turn it off and on.
+        </p>
+      } @else if (automerge.waiting) {
+        <p class="note" data-testid="automerge-waiting">
+          Automerge waits: {{ automerge.waiting }}.
+        </p>
+      } @else {
+        <p class="note" data-testid="automerge-info">
+          Automerge merges (rebase, else squash, else merge commit) once all
+          checks pass, the head commit is approved and no review thread is
+          unresolved.
+        </p>
+      }
+    }
     @if (error(); as text) {
       <p class="note warn" role="alert">{{ text }}</p>
     }
@@ -161,7 +194,7 @@ export class PullRequestAutomation {
   });
 
   protected toggle(
-    name: 'autofix' | 'autoclose',
+    name: 'autofix' | 'autoclose' | 'automerge',
     event: MatSlideToggleChange,
   ): void {
     this.save({ [name]: event.checked }, () => {

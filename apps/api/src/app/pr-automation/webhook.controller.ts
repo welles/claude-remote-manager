@@ -13,6 +13,8 @@ export const WEBHOOK_EVENTS: ReadonlySet<string> = new Set([
   'pull_request',
   'pull_request_review',
   'pull_request_review_comment',
+  // A review thread was resolved or unresolved (automerge waits for them).
+  'pull_request_review_thread',
   'issue_comment',
   'check_run',
   'check_suite',

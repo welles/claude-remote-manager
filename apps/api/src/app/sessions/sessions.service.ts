@@ -719,6 +719,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       references: parseReferenceRequests(body['references']),
       origin: 'user',
     });
+    // The owner answered: automerge waits no longer for their decision.
+    this.automation?.ownerMessage?.(sessionId);
   }
 
   /**

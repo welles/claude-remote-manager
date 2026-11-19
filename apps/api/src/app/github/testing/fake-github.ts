@@ -123,6 +123,18 @@ export interface FakeReviewItem {
   diffHunk?: string;
 }
 
+/** A review thread of a pull request (GraphQL `reviewThreads`). */
+export interface FakeReviewThread {
+  resolved: boolean;
+  outdated?: boolean;
+  author: string;
+  authorType?: 'User' | 'Bot';
+  body: string;
+  path?: string;
+  line?: number;
+  createdAt?: string;
+}
+
 export interface RecordedRequest {
   method: string;
   path: string;
@@ -170,6 +182,12 @@ export class FakeGitHub {
   readonly collaborators = new Map<string, string>();
   /** Logs of GitHub Actions jobs by job ID. */
   readonly jobLogs = new Map<number, string>();
+  /** Review threads per `<repository id>#<number>`. */
+  readonly reviewThreads = new Map<string, FakeReviewThread[]>();
+  /** Merge methods the repositories allow. */
+  allowedMergeMethods = new Set(['rebase', 'squash', 'merge']);
+  /** Merges done: pull request number and method. */
+  readonly merges: { number: number; method: string; sha: string }[] = [];
   /** Head commit GitHub reports for a new pull request's branch. */
   headSha: (repository: FakeRepository, head: string) => string = () =>
     'a'.repeat(40);
@@ -704,6 +722,129 @@ export class FakeGitHub {
         });
   }
 
+  /** GraphQL: only the review threads of a pull request. */
+  private graphqlRoute(request: RecordedRequest): Response | undefined {
+    const { method, path, auth } = request;
+    if (method !== 'POST' || path !== '/graphql') {
+      return undefined;
+    }
+    const body = request.body as {
+      query?: string;
+      variables?: {
+        owner?: string;
+        name?: string;
+        number?: number;
+        after?: string | null;
+      };
+    };
+    const variables = body.variables ?? {};
+    const found = this.repositoryByName(
+      variables.owner ?? '',
+      variables.name ?? '',
+    );
+    if (!body.query?.includes('reviewThreads') || !found) {
+      return json(200, { errors: [{ message: 'Fake GitHub: unknown query' }] });
+    }
+    if (!this.allows(auth, found.repository, 'pull_requests', 'read')) {
+      return json(200, {
+        data: { repository: null },
+        errors: [{ message: 'Resource not accessible by integration' }],
+      });
+    }
+    const all =
+      this.reviewThreads.get(`${found.repository.id}#${variables.number}`) ??
+      [];
+    // Pages of two, to exercise the cursor.
+    const start = Number(variables.after ?? 0);
+    const page = all.slice(start, start + 2);
+    return json(200, {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              pageInfo: {
+                hasNextPage: start + 2 < all.length,
+                endCursor: String(start + 2),
+              },
+              nodes: page.map((thread) => ({
+                isResolved: thread.resolved,
+                isOutdated: thread.outdated ?? false,
+                path: thread.path ?? 'src/app.ts',
+                line: thread.line ?? 1,
+                originalLine: thread.line ?? 1,
+                comments: {
+                  nodes: [
+                    {
+                      body: thread.body,
+                      createdAt: thread.createdAt ?? '2026-01-01T00:00:00Z',
+                      author: {
+                        __typename: thread.authorType ?? 'User',
+                        login: thread.author,
+                      },
+                    },
+                  ],
+                },
+              })),
+            },
+          },
+        },
+      },
+    });
+  }
+
+  /** `PUT /repos/{owner}/{repo}/pulls/{number}/merge`. */
+  private mergeRoute(request: RecordedRequest): Response | undefined {
+    const { method, path, auth } = request;
+    const match = /^\/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/merge$/.exec(path);
+    if (method !== 'PUT' || !match) {
+      return undefined;
+    }
+    const found = this.repositoryByName(
+      decodeURIComponent(match[1]),
+      decodeURIComponent(match[2]),
+    );
+    const pull = this.pulls.find(
+      (entry) =>
+        entry.repositoryId === found?.repository.id &&
+        entry.number === Number(match[3]),
+    );
+    if (!found || !pull) {
+      return json(404, { message: 'Not Found' });
+    }
+    if (
+      !this.allows(auth, found.repository, 'pull_requests', 'write') ||
+      !this.allows(auth, found.repository, 'contents', 'write')
+    ) {
+      return json(403, { message: 'Resource not accessible by integration' });
+    }
+    const body = (request.body ?? {}) as {
+      sha?: string;
+      merge_method?: string;
+    };
+    const merging = body.merge_method ?? 'merge';
+    if (!this.allowedMergeMethods.has(merging)) {
+      return json(405, {
+        message: `${merging[0].toUpperCase()}${merging.slice(1)} merges are not allowed on this repository.`,
+      });
+    }
+    if (pull.state !== 'open') {
+      return json(405, { message: 'Pull Request is not mergeable' });
+    }
+    if (body.sha && body.sha !== pull.headSha) {
+      return json(409, {
+        message: 'Head branch was modified. Review and try the merge again.',
+      });
+    }
+    pull.state = 'closed';
+    pull.merged = true;
+    this.merges.push({
+      number: pull.number,
+      method: merging,
+      sha: pull.headSha,
+    });
+    return json(200, { sha: 'f'.repeat(40), merged: true, message: 'Merged' });
+  }
+
   /** Token check for repository endpoints. */
   private allows(
     auth: RecordedRequest['auth'],
@@ -733,7 +874,10 @@ export class FakeGitHub {
       json(403, { message: 'Resource not accessible by integration' });
     let match: RegExpExecArray | null;
 
-    const automationResponse = this.automationRoute(request);
+    const automationResponse =
+      this.automationRoute(request) ??
+      this.graphqlRoute(request) ??
+      this.mergeRoute(request);
     if (automationResponse) {
       return automationResponse;
     }

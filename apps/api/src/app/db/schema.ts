@@ -274,6 +274,21 @@ export const pullRequests = sqliteTable(
       .default(false),
     /** When the merge or close was handled (notification, autoclose). */
     closeHandledAt: timestamp('close_handled_at'),
+    /**
+     * Automerge (needs autofix): the app merges once the head commit passed
+     * all checks, is approved and no review thread is unresolved.
+     */
+    automerge: integer('automerge', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    /** Claude asked for the owner's decision: no merge until they answer. */
+    automergeHeldAt: timestamp('automerge_held_at'),
+    automergeHoldReason: text('automerge_hold_reason'),
+    /** Head commit whose merge GitHub refused, and why (no retry for it). */
+    automergeFailedSha: text('automerge_failed_sha'),
+    automergeFailure: text('automerge_failure'),
+    /** What keeps a green, approved head commit from being merged now. */
+    automergeWaiting: text('automerge_waiting'),
   },
   (table) => [
     uniqueIndex('pull_requests_repository_number').on(

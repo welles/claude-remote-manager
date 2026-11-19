@@ -31,6 +31,12 @@ const pull = (overrides: Partial<PullRequestDto> = {}): PullRequestDto => ({
   automation: {
     autofix: false,
     autoclose: false,
+    automerge: {
+      enabled: false,
+      held: null,
+      failure: null,
+      waiting: null,
+    },
     attempts: 0,
     maxAttempts: 3,
     gaveUp: false,
@@ -121,7 +127,9 @@ describe('SessionGitPanel', () => {
     expect(all('push')).toEqual(['Push']);
     expect(all('create-pr')).toEqual(['Create PR']);
     const pulls = all('pull-request');
-    expect(pulls[0]).toMatch(/^Open #7 Fix login by Claude Autofix Autoclose/);
+    expect(pulls[0]).toMatch(
+      /^Open #7 Fix login by Claude Autofix Autoclose Automerge/,
+    );
     expect(pulls[1]).toBe('Merged #3 Old');
     // The automation is offered for open pull requests only.
     expect(all('pr-automation')).toHaveLength(1);
@@ -192,6 +200,62 @@ describe('SessionGitPanel', () => {
       http
         .expectOne({ method: 'POST', url: '/api/sessions/s1/autofix/stop' })
         .flush(githubSession());
+    });
+
+    it('switches automerge and shows what it waits for', async () => {
+      const merging = (
+        state: Partial<PullRequestDto['automation']['automerge']>,
+      ) =>
+        githubSession({
+          pullRequests: [
+            pull({
+              automation: automation({
+                autofix: true,
+                automerge: { ...pull().automation.automerge, ...state },
+              }),
+            }),
+          ],
+        });
+      const { fixture, element, all } = await render(
+        githubSession({ pullRequests: [pull()] }),
+      );
+      expect(all('automerge-info')).toEqual([]);
+      (
+        element.querySelector(
+          '[data-testid="automerge-toggle"] button',
+        ) as HTMLElement
+      ).click();
+      const toggle = http.expectOne({
+        method: 'PATCH',
+        url: '/api/sessions/s1/pull-requests/1/automation',
+      });
+      expect(toggle.request.body).toEqual({ automerge: true });
+      toggle.flush(merging({ enabled: true }));
+
+      const show = (session: SessionDto) => {
+        fixture.componentRef.setInput('session', session);
+        fixture.detectChanges();
+      };
+      show(merging({ enabled: true }));
+      expect(all('automerge-info')[0]).toContain(
+        'rebase, else squash, else merge commit',
+      );
+      show(merging({ enabled: true, waiting: '2 unresolved review threads' }));
+      expect(all('automerge-waiting')).toEqual([
+        'Automerge waits: 2 unresolved review threads.',
+      ]);
+      show(
+        merging({
+          enabled: true,
+          held: {
+            since: '2026-01-01T10:00:00.000Z',
+            reason: 'Keep the old API?',
+          },
+        }),
+      );
+      expect(all('automerge-held')[0]).toContain('Keep the old API?');
+      show(merging({ enabled: true, failure: 'GitHub: Merge conflict' }));
+      expect(all('automerge-failure')[0]).toContain('GitHub: Merge conflict');
     });
 
     it('says when the attempt limit was reached', async () => {

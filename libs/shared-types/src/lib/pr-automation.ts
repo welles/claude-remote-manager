@@ -9,7 +9,12 @@
  *   checks and is approved, the session is told so (no attempt);
  * - autoclose: when the pull request is merged or closed and the session
  *   has no open pull request left, the session ends and its clones are
- *   removed, except clones with work that is not on GitHub.
+ *   removed, except clones with work that is not on GitHub;
+ * - automerge (only with autofix): the app merges the pull request itself
+ *   once its head commit passed all checks, is approved and no review
+ *   thread is unresolved (rebase, else squash, else a merge commit);
+ *   Claude can pause it for the owner's decision, which the owner's next
+ *   message lifts.
  */
 
 /**
@@ -21,6 +26,7 @@ export type AutofixTrigger = 'ci' | 'review' | 'ci+review' | 'ready';
 export interface PullRequestAutomationDto {
   autofix: boolean;
   autoclose: boolean;
+  automerge: AutomergeStateDto;
   /** Autofix runs started for this pull request (survives restarts). */
   attempts: number;
   /** Runs allowed; afterwards the owner is notified instead. */
@@ -31,6 +37,20 @@ export interface PullRequestAutomationDto {
   running: boolean;
   lastRunAt: string | null;
   lastTrigger: AutofixTrigger | null;
+}
+
+/** Automerge of a pull request (see the comment at the top). */
+export interface AutomergeStateDto {
+  enabled: boolean;
+  /** Claude asked for the owner's decision; their next message lifts it. */
+  held: { since: string; reason: string } | null;
+  /** GitHub refused to merge the current head commit (no retry for it). */
+  failure: string | null;
+  /**
+   * What keeps the green, approved head commit from being merged now
+   * (e.g. unresolved review threads); `null` otherwise.
+   */
+  waiting: string | null;
 }
 
 /** Attempt limits a user may choose. */
@@ -44,6 +64,11 @@ export const AUTOFIX_DEFAULT_MAX_ATTEMPTS = 3;
 export interface UpdatePullRequestAutomationRequest {
   autofix?: boolean;
   autoclose?: boolean;
+  /**
+   * Turning it on turns autofix on too; turning autofix off turns it off.
+   * Turning it on (again) lifts a hold and retries a refused merge.
+   */
+  automerge?: boolean;
   maxAttempts?: number;
   /** Sets the attempt count back to 0. */
   resetAttempts?: boolean;

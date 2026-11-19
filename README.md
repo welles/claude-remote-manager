@@ -27,7 +27,9 @@ branches are pushed and pull requests created by button, or by Claude (as the se
 permission mode allows, up to `bypassPermissions`); usage is recorded per request. Sessions notify the user over Web Push and ntfy
 (approvals with Allow and Deny right in the notification), and the web app is an installable
 PWA with an offline shell, badge, shortcuts and a share target. Per open pull request,
-autofix continues the session when CI fails or reviewers with write access comment, and
+autofix continues the session when CI fails or reviewers with write access comment,
+automerge merges once CI is green, the head commit is approved and no review thread is open
+(Claude can pause it for the owner's decision), and
 autoclose ends the session and removes its clones when the pull request is merged or closed
 (see [PR automation](#pr-automation)). Dev servers Claude starts become previews on host names
 of their own, opened as links or embedded (see [Previews](#previews-of-dev-servers)).
@@ -1021,6 +1023,7 @@ switchable per event on the Settings page (stored in `app_settings`):
 | Session hangs                 | a running turn without any event for `SESSION_STALL_MINUTES` (once per stall)      | activity resumes or the turn ends        |
 | Session failed                | the session failed, or a setup script failed and the first message is held back    | the session continues                    |
 | Autofix gave up               | the PR automation reached its attempt limit (reported by the PR automation)        | –                                        |
+| Automerge needs you           | Claude asked for the owner's decision before merging, or GitHub refused the merge  | –                                        |
 | Pull request merged or closed | a pull request of the session was merged or closed (reported by the PR automation) | –                                        |
 
 Ending a session ("End session") notifies nobody. Notifications carry the session title and
@@ -1081,7 +1084,9 @@ derived from its tag; withdrawing it deletes it in the ntfy apps
 (e.g. `HTTP 401: unauthorized`), never with the token.
 
 **For the PR automation**: `NotificationsService` (exported by `NotificationsModule`) has
-`notifyAutofixGaveUp(sessionId, pullRequest, attempts, reason)` and
+`notifyAutofixGaveUp(sessionId, pullRequest, attempts, reason)`,
+`notifyAutomerge(sessionId, pullRequest, kind, detail)` (`held` with Claude's question,
+`failed` with GitHub's reason) and
 `notifyPullRequestClosed(sessionId, pullRequest, note)` (merged or closed by
 `pullRequest.state`; `note` says what autoclose did, e.g. that a clone was kept); preferences,
 presence and channels apply as for the other events. The PR automation sends each once per
@@ -1228,7 +1233,10 @@ its branches and tags, and points the existing session clones' `origin` there (s
   head commit, and the PR automation per pull request: `autofix`, `autoclose`, attempts and
   limit, when the limit stopped a run, the head commit whose failed checks were handled, the
   time after which reviews are new, the last run and what triggered it, whether a run is
-  going on, when the merge or close was handled.
+  going on, when the merge or close was handled; for automerge: `automerge`, the hold
+  (`automerge_held_at`, `automerge_hold_reason`: Claude's question), the head commit GitHub
+  refused to merge and why, and what a green, approved head commit waits for
+  (`automerge_waiting`).
 - `sessions.autoclosed_at`: when autoclose ended the session; clones still `ready`
   afterwards were kept because they hold work that is not on GitHub.
 - `webhook_deliveries`: IDs of processed webhook deliveries (a week), so redeliveries do
@@ -1447,6 +1455,7 @@ or logs:
 | clone and fetch of a mirror               | `contents: read`                                                             |
 | push by button                            | `contents: write` (+ `workflows: write` if workflow files changed)           |
 | create / read a pull request              | `pull_requests: write` + `contents: read` / `pull_requests: read`            |
+| merge a pull request (automerge)          | `pull_requests: write` + `contents: write`                                   |
 | create a repository                       | `administration: write`, fresh, revoked afterwards                           |
 | `#` references: issues, comments          | `issues: read` + `pull_requests: read`                                       |
 | `#` references: a pull request's diff     | `issues: read` + `pull_requests: read` + `contents: read`                    |
@@ -1518,9 +1527,10 @@ repository on GitHub and attach it.
 
 ## PR automation
 
-Per open pull request of a session the session view (git panel) offers two switches, both
+Per open pull request of a session the session view (git panel) offers three switches, all
 off by default, with the attempt count and limit, "Reset count", what started the last run,
-and "Stop autofix" while a run goes on (`apps/api/src/app/pr-automation`).
+"Stop autofix" while a run goes on, and what automerge waits for
+(`apps/api/src/app/pr-automation`).
 
 - **Autofix**: a failed CI check of the pull request's current head commit, or new review
   feedback from someone with write access to the repository, continues the session with what
@@ -1529,6 +1539,9 @@ and "Stop autofix" while a run goes on (`apps/api/src/app/pr-automation`).
   request left, the session ends, its dev servers stop (`DevServers.stopSession`: its
   previews and the processes behind them) and its clones are removed, except clones with
   work that is not on GitHub.
+- **Automerge** (turns autofix on with it; autofix off turns it off): the app merges the pull
+  request itself once it is green, approved and without unresolved review threads; findings
+  are worked off by autofix first (see [Automerge](#automerge)).
 
 ### Where events come from
 
@@ -1539,7 +1552,8 @@ installation token for that repository (`metadata`, `checks`, `statuses`, `pull_
 at a time; one asked for meanwhile runs afterwards.
 
 - **Webhook** `POST /api/github/webhook` (the GitHub App's webhook, events `pull_request`,
-  `pull_request_review`, `pull_request_review_comment`, `issue_comment` (only comments on
+  `pull_request_review`, `pull_request_review_comment`, `pull_request_review_thread`
+  (resolved or unresolved threads, for automerge), `issue_comment` (only comments on
   pull requests are followed), `check_run`, `check_suite`, `status`; `ping` is answered). It is the one route reachable without the Cloudflare Access
   login, exempt from the Access check and from the request guard, and authenticated only by
   its signature:
@@ -1626,6 +1640,43 @@ at a time; one asked for meanwhile runs afterwards.
 - **Several pull requests** (one per repository): switches, counts and runs are per pull
   request; a session runs one autofix run at a time, the others wait until it is idle again.
 
+### Automerge
+
+Automerge works through autofix; turning it on turns autofix on, turning autofix off (also
+"Stop autofix") turns it off. Turning it on (again) lifts a hold and retries a refused merge.
+
+- **When it merges**: in a check, once the head commit is ready as above (all checks passed,
+  exactly this commit approved by someone who counts, nobody who counts requests changes;
+  never without an approval), no failed check or new review or comment waits for a run, the
+  pull request is no draft, Claude did not ask for the owner's decision, GitHub did not
+  refuse this head commit before, and **no review thread is unresolved** (GraphQL
+  `reviewThreads`, as REST has no resolution state; every unresolved thread counts, also
+  hints and threads of people without write access, and an incomplete answer counts as not
+  resolved). The session must wait for a message (merging never races a turn). The app merges
+  with `PUT …/pulls/{number}/merge` and `sha` set to the checked head commit (GitHub refuses
+  if it moved), trying `rebase`, then `squash`, then `merge` (the next one only when GitHub
+  says the method is not allowed or the branch cannot be rebased). The merge is then seen like
+  any other: notification "Merged", autoclose if on. The history says how it merged.
+- **Findings first**: unresolved threads on a green, approved head commit go along with the
+  ready message (once per head commit, as untrusted context, only those whose author counts;
+  an attempt), which asks Claude to fix every finding, also hints, commit and push; the
+  reviewer resolves what it finds fixed with its next review, which starts the next round.
+  The UI shows "Automerge waits: 2 unresolved review threads". Messages to Claude while
+  automerge is on say that the app merges and Claude must neither merge nor resolve threads.
+  After a run ends, the pull request is checked again (nothing left may mean ready).
+- **The owner's decision**: when a finding needs the owner (a product or design decision, a
+  trade-off, scope, or Claude thinks it is wrong), Claude calls the app's tool
+  `request_owner_decision` with its question (offered to sessions with a GitHub clone; never
+  asks, also not during an Autofix run, as it only stops a merge). It pauses automerge of the
+  session's open pull requests (`automerge_held_at`), notes it in the history, and notifies the
+  owner ("Automerge needs you", with the question). The owner's next message in the session
+  (`SessionsService.send`, not the app's) lifts the hold; the pull request is checked again
+  when that turn ends.
+- **Refusals**: when GitHub refuses (conflict, branch protection, workflow files the app may
+  not merge), the head commit and GitHub's reason are stored, the history says so, the owner is
+  notified once, and the session's ready message says it was refused. A new head commit, or
+  turning automerge off and on, tries again.
+
 ### git during autofix
 
 While autofix is on for an open pull request, Claude may stage, commit and push its session
@@ -1698,7 +1749,9 @@ were removed cannot be resumed.
 2. In the GitHub App's settings: Webhook active, URL
    `https://<public host>/api/github/webhook`, content type `application/json`, the same
    secret, SSL verification on. Subscribe to the events Check run, Check suite, Issue
-   comment, Pull request, Pull request review, Pull request review comment and Status.
+   comment, Pull request, Pull request review, Pull request review comment, Pull request
+   review thread and Status. Without Pull request review thread, a thread the owner resolves
+   is noticed with the next other event or poll.
 3. In Cloudflare Access: a Bypass policy (or a separate application with a Bypass policy) for
    exactly the path `/api/github/webhook` of the public host, nothing else. Without it GitHub's
    deliveries end at the Access login; polling still works then, at its slower backstop

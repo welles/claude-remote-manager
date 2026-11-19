@@ -99,12 +99,17 @@ describe('session integrations (tools, memory, pushes)', () => {
     expect(options().tools?.map((entry) => entry.name)).toEqual([
       'show_file',
       'create_pull_request',
+      'request_owner_decision',
       'set_session_title',
       'add_repository',
     ]);
-    // Showing a file and setting the title never ask.
+    // Showing a file, setting the title and asking for the owner's
+    // decision (it only pauses automerge) never ask.
     expect(options().allowedTools).toContain('mcp__crm__show_file');
     expect(options().allowedTools).toContain('mcp__crm__set_session_title');
+    expect(options().allowedTools).toContain(
+      'mcp__crm__request_owner_decision',
+    );
     await expect(
       git(session.cwd, 'config', '--local', '--get-all', 'credential.helper'),
     ).rejects.toThrow();
