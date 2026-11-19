@@ -266,6 +266,56 @@ describe('sessions with an environment', () => {
     expect(result?.outputTail ?? '').not.toContain(SECRET.slice(8));
   });
 
+  it('masks a secret cut by the truncation of a tool result', async () => {
+    const env = environment(null);
+    const session = await harness.service.create({
+      prompt: 'Work',
+      scratch: true,
+      environmentId: env.id,
+    });
+    await harness.prepared(session.id);
+    // The secret starts 5 characters before the 8000-character limit.
+    const output = `${'x'.repeat(7995)}${SECRET} and more`;
+    harness.runner.last.emit(
+      {
+        type: 'assistant',
+        message: {
+          id: 'm1',
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'bash-1',
+              name: 'Bash',
+              input: { command: 'env' },
+            },
+          ],
+        },
+        parent_tool_use_id: null,
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'bash-1', content: output },
+          ],
+        },
+        parent_tool_use_id: null,
+      },
+    );
+    await flush();
+    const result = harness.events
+      .filter((envelope) => envelope.sessionId === session.id)
+      .map((envelope) => envelope.event)
+      .find((event) => event.type === 'tool.result') as
+      | { content: string; truncated: boolean }
+      | undefined;
+    expect(result?.truncated).toBe(true);
+    expect(result?.content).not.toContain(SECRET.slice(0, 5));
+    expect(result?.content.startsWith('x'.repeat(7900))).toBe(true);
+  });
+
   it('rejects an unknown environment', async () => {
     await expect(
       harness.service.create({

@@ -1656,7 +1656,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       live.mask = undefined;
       const mask = this.maskFor(live);
       const extras = (event: SessionEventInput) =>
-        mask(withContext(withAttachments(event, images), contexts));
+        maskEvent(mask, withContext(withAttachments(event, images), contexts));
       // Context messages sent before user messages are not conversation.
       const contextIds = new Set(
         [...contexts.values()].map((summary) => summary.contextId),
@@ -3767,7 +3767,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // Secrets of the environment never reach the log, the database, the
     // clients or the hooks (notifications, search).
     const mask = this.maskFor(live);
-    let input = raw ? unmasked : mask(unmasked);
+    let input = raw ? unmasked : maskEvent(mask, unmasked);
     if (raw) {
       // Masked already.
     } else if (unmasked.type === 'assistant.delta') {
@@ -4110,6 +4110,28 @@ function setupStreamKey(event: {
 }
 
 const SETUP_STREAM_PREFIX = 'setup:';
+
+/**
+ * Masks an event's secrets. A truncated tool result may end inside a
+ * secret (the start of it matches nothing): its last `longest - 1`
+ * characters are dropped first, as for the tail of a setup script's
+ * output.
+ */
+export function maskEvent<E extends SessionEventInput>(
+  mask: SecretMasker,
+  event: E,
+): E {
+  if (event.type === 'tool.result' && event.truncated && mask.longest > 1) {
+    return mask({
+      ...event,
+      content: event.content.slice(
+        0,
+        Math.max(0, event.content.length - (mask.longest - 1)),
+      ),
+    });
+  }
+  return mask(event);
+}
 
 /** Whether a key of the {@link StreamMasker} is a setup script's output. */
 function isSetupStreamKey(key: string): boolean {
