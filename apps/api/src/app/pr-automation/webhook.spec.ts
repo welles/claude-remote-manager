@@ -101,7 +101,11 @@ describe('POST /api/github/webhook', () => {
       {
         // A public host behind the tunnel; the webhook does not need it.
         allowedHosts: ['crm.example.com'],
-        prAutomation: { webhookSecretFile: file, pollIntervalMs: 0 },
+        prAutomation: {
+          webhookSecretFile: file,
+          pollIntervalMs: 0,
+          trustedBots: [],
+        },
       },
       {
         configure: (builder) =>

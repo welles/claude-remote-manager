@@ -111,6 +111,7 @@ export type PullRequestPatch = Partial<
       | 'autofixAttempts'
       | 'autofixGaveUpAt'
       | 'autofixCiHandledSha'
+      | 'autofixReadySha'
       | 'autofixReviewsAfter'
       | 'autofixLastRunAt'
       | 'autofixLastTrigger'

@@ -1,0 +1,1 @@
+ALTER TABLE `pull_requests` ADD `autofix_ready_sha` text;

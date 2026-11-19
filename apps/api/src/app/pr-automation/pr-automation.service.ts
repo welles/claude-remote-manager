@@ -48,6 +48,7 @@ import { SessionsService } from '../sessions/sessions.service';
 import {
   autofixContext,
   autofixMessage,
+  readyMessage,
   failedChecks,
   logExcerpt,
   pendingChecks,
@@ -110,9 +111,26 @@ function errorText(error: unknown): string {
 /** What a check found that an autofix run should handle. */
 interface Triggers {
   failed: FailedCheck[];
+  /** New reviews and comments that may ask for changes. */
   feedback: ReviewFeedback[];
+  /** New approvals with text: context of a run, never its cause. */
+  approvals: ReviewFeedback[];
+  /** The head commit passed all checks and is approved (not told yet). */
+  ready: boolean;
   headSha: string | null;
+  /** At the attempt limit: feedback left out, the review time kept. */
+  limited?: boolean;
 }
+
+/** Conclusions (and status states) of checks that passed. */
+const PASSED_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
+
+/** Review states that decide whether a reviewer approves. */
+const DECIDING_REVIEW_STATES = new Set([
+  'APPROVED',
+  'CHANGES_REQUESTED',
+  'DISMISSED',
+]);
 
 /**
  * The PR automation of session pull requests (see
@@ -133,8 +151,13 @@ export class PrAutomationService
   private readonly again = new Set<number>();
   /** Pull requests whose check found the session busy. */
   private readonly deferred = new Set<number>();
-  /** When failed checks were first seen per `pullRequestId:sha`. */
-  private readonly failureSeen = new Map<string, number>();
+  /**
+   * Since when failed checks or new feedback per `pullRequestId:sha` wait
+   * for the commit's other checks to finish.
+   */
+  private readonly waitingSince = new Map<string, number>();
+  /** Bots whose reviews and comments count (lower case). */
+  private readonly trustedBots: ReadonlySet<string>;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private polling: Promise<void> | null = null;
   private pausedUntil = 0;
@@ -156,6 +179,9 @@ export class PrAutomationService
     private readonly devServers: DevServers,
   ) {
     super();
+    this.trustedBots = new Set(
+      config.prAutomation.trustedBots.map((login) => login.toLowerCase()),
+    );
   }
 
   onModuleInit(): void {
@@ -478,7 +504,11 @@ export class PrAutomationService
       return;
     }
     const triggers = await this.triggers(pull, repository);
-    if (triggers.failed.length === 0 && triggers.feedback.length === 0) {
+    if (
+      triggers.failed.length === 0 &&
+      triggers.feedback.length === 0 &&
+      !triggers.ready
+    ) {
       return;
     }
     const current = this.records.pullRequest(pull.id);
@@ -486,66 +516,177 @@ export class PrAutomationService
       return;
     }
     if (current.autofixAttempts >= current.autofixMaxAttempts) {
-      this.giveUp(current, triggers);
+      if (triggers.failed.length > 0 || triggers.feedback.length > 0) {
+        this.giveUp(current, triggers);
+      }
+      if (!triggers.ready) {
+        return;
+      }
+      // The session still learns that the pull request is ready, but
+      // without the feedback that would need an attempt.
+      await this.startRun(current, repository, {
+        ...triggers,
+        failed: [],
+        feedback: [],
+        limited: true,
+      });
       return;
     }
     await this.startRun(current, repository, triggers);
   }
 
-  /** Failed checks of the head commit and new reviews that call for a run. */
+  /**
+   * Failed checks of the head commit and new reviews that call for a run,
+   * or a head commit that is ready to merge (all checks passed, approved).
+   * Failures and feedback wait while other checks of the commit still run
+   * (at most {@link PrAutomationTiming.ciSettleMs}), so that what belongs
+   * together becomes one run: a reviewer bot's comments arrive while its
+   * own check is still running.
+   */
   private async triggers(
     pull: PullRequestRecord,
     repository: FeedbackRepository,
   ): Promise<Triggers> {
     const headSha = pull.headSha;
-    let failed: FailedCheck[] = [];
-    if (headSha && headSha !== pull.autofixCiHandledSha) {
-      const checks = await this.feedback.checks(repository, headSha);
-      const failures = failedChecks(checks);
-      const key = `${pull.id}:${headSha}`;
-      if (failures.length > 0) {
-        const seen = this.failureSeen.get(key) ?? Date.now();
-        this.failureSeen.set(key, seen);
-        const pending = pendingChecks(checks);
-        if (
-          pending.length === 0 ||
-          Date.now() - seen >= this.timing.ciSettleMs
-        ) {
-          failed = failures.map((check) => ({ check, log: null }));
-        } else {
-          // One run for all checks of the commit: wait for the others.
-          this.schedule(pull.id, this.timing.ciRecheckMs);
-        }
-      }
-    }
+    const checks = headSha
+      ? await this.feedback.checks(repository, headSha)
+      : [];
+    const pending = pendingChecks(checks);
+    const failures =
+      headSha && headSha !== pull.autofixCiHandledSha
+        ? failedChecks(checks)
+        : [];
     const after = pull.autofixReviewsAfter?.getTime() ?? Date.now();
-    const candidates = (
-      await this.feedback.reviews(repository, pull.number, new Date(after))
-    )
+    const items = await this.feedback.reviews(
+      repository,
+      pull.number,
+      new Date(after),
+    );
+    const feedback: ReviewFeedback[] = [];
+    const approvals: ReviewFeedback[] = [];
+    const fresh = items
       .filter(
         (item) =>
           new Date(item.createdAt).getTime() > after &&
-          item.author !== null &&
-          item.authorType !== 'Bot' &&
-          !item.author.endsWith('[bot]') &&
-          // An approval or an empty review (the container of its comments)
-          // asks for nothing by itself.
-          !(item.kind === 'review' && item.body.trim() === '') &&
+          // An empty review (an approval without text, or the container
+          // of review comments) says nothing by itself; a dismissed one
+          // was withdrawn.
           !(
             item.kind === 'review' &&
-            item.state === 'APPROVED' &&
-            item.body.trim() === ''
+            (item.body.trim() === '' || item.state === 'DISMISSED')
           ),
       )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    const feedback: ReviewFeedback[] = [];
-    for (const item of candidates) {
-      // Only people with write access to the repository start a run.
-      if (await this.feedback.canWrite(repository, item.author as string)) {
-        feedback.push(item);
+    for (const item of fresh) {
+      if (!(await this.counts(repository, item))) {
+        continue;
+      }
+      // An approval asks for nothing; its text goes along as context.
+      (item.kind === 'review' && item.state === 'APPROVED'
+        ? approvals
+        : feedback
+      ).push(item);
+    }
+    const ready =
+      headSha !== null &&
+      headSha !== pull.autofixReadySha &&
+      checks.every(
+        (check) =>
+          check.status === 'completed' &&
+          check.conclusion !== null &&
+          PASSED_CONCLUSIONS.has(check.conclusion),
+      ) &&
+      (await this.approved(repository, items, headSha));
+    const key = `${pull.id}:${headSha}`;
+    this.forgetWaiting(pull.id, key);
+    if (pending.length === 0) {
+      this.waitingSince.delete(key);
+    } else if (failures.length > 0 || feedback.length > 0) {
+      const since = this.waitingSince.get(key) ?? Date.now();
+      this.waitingSince.set(key, since);
+      if (Date.now() - since < this.timing.ciSettleMs) {
+        // One run for all checks of the commit: wait for the others.
+        this.schedule(pull.id, this.timing.ciRecheckMs);
+        return { failed: [], feedback: [], approvals: [], ready, headSha };
       }
     }
-    return { failed, feedback, headSha };
+    return {
+      failed: failures.map((check) => ({ check, log: null })),
+      feedback,
+      approvals,
+      ready,
+      headSha,
+    };
+  }
+
+  /** Drops what waited for other commits of a pull request than `keep`. */
+  private forgetWaiting(pullRequestId: number, keep?: string): void {
+    for (const key of this.waitingSince.keys()) {
+      if (key.startsWith(`${pullRequestId}:`) && key !== keep) {
+        this.waitingSince.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Whether a review or comment counts: by a trusted bot, or by a person
+   * (not a bot) with write access to the repository.
+   */
+  private async counts(
+    repository: FeedbackRepository,
+    item: ReviewFeedback,
+  ): Promise<boolean> {
+    if (item.author === null) {
+      return false;
+    }
+    if (this.trustedBots.has(item.author.toLowerCase())) {
+      return true;
+    }
+    if (item.authorType === 'Bot' || item.author.endsWith('[bot]')) {
+      return false;
+    }
+    return this.feedback.canWrite(repository, item.author);
+  }
+
+  /**
+   * Whether the head commit is approved: someone who counts (see
+   * {@link counts}) approved exactly this commit with their latest
+   * deciding review, and nobody who counts requests changes.
+   */
+  private async approved(
+    repository: FeedbackRepository,
+    items: ReviewFeedback[],
+    headSha: string,
+  ): Promise<boolean> {
+    const latest = new Map<string, ReviewFeedback>();
+    for (const item of [...items].sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt),
+    )) {
+      if (
+        item.kind === 'review' &&
+        item.author !== null &&
+        item.state !== null &&
+        DECIDING_REVIEW_STATES.has(item.state)
+      ) {
+        latest.set(item.author.toLowerCase(), item);
+      }
+    }
+    let approved = false;
+    for (const review of latest.values()) {
+      const approves =
+        review.state === 'APPROVED' && review.commitId === headSha;
+      if (review.state !== 'CHANGES_REQUESTED' && !approves) {
+        continue;
+      }
+      if (!(await this.counts(repository, review))) {
+        continue;
+      }
+      if (review.state === 'CHANGES_REQUESTED') {
+        return false;
+      }
+      approved = true;
+    }
+    return approved;
   }
 
   private giveUp(pull: PullRequestRecord, triggers: Triggers): void {
@@ -611,34 +752,63 @@ export class PrAutomationService
       this.deferred.add(pull.id);
       return;
     }
-    const trigger: AutofixTrigger =
-      triggers.failed.length > 0 && triggers.feedback.length > 0
+    const trigger: AutofixTrigger = triggers.ready
+      ? 'ready'
+      : triggers.failed.length > 0 && triggers.feedback.length > 0
         ? 'ci+review'
         : triggers.failed.length > 0
           ? 'ci'
           : 'review';
-    const attempt = current.autofixAttempts + 1;
+    // Telling the session that its pull request is ready (once per head
+    // commit) is no attempt, unless feedback that may ask for changes
+    // comes along.
+    const counted = trigger !== 'ready' || triggers.feedback.length > 0;
+    const attempt = current.autofixAttempts + (counted ? 1 : 0);
     const directory = session.directories.find(
       (entry) =>
         entry.kind === 'clone' && entry.repositoryId === pull.repositoryId,
     );
-    const text = autofixMessage({
-      repository: pull.repositoryName,
-      number: pull.number,
-      trigger,
-      attempt,
-      maxAttempts: current.autofixMaxAttempts,
-      headSha: triggers.headSha,
-      branch: directory?.branch ?? pull.headBranch,
-    });
-    const untrusted = autofixContext({
-      repository: pull.repositoryName,
-      number: pull.number,
-      failed: triggers.failed,
-      feedback: triggers.feedback,
-    });
+    const branch = directory?.branch ?? pull.headBranch;
+    const feedback = [...triggers.feedback, ...triggers.approvals].sort(
+      (a, b) => a.createdAt.localeCompare(b.createdAt),
+    );
+    const text =
+      trigger === 'ready'
+        ? readyMessage({
+            repository: pull.repositoryName,
+            number: pull.number,
+            headSha: triggers.headSha,
+            branch,
+            context:
+              triggers.feedback.length > 0
+                ? 'feedback'
+                : feedback.length > 0
+                  ? 'approvals'
+                  : 'none',
+            attempt: counted ? attempt : null,
+            maxAttempts: current.autofixMaxAttempts,
+          })
+        : autofixMessage({
+            repository: pull.repositoryName,
+            number: pull.number,
+            trigger,
+            attempt,
+            maxAttempts: current.autofixMaxAttempts,
+            headSha: triggers.headSha,
+            branch,
+          });
+    const untrusted =
+      triggers.failed.length > 0 || feedback.length > 0
+        ? autofixContext({
+            repository: pull.repositoryName,
+            number: pull.number,
+            failed: triggers.failed,
+            feedback,
+            ready: trigger === 'ready',
+          })
+        : undefined;
     const now = new Date();
-    const newest = triggers.feedback.at(-1)?.createdAt;
+    const newest = feedback.at(-1)?.createdAt;
     this.records.updatePullRequest(pull.id, {
       autofixAttempts: attempt,
       autofixLastRunAt: now,
@@ -646,10 +816,15 @@ export class PrAutomationService
       ...(triggers.failed.length > 0
         ? { autofixCiHandledSha: triggers.headSha }
         : {}),
-      ...(newest ? { autofixReviewsAfter: new Date(newest) } : {}),
+      ...(trigger === 'ready' ? { autofixReadySha: triggers.headSha } : {}),
+      ...(newest && !triggers.limited
+        ? { autofixReviewsAfter: new Date(newest) }
+        : {}),
     });
     this.logger.log(
-      `Autofix run ${attempt}/${current.autofixMaxAttempts} for ${pull.repositoryName}#${pull.number} (${trigger})`,
+      trigger === 'ready' && !counted
+        ? `Told the session that ${pull.repositoryName}#${pull.number} is ready to merge`
+        : `Autofix run ${attempt}/${current.autofixMaxAttempts} for ${pull.repositoryName}#${pull.number} (${trigger})`,
     );
     try {
       await this.sessions.sendMessage(pull.sessionId, {
@@ -666,6 +841,7 @@ export class PrAutomationService
       this.records.updatePullRequest(pull.id, {
         autofixAttempts: current.autofixAttempts,
         autofixCiHandledSha: current.autofixCiHandledSha,
+        autofixReadySha: current.autofixReadySha,
         autofixReviewsAfter: current.autofixReviewsAfter,
       });
       this.logger.warn(
@@ -981,6 +1157,7 @@ export class PrAutomationService
     if (!pull || pull.state === 'open' || pull.closeHandledAt) {
       return;
     }
+    this.forgetWaiting(pull.id);
     this.records.updatePullRequest(pull.id, {
       closeHandledAt: new Date(),
       autofixRunning: false,

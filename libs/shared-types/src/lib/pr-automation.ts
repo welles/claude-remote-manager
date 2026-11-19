@@ -5,14 +5,18 @@
  *   review feedback from someone with write access to the repository,
  *   continues the session with that content (as untrusted context);
  *   Claude may then push exactly the session branch without asking (the
- *   app pushes it, without force);
+ *   app pushes it, without force); once the head commit passed all
+ *   checks and is approved, the session is told so (no attempt);
  * - autoclose: when the pull request is merged or closed and the session
  *   has no open pull request left, the session ends and its clones are
  *   removed, except clones with work that is not on GitHub.
  */
 
-/** What started an autofix run. */
-export type AutofixTrigger = 'ci' | 'review' | 'ci+review';
+/**
+ * What started an autofix run; `ready`: the session was told that the
+ * pull request passed all checks and is approved (no attempt).
+ */
+export type AutofixTrigger = 'ci' | 'review' | 'ci+review' | 'ready';
 
 export interface PullRequestAutomationDto {
   autofix: boolean;

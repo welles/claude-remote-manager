@@ -234,6 +234,9 @@ let
     NTFY_TOPIC = cfg.ntfy.topic;
   }
   // optionalAttrs (cfg.github.appId != null) { GITHUB_APP_ID = toString cfg.github.appId; }
+  // optionalAttrs (cfg.github.trustedBots != [ ]) {
+    PR_TRUSTED_BOTS = list cfg.github.trustedBots;
+  }
   // optionalAttrs (cfg.vapid.publicKey != null) { VAPID_PUBLIC_KEY = cfg.vapid.publicKey; }
   // optionalAttrs (cfg.vapid.subject != null) { VAPID_SUBJECT = cfg.vapid.subject; }
   // lib.mapAttrs' (name: v: lib.nameValuePair v.variable "%d/${name}") secrets
@@ -470,6 +473,17 @@ in
         default = null;
         example = "/run/secrets/crm/github-webhook-secret";
         description = "File with the GitHub App's webhook secret (PR automation).";
+      };
+      trustedBots = mkOption {
+        type = types.listOf (types.strMatching "[A-Za-z0-9][A-Za-z0-9-]{0,38}\\[bot\\]");
+        default = [ ];
+        example = [ "my-reviewer[bot]" ];
+        description = ''
+          GitHub logins of bots whose reviews and comments the PR automation
+          treats like those of people with write access (e.g. a reviewer
+          bot): they start autofix runs, and their approvals count when a
+          session is told that its pull request is ready to merge.
+        '';
       };
     };
 

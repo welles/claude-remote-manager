@@ -70,7 +70,11 @@ describe('loadAppConfig', () => {
         ntfy: null,
         vapid: { publicKey: null, privateKeyFile: null, subject: null },
       },
-      prAutomation: { webhookSecretFile: null, pollIntervalMs: null },
+      prAutomation: {
+        webhookSecretFile: null,
+        pollIntervalMs: null,
+        trustedBots: [],
+      },
       previews: null,
     });
   });
@@ -105,6 +109,7 @@ describe('loadAppConfig', () => {
           VAPID_SUBJECT: 'mailto:admin@example.com',
           GITHUB_WEBHOOK_SECRET_FILE: '/run/secrets/github-webhook-secret',
           PR_POLL_INTERVAL_SECONDS: '300',
+          PR_TRUSTED_BOTS: 'my-reviewer[bot], ci-helper[bot]',
         },
         PASSWD,
       ),
@@ -163,6 +168,7 @@ describe('loadAppConfig', () => {
       prAutomation: {
         webhookSecretFile: '/run/secrets/github-webhook-secret',
         pollIntervalMs: 300_000,
+        trustedBots: ['my-reviewer[bot]', 'ci-helper[bot]'],
       },
       previews: null,
     });
@@ -177,6 +183,14 @@ describe('loadAppConfig', () => {
       expect(() =>
         loadAppConfig({ ...DEV, PR_POLL_INTERVAL_SECONDS: value }),
       ).toThrow('PR_POLL_INTERVAL_SECONDS');
+    }
+  });
+
+  it('accepts only bot logins as trusted bots', () => {
+    for (const value of ['someone', 'my-reviewer', '[bot]', 'a b[bot]']) {
+      expect(() => loadAppConfig({ ...DEV, PR_TRUSTED_BOTS: value })).toThrow(
+        'PR_TRUSTED_BOTS',
+      );
     }
   });
 

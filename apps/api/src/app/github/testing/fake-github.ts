@@ -116,6 +116,8 @@ export interface FakeReviewItem {
   body: string;
   createdAt: string;
   state?: string;
+  /** Reviews: the commit reviewed. */
+  commitId?: string;
   path?: string;
   line?: number;
   diffHunk?: string;
@@ -659,6 +661,7 @@ export class FakeGitHub {
               body: item.body,
               state: item.state ?? 'COMMENTED',
               submitted_at: item.createdAt,
+              commit_id: item.commitId ?? null,
             })),
           )
         : json(

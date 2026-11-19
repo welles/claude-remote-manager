@@ -19,6 +19,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
   ci: 'failed checks',
   review: 'review feedback',
   'ci+review': 'failed checks and review feedback',
+  ready: 'ready to merge',
 };
 
 /**

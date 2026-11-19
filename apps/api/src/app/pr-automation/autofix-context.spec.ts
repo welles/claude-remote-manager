@@ -6,6 +6,7 @@ import {
   failedChecks,
   logExcerpt,
   pendingChecks,
+  readyMessage,
 } from './autofix-context';
 import type { CheckResult, ReviewFeedback } from './pull-request-feedback';
 
@@ -84,6 +85,7 @@ describe('autofix context', () => {
         body: `Comment ${index} ${'x'.repeat(5000)}`,
         createdAt: '2026-11-13T10:00:00Z',
         state: null,
+        commitId: null,
         path: 'a.ts',
         line: index,
         diffHunk: null,
@@ -133,6 +135,37 @@ describe('autofix context', () => {
         branch: 'claude/x',
       }),
     ).not.toContain('ignore');
+  });
+
+  it("tells that a pull request is ready in the app's own words", () => {
+    const plain = readyMessage({
+      repository: 'acme/app',
+      number: 3,
+      headSha: 'b'.repeat(40),
+      branch: 'claude/fix-k3x9q2',
+      context: 'none',
+      attempt: null,
+      maxAttempts: 3,
+    });
+    expect(plain).toContain('acme/app#3');
+    expect(plain).toContain('bbbbbbbbbbbb');
+    expect(plain).toContain('ready to merge');
+    expect(plain).toContain('merging needs the approval of the user');
+    expect(plain).not.toContain('untrusted context');
+    expect(plain).not.toContain('@');
+    const withFeedback = readyMessage({
+      repository: 'acme/app',
+      number: 3,
+      headSha: 'not a sha',
+      branch: 'claude/fix-k3x9q2',
+      context: 'feedback',
+      attempt: 2,
+      maxAttempts: 3,
+    });
+    expect(withFeedback).toContain('untrusted context');
+    expect(withFeedback).toContain('attempt 2 of 3');
+    expect(withFeedback).toContain('claude/fix-k3x9q2');
+    expect(withFeedback).not.toContain('not a sha');
   });
 
   it('wraps check output and comments as untrusted items', () => {
