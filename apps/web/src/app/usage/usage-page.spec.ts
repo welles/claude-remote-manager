@@ -105,7 +105,7 @@ describe('UsagePage and WorkspacePage', () => {
     const element = fixture.nativeElement as HTMLElement;
     const text = (id: string) =>
       words(element.querySelector(`[data-testid="${id}"]`));
-    expect(text('cost-note')).toContain('theoretical');
+    expect(text('period-note')).toContain('Monday to Sunday');
     expect(text('total-cost')).toContain('$2.75');
     expect(element.querySelectorAll('[data-testid="usage-bar"]')).toHaveLength(
       2,
