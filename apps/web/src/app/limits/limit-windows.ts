@@ -57,20 +57,24 @@ import { LimitsStore } from './limits-store';
     .window {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
+    /* The same meter as the context in the session details. */
     .row {
       display: flex;
+      align-items: baseline;
       justify-content: space-between;
       gap: var(--app-space-2);
-      font: var(--mat-sys-title-small);
+      font: var(--mat-sys-body-medium);
     }
     .percent {
+      font: var(--mat-sys-body-small);
       font-variant-numeric: tabular-nums;
+      color: var(--mat-sys-on-surface-variant);
     }
     .bar {
-      height: 6px;
-      border-radius: 3px;
+      height: 4px;
+      border-radius: 2px;
       background: var(--mat-sys-surface-container-highest);
       overflow: hidden;
     }

@@ -64,7 +64,7 @@ import { PREVIEW_STATE_LABELS, PreviewsApi, previewHref } from './previews-api';
             Embed
           </button>
           <button
-            matButton
+            matButton="outlined"
             (click)="stop()"
             [disabled]="stopping()"
             data-testid="preview-stop"

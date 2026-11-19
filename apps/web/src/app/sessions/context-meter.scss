@@ -2,24 +2,40 @@
   display: block;
 }
 
+// Label and value in one row, a thin bar below: the same meter as the plan
+// limits (see `limit-windows.ts`).
 .context {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
-  font: var(--mat-sys-body-small);
-  color: var(--mat-sys-on-surface-variant);
+  flex-direction: column;
+  gap: 6px;
 }
 
-.context-bar {
-  flex: 1 1 120px;
-  height: 6px;
-  border-radius: var(--mat-sys-corner-extra-small);
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--app-space-2);
+}
+
+.label {
+  font: var(--mat-sys-body-medium);
+}
+
+.value {
+  font: var(--mat-sys-body-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--mat-sys-on-surface-variant);
+  text-align: right;
+}
+
+.bar {
+  height: 4px;
+  border-radius: 2px;
   background: var(--mat-sys-surface-container-highest);
   overflow: hidden;
 }
 
-.context-fill {
+.fill {
   height: 100%;
   background: var(--app-status-running);
 

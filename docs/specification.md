@@ -191,6 +191,8 @@ Nicht Teil der ersten Version, aber in der Architektur mitzudenken:
 
 * **Antwortvorschläge:** Wie im Terminal und in der Desktop-App schlägt Claude Code nach einem Turn die nächste Nachricht des Nutzers vor, die er übernehmen kann. **Umsetzung (entschieden):** Wie in Terminal und Desktop-App als Platzhaltertext des leeren Eingabefelds, solange kein Turn läuft und noch keine Nachricht gesendet wurde. Senden bei leerem Feld schickt den Vorschlag unverändert ab (nur wenn er ganz sichtbar ist, höchstens 8 Zeilen); Tab oder ein Bearbeiten-Knopf neben Senden (für Touch-Geräte) übernimmt ihn ins Eingabefeld zum Ändern. Er bleibt nach einem Neuladen erhalten. Ausschalten über die Claude-Code-Einstellung `promptSuggestionEnabled: false`.
 
+* **Verstellbare Spalten:** Auf breiten Bildschirmen lassen sich die Sitzungsliste links und die Sitzungsdetails rechts neben einer offenen Sitzung in der Breite ändern. **Umsetzung (entschieden):** Ein Griff am Rand der Spalte (Ziehen, oder fokussieren und Pfeiltasten; Doppelklick oder Enter stellt die Standardbreite wieder her). Die Breiten gelten pro Browser (`localStorage`), nicht pro Sitzung; Grenzen: Liste 240–560 px und höchstens 30 % des Fensters, Details 280–640 px und höchstens 34 %, damit das Gespräch Platz behält.
+
 ## Offene Entscheidungen
 
 - Aufteilung gemeinsamer Typen und Bibliotheken im Nx-Workspace

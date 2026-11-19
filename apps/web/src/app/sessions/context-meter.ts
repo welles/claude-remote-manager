@@ -3,21 +3,26 @@ import { Component, input } from '@angular/core';
 import type { ContextUsage } from '@claude-remote-manager/shared-types';
 import { formatTokens } from './format';
 
-/** Context window usage of a session: tokens, percent and a bar. */
+/**
+ * Context window usage of a session: tokens and percent, a bar below (the
+ * same meter as the plan limits in the details).
+ */
 @Component({
   selector: 'app-context-meter',
   imports: [DecimalPipe],
   template: `
     @if (context(); as c) {
       <div class="context" title="Context window of {{ c.model }}">
-        <span data-testid="context">
-          Context {{ formatTokens(c.usedTokens) }} /
-          {{ formatTokens(c.maxTokens) }} ({{
-            c.percentage | number: '1.0-1'
-          }}%)
-        </span>
+        <div class="row">
+          <span class="label">Context</span>
+          <span class="value" data-testid="context"
+            >{{ formatTokens(c.usedTokens) }} /
+            {{ formatTokens(c.maxTokens) }} ·
+            {{ c.percentage | number: '1.0-1' }}%</span
+          >
+        </div>
         <div
-          class="context-bar"
+          class="bar"
           role="progressbar"
           aria-label="Context window usage"
           [attr.aria-valuenow]="c.percentage"
@@ -25,15 +30,20 @@ import { formatTokens } from './format';
           aria-valuemax="100"
         >
           <div
-            class="context-fill"
+            class="fill"
             [class.high]="c.percentage >= 80"
             [style.width.%]="c.percentage > 100 ? 100 : c.percentage"
           ></div>
         </div>
       </div>
     } @else {
-      <div class="context" data-testid="context-unknown">
-        Context usage: known after Claude's next answer
+      <div class="context">
+        <div class="row">
+          <span class="label">Context</span>
+          <span class="value" data-testid="context-unknown"
+            >known after Claude's next answer</span
+          >
+        </div>
       </div>
     }
   `,

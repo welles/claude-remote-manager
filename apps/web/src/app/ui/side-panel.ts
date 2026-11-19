@@ -18,7 +18,8 @@ import { AppIcon } from './icon';
  * `docked`, a permanent column of the page (no close button). Its content
  * stays in the page while closed (hidden), so it keeps its state. Esc
  * closes it; opening moves the focus to its title. Actions for the header
- * go into an element with `panel-actions`.
+ * go into an element with `panel-actions`; an element with `panel-edge`
+ * (a resize handle) is placed outside the scrolling body.
  */
 @Component({
   selector: 'app-side-panel',
@@ -51,6 +52,7 @@ import { AppIcon } from './icon';
       }
     </header>
     <div class="body"><ng-content /></div>
+    <ng-content select="[panel-edge]" />
   `,
   styles: `
     :host {

@@ -1,31 +1,44 @@
 // Phone: app bar, strip, conversation, dock; details in an overlay panel.
 // From 1100 px the session list sits on the left, from 1360 px the
-// details are a permanent column on the right.
+// details are a permanent column on the right. Both columns can be resized
+// (`--list-width`, `--details-width`); the window limits them so the
+// conversation keeps room.
 :host {
   display: block;
 }
 
 .layout {
+  --list-column: min(var(--list-width, 320px), 30vw);
+  --details-column: min(var(--details-width, 340px), 34vw);
+
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
 
   @media (min-width: 1100px) {
-    grid-template-columns: 320px minmax(0, 1fr);
+    grid-template-columns: var(--list-column) minmax(0, 1fr);
   }
 
   @media (min-width: 1360px) {
-    grid-template-columns: 320px minmax(0, 1fr) 340px;
+    grid-template-columns: var(--list-column) minmax(0, 1fr) var(
+        --details-column
+      );
   }
 }
 
+// Sticky column with its own scrolling; the resize handle on its right
+// edge stays outside the scrolling part.
 .list-pane {
   position: sticky;
   top: var(--app-top-inset, 0px);
   height: calc(100dvh - var(--app-top-inset, 0px));
+  border-right: 1px solid var(--mat-sys-outline-variant);
+}
+
+.list-scroll {
+  height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-right: 1px solid var(--mat-sys-outline-variant);
 }
 
 .main {
@@ -73,6 +86,37 @@
   background: var(--mat-sys-surface);
 }
 
+// Details panel: one size for its actions (32 px buttons, small switches),
+// so the sections read as one column. Inherited by the components inside.
+.details {
+  --mat-button-outlined-container-height: 32px;
+  --mat-button-outlined-horizontal-padding: 12px;
+  --mat-button-text-container-height: 32px;
+  --mat-button-text-horizontal-padding: 12px;
+  --mat-button-filled-container-height: 32px;
+  --mat-slide-toggle-track-height: 20px;
+  --mat-slide-toggle-track-width: 36px;
+  --mat-slide-toggle-unselected-handle-size: 12px;
+  --mat-slide-toggle-selected-handle-size: 14px;
+  --mat-slide-toggle-with-icon-handle-size: 14px;
+  --mat-slide-toggle-pressed-handle-size: 16px;
+  --mat-slide-toggle-selected-icon-size: 10px;
+  --mat-slide-toggle-unselected-icon-size: 10px;
+  --mat-slide-toggle-state-layer-size: 28px;
+  --mat-slide-toggle-label-text-size: var(--mat-sys-body-medium-size);
+  --mat-select-trigger-text-size: var(--mat-sys-body-medium-size);
+  --mat-select-trigger-text-line-height: var(--mat-sys-body-medium-line-height);
+}
+
+// Settings: room for the floating labels and between field and hint.
+#details-settings {
+  gap: var(--app-space-4);
+
+  .app-section-label {
+    margin-bottom: calc(-1 * var(--app-space-1));
+  }
+}
+
 // Details panel content.
 .facts {
   display: flex;
@@ -88,6 +132,7 @@
 
 .usage {
   margin: 0;
+  font: var(--mat-sys-body-medium);
 }
 
 /* The process runs in another mode than the chosen one; or a mode that
