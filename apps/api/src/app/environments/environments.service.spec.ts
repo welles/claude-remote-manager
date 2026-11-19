@@ -202,7 +202,7 @@ describe('EnvironmentsService', () => {
     ).toThrow('not found');
   });
 
-  it('is deleted only when no active session uses it', () => {
+  it('is deleted only when no session uses it, archived ones included', () => {
     const environment = service.create({ name: 'A' });
     const active = addSession(environment.id);
     const archived = addSession(environment.id, true);
@@ -212,14 +212,12 @@ describe('EnvironmentsService', () => {
       .set({ archivedAt: new Date() })
       .where(eq(sessions.id, active))
       .run();
+    // Archived sessions keep it too: their history holds the secrets.
+    expect(() => service.remove(environment.id)).toThrow('(archived)');
+    db.delete(sessions).where(eq(sessions.id, active)).run();
+    db.delete(sessions).where(eq(sessions.id, archived)).run();
     service.remove(environment.id);
     expect(service.list()).toEqual([]);
-    const row = db
-      .select()
-      .from(sessions)
-      .where(eq(sessions.id, archived))
-      .get();
-    expect(row?.environmentId).toBeNull();
   });
 
   it('checks the environment of a new session', () => {

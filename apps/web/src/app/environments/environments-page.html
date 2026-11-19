@@ -80,21 +80,20 @@
   (closed)="deleting.set(null)"
 >
   @if (deleting(); as environment) {
-  <p>
-    Its variables, files and secrets are deleted for good. Archived sessions
-    that used it keep running without it if they are shown again.
+  <p>Its variables, files and secrets are deleted for good.</p>
+  @if (environment.sessions.length > 0) {
+  <p class="error">
+    Used by these sessions; delete them first, archived ones too (their history
+    holds the secrets, which are masked only while the environment exists):
   </p>
-  @if (activeSessions(environment) > 0) {
-  <p class="error">Used by sessions that are not archived:</p>
   <ul>
-    @for (session of environment.sessions; track session.id) { @if
-    (!session.archived) {
+    @for (session of environment.sessions; track session.id) {
     <li>
       <a [routerLink]="['/sessions', session.id]" (click)="closeDelete()"
         >{{ session.title ?? 'Untitled session' }}</a
-      >
+      >@if (session.archived) { (archived) }
     </li>
-    } }
+    }
   </ul>
   } @if (deleteError(); as text) {
   <p class="error" role="alert" data-testid="environment-delete-error">
