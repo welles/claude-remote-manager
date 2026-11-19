@@ -17,6 +17,7 @@ import type {
   SessionDirectoryState,
   SessionPermissionMode,
   SessionStatus,
+  SessionTitleSource,
   SetupStatus,
   ShownFileKind,
   ShownFileOrigin,
@@ -76,6 +77,15 @@ export const sessions = sqliteTable('sessions', {
   /** Claude Code session ID used for resuming; known after the first start. */
   sdkSessionId: text('sdk_session_id'),
   title: text('title'),
+  /**
+   * Where the title comes from: the first message (`prompt`), the user
+   * (`user`: a title given when creating, or a rename) or Claude's tool
+   * `set_session_title` (`claude`). Claude never replaces a user's title.
+   */
+  titleSource: text('title_source')
+    .$type<SessionTitleSource>()
+    .notNull()
+    .default('prompt'),
   model: text('model'),
   permissionMode: text('permission_mode')
     .$type<SessionPermissionMode>()

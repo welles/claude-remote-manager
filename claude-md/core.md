@@ -21,6 +21,17 @@
   adds a repository themselves, the session manager tells you its path with your next
   message.
 
+## The session's title
+
+- Name the session with the tool `set_session_title` once you know what it is about: after
+  reading what the task refers to (an issue, a pull request, files, an error), not right after
+  the first message. Name the actual subject, not the request: not "Work on issue #12", but
+  what issue #12 is about.
+- Short and distinctive, so the user recognizes the session in the list: about 3 to 6 words,
+  in the language the user writes in.
+- Set it again when the topic changes substantially (another task, or the problem turned out
+  to be a different one), not for each step. A title the user chose stays.
+
 ## Showing files to the user
 
 - When you produce a file the user should look at (a screenshot, an image, a report, an HTML
