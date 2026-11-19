@@ -152,9 +152,12 @@ export class SessionsApi {
     directory: number,
     path: string,
   ): Observable<BrowsedFileDto> {
-    return this.http.get<BrowsedFileDto>(`${sessionPath(sessionId)}/browse/file`, {
-      params: { directory, path },
-    });
+    return this.http.get<BrowsedFileDto>(
+      `${sessionPath(sessionId)}/browse/file`,
+      {
+        params: { directory, path },
+      },
+    );
   }
 
   /** Slash commands and skills for `/` autocomplete. */

@@ -493,8 +493,11 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   its `@` mention; from its first 8 KB), `GET .../browse/content?directory=&path=` serves it
   like a shown file's live content (read as the session user through the same helper, only
   inside that directory, also not through symlinks; relative paths without `..`; up to
-  50 MB; never sniffed, sandboxed CSP). "Reference in message" returns to the session with
-  `?mention=@path`, which the input takes over.
+  50 MB; never sniffed; HTML, SVG and text sandboxed by CSP, PDFs in the browser's viewer
+  as for shown files). A directory that cannot be listed (gone) shows an error, the others
+  stay; folders show 300 files until "more". "Reference in message" returns to the session
+  with `?mention=@path`; the input takes one such reference (anything else in the parameter
+  is dropped) after the text already typed, which the app keeps per session while it runs.
 - `/` commands: a message starting with `/` offers Claude Code's slash commands and skills
   (`GET /api/sessions/:id/slash-commands`), names and aliases starting with what was typed
   first, then names containing it; choosing inserts `/name `. The list is what the session's

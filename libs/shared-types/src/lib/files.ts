@@ -43,6 +43,8 @@ export interface BrowsedDirectory {
   files: string[];
   /** More files than were listed. */
   truncated: boolean;
+  /** Why the directory could not be listed (then `files` is empty). */
+  error: string | null;
 }
 
 export interface BrowseResponse {

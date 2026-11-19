@@ -51,6 +51,8 @@ export class SessionFilesPage {
   protected readonly error = signal<string | null>(null);
   protected readonly filter = signal('');
   private readonly expanded = signal<ReadonlySet<string>>(new Set());
+  /** Folders whose files are all shown (beyond the first ones). */
+  private readonly complete = signal<ReadonlySet<string>>(new Set());
   private readonly diff = signal<SessionDiffResponse | null>(null);
   private readonly changes = computed(() => {
     const diff = this.diff();
@@ -78,6 +80,7 @@ export class SessionFilesPage {
         this.expanded(),
         this.changes(),
         this.filter(),
+        this.complete(),
       ),
     })),
   );
@@ -115,8 +118,14 @@ export class SessionFilesPage {
     this.filter.set((event.target as HTMLInputElement).value);
   }
 
+  /** Shows all files of a folder whose list was cut short. */
+  protected showAll(row: TreeRow): void {
+    this.complete.update((keys) => new Set(keys).add(row.key));
+  }
+
   private open(row: TreeRow): void {
     const id = this.id();
+    this.error.set(null);
     this.opening.set(row.key);
     this.api.browsedFile(id, row.directory, row.path).subscribe({
       next: (browsed) => {
@@ -171,7 +180,9 @@ export function changesOf(
       continue;
     }
     const position = directory.directory;
-    for (const file of repository.files) {
+    // Only files there are rows for (not deleted ones).
+    const listed = new Set(directory.files);
+    for (const file of repository.files.filter((f) => listed.has(f.path))) {
       changes.set(rowKey(position, file.path), file.status);
     }
   }

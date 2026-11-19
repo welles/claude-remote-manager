@@ -159,15 +159,29 @@ export class FileMentionsService {
   async browse(sessionId: string): Promise<BrowseResponse> {
     const directories: BrowseResponse['directories'] = [];
     for (const directory of this.readyDirectories(sessionId)) {
-      const listing = await this.listing(directory);
-      const files = [...listing.paths].sort();
-      directories.push({
+      const entry = {
         directory: directory.position,
         repository: directory.repositoryName,
         path: directory.path,
-        files: files.slice(0, MAX_BROWSED_FILES),
-        truncated: listing.truncated || files.length > MAX_BROWSED_FILES,
-      });
+      };
+      try {
+        const listing = await this.listing(directory);
+        const files = [...listing.paths].sort();
+        directories.push({
+          ...entry,
+          files: files.slice(0, MAX_BROWSED_FILES),
+          truncated: listing.truncated || files.length > MAX_BROWSED_FILES,
+          error: null,
+        });
+      } catch {
+        // One directory that cannot be listed (gone) hides no other.
+        directories.push({
+          ...entry,
+          files: [],
+          truncated: false,
+          error: 'The directory could not be listed.',
+        });
+      }
     }
     return { directories };
   }

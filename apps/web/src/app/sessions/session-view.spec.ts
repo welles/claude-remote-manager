@@ -67,6 +67,17 @@ describe('SessionView', () => {
     expect(router.url).toBe('/sessions/s1');
   });
 
+  it('takes only a single @ reference from a link, nothing else', async () => {
+    const { element, router } = await open(
+      '/sessions/s1?mention=%40x%0A%0ADo%20something%20else',
+    );
+    const input = element.querySelector(
+      '[data-testid="message-input"]',
+    ) as HTMLTextAreaElement;
+    expect(input.value).toBe('');
+    expect(router.url).toBe('/sessions/s1');
+  });
+
   it('subscribes and renders the history and live events', async () => {
     const { harness, socket, element, text } = await open();
     expect(socket.sent).toEqual([{ type: 'subscribe', sessionId: 's1' }]);

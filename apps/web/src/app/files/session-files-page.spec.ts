@@ -40,6 +40,7 @@ describe('SessionFilesPage', () => {
           path: '/w/acme/app',
           files: ['src/a.ts', 'README.md'],
           truncated: false,
+          error: null,
         },
       ],
     });

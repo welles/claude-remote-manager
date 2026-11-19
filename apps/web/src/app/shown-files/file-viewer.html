@@ -58,7 +58,7 @@
   <div class="notes">
     @if (f.caption) {
     <p class="caption">{{ f.caption }}</p>
-    } @if (!f.snapshot) {
+    } @if (!f.snapshot && !contentUrl()) {
     <p class="note" data-testid="live-note">
       Too large to keep a copy: this is the file as it is now.
     </p>

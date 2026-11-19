@@ -9,7 +9,12 @@ interface TreeNode {
   path: string;
   folders: Map<string, TreeNode>;
   files: string[];
+  /** Sorted once, after building. */
+  sortedFolders?: TreeNode[];
 }
+
+/** Files shown per folder before "Show all". */
+export const MAX_FOLDER_FILES = 300;
 
 /** One visible row of the file browser. */
 export interface TreeRow {
@@ -27,6 +32,11 @@ export interface TreeRow {
   change: FileChangeStatus | null;
   /** A folder with changed files below it. */
   changedInside: boolean;
+  /**
+   * Not a file: "show the other N files" of the folder `path` (keyed by
+   * the folder); `name` says how many.
+   */
+  more?: number;
 }
 
 /** At most this many rows match a filter. */
@@ -56,8 +66,18 @@ export function buildTree(files: readonly string[]): TreeNode {
     }
     node.files.push(file);
   }
+  const sort = (node: TreeNode) => {
+    node.sortedFolders = [...node.folders.values()].sort((a, b) =>
+      byName(a.name, b.name),
+    );
+    node.files.sort((a, b) => byName(baseName(a), baseName(b)));
+    node.sortedFolders.forEach(sort);
+  };
+  sort(root);
   return root;
 }
+
+const baseName = (path: string) => path.split('/').at(-1) ?? path;
 
 const byName = (a: string, b: string) =>
   a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
@@ -73,6 +93,7 @@ export function treeRows(
   expanded: ReadonlySet<string>,
   changes: ReadonlyMap<string, FileChangeStatus>,
   filter: string,
+  complete: ReadonlySet<string> = new Set(),
 ): TreeRow[] {
   const at = directory.directory;
   const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
@@ -83,6 +104,7 @@ export function treeRows(
         return words.every((word) => lower.includes(word));
       })
       .slice(0, MAX_FILTERED_ROWS)
+      .sort(byName)
       .map((file) => ({
         key: rowKey(at, file),
         directory: at,
@@ -107,8 +129,8 @@ export function treeRows(
   }
   const rows: TreeRow[] = [];
   const walk = (node: TreeNode, depth: number) => {
-    for (const name of [...node.folders.keys()].sort(byName)) {
-      const folder = node.folders.get(name) as TreeNode;
+    for (const folder of node.sortedFolders ?? []) {
+      const name = folder.name;
       const key = rowKey(at, folder.path);
       const open = expanded.has(key);
       rows.push({
@@ -126,9 +148,10 @@ export function treeRows(
         walk(folder, depth + 1);
       }
     }
-    for (const file of [...node.files].sort((a, b) =>
-      byName(a.split('/').at(-1) ?? a, b.split('/').at(-1) ?? b),
-    )) {
+    const folderKey = rowKey(at, node.path);
+    const all = complete.has(folderKey);
+    const files = all ? node.files : node.files.slice(0, MAX_FOLDER_FILES);
+    for (const file of files) {
       rows.push({
         key: rowKey(at, file),
         directory: at,
@@ -139,6 +162,20 @@ export function treeRows(
         expanded: false,
         change: changes.get(rowKey(at, file)) ?? null,
         changedInside: false,
+      });
+    }
+    if (files.length < node.files.length) {
+      rows.push({
+        key: `${folderKey}#more`,
+        directory: at,
+        path: node.path,
+        name: `${node.files.length - files.length} more files`,
+        depth,
+        folder: false,
+        expanded: false,
+        change: null,
+        changedInside: false,
+        more: node.files.length - files.length,
       });
     }
   };

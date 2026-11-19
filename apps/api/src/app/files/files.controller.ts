@@ -63,6 +63,9 @@ function accessError(error: unknown): unknown {
   switch (error.code) {
     case 'not_found':
       return new NotFoundException('No such file');
+    case 'usage':
+      // The directory is gone from disk.
+      return new NotFoundException('No such directory');
     case 'outside':
       return new ForbiddenException('The file is outside the directory');
     case 'no_access':

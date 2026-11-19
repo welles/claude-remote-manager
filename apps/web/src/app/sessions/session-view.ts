@@ -15,6 +15,7 @@ import {
   ElementRef,
   afterRenderEffect,
   computed,
+  effect,
   inject,
   signal,
   viewChild,
@@ -69,12 +70,16 @@ import { todoList } from './todos';
 import { SessionGitPanel } from './session-git-panel';
 import { SessionSocket } from './session-socket';
 import { newId, SessionsApi } from './sessions-api';
+import { SessionDrafts } from './session-drafts';
 import { CleanupDialog } from './cleanup-dialog';
 import { SessionTitle } from './session-title';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { errorMessage } from '../repositories/repositories-api';
 
 /** One session: the streamed conversation, input and usage. */
+/** One `@path` reference, as the file browser hands it over (`?mention=`). */
+const MENTION_TOKEN = /^@(?:"[^"\n]{1,4096}"|[^\s"]{1,4096})$/;
+
 @Component({
   selector: 'app-session-view',
   imports: [
@@ -301,6 +306,7 @@ export class SessionView implements OnInit {
   );
   private readonly sessionsApi = inject(SessionsApi);
   private readonly router = inject(Router);
+  private readonly drafts = inject(SessionDrafts);
 
   /** Request IDs of frames this view sent, to show their errors. */
   private readonly pending = new Set<string>();
@@ -312,7 +318,14 @@ export class SessionView implements OnInit {
   private stickToBottom = true;
 
   constructor() {
-    this.takeMention();
+    // Unsent text stays with its session.
+    effect(() => {
+      const id = this.sessionId();
+      const text = this.draft();
+      if (id) {
+        this.drafts.set(id, text);
+      }
+    });
     let revealed = false;
     afterRenderEffect(() => {
       this.items();
@@ -349,6 +362,8 @@ export class SessionView implements OnInit {
         }
         const id = params.get('id') ?? '';
         this.sessionId.set(id);
+        this.draft.set(this.drafts.get(id));
+        this.takeMention();
         this.session.set(null);
         this.items.set([]);
         this.context.set(null);
@@ -499,22 +514,26 @@ export class SessionView implements OnInit {
   }
 
   /**
-   * Shows the place a search result points to (`?at=` message ID, else the
-   * first message containing the first word of `?q=`), once the history
-   * has loaded.
-   */
-  /**
    * A file referenced from the file browser (`?mention=@path`): added to
    * the input, then dropped from the URL.
    */
   private takeMention(): void {
     const mention = this.route.snapshot.queryParamMap.get('mention');
-    if (!mention || !mention.startsWith('@')) {
+    if (mention === null) {
+      return;
+    }
+    if (!MENTION_TOKEN.test(mention)) {
+      // Only ever one `@path`: a link must not fill the input with text.
+      this.dropMentionParam();
       return;
     }
     this.draft.update((text) =>
       text.trim() ? `${text.replace(/\s+$/, '')} ${mention} ` : `${mention} `,
     );
+    this.dropMentionParam();
+  }
+
+  private dropMentionParam(): void {
     void this.router.navigate([], {
       relativeTo: this.route,
       queryParams: { mention: null },
@@ -523,6 +542,11 @@ export class SessionView implements OnInit {
     });
   }
 
+  /**
+   * Shows the place a search result points to (`?at=` message ID, else the
+   * first message containing the first word of `?q=`), once the history
+   * has loaded.
+   */
   private revealSearchTarget(): void {
     const params = this.route.snapshot.queryParamMap;
     const anchor = params.get('at');

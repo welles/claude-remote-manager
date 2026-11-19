@@ -1,4 +1,4 @@
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { openDatabase, type AppDatabase } from '../db/database';
 import { createOrigin, git, gitSandbox } from '../git/testing/git-fixtures';
@@ -185,12 +185,33 @@ describe('FileMentionsService', () => {
     await expect(service.browsedFile('nope', 0, 'x')).rejects.toThrow(
       'not found',
     );
+    // A file in a missing folder is not found (not "outside").
+    await expect(
+      service.browsedFile('s1', 0, 'nope/x.txt'),
+    ).rejects.toMatchObject({
+      code: 'not_found',
+    });
     const opened = await service.openBrowsed('s1', 0, 'src/main.ts');
     const chunks: Buffer[] = [];
     for await (const chunk of opened.content) {
       chunks.push(chunk as Buffer);
     }
     expect(Buffer.concat(chunks).toString()).toBe('export const a = 1;\n');
+  });
+
+  it('lists the other directories when one is gone', async () => {
+    await rm(lib, { recursive: true, force: true });
+    const browse = await service.browse('s1');
+    expect(browse.directories[0]).toMatchObject({ error: null });
+    expect(browse.directories[1]).toMatchObject({
+      files: [],
+      error: expect.any(String),
+    });
+    await expect(
+      service.browsedFile('s1', 1, 'README.md'),
+    ).rejects.toMatchObject({
+      code: 'usage',
+    });
   });
 
   it('quotes mentions with spaces and ranks file names first', () => {

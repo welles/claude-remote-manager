@@ -31,12 +31,24 @@
       (not all files listed)</span
     >}
   </h2>
-  @if (section.rows.length === 0) {
+  @if (section.directory.error; as message) {
+  <p class="error">{{ message }}</p>
+  } @else if (section.rows.length === 0) {
   <p class="hint">{{ filter() ? 'No matching files' : 'No files' }}</p>
   }
   <ul class="rows" [attr.aria-label]="section.title">
     @for (row of section.rows; track row.key) {
     <li [style.--depth]="row.depth">
+      @if (row.more) {
+      <button
+        type="button"
+        class="row more"
+        (click)="showAll(row)"
+        data-testid="show-more"
+      >
+        <span class="spacer"></span>{{ row.name }}
+      </button>
+      } @else {
       <button
         type="button"
         class="row"
@@ -66,6 +78,7 @@
         <span class="change inside" title="Changed files inside">•</span>
         }
       </button>
+      }
     </li>
     }
   </ul>
