@@ -280,8 +280,10 @@ export class WorkspacePage implements OnInit {
         next: () => {
           this.busy.set(false);
           this.toasts.show({
-            title: 'Directory forgotten',
-            lines: [`${entry.name} of ${entry.sessionTitle ?? 'the session'}`],
+            title: 'Marked as removed',
+            lines: [
+              `${entry.name} of ${entry.sessionTitle || 'Untitled session'}`,
+            ],
           });
           this.load();
         },

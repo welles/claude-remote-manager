@@ -6,7 +6,6 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import type {
-  PullRequestDto,
   SessionEvent,
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
@@ -19,6 +18,7 @@ import {
   permissionRequest,
   permissionResolved,
 } from './testing/permission-events';
+import { pullRequestDto } from './testing/pull-request';
 import { sessionDto } from './testing/session-dto';
 import { preview } from '../previews/testing/preview';
 
@@ -995,29 +995,29 @@ describe('SessionView', () => {
     expect(element.querySelector('app-message-composer')).toBeNull();
   });
 
-  it('unarchives with a toast and shows a draft pull request grey', async () => {
+  it('shows an open draft pull request grey in the strip', async () => {
     const { harness, socket, element } = await open();
-    const draft = {
-      id: 1,
-      number: 7,
-      state: 'open',
-      draft: true,
-      automation: { autofix: false },
-    } as unknown as PullRequestDto;
+    history(
+      socket,
+      sessionDto({ pullRequests: [pullRequestDto({ draft: true })] }),
+    );
+    await harness.fixture.whenStable();
+    const state = element.querySelector('[data-testid="strip-pr-state"]');
+    expect(state?.textContent?.trim()).toBe('draft');
+    expect(state?.classList).toContain('pr-draft');
+  });
+
+  it('confirms unarchiving with a toast', async () => {
+    const { harness, socket, element, text } = await open();
     history(
       socket,
       sessionDto({
         status: 'finished',
         waitingFor: null,
         archivedAt: '2026-01-02T00:00:00Z',
-        pullRequests: [draft],
       }),
     );
     await harness.fixture.whenStable();
-    const state = element.querySelector('[data-testid="strip-pr-state"]');
-    expect(state?.textContent?.trim()).toBe('draft');
-    expect(state?.classList).toContain('pr-draft');
-
     (
       element.querySelector(
         '[data-testid="unarchive-banner"]',
@@ -1026,9 +1026,11 @@ describe('SessionView', () => {
     TestBed.inject(HttpTestingController)
       .expectOne('/api/sessions/s1/unarchive')
       .flush(sessionDto({ status: 'finished', waitingFor: null }));
+    await harness.fixture.whenStable();
     expect(TestBed.inject(Toasts).all()).toMatchObject([
       { title: 'Session unarchived' },
     ]);
+    expect(text('archived-banner')).toBeUndefined();
   });
 
   it('makes no offer for failed sessions', async () => {

@@ -192,8 +192,14 @@ export class DiscardCloneDialog {
         this.discarded.emit(target.repositoryId);
       },
       error: (error: unknown) => {
-        this.busy.set(false);
-        this.error.set(errorMessage(error, 'The clone was not deleted.'));
+        const message = errorMessage(error, 'The clone was not deleted.');
+        if (this.target() === target) {
+          this.busy.set(false);
+          this.error.set(message);
+        } else {
+          // Closed (Esc) or opened for another clone meanwhile.
+          this.toasts.show({ title: message, kind: 'error' });
+        }
       },
     });
   }

@@ -11,42 +11,8 @@ import type {
 import { words } from '../testing/text';
 import { Toasts } from '../ui/toasts';
 import { SessionGitPanel } from './session-git-panel';
+import { pullRequestDto as pull } from './testing/pull-request';
 import { sessionDto } from './testing/session-dto';
-
-const pull = (overrides: Partial<PullRequestDto> = {}): PullRequestDto => ({
-  id: 1,
-  repositoryId: 'r1',
-  repository: 'acme/app',
-  number: 7,
-  url: 'https://github.com/acme/app/pull/7',
-  title: 'Fix login',
-  state: 'open',
-  draft: false,
-  headBranch: 'claude/reply-with-pong-abc123',
-  baseBranch: 'main',
-  createdBy: 'claude',
-  openedAt: '2026-01-01T10:00:00.000Z',
-  closedAt: null,
-  mergedAt: null,
-  syncedAt: '2026-01-01T10:00:00.000Z',
-  automation: {
-    autofix: false,
-    autoclose: false,
-    automerge: {
-      enabled: false,
-      held: null,
-      failure: null,
-      waiting: null,
-    },
-    attempts: 0,
-    maxAttempts: 3,
-    gaveUp: false,
-    running: false,
-    lastRunAt: null,
-    lastTrigger: null,
-  },
-  ...overrides,
-});
 
 const githubSession = (overrides: Partial<SessionDto> = {}) => {
   const base = sessionDto();
@@ -442,6 +408,20 @@ describe('SessionGitPanel', () => {
     fixture.detectChanges();
     expect(all('git-message')).toEqual(['Pull request #7 is open']);
     expect(all('pr-form')).toEqual([]);
+  });
+
+  it('says when the created pull request is a draft', async () => {
+    const { fixture, all, click } = await render(githubSession());
+    await click('create-pr');
+    await click('pr-submit');
+    http
+      .expectOne({
+        method: 'POST',
+        url: '/api/sessions/s1/repositories/r1/pull-requests',
+      })
+      .flush(pull({ draft: true }));
+    fixture.detectChanges();
+    expect(all('git-message')).toEqual(['Pull request #7 is a draft']);
   });
 
   it('shows errors of the API', async () => {

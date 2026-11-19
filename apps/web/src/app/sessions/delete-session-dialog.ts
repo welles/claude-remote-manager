@@ -205,8 +205,14 @@ export class DeleteSessionDialog {
         this.deleted.emit(this.sessionId());
       },
       error: (error: unknown) => {
-        this.busy.set(false);
-        this.error.set(errorMessage(error, 'The session was not deleted.'));
+        const message = errorMessage(error, 'The session was not deleted.');
+        if (this.open()) {
+          this.busy.set(false);
+          this.error.set(message);
+        } else {
+          // Closed meanwhile (Esc): the error must not get lost.
+          this.toasts.show({ title: message, kind: 'error' });
+        }
       },
     });
   }

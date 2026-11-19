@@ -14,6 +14,7 @@ import { words } from '../testing/text';
 import { WorkspacePage } from '../workspace/workspace-page';
 import { axisTicks, chartSeries } from './usage-chart';
 import { UsagePage } from './usage-page';
+import { Toasts } from '../ui/toasts';
 
 const totals = (cost: number, tokens = 100): UsageTotals => ({
   inputTokens: tokens,
@@ -171,5 +172,37 @@ describe('UsagePage and WorkspacePage', () => {
     request.flush({ orphans: [], missing: [] });
     fixture.detectChanges();
     expect(element.querySelector('[data-testid="no-orphans"]')).not.toBeNull();
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      { title: 'Directory removed', lines: [orphan.path] },
+    ]);
+  });
+
+  it('marks a missing directory as removed and says so', async () => {
+    const fixture = TestBed.createComponent(WorkspacePage);
+    fixture.detectChanges();
+    const missing = {
+      sessionId: 's1',
+      sessionTitle: '',
+      position: 1,
+      path: '/workspace/sessions/x/acme/lib',
+      name: 'acme/lib',
+    };
+    http
+      .expectOne('/api/workspace/orphans')
+      .flush({ orphans: [], missing: [missing] });
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+    (
+      element.querySelector('[data-testid="missing-forget"]') as HTMLElement
+    ).click();
+    const request = http.expectOne('/api/workspace/missing/forget');
+    expect(request.request.body).toEqual({ sessionId: 's1', position: 1 });
+    request.flush(null);
+    http
+      .expectOne('/api/workspace/orphans')
+      .flush({ orphans: [], missing: [] });
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      { title: 'Marked as removed', lines: ['acme/lib of Untitled session'] },
+    ]);
   });
 });
