@@ -1049,6 +1049,9 @@ describe('SessionView', () => {
       { title: 'Session unarchived' },
     ]);
     expect(text('archived-banner')).toBeUndefined();
+    // Unarchived to continue it: the input, not the archive offer.
+    expect(text('archive-offer')).toBeUndefined();
+    expect(element.querySelector('app-message-composer')).not.toBeNull();
   });
 
   it('makes no offer for failed sessions', async () => {

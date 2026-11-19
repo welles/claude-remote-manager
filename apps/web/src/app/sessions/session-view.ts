@@ -633,6 +633,8 @@ export class SessionView implements OnInit {
   protected unarchive(): void {
     this.sessionsApi.unarchive(this.sessionId()).subscribe({
       next: (session) => {
+        // Unarchived to continue it: the input shows, not the archive offer.
+        this.continuing.set(true);
         this.session.set(session);
         this.toasts.show({ title: 'Session unarchived' });
       },
