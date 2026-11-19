@@ -94,6 +94,15 @@ describe('tool groups', () => {
     expect(result.map((entry) => entry.kind)).toEqual(['tool', 'assistant']);
   });
 
+  it('does not break a run at a message waiting in the queue', () => {
+    const result = entries([
+      call('q1'),
+      event({ type: 'message.queued', id: 'w1', text: 'Also this' }),
+      call('q2'),
+    ]);
+    expect(result.map((entry) => entry.kind)).toEqual(['queued', 'tools']);
+  });
+
   it('counts tools by name, most used first, MCP tools by their own name', () => {
     const tools = entries([
       call('t1', 'Read'),

@@ -13,7 +13,10 @@ import { words } from '../testing/text';
 import { WEBSOCKET_FACTORY } from './session-socket';
 import { SessionView } from './session-view';
 import { FakeWebSocket, fakeWebSocketFactory } from './testing/fake-websocket';
-import { permissionRequest } from './testing/permission-events';
+import {
+  permissionRequest,
+  permissionResolved,
+} from './testing/permission-events';
 import { sessionDto } from './testing/session-dto';
 import { preview } from '../previews/testing/preview';
 
@@ -415,6 +418,46 @@ describe('SessionView', () => {
     expect(group.querySelectorAll('.tool')).toHaveLength(3);
     // Claude's text stays outside, after the group.
     expect(group.nextElementSibling?.textContent).toContain('Found it.');
+  });
+
+  it("keeps a group's permission lines inside it and says what waits", async () => {
+    const { harness, socket, element } = await open();
+    const call = (toolUseId: string) =>
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId,
+        name: 'Bash',
+        input: { command: `rm ${toolUseId}` },
+        parentToolUseId: null,
+      });
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto({ status: 'waiting', waitingFor: 'permission' }),
+      events: [
+        call('t1'),
+        permissionRequest({ requestId: 'p1', toolUseId: 't1', seq: ++seq }),
+        permissionResolved({ requestId: 'p1', toolUseId: 't1', seq: ++seq }),
+        call('t2'),
+        permissionRequest({ requestId: 'p2', toolUseId: 't2', seq: ++seq }),
+      ],
+    });
+    await harness.fixture.whenStable();
+    const group = element.querySelector('[data-testid="tool-group"]');
+    expect(
+      group?.querySelectorAll('[data-testid="permission-line"]'),
+    ).toHaveLength(1);
+    expect(
+      element.querySelectorAll('[data-testid="permission-line"]'),
+    ).toHaveLength(1);
+    const summary = group
+      ?.querySelector('summary')
+      ?.textContent?.replace(/\s+/g, ' ');
+    expect(summary).toContain('Bash rm t2');
+    expect(summary).toContain('needs approval');
   });
 
   it("names a group's running call in its row", async () => {

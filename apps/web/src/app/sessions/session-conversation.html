@@ -24,25 +24,33 @@
   [ngTemplateOutletContext]="{ $implicit: item }"
 />
 <ng-container
+  [ngTemplateOutlet]="permissionLine"
+  [ngTemplateOutletContext]="{ $implicit: item }"
+/>
+<ng-container
   [ngTemplateOutlet]="toolExtras"
   [ngTemplateOutletContext]="{ $implicit: item }"
 />
 } @case ('tools') { @let group = groupState(item);
 <details class="tool-group tool-{{ group.tone }}" data-testid="tool-group">
   <summary>
-    <app-icon class="group-chevron" name="chevron-right" />
+    <app-icon class="tool-icon group-chevron" name="chevron-right" />
     <span class="group-count">{{ item.tools.length }} tool calls</span>
     <span class="group-detail" [class.group-current]="group.current"
       >{{ group.current ?? group.counts }}</span
     >
     @if (group.state) {
-    <span class="group-state">{{ group.state }}</span>
+    <span class="tool-state">{{ group.state }}</span>
     }
   </summary>
   <div class="group-body">
     @for (inner of item.items; track inner.key) { @if (inner.kind === 'tool') {
     <ng-container
       [ngTemplateOutlet]="toolRow"
+      [ngTemplateOutletContext]="{ $implicit: inner }"
+    />
+    <ng-container
+      [ngTemplateOutlet]="permissionLine"
       [ngTemplateOutletContext]="{ $implicit: inner }"
     />
     } @else {
@@ -244,16 +252,8 @@
     [preview]="current(preview)"
     (embed)="embed.emit($event)"
   />
-  } @if (item.permission; as permission) { @if (permission.resolved) {
-  <p
-    class="permission-line"
-    [class.permission-denied]="permission.resolved.decision === 'deny'"
-    [class.nested]="item.nested"
-    data-testid="permission-line"
-  >
-    {{ resolutionText(permission) }}
-  </p>
-  } @if (permission.request.plan && permission.resolved) {
+  } @if (item.permission; as permission) {
+  @if (permission.request.plan && permission.resolved) {
   <details class="plan" [class.nested]="item.nested">
     <summary>Plan</summary>
     <div
@@ -262,4 +262,17 @@
     ></div>
   </details>
   } }
+</ng-template>
+
+<ng-template #permissionLine let-item>
+  @if (item.permission?.resolved) {
+  <p
+    class="permission-line"
+    [class.permission-denied]="item.permission.resolved.decision === 'deny'"
+    [class.nested]="item.nested"
+    data-testid="permission-line"
+  >
+    {{ resolutionText(item.permission) }}
+  </p>
+  }
 </ng-template>

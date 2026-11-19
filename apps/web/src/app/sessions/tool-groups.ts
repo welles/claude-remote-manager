@@ -28,7 +28,8 @@ function inRun(item: ShownItem): item is ToolItem | AssistantItem {
 /**
  * The conversation with each run of two or more tool calls folded into a
  * group. A single call stays a row of its own; a run that has a subagent's
- * text but only one call is left as it is.
+ * text but only one call is left as it is. When a second call follows, the
+ * row becomes a group (keyed by its first item), so an opened row closes.
  */
 export function groupTools(items: ShownItem[]): ConversationEntry[] {
   const entries: ConversationEntry[] = [];
@@ -50,6 +51,11 @@ export function groupTools(items: ShownItem[]): ConversationEntry[] {
   for (const item of items) {
     if (inRun(item)) {
       run.push(item);
+      continue;
+    }
+    if (item.kind === 'queued' && item.state === 'queued') {
+      // Waiting messages show in the queue, not here: no break in the run.
+      entries.push(item);
       continue;
     }
     flush();

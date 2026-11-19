@@ -65,7 +65,7 @@ export type QueuedItem = Extract<ConversationItem, { kind: 'queued' }>;
     ShownFileCard,
   ],
   templateUrl: './session-conversation.html',
-  styleUrl: './session-conversation.scss',
+  styleUrls: ['./session-conversation.scss', './tool-rows.scss'],
 })
 export class SessionConversation {
   readonly items = input.required<ShownItem[]>();
@@ -164,21 +164,37 @@ export class SessionConversation {
     counts: string;
     state: string | null;
   } {
-    const tones = group.tools.map((tool) =>
-      this.toolTone(this.toolState(tool)),
-    );
-    const failed = tones.filter((tone) => tone === 'bad').length;
+    const states = group.tools.map((tool) => this.toolState(tool));
+    const tones = states.map((state) => this.toolTone(state));
+    const denied = states.filter((state) => state === 'denied').length;
+    const failed =
+      tones.filter((tone) => tone === 'bad').length - denied;
     const waiting = group.tools.find((_, index) => tones[index] === 'ask');
-    const running = group.tools.findLast((_, index) => tones[index] === 'busy');
+    const running = group.tools.findLast(
+      (_, index) => tones[index] === 'busy',
+    );
     const current = waiting ?? running;
-    const failures = failed > 0 ? `${failed} failed` : null;
+    const problems = [
+      failed > 0 ? `${failed} failed` : null,
+      denied > 0 ? `${denied} denied` : null,
+    ].filter((text) => text !== null);
     return {
-      tone: waiting ? 'ask' : running ? 'busy' : failed > 0 ? 'bad' : 'quiet',
+      tone: waiting
+        ? 'ask'
+        : running
+          ? 'busy'
+          : problems.length > 0
+            ? 'bad'
+            : 'quiet',
       current: current
         ? `${shortToolName(current.name)} ${this.toolLine(current)}`.trim()
         : null,
       counts: toolCounts(group.tools),
-      state: waiting ? this.toolState(waiting) : running ? 'running' : failures,
+      state: waiting
+        ? this.toolState(waiting)
+        : running
+          ? 'running'
+          : problems.join(' · ') || null,
     };
   }
 
