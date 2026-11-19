@@ -111,4 +111,18 @@ describe('secret masking', () => {
     // Without secrets pieces pass as they are.
     expect(new StreamMasker().push('m:0', 'abc', NO_MASKING)).toBe('abc');
   });
+
+  it('keeps the drafts a clear does not match', () => {
+    const mask = secretMasker(['sk-123456']);
+    const stream = new StreamMasker();
+    stream.push('m:0', 'text sk-12', mask);
+    stream.push('setup::app', 'out sk-12', mask);
+    // The process ended: its drafts go, a running setup script's stay.
+    stream.clear((key) => !key.startsWith('setup:'));
+    const rest = stream.push('setup::app', '3456 more output here', mask);
+    const sent = `${rest}${stream.flush('setup::app', mask)}`;
+    expect(sent).not.toContain('3456');
+    expect(sent).toContain(`${MASK} more output here`);
+    expect(stream.flush('m:0', mask)).toBe('');
+  });
 });

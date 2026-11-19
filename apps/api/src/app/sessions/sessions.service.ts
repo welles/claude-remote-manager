@@ -1952,7 +1952,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.reportedMode = null;
     this.clearIdleTimer(live);
     live.log.clearDrafts();
-    live.stream.clear();
+    // Only the process's own drafts: setup scripts (of a repository being
+    // added) run on and keep their held-back output.
+    live.stream.clear((key) => !isSetupStreamKey(key));
     const status = this.requireRecord(live.id).status;
     if (hadBackgroundTasks && status === 'waiting') {
       this.append(live, {
@@ -4070,7 +4072,14 @@ function setupStreamKey(event: {
   repository: string;
   addition?: string;
 }): string {
-  return `setup:${event.addition ?? ''}:${event.repository}`;
+  return `${SETUP_STREAM_PREFIX}${event.addition ?? ''}:${event.repository}`;
+}
+
+const SETUP_STREAM_PREFIX = 'setup:';
+
+/** Whether a key of the {@link StreamMasker} is a setup script's output. */
+function isSetupStreamKey(key: string): boolean {
+  return key.startsWith(SETUP_STREAM_PREFIX);
 }
 
 /** Output limit of a command the app carried out itself. */

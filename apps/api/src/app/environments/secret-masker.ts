@@ -254,7 +254,12 @@ export class StreamMasker {
     this.drafts.delete(key);
   }
 
-  clear(): void {
-    this.drafts.clear();
+  /** Forgets the drafts whose key matches (by default all). */
+  clear(matches: (key: string) => boolean = () => true): void {
+    for (const key of [...this.drafts.keys()]) {
+      if (matches(key)) {
+        this.drafts.delete(key);
+      }
+    }
   }
 }
