@@ -23,6 +23,7 @@ import {
 } from '@angular/core';
 import type { ReferencePreview } from './reference-preview';
 import {
+  repositoryName,
   stateLabel,
   type ReferenceChipModel,
   type ReferenceOptions,
@@ -135,6 +136,8 @@ export class ReferenceChip {
   readonly chip = input.required<ReferenceChipModel>();
   /** In the input: offers to give Claude comments and the diff. */
   readonly editable = input(false);
+  /** Show `#12` as `repo#12` (the session has several repositories). */
+  readonly showRepository = input(false);
   readonly optionsChange = output<ReferenceOptions>();
 
   protected readonly open = signal(false);
@@ -168,8 +171,13 @@ export class ReferenceChip {
   protected readonly state = computed(() =>
     this.chip().status === 'failed' ? 'failed' : this.stateText(),
   );
-  /** `#12`, or `owner/repo#12` as written. */
-  protected readonly token = computed(() => this.chip().token);
+  /** `#12` (`repo#12` with several repositories), or `owner/repo#12`. */
+  protected readonly token = computed(() => {
+    const chip = this.chip();
+    return this.showRepository() && chip.token.startsWith('#')
+      ? `${repositoryName(chip.repository)}#${chip.number}`
+      : chip.token;
+  });
   protected readonly extras = computed(() =>
     [
       ...(this.chip().comments ? ['comments'] : []),

@@ -11,6 +11,7 @@ import { MessageImages } from '../attachments/message-images';
 import { FileDiffCard } from '../diffs/file-diff-card';
 import { MessageContext } from '../github-references/message-context';
 import { MessageText } from '../github-references/message-text';
+import { sessionGitHubRepositories } from '../github-references/references';
 import { PreviewCard } from '../previews/preview-card';
 import { currentPreview } from '../previews/previews-api';
 import { ShownFileCard } from '../shown-files/shown-file-card';
@@ -83,6 +84,11 @@ export class SessionConversation {
   readonly embed = output<PreviewDto>();
   /** A message that was not sent goes back into the input. */
   readonly edit = output<QueuedItem>();
+
+  /** Reference chips name the repository of `#12` (several repositories). */
+  protected readonly multiRepository = computed(
+    () => sessionGitHubRepositories(this.session()).length > 1,
+  );
 
   /** The items with each run of tool calls folded into a group. */
   protected readonly entries = computed(() => groupTools(this.items()));

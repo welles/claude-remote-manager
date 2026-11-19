@@ -1,7 +1,15 @@
 import type { MessageReference } from '@claude-remote-manager/shared-types';
-import { messageSegments } from './message-text';
+import { TestBed } from '@angular/core/testing';
+import { MessageText, messageSegments } from './message-text';
 import { referenceQuery } from './reference-autocomplete';
-import { draftReferences, optionsOf } from './references';
+import {
+  bareNumbers,
+  draftReferences,
+  optionsOf,
+  qualifyReference,
+  resolveBare,
+  type DetailState,
+} from './references';
 
 const reference = (token: string, number: number): MessageReference => ({
   token,
@@ -59,6 +67,24 @@ describe('GitHub references in the web app', () => {
     ).toEqual({ comments: false, diff: true });
   });
 
+  it('names the repository of #12 in a chip when there are several', async () => {
+    const fixture = TestBed.createComponent(MessageText);
+    fixture.componentRef.setInput('text', 'Fix #12 and acme/lib#3');
+    fixture.componentRef.setInput('references', [
+      reference('#12', 12),
+      reference('acme/lib#3', 3),
+    ]);
+    const tokens = () =>
+      [
+        ...(fixture.nativeElement as HTMLElement).querySelectorAll('.token'),
+      ].map((token) => token.textContent);
+    await fixture.whenStable();
+    expect(tokens()).toEqual(['#12', 'acme/lib#3']);
+    fixture.componentRef.setInput('showRepository', true);
+    await fixture.whenStable();
+    expect(tokens()).toEqual(['app#12', 'acme/lib#3']);
+  });
+
   it('puts chips where the references are in a sent message', () => {
     const segments = messageSegments('Fix #12 and acme/lib#3!', [
       reference('#12', 12),
@@ -71,5 +97,80 @@ describe('GitHub references in the web app', () => {
       ),
     ).toEqual(['Fix ', '[#12]', ' and ', '[acme/lib#3]', '!', '\n', '[#9]']);
     expect(messageSegments('Hi', [])).toEqual([{ kind: 'text', text: 'Hi' }]);
+  });
+
+  it('reads #12 as the repository repositoryOf names', () => {
+    expect(
+      draftReferences(
+        'Fix #12 and acme/app#3',
+        ['acme/app', 'acme/lib'],
+        new Map(),
+        () => 'acme/lib',
+      ),
+    ).toEqual([
+      { token: '#12', repository: 'acme/lib', number: 12 },
+      { token: 'acme/app#3', repository: 'acme/app', number: 3 },
+    ]);
+    expect(
+      draftReferences('Fix #12', ['acme/app'], new Map(), () => null),
+    ).toEqual([]);
+  });
+
+  it('qualifies every bare #12 once the repository is chosen', () => {
+    expect(bareNumbers('#12, acme/lib#3, #12 and #4 but `#5`')).toEqual([
+      12, 4,
+    ]);
+    const text = '#12 and (#12), acme/app#12, #120, `#12`';
+    expect(qualifyReference(text, 12, 'acme/lib', 9)).toEqual({
+      text: 'acme/lib#12 and (acme/lib#12), acme/app#12, #120, `#12`',
+      // The caret after "(" moves with the first #12 only.
+      caret: 9 + 'acme/lib'.length,
+    });
+  });
+
+  it('resolves #12 to the repository that has it, or asks', () => {
+    const found = (repository: string): DetailState => ({
+      status: 'resolved',
+      detail: {
+        repository,
+        number: 12,
+        kind: 'pull_request',
+        title: `PR in ${repository}`,
+        state: 'open',
+        draft: false,
+        url: '',
+        author: null,
+        updatedAt: null,
+        body: '',
+        bodyTruncated: false,
+        labels: [],
+        comments: 0,
+        createdAt: null,
+        closedAt: null,
+        pull: null,
+      },
+    });
+    const missing: DetailState = { status: 'failed', error: 'Not found' };
+    const repositories = ['acme/app', 'acme/lib'];
+    expect(
+      resolveBare(repositories, [found('acme/app'), { status: 'loading' }]),
+    ).toEqual({ status: 'pending' });
+    expect(resolveBare(repositories, [missing, found('acme/lib')])).toEqual({
+      status: 'resolved',
+      repository: 'acme/lib',
+    });
+    expect(resolveBare(repositories, [missing, missing])).toEqual({
+      status: 'resolved',
+      repository: 'acme/app',
+    });
+    const both = resolveBare(repositories, [
+      found('acme/app'),
+      found('acme/lib'),
+    ]);
+    expect(both.status).toBe('ambiguous');
+    expect(
+      both.status === 'ambiguous' &&
+        both.candidates.map((candidate) => candidate.repository),
+    ).toEqual(repositories);
   });
 });

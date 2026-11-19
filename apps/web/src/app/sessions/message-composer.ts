@@ -24,9 +24,10 @@ import { AppIcon } from '../ui/icon';
 import { ReferenceAutocomplete } from '../github-references/reference-autocomplete';
 import { ReferenceChips } from '../github-references/reference-chips';
 import { ReferenceSuggestions } from '../github-references/reference-suggestions';
+import { DraftReferences } from '../github-references/draft-references';
 import {
-  draftReferences,
   optionsOf,
+  qualifyReference,
   type ReferenceOptions,
 } from '../github-references/references';
 import { AttachmentDrafts, imageFiles } from '../attachments/attachment-drafts';
@@ -112,7 +113,8 @@ export class MessageComposer {
   readonly showRepository = input(false);
   /**
    * GitHub repositories of the session, the main one first: `#` searches
-   * them, `#12` refers to the first. Without, `#` offers nothing.
+   * them; `#12` refers to the one that has it (or the first, see
+   * DraftReferences). Without, `#` offers nothing.
    */
   readonly githubRepositories = input<string[]>([]);
   readonly send = output<ComposedMessage>();
@@ -220,6 +222,7 @@ export class MessageComposer {
     () =>
       !this.disabled() &&
       !this.images.busy() &&
+      !this.draftReferences.unresolved() &&
       (this.draft().trim() !== '' ||
         this.images.ids().length > 0 ||
         this.sendsSuggestion()),
@@ -240,6 +243,12 @@ export class MessageComposer {
   protected readonly referenceText = computed(() =>
     this.offering() ? (this.suggestion() ?? '') : this.draft(),
   );
+  /** The references of {@link referenceText}, for the chips and sending. */
+  protected readonly draftReferences = new DraftReferences(
+    () => this.referenceText(),
+    () => this.githubRepositories(),
+    () => this.referenceOptions(),
+  );
   /** ID of a message being sent again. */
   private reuseId: string | null = null;
 
@@ -250,7 +259,25 @@ export class MessageComposer {
     attachments: AttachmentDto[],
     references: readonly MessageReference[] = [],
   ): void {
-    this.draft.set(this.draft().trim() ? `${this.draft()}\n\n${text}` : text);
+    // With several repositories, the restored #12 keeps the repository it
+    // was sent with instead of being looked up again.
+    const qualified =
+      this.githubRepositories().length > 1
+        ? references
+            .filter((reference) => reference.token.startsWith('#'))
+            .reduce(
+              (current, reference) =>
+                qualifyReference(
+                  current,
+                  reference.number,
+                  reference.repository,
+                ).text,
+              text,
+            )
+        : text;
+    this.draft.set(
+      this.draft().trim() ? `${this.draft()}\n\n${qualified}` : qualified,
+    );
     this.referenceOptions.update(
       (options) => new Map([...options, ...optionsOf(references)]),
     );
@@ -293,6 +320,28 @@ export class MessageComposer {
     );
   }
 
+  /** The user chose which repository a `#12` means. */
+  protected chooseReferenceRepository(choice: {
+    number: number;
+    repository: string;
+  }): void {
+    const field = this.textarea()?.nativeElement;
+    const text = this.referenceText();
+    const next = qualifyReference(
+      text,
+      choice.number,
+      choice.repository,
+      this.offering() || !field ? text.length : field.selectionStart,
+    );
+    this.draft.set(next.text);
+    if (field) {
+      // The tap blurred the input: give it the caret back.
+      field.value = next.text;
+      field.focus();
+      field.setSelectionRange(next.caret, next.caret);
+    }
+  }
+
   protected submit(): void {
     if (!this.canSend()) {
       return;
@@ -305,11 +354,7 @@ export class MessageComposer {
       id: this.reuseId,
       text,
       attachmentIds: this.images.ids(),
-      references: draftReferences(
-        text,
-        this.githubRepositories(),
-        this.referenceOptions(),
-      ),
+      references: this.draftReferences.requests(text),
     });
   }
 
