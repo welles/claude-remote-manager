@@ -315,7 +315,7 @@ describe('SessionsService', () => {
     it("offers the user's commands first, then what the session reported", async () => {
       runner.probeCommands = () => [
         { name: 'review', description: 'Review', argumentHint: '' },
-        { name: 'exit', description: 'Exit', argumentHint: '', builtin: true },
+        { name: 'doctor', description: 'Doctor', argumentHint: '', builtin: true },
       ];
       const session = await startSession();
       await expect(slashCommands.forSession(session.id)).resolves.toEqual({
