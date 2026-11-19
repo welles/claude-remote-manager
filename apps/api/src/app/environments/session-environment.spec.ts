@@ -163,14 +163,15 @@ describe('sessions with an environment', () => {
       'failed',
     );
     expect(harness.runner.runs).toHaveLength(0);
+    const NEW_SECRET = 'sk_live_rotated_999';
     harness.environments.update(env.id, {
       ...env,
-      setupScript: 'true',
+      setupScript: 'echo "new $API_TOKEN"',
       variables: env.variables.map(({ id, name, secret, value }) => ({
         id,
         name,
         secret,
-        ...(value === null ? {} : { value }),
+        ...(secret ? { value: NEW_SECRET } : { value: value ?? '' }),
       })),
       files: env.files.map(({ id, variable, fileName, secret }) => ({
         id,
@@ -181,6 +182,12 @@ describe('sessions with an environment', () => {
     });
     await harness.service.rerunSetup(session.id);
     await harness.prepared(session.id);
+    // Masked with the new value, not the one cached for the first run.
+    expect(outputs(session.id)).toContain('new ***');
+    expect(JSON.stringify(harness.events)).not.toContain(NEW_SECRET);
+    expect(
+      JSON.stringify(new SessionEventRepository(harness.db).list(session.id)),
+    ).not.toContain(NEW_SECRET);
     expect(harness.sessions.require(session.id).environmentSetupStatus).toBe(
       'succeeded',
     );
