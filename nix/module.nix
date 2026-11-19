@@ -475,7 +475,9 @@ in
         description = "File with the GitHub App's webhook secret (PR automation).";
       };
       trustedBots = mkOption {
-        type = types.listOf (types.strMatching "[A-Za-z0-9][A-Za-z0-9-]{0,38}\\[bot\\]");
+        # Brackets as bracket expressions: Nix's regular expressions
+        # (std::regex, extended) refuse the escapes `\[` and `\]`.
+        type = types.listOf (types.strMatching "[A-Za-z0-9][A-Za-z0-9-]{0,38}[[]bot[]]");
         default = [ ];
         example = [ "my-reviewer[bot]" ];
         description = ''

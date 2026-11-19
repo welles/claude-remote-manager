@@ -40,6 +40,7 @@ let
     {
       messages = map (a: a.message) (lib.filter (a: !a.assertion) eval.config.assertions);
       builds = (builtins.tryEval eval.config.system.build.toplevel.drvPath).success;
+      inherit (eval.config.systemd.services.claude-remote-manager) environment;
     };
 
   expectFailure =
@@ -72,14 +73,22 @@ let
         github = {
           appId = 123456;
           privateKeyFile = "/run/secrets/crm/github-app-key";
+          trustedBots = [
+            "my-reviewer[bot]"
+            "ci-helper[bot]"
+          ];
         };
       };
     in
     pkgs.runCommand "claude-remote-manager-eval-accepted" { } (
-      if result.messages == [ ] then
-        "touch $out"
-      else
+      if result.messages != [ ] then
         throw "a valid configuration was refused: ${builtins.toJSON result.messages}"
+      else if result.environment.PR_TRUSTED_BOTS or null != "my-reviewer[bot],ci-helper[bot]" then
+        throw "github.trustedBots did not reach PR_TRUSTED_BOTS: ${
+          builtins.toJSON (result.environment.PR_TRUSTED_BOTS or null)
+        }"
+      else
+        "touch $out"
     );
 in
 {
