@@ -720,7 +720,7 @@ session. It has:
   at least 6 characters (for files the content, its JSON values, `KEY=value` and `key: value`
   values, and long lines without spaces) are replaced by `***` in the session's events
   before they are stored, sent or indexed (also `lastError`, titles set by Claude and streamed
-  text, which is held back until it cannot be part of a secret), and when an older conversation is loaded from the
+  text and setup output, which are held back until they cannot be part of a secret), and when an older conversation is loaded from the
   transcript, with the current values. Claude itself knows the values; diffs, the file browser and
   shown files are not masked.
 - **Instructions**, appended to the system prompt together with the names (not values) of the

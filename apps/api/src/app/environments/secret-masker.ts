@@ -224,6 +224,20 @@ export class StreamMasker {
     return next;
   }
 
+  /**
+   * Ends a stream: the masked text not sent yet (also what was held back),
+   * or `''`.
+   */
+  flush(key: string, mask: SecretMasker): string {
+    const draft = this.drafts.get(key);
+    this.drafts.delete(key);
+    if (!draft) {
+      return '';
+    }
+    const masked = mask.text(draft.raw);
+    return masked.startsWith(draft.sent) ? masked.slice(draft.sent.length) : '';
+  }
+
   /** Forgets a draft (its complete text arrived). */
   end(key: string): void {
     this.drafts.delete(key);

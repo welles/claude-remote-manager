@@ -3749,13 +3749,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private append(
     live: LiveSession,
     unmasked: SessionEventInput,
-    { store = true }: { store?: boolean } = {},
+    {
+      store = true,
+      raw = false,
+    }: {
+      store?: boolean;
+      /** Already masked (output flushed from the stream masker). */
+      raw?: boolean;
+    } = {},
   ): void {
     // Secrets of the environment never reach the log, the database, the
     // clients or the hooks (notifications, search).
     const mask = this.maskFor(live);
-    let input = mask(unmasked);
-    if (unmasked.type === 'assistant.delta') {
+    let input = raw ? unmasked : mask(unmasked);
+    if (raw) {
+      // Masked already.
+    } else if (unmasked.type === 'assistant.delta') {
       // Pieces of streamed text are masked together (see StreamMasker).
       const text = live.stream.push(
         `${unmasked.messageId}:${unmasked.blockIndex}`,
@@ -3771,6 +3780,42 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       unmasked.blockIndex !== null
     ) {
       live.stream.end(`${unmasked.messageId}:${unmasked.blockIndex}`);
+    } else if (unmasked.type === 'setup.output') {
+      // The output of a setup script comes in chunks as well.
+      const text = live.stream.push(
+        setupStreamKey(unmasked),
+        unmasked.text,
+        mask,
+      );
+      if (!text) {
+        return;
+      }
+      input = { ...unmasked, text };
+    } else if (
+      unmasked.type === 'setup.result' &&
+      unmasked.state !== 'started'
+    ) {
+      // What was held back of the output comes before the result.
+      const rest = live.stream.flush(setupStreamKey(unmasked), mask);
+      if (rest) {
+        this.append(
+          live,
+          {
+            type: 'setup.output',
+            repository: unmasked.repository,
+            text: rest,
+            ...(unmasked.addition ? { addition: unmasked.addition } : {}),
+          },
+          { store, raw: true },
+        );
+      }
+      if (unmasked.outputTail && mask.longest > 0) {
+        // The tail may start inside a secret: drop what could be its end.
+        input = {
+          ...(input as typeof unmasked),
+          outputTail: `…${mask.text(unmasked.outputTail.slice(mask.longest - 1))}`,
+        };
+      }
     }
     const event = live.log.append(input);
     this.eventAppended?.(live.id, input);
@@ -4048,6 +4093,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       environment: this.environmentOf(record),
     };
   }
+}
+
+/** Key of a setup script's output in the {@link StreamMasker}. */
+function setupStreamKey(event: {
+  repository: string;
+  addition?: string;
+}): string {
+  return `setup:${event.addition ?? ''}:${event.repository}`;
 }
 
 /** Output limit of a command the app carried out itself. */
