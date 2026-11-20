@@ -4,6 +4,7 @@ import {
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
+import { EditorDriver } from '../testing/editor';
 import { words } from '../testing/text';
 import { MessageComposer, type ComposedMessage } from './message-composer';
 
@@ -47,7 +48,7 @@ describe('MessageComposer', () => {
         })),
       },
     });
-    element.querySelector('textarea')?.dispatchEvent(event);
+    new EditorDriver(element).view.contentDOM.dispatchEvent(event);
     await fixture.whenStable();
     return event;
   };
@@ -105,12 +106,9 @@ describe('MessageComposer', () => {
     ).toContain('only PNG, JPEG, GIF and WebP');
     http.expectNone('/api/attachments');
 
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
-    textarea.value = 'Look';
-    textarea.dispatchEvent(new Event('input'));
-    textarea.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }),
-    );
+    const textarea = new EditorDriver(element);
+    textarea.type('Look');
+    textarea.press('Enter', { ctrlKey: true });
     expect(sent).toEqual([
       { id: null, text: 'Look', attachmentIds: ['a2'], references: [] },
     ]);
@@ -144,7 +142,7 @@ describe('MessageComposer', () => {
       ],
     );
     await fixture.whenStable();
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const textarea = new EditorDriver(element);
     expect(textarea.value).toBe('Fix acme/lib#12');
   });
 
@@ -169,8 +167,9 @@ describe('MessageComposer', () => {
   it('shows the suggested message as placeholder, to take or send', async () => {
     fixture.componentRef.setInput('suggestion', 'Run the tests');
     await fixture.whenStable();
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const textarea = new EditorDriver(element);
     expect(textarea.placeholder).toBe('Run the tests');
+    expect(textarea.element.hasAttribute('data-suggestion')).toBe(true);
 
     // Send with the empty input sends it as it is.
     expect(button('send').disabled).toBe(false);
@@ -178,12 +177,11 @@ describe('MessageComposer', () => {
     expect(sent.at(-1)?.text).toBe('Run the tests');
 
     // Tab puts it into the input to edit.
-    const tab = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true });
-    textarea.dispatchEvent(tab);
+    const tab = textarea.press('Tab');
     await fixture.whenStable();
     expect(tab.defaultPrevented).toBe(true);
     expect(textarea.value).toBe('Run the tests');
-    expect(textarea.placeholder).toBe('Message');
+    expect(textarea.element.hasAttribute('data-suggestion')).toBe(false);
     expect(button('take-suggestion')).toBeNull();
 
     // So does the edit button (touch screens).
@@ -194,8 +192,7 @@ describe('MessageComposer', () => {
     expect(textarea.value).toBe('Run the tests');
 
     // Typed text wins over the suggestion.
-    textarea.value = 'Something else';
-    textarea.dispatchEvent(new Event('input'));
+    textarea.type('Something else');
     await fixture.whenStable();
     button('send').click();
     expect(sent.at(-1)?.text).toBe('Something else');
@@ -203,11 +200,7 @@ describe('MessageComposer', () => {
     fixture.componentRef.setInput('suggestion', null);
     fixture.componentInstance.clear();
     await fixture.whenStable();
-    const plainTab = new KeyboardEvent('keydown', {
-      key: 'Tab',
-      cancelable: true,
-    });
-    textarea.dispatchEvent(plainTab);
+    const plainTab = textarea.press('Tab');
     expect(plainTab.defaultPrevented).toBe(false);
     expect(textarea.placeholder).toBe('Message');
     expect(button('send').disabled).toBe(true);
@@ -220,7 +213,7 @@ describe('MessageComposer', () => {
       .expectOne('/api/attachments')
       .flush('nope', { status: 500, statusText: 'Server Error' });
     await fixture.whenStable();
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const textarea = new EditorDriver(element);
     expect(textarea.placeholder).toBe('Message');
     expect(button('send').disabled).toBe(true);
   });
@@ -229,11 +222,9 @@ describe('MessageComposer', () => {
     fixture.componentRef.setInput('sessionId', 's1');
     fixture.componentRef.setInput('showRepository', true);
     await fixture.whenStable();
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const textarea = new EditorDriver(element);
     const type = async (value: string) => {
-      textarea.value = value;
-      textarea.setSelectionRange(value.length, value.length);
-      textarea.dispatchEvent(new Event('input'));
+      textarea.type(value);
       await new Promise((resolve) => setTimeout(resolve, 200));
     };
     await type('Look at @log');
@@ -269,17 +260,14 @@ describe('MessageComposer', () => {
     // The combobox points at the list it controls.
     const list = element.querySelector('[data-testid="mentions"]');
     expect(list?.id).toBeTruthy();
-    expect(textarea.getAttribute('aria-controls')).toBe(list?.id);
-    const key = (name: string) =>
-      textarea.dispatchEvent(
-        new KeyboardEvent('keydown', { key: name, cancelable: true }),
-      );
+    expect(textarea.element.getAttribute('aria-controls')).toBe(list?.id);
+    const key = (name: string) => textarea.press(name);
     key('ArrowDown');
     key('Enter');
     await fixture.whenStable();
     expect(textarea.value).toBe('Look at @"/w/acme/lib/docs/log book.md" ');
     expect(element.querySelector('[data-testid="mentions"]')).toBeNull();
-    expect(textarea.hasAttribute('aria-controls')).toBe(false);
+    expect(textarea.element.hasAttribute('aria-controls')).toBe(false);
     // Enter sent nothing.
     expect(sent).toEqual([]);
 
@@ -290,11 +278,9 @@ describe('MessageComposer', () => {
   it('completes slash commands at the start of a message', async () => {
     fixture.componentRef.setInput('sessionId', 's1');
     await fixture.whenStable();
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const textarea = new EditorDriver(element);
     const type = async (value: string) => {
-      textarea.value = value;
-      textarea.setSelectionRange(value.length, value.length);
-      textarea.dispatchEvent(new Event('input'));
+      textarea.type(value);
       await fixture.whenStable();
     };
     const command = (name: string, extra: object = {}) => ({
@@ -317,19 +303,17 @@ describe('MessageComposer', () => {
     });
     await fixture.whenStable();
     const names = () =>
-      [...element.querySelectorAll('[data-testid="command"] .command-name')].map(
-        (option) => words(option),
-      );
+      [
+        ...element.querySelectorAll('[data-testid="command"] .command-name'),
+      ].map((option) => words(option));
     // Starting with what was typed first, then containing it.
     expect(names()).toEqual(['/review <pr>', '/pre-review']);
-    expect(textarea.getAttribute('aria-controls')).toBe('command-list');
+    expect(textarea.element.getAttribute('aria-controls')).toBe('command-list');
     // Aliases count.
     await type('/co');
     expect(names()).toEqual(['/compact', '/usage']);
     await type('/re');
-    textarea.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }),
-    );
+    textarea.press('Enter');
     await fixture.whenStable();
     expect(textarea.value).toBe('/review ');
     expect(element.querySelector('[data-testid="commands"]')).toBeNull();
@@ -345,7 +329,7 @@ describe('MessageComposer', () => {
   it('keeps the next line, drops stale lists and stays in range', async () => {
     fixture.componentRef.setInput('sessionId', 's1');
     await fixture.whenStable();
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const textarea = new EditorDriver(element);
     const command = (name: string) => ({
       name,
       description: '',
@@ -353,21 +337,14 @@ describe('MessageComposer', () => {
       aliases: [],
       builtin: false,
     });
-    const key = (name: string) =>
-      textarea.dispatchEvent(
-        new KeyboardEvent('keydown', { key: name, cancelable: true }),
-      );
+    const key = (name: string) => textarea.press(name);
     // Typing "/re" in front of a second line.
-    textarea.value = '/re\nmore';
-    textarea.setSelectionRange(3, 3);
-    textarea.dispatchEvent(new Event('input'));
+    textarea.type('/re\nmore', 3);
     await fixture.whenStable();
     const first = http.expectOne('/api/sessions/s1/slash-commands');
     // The list closes and opens again: a second request.
-    textarea.setSelectionRange(0, 0);
-    textarea.dispatchEvent(new Event('input'));
-    textarea.setSelectionRange(3, 3);
-    textarea.dispatchEvent(new Event('input'));
+    textarea.moveCaret(0);
+    textarea.moveCaret(3);
     await fixture.whenStable();
     const second = http.expectOne('/api/sessions/s1/slash-commands');
     second.flush({ source: 'session', commands: [command('review')] });
@@ -382,7 +359,9 @@ describe('MessageComposer', () => {
     ).toBe(1);
     key('ArrowDown');
     key('ArrowDown');
-    expect(textarea.getAttribute('aria-activedescendant')).toBe('command-0');
+    expect(textarea.element.getAttribute('aria-activedescendant')).toBe(
+      'command-0',
+    );
     key('Enter');
     await fixture.whenStable();
     expect(textarea.value).toBe('/review \nmore');
@@ -394,11 +373,9 @@ describe('MessageComposer', () => {
       'acme/lib',
     ]);
     await fixture.whenStable();
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
+    const textarea = new EditorDriver(element);
     const type = async (value: string) => {
-      textarea.value = value;
-      textarea.setSelectionRange(value.length, value.length);
-      textarea.dispatchEvent(new Event('input'));
+      textarea.type(value);
       await new Promise((resolve) => setTimeout(resolve, 200));
     };
     const summary = (repository: string, number: number, title: string) => ({
@@ -439,10 +416,7 @@ describe('MessageComposer', () => {
       element.querySelector('[data-testid="reference-search-error"]')
         ?.textContent,
     ).toContain('rate limit');
-    const key = (name: string) =>
-      textarea.dispatchEvent(
-        new KeyboardEvent('keydown', { key: name, cancelable: true }),
-      );
+    const key = (name: string) => textarea.press(name);
     key('Enter');
     await fixture.whenStable();
     // With several repositories, #12 could mean more than one item.
@@ -520,10 +494,8 @@ describe('MessageComposer', () => {
       'acme/lib',
     ]);
     await fixture.whenStable();
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
-    textarea.value = 'Fix #12 and #7';
-    textarea.setSelectionRange(14, 14);
-    textarea.dispatchEvent(new Event('input'));
+    const textarea = new EditorDriver(element);
+    textarea.type('Fix #12 and #7', 14);
     await fixture.whenStable();
     // Not yet known which repository it is.
     expect(button('send').disabled).toBe(true);
@@ -583,7 +555,7 @@ describe('MessageComposer', () => {
     await fixture.whenStable();
     expect(textarea.value).toBe('Fix acme/lib#12 and #7');
     // The input keeps the caret, moved with the text.
-    expect(document.activeElement).toBe(textarea);
+    expect(textarea.hasFocus()).toBe(true);
     expect(textarea.selectionStart).toBe(14 + 'acme/lib'.length);
     await new Promise((resolve) => setTimeout(resolve, 450));
     await fixture.whenStable();
@@ -595,11 +567,33 @@ describe('MessageComposer', () => {
     ]);
   });
 
+  it('formats from the toolbar it shows on demand, remembered', async () => {
+    localStorage.removeItem('crm.formattingToolbar');
+    const textarea = new EditorDriver(element);
+    expect(element.querySelector('[role="toolbar"]')).toBeNull();
+    button('toggle-formatting').click();
+    await fixture.whenStable();
+    expect(button('toggle-formatting').getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect(localStorage.getItem('crm.formattingToolbar')).toBe('true');
+    textarea.type('Ship it');
+    textarea.view.dispatch({ selection: { anchor: 0, head: 4 } });
+    button('format-bold').click();
+    button('format-bullet').click();
+    await fixture.whenStable();
+    expect(textarea.value).toBe('- **Ship** it');
+    expect(fixture.componentInstance.draft()).toBe('- **Ship** it');
+    expect(button('format-bold').title).toBe('Bold (Ctrl+B)');
+    button('toggle-formatting').click();
+    await fixture.whenStable();
+    expect(element.querySelector('[role="toolbar"]')).toBeNull();
+    localStorage.removeItem('crm.formattingToolbar');
+  });
+
   it('offers nothing for # without GitHub repositories', async () => {
-    const textarea = element.querySelector('textarea') as HTMLTextAreaElement;
-    textarea.value = 'Fix #1';
-    textarea.setSelectionRange(6, 6);
-    textarea.dispatchEvent(new Event('input'));
+    const textarea = new EditorDriver(element);
+    textarea.type('Fix #1', 6);
     await new Promise((resolve) => setTimeout(resolve, 500));
     http.expectNone((request) => request.url.startsWith('/api/github'));
     button('send').click();

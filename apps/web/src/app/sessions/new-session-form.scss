@@ -103,3 +103,15 @@
 
   margin-right: 6px;
 }
+
+// The prompt: 6 lines high, growing up to 18, then it scrolls.
+.prompt-editor {
+  --app-editor-font: inherit;
+  --app-editor-max-height: calc(18 * 1.5em);
+
+  min-height: calc(6 * 1.5em);
+}
+
+.toolbar {
+  margin-bottom: var(--app-space-1);
+}

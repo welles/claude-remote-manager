@@ -68,12 +68,9 @@
   color: var(--mat-sys-on-surface-variant);
 }
 
-// One row: attach, the text (growing up to 8 lines), stop, send.
-.composer-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  padding: 3px;
+// The bordered box: the formatting toolbar (when shown) above one row of
+// attach, formatting, the text (growing up to 8 lines), stop, send.
+.composer-box {
   border: 1px solid var(--mat-sys-outline-variant);
   border-radius: var(--mat-sys-corner-medium);
   background: var(--mat-sys-surface-container);
@@ -83,39 +80,30 @@
   }
 }
 
-.input {
-  flex: 1;
-  min-width: 0;
-  min-height: 40px;
-  box-sizing: border-box;
-  padding: 9px 6px;
-  overflow-y: auto;
-  border: 0;
-  outline: none;
-  resize: none;
-  background: none;
-  color: var(--mat-sys-on-surface);
-  font: var(--mat-sys-body-large);
-
-  &::placeholder {
-    color: var(--mat-sys-on-surface-variant);
-  }
-
-  // Claude Code's suggested next message, as in the terminal.
-  &[data-suggestion]::placeholder {
-    font-style: italic;
-  }
+.toolbar {
+  padding: 3px 3px 0;
+  border-bottom: 1px solid var(--mat-sys-outline-variant);
 }
 
-// Measures the suggestion as the placeholder shows it (in italics).
-.mirror {
-  position: absolute;
-  visibility: hidden;
-  pointer-events: none;
-  flex: none;
-  min-width: 0;
-  overflow: hidden;
-  font-style: italic;
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 3px;
+}
+
+.input {
+  flex: 1;
+  align-self: center;
+  // Eight lines of text plus the padding, then it scrolls.
+  --app-editor-max-height: 208px;
+  --app-editor-padding: 8px 6px;
+  min-height: 40px;
+}
+
+.format-toggle.on {
+  background: var(--mat-sys-secondary-container);
+  color: var(--mat-sys-on-secondary-container);
 }
 
 .send.ready {

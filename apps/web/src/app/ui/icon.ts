@@ -122,6 +122,49 @@ export const ICONS = {
     'M15 9a2 2 0 1 0 0-.01',
     'M21 7a5 5 0 0 1-7.5 4.3L6 19H3v-3l7.7-7.5A5 5 0 1 1 21 7z',
   ],
+  // Markdown formatting (the composer's toolbar).
+  'text-format': ['M5 7V5h14v2', 'M12 5v14', 'M9 19h6'],
+  bold: ['M7 5h5.5a3.5 3.5 0 0 1 0 7H7z', 'M7 12h6.5a3.5 3.5 0 0 1 0 7H7z'],
+  italic: ['M11 5h7', 'M6 19h7', 'M15 5L9 19'],
+  strikethrough: [
+    'M4 12h16',
+    'M16.5 7.5C15.8 5.9 14.2 5 12 5c-2.8 0-4.5 1.4-4.5 3.3 0 1.2.6 2.1 1.8 2.7',
+    'M7.5 16.5c.7 1.6 2.3 2.5 4.5 2.5 2.8 0 4.5-1.4 4.5-3.3 0-.6-.1-1.2-.4-1.7',
+  ],
+  heading: ['M6 5v14', 'M18 5v14', 'M6 12h12'],
+  quote: ['M5 5v14', 'M10 8h9', 'M10 12h9', 'M10 16h6'],
+  code: ['M8 7l-5 5 5 5', 'M16 7l5 5-5 5'],
+  'code-block': [
+    'M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
+    'M10 9l-3 3 3 3',
+    'M14 9l3 3-3 3',
+  ],
+  link: [
+    'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1',
+    'M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+  ],
+  'list-bullet': [
+    'M9 6h11',
+    'M9 12h11',
+    'M9 18h11',
+    'M4.5 6h.01',
+    'M4.5 12h.01',
+    'M4.5 18h.01',
+  ],
+  'list-numbered': [
+    'M10 6h10',
+    'M10 12h10',
+    'M10 18h10',
+    'M4 4.5l1.5-1v5',
+    'M4 14.5a1.5 1.5 0 0 1 3 .3c0 1-3 2.2-3 3.7h3',
+  ],
+  'list-task': [
+    'M4 4h6v6H4z',
+    'M4 14h6v6H4z',
+    'M5.5 17l1.3 1.3 2-2.6',
+    'M14 7h6',
+    'M14 17h6',
+  ],
 } as const satisfies Record<string, readonly string[]>;
 
 export type IconName = keyof typeof ICONS;

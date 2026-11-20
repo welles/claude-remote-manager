@@ -1,4 +1,3 @@
-import { TextFieldModule } from '@angular/cdk/text-field';
 import {
   Component,
   computed,
@@ -9,7 +8,6 @@ import {
   signal,
   viewChild,
   untracked,
-  type ElementRef,
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -48,6 +46,11 @@ import { ModelsStore } from './models-store';
 import { AttachmentDrafts, imageFiles } from '../attachments/attachment-drafts';
 import { AttachmentsApi } from '../attachments/attachments-api';
 import { DraftImages } from '../attachments/draft-images';
+import { MarkdownEditor } from '../markdown/markdown-editor';
+import {
+  FormattingToolbarPreference,
+  MarkdownToolbar,
+} from '../markdown/markdown-toolbar';
 import { SessionsApi } from './sessions-api';
 import { EnvironmentsApi } from '../environments/environments-api';
 
@@ -98,13 +101,14 @@ export interface SessionPrefill {
     GitHubRepositoryPicker,
     MatButtonModule,
     AppIcon,
+    MarkdownEditor,
+    MarkdownToolbar,
     MatFormFieldModule,
     MatInputModule,
     MatSelectModule,
     ReferenceChips,
     ReferenceSuggestions,
     RouterLink,
-    TextFieldModule,
   ],
   templateUrl: './new-session-form.html',
   styleUrl: './new-session-form.scss',
@@ -119,8 +123,8 @@ export class NewSessionForm implements OnInit {
   readonly created = output<SessionDto>();
   /** Fills in the prompt and images, e.g. from content shared to the app. */
   readonly prefill = input<SessionPrefill | null>(null);
-  private readonly promptField =
-    viewChild<ElementRef<HTMLTextAreaElement>>('promptField');
+  private readonly promptField = viewChild(MarkdownEditor);
+  protected readonly toolbar = inject(FormattingToolbarPreference);
 
   /** Models from Claude Code; `''` stands for its default. */
   protected readonly modelOptions = computed(() =>
@@ -138,7 +142,13 @@ export class NewSessionForm implements OnInit {
     new Map<string, RepositoryBranchesResponse>(),
   );
 
-  protected prompt = '';
+  protected get prompt(): string {
+    return this.promptText();
+  }
+
+  protected set prompt(value: string) {
+    this.promptText.set(value);
+  }
   /** Images for the first message. */
   protected readonly images = new AttachmentDrafts(inject(AttachmentsApi));
   protected readonly accept = ATTACHMENT_MEDIA_TYPES.join(',');
@@ -179,7 +189,7 @@ export class NewSessionForm implements OnInit {
           .filter((repository) => !!repository?.github)
           .map((repository) => repository?.fullName ?? ''),
   );
-  /** The prompt as a signal, for the reference chips. */
+  /** The prompt (bound to the editor's text). */
   protected readonly promptText = signal('');
   protected readonly references = new ReferenceAutocomplete(
     () => this.githubRepositories(),
@@ -215,9 +225,9 @@ export class NewSessionForm implements OnInit {
 
   /** Puts the cursor into the prompt (e.g. for the "New session" shortcut). */
   focusPrompt(): void {
-    const field = this.promptField()?.nativeElement;
+    const field = this.promptField();
     field?.focus();
-    field?.scrollIntoView?.({ block: 'center' });
+    field?.contentElement.scrollIntoView?.({ block: 'center' });
   }
 
   ngOnInit(): void {
@@ -485,20 +495,17 @@ export class NewSessionForm implements OnInit {
       this.create();
       return;
     }
-    this.references.keydown(event, event.target as HTMLTextAreaElement);
+    const field = this.promptField();
+    if (field) {
+      this.references.keydown(event, field);
+    }
   }
 
-  protected onPromptInput(event: Event): void {
-    const field = event.target as HTMLTextAreaElement;
-    this.promptText.set(field.value);
-    this.references.update(field);
-  }
-
-  /** Caret moved: the `#` reference being typed may have changed. */
-  protected onPromptCaret(event: Event): void {
-    const key = (event as KeyboardEvent).key;
-    if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(key)) {
-      this.references.update(event.target as HTMLTextAreaElement);
+  /** Typed, or the caret moved: the `#` reference may have changed. */
+  protected onPromptChange(): void {
+    const field = this.promptField();
+    if (field) {
+      this.references.update(field);
     }
   }
 
@@ -516,7 +523,7 @@ export class NewSessionForm implements OnInit {
     number: number;
     repository: string;
   }): void {
-    const field = this.promptField()?.nativeElement;
+    const field = this.promptField();
     const next = qualifyReference(
       this.prompt,
       choice.number,
@@ -533,7 +540,6 @@ export class NewSessionForm implements OnInit {
   }
 
   private setPrompt(value: string): void {
-    this.prompt = value;
     this.promptText.set(value);
   }
 

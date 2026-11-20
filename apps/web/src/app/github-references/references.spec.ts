@@ -85,6 +85,44 @@ describe('GitHub references in the web app', () => {
     expect(tokens()).toEqual(['app#12', 'acme/lib#3']);
   });
 
+  it('renders a sent message as Markdown with its chips in place', async () => {
+    const fixture = TestBed.createComponent(MessageText);
+    fixture.componentRef.setInput(
+      'text',
+      'Fix **#12** first\n\n* [x] done\n\n- then `x`\n- add a <button> to the <b>page</b>\nnext line',
+    );
+    fixture.componentRef.setInput('references', [
+      reference('#12', 12),
+      reference('#9', 9),
+    ]);
+    await fixture.whenStable();
+    const element = fixture.nativeElement as HTMLElement;
+    // The chip inside the bold text, where #12 was written.
+    expect(element.querySelector('strong .token')?.textContent).toBe('#12');
+    expect(element.querySelectorAll('ul')).toHaveLength(2);
+    expect(element.querySelector('li code')?.textContent).toBe('x');
+    // Task boxes as characters (the sanitizer drops inputs).
+    expect(element.querySelector('li')?.textContent).toBe('☑ done');
+    // HTML shows as typed; a typed line break stays.
+    expect(element.querySelector('button:not(.chip), b')).toBeNull();
+    expect(element.querySelectorAll('li')[2].textContent).toContain(
+      'add a <button> to the <b>page</b>next line',
+    );
+    expect(element.querySelector('li br')).not.toBeNull();
+    // A reference the text does not contain follows it.
+    const tokens = [...element.querySelectorAll('.token')].map(
+      (token) => token.textContent,
+    );
+    expect(tokens).toEqual(['#12', '#9']);
+
+    // A new text replaces the chips.
+    fixture.componentRef.setInput('text', 'Plain');
+    fixture.componentRef.setInput('references', []);
+    await fixture.whenStable();
+    expect(element.querySelector('.token')).toBeNull();
+    expect(element.textContent).toBe('Plain');
+  });
+
   it('puts chips where the references are in a sent message', () => {
     const segments = messageSegments('Fix #12 and acme/lib#3!', [
       reference('#12', 12),

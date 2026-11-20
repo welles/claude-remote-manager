@@ -1,0 +1,75 @@
+// CodeMirror builds its DOM itself (no encapsulation attributes): these
+// rules are unencapsulated, scoped by the host element, and nested in
+// `.cm-editor` to win over CodeMirror's base theme.
+app-markdown-editor {
+  display: block;
+  min-width: 0;
+}
+
+app-markdown-editor .cm-editor {
+  max-height: var(--app-editor-max-height, none);
+  color: var(--mat-sys-on-surface);
+  font: var(--app-editor-font, var(--mat-sys-body-large));
+
+  &.cm-focused {
+    outline: none;
+  }
+
+  .cm-scroller {
+    overflow-y: auto;
+    font-family: inherit;
+    line-height: inherit;
+  }
+
+  .cm-content {
+    padding: var(--app-editor-padding, 0);
+    caret-color: var(--mat-sys-on-surface);
+  }
+
+  .cm-line {
+    padding: 0;
+  }
+
+  .cm-placeholder {
+    color: var(--mat-sys-on-surface-variant);
+  }
+
+  // Claude Code's suggested next message, as in the terminal.
+  [data-suggestion] .cm-placeholder {
+    font-style: italic;
+  }
+
+  .cm-md-mark {
+    color: var(--mat-sys-on-surface-variant);
+    font-weight: 400;
+  }
+
+  .cm-md-code {
+    font-family: var(--app-font-mono);
+    font-size: 0.875em;
+  }
+
+  .cm-md-link {
+    color: var(--mat-sys-primary);
+  }
+
+  .cm-md-url {
+    color: var(--mat-sys-on-surface-variant);
+    text-decoration: underline;
+  }
+
+  .cm-md-code-block {
+    background: var(--mat-sys-surface-container-high);
+    font-family: var(--app-font-mono);
+    font-size: 0.875em;
+  }
+
+  .cm-md-quote {
+    padding-left: var(--app-space-2);
+    border-left: 3px solid var(--mat-sys-outline-variant);
+  }
+
+  .cm-md-quote-text {
+    color: var(--mat-sys-on-surface-variant);
+  }
+}

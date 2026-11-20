@@ -20,6 +20,7 @@ import {
 } from './testing/permission-events';
 import { pullRequestDto } from './testing/pull-request';
 import { sessionDto } from './testing/session-dto';
+import { EditorDriver } from '../testing/editor';
 import { preview } from '../previews/testing/preview';
 
 const LOG = 'log-1';
@@ -65,9 +66,7 @@ describe('SessionView', () => {
     const { element, router } = await open(
       '/sessions/s1?mention=%40src%2Fa.ts',
     );
-    const input = element.querySelector(
-      '[data-testid="message-input"]',
-    ) as HTMLTextAreaElement;
+    const input = new EditorDriver(element);
     expect(input.value).toBe('@src/a.ts ');
     expect(router.url).toBe('/sessions/s1');
   });
@@ -76,9 +75,7 @@ describe('SessionView', () => {
     const { element, router } = await open(
       '/sessions/s1?mention=%40x%0A%0ADo%20something%20else',
     );
-    const input = element.querySelector(
-      '[data-testid="message-input"]',
-    ) as HTMLTextAreaElement;
+    const input = new EditorDriver(element);
     expect(input.value).toBe('');
     expect(router.url).toBe('/sessions/s1');
   });
@@ -232,11 +229,11 @@ describe('SessionView', () => {
 
   it('offers the prompt suggestion of the last turn until a message is sent', async () => {
     const { harness, socket, element } = await open();
-    const input = element.querySelector(
-      '[data-testid="message-input"]',
-    ) as HTMLTextAreaElement;
+    const input = new EditorDriver(element);
     const suggestion = () =>
-      input.hasAttribute('data-suggestion') ? input.placeholder : undefined;
+      input.element.hasAttribute('data-suggestion')
+        ? input.placeholder
+        : undefined;
     socket.receive({
       type: 'session.history',
       logId: LOG,
@@ -261,8 +258,7 @@ describe('SessionView', () => {
     await harness.fixture.whenStable();
     expect(suggestion()).toBe('Run the tests');
 
-    input.value = 'Something else';
-    input.dispatchEvent(new Event('input'));
+    input.type('Something else');
     await harness.fixture.whenStable();
     (
       element.querySelector('[data-testid="send"]') as HTMLButtonElement
@@ -285,11 +281,8 @@ describe('SessionView', () => {
     });
     await harness.fixture.whenStable();
 
-    const input = element.querySelector(
-      '[data-testid="message-input"]',
-    ) as HTMLTextAreaElement;
-    input.value = 'Again';
-    input.dispatchEvent(new Event('input'));
+    const input = new EditorDriver(element);
+    input.type('Again');
     await harness.fixture.whenStable();
     (
       element.querySelector('[data-testid="send"]') as HTMLButtonElement
@@ -971,11 +964,8 @@ describe('SessionView', () => {
       ) as HTMLButtonElement
     ).click();
     await harness.fixture.whenStable();
-    const input = element.querySelector(
-      '[data-testid="message-input"]',
-    ) as HTMLTextAreaElement;
-    input.value = 'Next step';
-    input.dispatchEvent(new Event('input'));
+    const input = new EditorDriver(element);
+    input.type('Next step');
     live(socket, event({ type: 'session.status', status: 'running' }));
     live(socket, event({ type: 'session.status', status: 'finished' }));
     await harness.fixture.whenStable();
@@ -1097,14 +1087,13 @@ describe('SessionView', () => {
     history(socket, sessionDto({ status: 'finished', waitingFor: null }));
     await harness.fixture.whenStable();
     expect(text('archive-offer')).toBeUndefined();
-    const input = element.querySelector(
-      '[data-testid="message-input"]',
-    ) as HTMLTextAreaElement;
-    input.value = '';
-    input.dispatchEvent(new Event('input'));
+    const input = new EditorDriver(element);
+    input.type('');
     await harness.fixture.whenStable();
     expect(text('archive-offer')).toBeUndefined();
-    expect(element.querySelector('[data-testid="message-input"]')).toBe(input);
+    expect(element.querySelector('[data-testid="message-input"]')).toBe(
+      input.element,
+    );
   });
 
   it('takes a withdrawn message of an ended session back into the input', async () => {
@@ -1127,13 +1116,7 @@ describe('SessionView', () => {
     ).click();
     await harness.fixture.whenStable();
     expect(text('archive-offer')).toBeUndefined();
-    expect(
-      (
-        element.querySelector(
-          '[data-testid="message-input"]',
-        ) as HTMLTextAreaElement
-      ).value,
-    ).toBe('Stopped one');
+    expect(new EditorDriver(element).value).toBe('Stopped one');
   });
 
   it('shows queued messages, removes them and offers withdrawn ones again', async () => {
@@ -1189,13 +1172,7 @@ describe('SessionView', () => {
       ) as HTMLButtonElement
     ).click();
     await harness.fixture.whenStable();
-    expect(
-      (
-        element.querySelector(
-          '[data-testid="message-input"]',
-        ) as HTMLTextAreaElement
-      ).value,
-    ).toBe('Stopped one');
+    expect(new EditorDriver(element).value).toBe('Stopped one');
   });
 
   it('sends all queued messages right away', async () => {

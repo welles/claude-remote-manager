@@ -1,24 +1,27 @@
 <form (ngSubmit)="create()" class="form">
   <div class="prompt">
+    @if (toolbar.shown()) {
+    <app-markdown-toolbar
+      class="toolbar"
+      (format)="promptField.format($event)"
+    />
+    }
     <mat-form-field appearance="outline" class="full">
       <mat-label>What should Claude do?</mat-label>
-      <textarea
-        matInput
-        name="prompt"
-        [(ngModel)]="prompt"
-        (keydown)="onPromptKeydown($event)"
-        (input)="onPromptInput($event)"
-        (click)="onPromptCaret($event)"
-        (keyup)="onPromptCaret($event)"
-        (blur)="references.close()"
-        (paste)="onPaste($event)"
-        cdkTextareaAutosize
-        cdkAutosizeMinRows="6"
-        cdkAutosizeMaxRows="18"
-        rows="6"
-        data-testid="new-prompt"
+      <app-markdown-editor
+        class="prompt-editor"
+        [(text)]="promptText"
+        [attributes]="{
+          'aria-label': 'What should Claude do?',
+          'data-testid': 'new-prompt',
+        }"
+        (edited)="onPromptChange()"
+        (caret)="onPromptChange()"
+        (beforeKey)="onPromptKeydown($event)"
+        (beforePaste)="onPaste($event)"
+        (blurred)="references.close()"
         #promptField
-      ></textarea>
+      />
       <mat-hint
         >Ctrl+Enter to start · paste or attach images@if
         (githubRepositories().length > 0) { · # for issues and pull requests
@@ -47,6 +50,17 @@
       data-testid="new-attach-image"
     >
       <app-icon name="attach" />Attach images
+    </button>
+    <button
+      matButton
+      type="button"
+      (mousedown)="$event.preventDefault()"
+      (click)="toolbar.toggle()"
+      [attr.aria-pressed]="toolbar.shown()"
+      data-testid="new-toggle-formatting"
+    >
+      <app-icon name="text-format" />{{ toolbar.shown() ? 'Hide formatting' :
+      'Formatting' }}
     </button>
     <input
       #picker

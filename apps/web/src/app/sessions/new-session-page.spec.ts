@@ -10,6 +10,7 @@ import { NewSessionPage } from './new-session-page';
 import { WEBSOCKET_FACTORY } from './session-socket';
 import { fakeWebSocketFactory } from './testing/fake-websocket';
 import { sessionDto } from './testing/session-dto';
+import { EditorDriver } from '../testing/editor';
 
 describe('NewSessionPage', () => {
   let http: HttpTestingController;
@@ -83,13 +84,9 @@ describe('NewSessionPage', () => {
     fixture.detectChanges();
     await fixture.whenStable();
     const element = fixture.nativeElement as HTMLElement;
-    expect(
-      (
-        element.querySelector(
-          '[data-testid="new-prompt"]',
-        ) as HTMLTextAreaElement
-      ).value,
-    ).toBe('The login fails\n\nhttps://example.com/1');
+    expect(new EditorDriver(element, 'new-prompt').value).toBe(
+      'The login fails\n\nhttps://example.com/1',
+    );
     expect(
       element.querySelector('[data-testid="share-notice"]'),
     ).not.toBeNull();

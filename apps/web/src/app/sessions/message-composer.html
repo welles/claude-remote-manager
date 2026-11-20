@@ -22,8 +22,7 @@
     </li>
     }
   </ul>
-  }
-  @if (suggestingCommands()) {
+  } @if (suggestingCommands()) {
   <ul
     id="command-list"
     class="mentions commands"
@@ -56,7 +55,7 @@
   <app-reference-suggestions
     [autocomplete]="references"
     [showRepository]="githubRepositories().length > 1"
-    (chosen)="references.choose($event, textarea)"
+    (chosen)="references.choose($event, editor)"
   />
   <app-reference-chips
     [references]="draftReferences"
@@ -65,102 +64,97 @@
     (repositoryChosen)="chooseReferenceRepository($event)"
   />
   <app-draft-images [drafts]="images" />
-  <div class="composer-row">
-    <button
-      type="button"
-      class="app-icon-btn attach"
-      (click)="picker.click()"
-      title="Attach images (or paste or drop them)"
-      data-testid="attach-image"
-    >
-      <app-icon name="attach" /><span class="visually-hidden"
-        >Attach images</span
-      >
-    </button>
-    <input
-      #picker
-      type="file"
-      [accept]="accept"
-      multiple
-      hidden
-      (change)="onPick($event)"
-      data-testid="image-picker"
-    />
-    <textarea
-      class="input"
-      [value]="draft()"
-      [placeholder]="offering() ? suggestion() : label()"
-      [attr.aria-label]="label()"
-      (input)="onInput($event)"
-      (keydown)="onKeydown($event)"
-      (paste)="onPaste($event)"
-      (click)="onCaret($event)"
-      (keyup)="onCaret($event)"
-      (blur)="closeSuggestions()"
-      #textarea
-      rows="1"
-      role="combobox"
-      aria-autocomplete="list"
-      [attr.aria-controls]="
-        suggestingCommands()
-          ? 'command-list'
-          : suggesting()
-            ? 'mention-list'
-            : null
-      "
-      [attr.aria-expanded]="suggesting() || suggestingCommands()"
-      [attr.aria-activedescendant]="activeCommandId()"
-      [attr.aria-describedby]="offering() ? 'prompt-suggestion' : null"
-      [attr.data-suggestion]="offering() ? '' : null"
-      enterkeyhint="send"
-      data-testid="message-input"
-    ></textarea>
-    @if (offering()) {
-    <textarea
-      #mirror
-      class="input mirror"
-      aria-hidden="true"
-      tabindex="-1"
-      rows="1"
-      readonly
-    ></textarea>
-    <span id="prompt-suggestion" class="visually-hidden"
-      >Suggested: {{ suggestion() }}. Tab puts it into the input{{
-      suggestionFits() ? ', Send sends it' : '' }}.</span
-    >
-    <button
-      type="button"
-      class="app-icon-btn take"
-      (mousedown)="$event.preventDefault()"
-      (click)="takeSuggestion()"
-      title="Edit the suggestion (Tab)"
-      data-testid="take-suggestion"
-    >
-      <app-icon name="edit" /><span class="visually-hidden"
-        >Edit the suggestion</span
-      >
-    </button>
-    } @if (running()) {
-    <button
-      type="button"
-      class="app-icon-btn stop"
-      (click)="interrupt.emit()"
-      title="Stop Claude"
-      data-testid="interrupt"
-    >
-      <app-icon name="stop" /><span class="visually-hidden">Stop</span>
-    </button>
+  <div class="composer-box">
+    @if (toolbar.shown()) {
+    <app-markdown-toolbar class="toolbar" (format)="editor.format($event)" />
     }
-    <button
-      type="button"
-      class="app-icon-btn send"
-      [class.ready]="canSend()"
-      (click)="submit()"
-      [disabled]="!canSend()"
-      title="Send (Ctrl+Enter)"
-      data-testid="send"
-    >
-      <app-icon name="send" /><span class="visually-hidden">Send</span>
-    </button>
+    <div class="composer-row">
+      <button
+        type="button"
+        class="app-icon-btn attach"
+        (click)="picker.click()"
+        title="Attach images (or paste or drop them)"
+        data-testid="attach-image"
+      >
+        <app-icon name="attach" /><span class="visually-hidden"
+          >Attach images</span
+        >
+      </button>
+      <button
+        type="button"
+        class="app-icon-btn format-toggle"
+        [class.on]="toolbar.shown()"
+        (mousedown)="$event.preventDefault()"
+        (click)="toolbar.toggle()"
+        [attr.aria-pressed]="toolbar.shown()"
+        title="Formatting"
+        data-testid="toggle-formatting"
+      >
+        <app-icon name="text-format" /><span class="visually-hidden"
+          >Formatting</span
+        >
+      </button>
+      <input
+        #picker
+        type="file"
+        [accept]="accept"
+        multiple
+        hidden
+        (change)="onPick($event)"
+        data-testid="image-picker"
+      />
+      <app-markdown-editor
+        #editor
+        class="input"
+        [(text)]="draft"
+        [hint]="offering() ? (suggestion() ?? '') : label()"
+        [suggestion]="offering()"
+        [attributes]="editorAttributes()"
+        (edited)="onInput()"
+        (beforeKey)="onKeydown($event)"
+        (beforePaste)="onPaste($event)"
+        (caret)="onCaret()"
+        (blurred)="closeSuggestions()"
+      />
+      @if (offering()) {
+      <span id="prompt-suggestion" class="visually-hidden"
+        >Suggested: {{ suggestion() }}. Tab puts it into the input{{
+        suggestionFits() ? ', Send sends it' : '' }}.</span
+      >
+      <button
+        type="button"
+        class="app-icon-btn take"
+        (mousedown)="$event.preventDefault()"
+        (click)="takeSuggestion()"
+        title="Edit the suggestion (Tab)"
+        data-testid="take-suggestion"
+      >
+        <app-icon name="edit" /><span class="visually-hidden"
+          >Edit the suggestion</span
+        >
+      </button>
+      } @if (running()) {
+      <button
+        type="button"
+        class="app-icon-btn stop"
+        (click)="interrupt.emit()"
+        title="Stop Claude"
+        data-testid="interrupt"
+      >
+        <app-icon name="stop" /><span class="visually-hidden">Stop</span>
+      </button>
+      }
+      <button
+        type="button"
+        class="app-icon-btn send"
+        [class.ready]="canSend()"
+        (click)="submit()"
+        [disabled]="!canSend()"
+        title="Send (Ctrl+Enter)"
+        data-testid="send"
+      >
+        <app-icon name="send" /><span class="visually-hidden">Send</span>
+      </button>
+    </div>
   </div>
 </div>
