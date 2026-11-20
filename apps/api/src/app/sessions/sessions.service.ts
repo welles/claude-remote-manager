@@ -941,8 +941,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         // an earlier one takes longer to prepare (its references).
         await previous;
         // A clone of the session is being removed: no turn starts until
-        // it is gone (see holdMessagesWhile).
-        await this.messageHolds.get(sessionId);
+        // it is gone (see holdMessagesWhile), also one that began while
+        // this message waited.
+        for (
+          let hold = this.messageHolds.get(sessionId);
+          hold;
+          hold = this.messageHolds.get(sessionId)
+        ) {
+          await hold;
+        }
         if (live.starting) {
           await live.starting;
         }
@@ -3856,15 +3863,19 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     work: () => Promise<void>,
   ): Promise<void> {
     const running = work();
-    const hold = running.catch(() => undefined);
+    // Chained: two removals at once (two pull requests closed together)
+    // hold messages until both are done, whichever ends first.
+    const hold = Promise.all([
+      this.messageHolds.get(sessionId),
+      running.catch(() => undefined),
+    ]).then(() => undefined);
     this.messageHolds.set(sessionId, hold);
-    try {
-      await running;
-    } finally {
+    void hold.then(() => {
       if (this.messageHolds.get(sessionId) === hold) {
         this.messageHolds.delete(sessionId);
       }
-    }
+    });
+    await running;
   }
 
   /**
