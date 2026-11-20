@@ -1957,6 +1957,34 @@ export class PrAutomationService
       note,
     );
     this.sessions.publishUpdate(session.id);
+    if (!autoclose && this.sessions.claudeGoesOn(session.id)) {
+      await this.wakeAfterClose(session.id, pull);
+    }
+  }
+
+  /**
+   * Claude said it goes on by itself (`set_waiting_state` "work"): a merge
+   * or close of one of its pull requests wakes it, so that it continues
+   * without the user saying so. Not while a turn runs (Claude merged it
+   * itself, or sees it there), nor when autoclose ended the session.
+   */
+  private async wakeAfterClose(
+    sessionId: string,
+    pull: PullRequestRecord,
+  ): Promise<void> {
+    const name = `${pull.repositoryName}#${pull.number}`;
+    const text =
+      pull.state === 'merged'
+        ? `${name} was merged into ${pull.baseBranch}. You said you go on by yourself: continue with what comes next. Fetch ${pull.baseBranch} before you build on it; the merge may have rewritten the commits of the session branch.`
+        : `${name} was closed without merging. You said you go on by yourself: decide what follows, and ask the user if it needs their decision.`;
+    try {
+      await this.sessions.sendMessage(sessionId, { text, origin: 'app' });
+      this.logger.log(`Woke ${sessionId}: ${name} was ${pull.state}`);
+    } catch (error) {
+      this.logger.warn(
+        `Could not wake ${sessionId} after ${name} was ${pull.state}: ${errorText(error)}`,
+      );
+    }
   }
 
   /**

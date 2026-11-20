@@ -2490,6 +2490,75 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       expect(notifications.closed).toHaveLength(1);
       expect(harness.service.get(session.id).status).not.toBe('finished');
       expect(existsSync(clone)).toBe(true);
+      expect(wakeMessages()).toEqual([]);
+    });
+
+    /** Messages that woke Claude after a merge or close. */
+    const wakeMessages = () =>
+      harness.runner.runs.flatMap((run) =>
+        run.sent
+          .map((message) => message.text)
+          .filter((text) =>
+            /was (merged into|closed without merging)/.test(text),
+          ),
+      );
+
+    /** A turn in which Claude says it goes on by itself, then ends. */
+    const claudeGoesOn = async (sessionId: string) => {
+      await harness.service.sendMessage(sessionId, { text: 'Open the PR' });
+      const tool = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'set_waiting_state',
+      );
+      if (!tool) {
+        throw new Error('set_waiting_state is missing');
+      }
+      await tool.handler(
+        { waiting_on: 'work', reason: 'CI of PR #1' },
+        { toolUseId: 'toolu_wait' },
+      );
+      harness.runner.last.emit(resultMessage(30, 0.03));
+      await waitFor(
+        () => harness.service.get(sessionId).waitingFor === 'background',
+      );
+    };
+
+    it('wakes Claude when a pull request is merged while it said it goes on by itself', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      await claudeGoesOn(session.id);
+      merge(pull.number);
+
+      await automation.check(pull.id);
+      await waitFor(() => wakeMessages().length === 1);
+
+      expect(wakeMessages()[0]).toContain(
+        `alice/app#${pull.number} was merged into main`,
+      );
+      expect(notifications.closed).toHaveLength(1);
+      expect(harness.service.get(session.id).status).toBe('running');
+    });
+
+    it('wakes Claude when a pull request is closed without merging', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      await claudeGoesOn(session.id);
+      fakePull(pull.number).state = 'closed';
+
+      await automation.check(pull.id);
+      await waitFor(() => wakeMessages().length === 1);
+
+      expect(wakeMessages()[0]).toContain('was closed without merging');
+    });
+
+    it('does not wake Claude when autoclose ends the session', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      automation.update(session.id, pull.id, { autoclose: true });
+      await claudeGoesOn(session.id);
+      merge(pull.number);
+
+      await automation.check(pull.id);
+      await waitFor(() => notifications.closed.length === 1);
+
+      expect(harness.service.get(session.id).status).toBe('finished');
+      expect(wakeMessages()).toEqual([]);
     });
   });
 
