@@ -61,8 +61,7 @@ export const STATUS_KIND_CLASS: Record<StatusKind, string> = {
 
 /**
  * A session's status as a small tag in its state's colour (see
- * `statusKind`), the same in the session list, the session view and the
- * search results.
+ * `statusKind`), in the session details; running sessions as muted text.
  */
 @Component({
   selector: 'app-status-badge',
@@ -116,7 +115,8 @@ export class StatusBadge {
       box-shadow: 0 0 0 3px var(--app-status-ready-container);
     }
     :host(.dot-running) {
-      background: var(--app-status-done);
+      background: var(--app-status-idle);
+      opacity: 0.6;
     }
     :host(.dot-failed) {
       background: var(--app-status-failed);
@@ -132,7 +132,7 @@ export class StatusBadge {
     }
     @keyframes pulse {
       50% {
-        opacity: 0.4;
+        opacity: 0.25;
       }
     }
   `,

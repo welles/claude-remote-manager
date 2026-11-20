@@ -30,8 +30,8 @@
 
   // Session states. Attention (amber) is the only warm colour: it means
   // "needs you" and nothing else. Ready (the user's turn) is the other
-  // strong state; a running session (Claude goes on by itself) stays quiet
-  // in the idle colours. `--app-status-running` marks work in progress
+  // strong state; a running session (Claude goes on by itself) stays quiet:
+  // muted text and a pale idle-coloured dot. `--app-status-running` marks work in progress
   // inside a session (tool rows, todos, meters), not the session's state.
   --app-status-attention: var(--mat-sys-tertiary);
   --app-status-attention-container: var(--mat-sys-tertiary-container);
