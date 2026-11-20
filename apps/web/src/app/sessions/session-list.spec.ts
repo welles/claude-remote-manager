@@ -201,4 +201,59 @@ describe('SessionList', () => {
     // What the session needs, not only that it needs the user.
     expect(rows(fixture)[0]).toContain('2 questions');
   });
+
+  it('highlights what waits for the user and mutes what runs by itself', async () => {
+    const fixture = await render();
+    http.expectOne('/api/sessions').flush({
+      sessions: [
+        sessionDto({ id: 's1', title: 'Idle', waitingFor: 'message' }),
+        sessionDto({ id: 's2', title: 'Ask', waitingFor: 'permission' }),
+        sessionDto({
+          id: 's3',
+          title: 'Busy',
+          status: 'running',
+          waitingFor: null,
+        }),
+        sessionDto({
+          id: 's4',
+          title: 'CI',
+          waitingFor: 'background',
+          waitingReason: 'CI of #12',
+        }),
+      ],
+    });
+    await fixture.whenStable();
+    const element = fixture.nativeElement as HTMLElement;
+    const state = (title: string) => {
+      const row = [...element.querySelectorAll('[data-testid="session"]')].find(
+        (candidate) =>
+          candidate.querySelector('.title')?.textContent?.trim() === title,
+      );
+      const status = row?.querySelector('[data-testid="session-status"]');
+      const dot = row?.querySelector('app-status-dot');
+      return {
+        classes: [...(status?.classList ?? [])],
+        text: status?.textContent?.trim(),
+        dot: [...(dot?.classList ?? [])],
+      };
+    };
+    expect(state('Idle')).toEqual({
+      classes: ['status', 'status-waiting'],
+      text: 'Ready',
+      dot: ['dot-idle'],
+    });
+    expect(state('Ask').classes).toEqual(['status', 'status-permission']);
+    expect(state('Ask').dot).toEqual(['dot-attention']);
+    expect(state('Busy')).toEqual({
+      classes: ['state'],
+      text: 'Running',
+      dot: ['dot-running'],
+    });
+    // What it waits for, as muted text.
+    expect(state('CI')).toEqual({
+      classes: ['state'],
+      text: 'CI of #12',
+      dot: ['dot-running'],
+    });
+  });
 });

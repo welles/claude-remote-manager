@@ -1,5 +1,4 @@
 import {
-  needsUser,
   pendingRequestLabel,
   type SessionDto,
   type SessionStatus,
@@ -77,17 +76,6 @@ export function needLabel(
     return pendingRequestLabel(session.pendingRequests);
   }
   return statusLabel(session);
-}
-
-/**
- * CSS class of the status badge. `status-permission` stands out: every
- * session blocked on the user (see `needsUser`), including a failed setup
- * script that holds the first message back.
- */
-export function statusClass(
-  session: Pick<SessionDto, 'status' | 'waitingFor'>,
-): string {
-  return needsUser(session) ? 'status-permission' : `status-${session.status}`;
 }
 
 /** Compact token count, e.g. `950`, `12.3k`, `1.2M`. */
