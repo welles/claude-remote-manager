@@ -27,7 +27,7 @@
   @if (access.state() === 'expired') {
   <app-banner strip kind="error" role="alert" data-testid="access-expired">
     Your sign-in has expired. Nothing you send reaches the server.
-    <div banner-actions class="ml-auto flex flex-wrap gap-2">
+    <div banner-actions>
       <button matButton type="button" (click)="access.signIn()">
         Sign in again
       </button>
@@ -36,7 +36,7 @@
   } @else if (access.state() === 'offline') {
   <app-banner strip role="status" data-testid="offline">
     Offline: the server cannot be reached. What you see may be out of date.
-    <div banner-actions class="ml-auto flex flex-wrap gap-2">
+    <div banner-actions>
       <button matButton type="button" (click)="access.check()">Retry</button>
     </div>
   </app-banner>

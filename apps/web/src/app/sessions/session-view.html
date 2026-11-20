@@ -74,7 +74,7 @@
         history readable. @if (removedDirectories(); as removed) { {{
         removed.text }} {{ removed.verb }} removed, so it cannot be continued. }
         @else { Unarchive it to continue it. }
-        <div banner-actions class="ml-auto flex flex-wrap gap-2">
+        <div banner-actions>
           <button
             matButton
             type="button"
@@ -139,7 +139,7 @@
       <app-banner kind="attention" data-testid="held-back">
         A setup script failed, so the first message waits: send it anyway, run
         the setup again, or end the session.
-        <div banner-actions class="ml-auto flex flex-wrap gap-2">
+        <div banner-actions>
           <button
             matButton="filled"
             (click)="sendPending()"
@@ -179,7 +179,7 @@
         @if (resumable()) { The session has ended. Archive it, or continue it
         with a new message. } @else { The session has ended and cannot be
         continued. Archive it to hide it from the session list. }
-        <div banner-actions class="ml-auto flex flex-wrap gap-2">
+        <div banner-actions>
           <button
             matButton="filled"
             type="button"

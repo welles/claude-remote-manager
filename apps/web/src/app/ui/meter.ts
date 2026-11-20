@@ -19,7 +19,7 @@ import {
     role: 'progressbar',
     'aria-valuemin': '0',
     'aria-valuemax': '100',
-    '[attr.aria-valuenow]': 'percent()',
+    '[attr.aria-valuenow]': 'value() === null ? null : percent()',
     '[attr.aria-label]': 'label()',
     '[attr.aria-hidden]': 'label() ? null : "true"',
     class:
@@ -36,7 +36,7 @@ import {
 export class Meter {
   /** Percent, 0-100 (clamped); `null` when unknown (empty bar). */
   readonly value = input<number | null>(null);
-  readonly high = input(false);
+  readonly high = input(false, { transform: booleanAttribute });
   readonly inline = input(false, { transform: booleanAttribute });
   /** Accessible name; without one the meter is hidden from assistive tech. */
   readonly label = input<string | null>(null);

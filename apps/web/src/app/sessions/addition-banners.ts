@@ -36,7 +36,7 @@ import { SessionsApi } from './sessions-api';
           <strong>{{ name }}</strong> could not be added:
           {{ directory.addition?.error ?? 'the clone failed' }}.
         }
-        <div banner-actions class="ml-auto flex flex-wrap gap-2">
+        <div banner-actions>
           <button
             matButton="filled"
             (click)="act(directory, 'retry')"

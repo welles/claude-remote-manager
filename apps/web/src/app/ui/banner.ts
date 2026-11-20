@@ -10,8 +10,8 @@ import {
  * sign-in expired, archived, clones removed, held back). `kind` sets the
  * tone: `neutral`, `attention` (needs the user) or `error`. A box in the
  * page, or with `strip` edge to edge under the app bar. Action buttons go
- * into an element with `banner-actions` (class `banner-actions`); text
- * buttons there take the banner's colour.
+ * into an element with `banner-actions`; text buttons there take the
+ * banner's colour.
  */
 @Component({
   selector: 'app-banner',
@@ -28,7 +28,9 @@ import {
     <div class="min-w-0 flex-[1_1_16em] [overflow-wrap:anywhere]">
       <ng-content />
     </div>
-    <ng-content select="[banner-actions]" />
+    <div class="ml-auto empty:hidden *:flex *:flex-wrap *:gap-2">
+      <ng-content select="[banner-actions]" />
+    </div>
   `,
 })
 export class AppBanner {

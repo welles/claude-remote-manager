@@ -66,7 +66,7 @@ export type DetailSection =
           state
         }}</span>
         @if (p.automation.autofix && p.state === 'open') {
-          autofix
+          <span class="text-on-surface-variant">· autofix</span>
         }
       </button>
     }

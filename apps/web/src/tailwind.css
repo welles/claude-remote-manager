@@ -9,6 +9,11 @@
  */
 @import 'tailwindcss/utilities.css' source('./app');
 
+/* Tones are also built from state names (`tone-{{ state }}`). */
+@source inline('tone-{ready,attention,error,error-line,open,merged,closed,draft}');
+/* Ordinary words in templates that would otherwise become utilities. */
+@source not inline('container filter grid grow table transition ring outline resize transform');
+
 @theme inline {
   --*: initial;
 
@@ -157,7 +162,23 @@
  * meaning (set `--tone-*`), they are not style variants.
  */
 
-/* Tones: session states, errors and GitHub states. */
+/* Tones: session states, errors and GitHub states. Not inherited: a
+   plain badge inside a toned banner stays neutral. */
+@property --tone-bg {
+  syntax: '*';
+  inherits: false;
+}
+
+@property --tone-fg {
+  syntax: '*';
+  inherits: false;
+}
+
+@property --tone-line {
+  syntax: '*';
+  inherits: false;
+}
+
 @utility tone-ready {
   --tone-bg: var(--app-status-ready-container);
   --tone-fg: var(--app-status-on-ready-container);
@@ -225,7 +246,13 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   vertical-align: middle;
+  text-decoration: none;
   --app-icon-size: 14px;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: none;
+  }
 }
 
 @utility badge-outline {
@@ -237,7 +264,7 @@
 /*
  * Chip: a small button that filters, toggles or opens something (filters
  * of the session list, the session strip, the limits). Outlined; chosen
- * with `aria-pressed="true"` or `chip-on`; toned chips are filled.
+ * with `aria-pressed="true"`; toned chips are filled.
  */
 @utility chip {
   display: inline-flex;
