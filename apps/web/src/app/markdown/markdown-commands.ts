@@ -24,7 +24,8 @@ const MARKERS: Record<InlineFormat, string> = {
 };
 
 /** A list item's marker with its indentation and the space after it. */
-const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\]\s+)?/;
+const LIST_ITEM =
+  /^(\s*)([-*+]|\d+[.)])(\s+)(?!(?:[-*+]\s*){2,}$)(\[[ xX]\]\s+)?/;
 
 /** Any prefix a line format may have put there (replaced by another one). */
 const LINE_PREFIX =
@@ -44,34 +45,39 @@ const PREFIX_OF: Record<Exclude<LineFormat, 'numbered' | 'heading'>, RegExp> = {
 function toggleInline(state: EditorState, format: InlineFormat) {
   const marker = MARKERS[format];
   const size = marker.length;
+  // Italic typed as `*x*` unwraps as well.
+  const markers = format === 'italic' ? [marker, '*'] : [marker];
   return state.changeByRange((range) => {
     const text = state.sliceDoc(range.from, range.to);
-    if (
-      text.length >= 2 * size &&
-      text.startsWith(marker) &&
-      text.endsWith(marker)
-    ) {
-      return {
-        changes: [
-          { from: range.from, to: range.from + size },
-          { from: range.to - size, to: range.to },
-        ],
-        range: EditorSelection.range(range.from, range.to - 2 * size),
-      };
-    }
-    if (
-      state.sliceDoc(range.from - size, range.from) === marker &&
-      state.sliceDoc(range.to, range.to + size) === marker &&
-      // `**` around the caret is bold, not two italic markers.
-      !(format === 'italic' && isPartOfLongerRun(state, range, marker))
-    ) {
-      return {
-        changes: [
-          { from: range.from - size, to: range.from },
-          { from: range.to, to: range.to + size },
-        ],
-        range: EditorSelection.range(range.from - size, range.to - size),
-      };
+    for (const wrap of markers) {
+      if (
+        text.length >= 2 * size &&
+        text.startsWith(wrap) &&
+        text.endsWith(wrap) &&
+        !(format === 'italic' && text.startsWith(wrap.repeat(2)))
+      ) {
+        return {
+          changes: [
+            { from: range.from, to: range.from + size },
+            { from: range.to - size, to: range.to },
+          ],
+          range: EditorSelection.range(range.from, range.to - 2 * size),
+        };
+      }
+      if (
+        state.sliceDoc(range.from - size, range.from) === wrap &&
+        state.sliceDoc(range.to, range.to + size) === wrap &&
+        // `**` around the caret is bold, not two italic markers.
+        !(format === 'italic' && isPartOfLongerRun(state, range, wrap))
+      ) {
+        return {
+          changes: [
+            { from: range.from - size, to: range.from },
+            { from: range.to, to: range.to + size },
+          ],
+          range: EditorSelection.range(range.from - size, range.to - size),
+        };
+      }
     }
     return {
       changes: [
@@ -109,7 +115,13 @@ function selectedLines(state: EditorState): Line[] {
   return lines.sort((a, b) => a.number - b.number);
 }
 
+/** `- - -`, `***`: a horizontal rule, no list item. */
+const isBreak = (text: string) => /^\s*([-*_])(\s*\1){2,}\s*$/.test(text);
+
 function hasLineFormat(line: Line, format: LineFormat): boolean {
+  if (isBreak(line.text)) {
+    return false;
+  }
   if (format === 'numbered') {
     return /^\s*\d+[.)]\s+/.test(line.text);
   }
@@ -143,8 +155,10 @@ function toggleLines(state: EditorState, format: LineFormat) {
     if (line.text.trim() === '' && lines.length > 1) {
       continue;
     }
-    const existing = LINE_PREFIX.exec(line.text)?.[0] ?? '';
     const indent = /^\s*/.exec(line.text)?.[0] ?? '';
+    const existing = isBreak(line.text)
+      ? indent
+      : (LINE_PREFIX.exec(line.text)?.[0] ?? '');
     let prefix: string;
     if (remove) {
       prefix = indent;
@@ -186,13 +200,27 @@ function toggleLines(state: EditorState, format: LineFormat) {
   return { changes: changeSet, selection };
 }
 
+const LINK = /\[([^\]\n]*)\]\(([^)\s]*)\)/g;
+
 /**
  * `[text](url)`: the selected text becomes the link's text and `url` is
  * selected to be typed over; a selected URL becomes the link's target and
- * the caret goes into its (empty) text.
+ * the caret goes into its (empty) text. Inside a link, it becomes its text
+ * again.
  */
 function insertLink(state: EditorState) {
   return state.changeByRange((range) => {
+    const line = state.doc.lineAt(range.from);
+    for (const match of line.text.matchAll(LINK)) {
+      const from = line.from + (match.index ?? 0);
+      const to = from + match[0].length;
+      if (range.from >= from && range.to <= to) {
+        return {
+          changes: { from, to, insert: match[1] },
+          range: EditorSelection.range(from, from + match[1].length),
+        };
+      }
+    }
     const text = state.sliceDoc(range.from, range.to);
     if (/^https?:\/\/\S+$/.test(text)) {
       return {
@@ -211,14 +239,34 @@ function insertLink(state: EditorState) {
   });
 }
 
+const FENCE = /^\s*(```|~~~)/;
+
 /**
  * Puts the selected lines between ``` fences (on lines of their own); an
- * empty selection gets an empty block with the caret inside.
+ * empty selection gets an empty block with the caret inside. Lines with
+ * fences right around them lose them.
  */
 function insertCodeBlock(state: EditorState) {
   return state.changeByRange((range) => {
     const first = state.doc.lineAt(range.from);
     const last = state.doc.lineAt(range.to);
+    if (first.number > 1 && last.number < state.doc.lines) {
+      const before = state.doc.line(first.number - 1);
+      const after = state.doc.line(last.number + 1);
+      if (FENCE.test(before.text) && /^\s*(```|~~~)\s*$/.test(after.text)) {
+        const removed = before.length + 1;
+        return {
+          changes: [
+            { from: before.from, to: first.from },
+            { from: last.to, to: after.to },
+          ],
+          range: EditorSelection.range(
+            range.from - removed,
+            range.to - removed,
+          ),
+        };
+      }
+    }
     if (range.empty && first.text.trim() === '') {
       return {
         changes: { from: first.from, to: first.to, insert: '```\n\n```' },
@@ -284,6 +332,32 @@ function listItem(text: string): { indent: number; width: number } | null {
     : null;
 }
 
+/**
+ * The nearest list item above a line that `wanted` accepts, looking past
+ * blank lines, continuation text (indented) and deeper items; `null` once
+ * the list has ended.
+ */
+function itemBefore(
+  state: EditorState,
+  number: number,
+  wanted: (item: { indent: number; width: number }) => boolean,
+): { indent: number; width: number } | null {
+  for (let n = number - 1; n >= 1; n--) {
+    const text = state.doc.line(n).text;
+    const item = listItem(text);
+    if (item) {
+      if (wanted(item)) {
+        return item;
+      }
+      continue;
+    }
+    if (text.trim() !== '' && !/^\s/.test(text)) {
+      return null;
+    }
+  }
+  return null;
+}
+
 /** Whether every selected line is a list item. */
 function inList(state: EditorState): boolean {
   return selectedLines(state).every((line) => listItem(line.text) !== null);
@@ -306,15 +380,13 @@ export const indentListItem: StateCommand = ({ state, dispatch }) => {
       continue;
     }
     // The previous item at the same depth: nest under its text.
-    for (let n = line.number - 1; n >= 1; n--) {
-      const previous = listItem(state.doc.line(n).text);
-      if (!previous || previous.indent < item.indent) {
-        break;
-      }
-      if (previous.indent === item.indent) {
-        changes.push({ from: line.from, insert: ' '.repeat(previous.width) });
-        break;
-      }
+    const previous = itemBefore(
+      state,
+      line.number,
+      (other) => other.indent <= item.indent,
+    );
+    if (previous?.indent === item.indent) {
+      changes.push({ from: line.from, insert: ' '.repeat(previous.width) });
     }
   }
   if (changes.length > 0) {
@@ -337,14 +409,12 @@ export const outdentListItem: StateCommand = ({ state, dispatch }) => {
     if (!item || item.indent === 0) {
       continue;
     }
-    let target = 0;
-    for (let n = line.number - 1; n >= 1; n--) {
-      const previous = listItem(state.doc.line(n).text);
-      if (previous && previous.indent < item.indent) {
-        target = previous.indent;
-        break;
-      }
-    }
+    const parent = itemBefore(
+      state,
+      line.number,
+      (other) => other.indent < item.indent,
+    );
+    const target = parent?.indent ?? 0;
     changes.push({ from: line.from + target, to: line.from + item.indent });
   }
   if (changes.length > 0) {

@@ -206,6 +206,18 @@ describe('MessageComposer', () => {
     expect(button('send').disabled).toBe(true);
   });
 
+  it('does not send a suggestion longer than the input shows', async () => {
+    const textarea = new EditorDriver(element);
+    // jsdom has no layout: the suggestion takes more than 8 lines.
+    Object.defineProperty(textarea.view.contentDOM, 'scrollHeight', {
+      value: 500,
+    });
+    fixture.componentRef.setInput('suggestion', 'A long suggestion');
+    await fixture.whenStable();
+    expect(textarea.placeholder).toBe('A long suggestion');
+    expect(button('send').disabled).toBe(true);
+  });
+
   it('does not send the suggestion instead of an image that failed', async () => {
     fixture.componentRef.setInput('suggestion', 'Run the tests');
     await paste(png());

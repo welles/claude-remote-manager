@@ -69,6 +69,12 @@ describe('Markdown formatting', () => {
     expect(format('bold', 'a **|**')).toBe('a |');
   });
 
+  it('unwraps italics written with stars too', () => {
+    expect(format('italic', '*[x]*')).toBe('[x]');
+    expect(format('italic', '[*x*]')).toBe('[x]');
+    expect(format('italic', '[**x**]')).toBe('_[**x**]_');
+  });
+
   it('does not take bold for two italic markers', () => {
     expect(format('italic', '__[x]__')).toBe('___[x]___');
   });
@@ -86,6 +92,8 @@ describe('Markdown formatting', () => {
     expect(format('numbered', '[- a\n  - b]')).toBe('[1. a\n  2. b]');
     // An empty line gets the prefix, the caret after it.
     expect(format('bullet', '|')).toBe('- |');
+    // A thematic break is not a list.
+    expect(format('bullet', '- - -|')).toBe('- - - -|');
   });
 
   it('cycles headings through three levels', () => {
@@ -101,12 +109,19 @@ describe('Markdown formatting', () => {
       '[|](https://example.com)',
     );
     expect(format('link', 'a |')).toBe('a [|](url)');
+    // Inside a link: back to its text.
+    expect(format('link', 'see [do|cs](https://x.y) now')).toBe(
+      'see [docs] now',
+    );
   });
 
   it('fences code blocks', () => {
     expect(format('codeBlock', '|')).toBe('```\n|\n```');
     expect(format('codeBlock', 'text|')).toBe('text\n```\n|\n```');
     expect(format('codeBlock', '[a\nb]')).toBe('```\n[a\nb]\n```');
+    // Fenced already: the fences go.
+    expect(format('codeBlock', '```ts\n[a\nb]\n```')).toBe('[a\nb]');
+    expect(format('codeBlock', 'x\n```\n|\n```\ny')).toBe('x\n|\ny');
   });
 });
 
@@ -126,6 +141,20 @@ describe('List indentation', () => {
       '- a\n  - b\n  - |c',
     );
     expect(run(outdentListItem, '- a\n  - |b').result).toBe('- a\n- |b');
+  });
+
+  it('looks past continuation text and blank lines', () => {
+    expect(run(indentListItem, '- a\n  more\n- |b').result).toBe(
+      '- a\n  more\n  - |b',
+    );
+    expect(run(indentListItem, '- a\n\n- |b').result).toBe('- a\n\n  - |b');
+    expect(run(outdentListItem, '- a\n  - b\n\n    more\n  - |c').result).toBe(
+      '- a\n  - b\n\n    more\n- |c',
+    );
+    // A paragraph ends the list: nothing to nest under.
+    expect(run(indentListItem, '- a\nText\n- |b').result).toBe(
+      '- a\nText\n- |b',
+    );
   });
 
   it('leaves Tab alone outside lists', () => {

@@ -87,6 +87,25 @@ describe('GitHub references in the web app', () => {
     expect(tokens()).toEqual(['app#12', 'acme/lib#3']);
   });
 
+  it('keeps the lines of HTML and takes references out of links', async () => {
+    const fixture = TestBed.createComponent(MessageText);
+    fixture.componentRef.setInput(
+      'text',
+      '<div>\n  <span>x</span>\n</div>\n\nSee [this](#12)',
+    );
+    fixture.componentRef.setInput('references', [reference('#12', 12)]);
+    await fixture.whenStable();
+    const element = fixture.nativeElement as HTMLElement;
+    const first = element.querySelector('p') as HTMLElement;
+    expect(first.querySelectorAll('br')).toHaveLength(2);
+    expect(first.textContent).toBe('<div>  <span>x</span></div>');
+    expect(element.querySelector('a')?.getAttribute('href')).toBe('#12');
+    expect(element.querySelector('a .token')).toBeNull();
+    expect(
+      [...element.querySelectorAll('.token')].map((token) => token.textContent),
+    ).toEqual(['#12']);
+  });
+
   it('renders a sent message as Markdown with its chips in place', async () => {
     const fixture = TestBed.createComponent(MessageText);
     fixture.componentRef.setInput(
@@ -107,7 +126,7 @@ describe('GitHub references in the web app', () => {
     expect(element.querySelector('li')?.textContent).toBe('☑ done');
     // HTML shows as typed; a typed line break stays.
     expect(element.querySelector('button:not(.chip), b')).toBeNull();
-    expect(element.querySelectorAll('li')[2].textContent).toContain(
+    expect(element.querySelectorAll('li')[2].textContent).toBe(
       'add a <button> to the <b>page</b>next line',
     );
     expect(element.querySelector('li br')).not.toBeNull();
@@ -116,6 +135,10 @@ describe('GitHub references in the web app', () => {
       (token) => token.textContent,
     );
     expect(tokens).toEqual(['#12', '#9']);
+
+    // The other one in a paragraph of its own.
+    expect(element.lastElementChild?.tagName).toBe('P');
+    expect(element.lastElementChild?.textContent).toContain('#9');
 
     // A new text replaces the chips.
     fixture.componentRef.setInput('text', 'Plain');
