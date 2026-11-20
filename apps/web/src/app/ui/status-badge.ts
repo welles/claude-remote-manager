@@ -11,13 +11,14 @@ import {
 import { statusLabel } from '../sessions/format';
 
 /**
- * The five visual states of a session:
+ * The five visual states of a session. Those where Claude would not go on
+ * without the user stand out; those where it works by itself are quiet:
  * - `attention`: blocked on the user (approval, question, plan, failed
  *   setup), the only amber state;
- * - `running`: preparing, working on a turn, or waiting for background
- *   tasks Claude started (it goes on by itself);
+ * - `idle`: ready for the next message, the user's turn (primary colour);
  * - `failed`: crashed or could not start;
- * - `idle`: ready for the next message;
+ * - `running`: preparing, working on a turn, or waiting for background
+ *   tasks or CI (it goes on by itself), muted;
  * - `done`: ended or archived.
  */
 export type StatusKind = 'attention' | 'running' | 'failed' | 'idle' | 'done';
@@ -88,8 +89,9 @@ export class StatusBadge {
 }
 
 /**
- * A round state marker for list rows: filled in the state's colour, pulsing
- * while running (not with reduced motion), a ring when done.
+ * A round state marker for list rows: filled in the state's colour with a
+ * halo when the user is on turn (needs you, ready), muted and softly
+ * pulsing while running (not with reduced motion), a ring when done.
  */
 @Component({
   selector: 'app-status-dot',
@@ -109,8 +111,12 @@ export class StatusBadge {
       background: var(--app-status-attention);
       box-shadow: 0 0 0 3px var(--app-status-attention-container);
     }
+    :host(.dot-idle) {
+      background: var(--app-status-ready);
+      box-shadow: 0 0 0 3px var(--app-status-ready-container);
+    }
     :host(.dot-running) {
-      background: var(--app-status-running);
+      background: var(--app-status-done);
     }
     :host(.dot-failed) {
       background: var(--app-status-failed);
@@ -121,12 +127,12 @@ export class StatusBadge {
     }
     @media (prefers-reduced-motion: no-preference) {
       :host(.dot-running) {
-        animation: pulse 1.6s var(--app-ease) infinite;
+        animation: pulse 2.4s var(--app-ease) infinite;
       }
     }
     @keyframes pulse {
       50% {
-        opacity: 0.35;
+        opacity: 0.4;
       }
     }
   `,

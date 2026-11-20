@@ -37,7 +37,6 @@ import {
   formatCost,
   formatTokens,
   needLabel,
-  statusLabel,
   totalTokens,
 } from './format';
 import { ModelsStore, modelLabel } from './models-store';
@@ -100,7 +99,6 @@ export class SessionList implements OnInit {
   /** The session open beside the pane (marked in the list). */
   readonly activeId = input<string | null>(null);
 
-  protected readonly statusLabel = statusLabel;
   protected readonly needLabel = needLabel;
   protected readonly statusKind = statusKind;
   protected readonly kindClass = STATUS_KIND_CLASS;
@@ -317,9 +315,12 @@ export class SessionList implements OnInit {
       .join(' + ');
   }
 
-  /** Kinds whose state is a coloured tag; the others are plain text. */
+  /**
+   * Kinds whose state is a coloured tag (Claude would not go on without the
+   * user); the others, running ones included, are plain text.
+   */
   protected tagged(kind: StatusKind): boolean {
-    return kind === 'attention' || kind === 'running' || kind === 'failed';
+    return kind === 'attention' || kind === 'idle' || kind === 'failed';
   }
 
   private upsert(session: SessionDto): void {
