@@ -7,10 +7,19 @@ export const CREATE_PULL_REQUEST_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${CREATE_P
  * The app's tool that replies on a review thread of one of the session's
  * pull requests and/or resolves it (the backend does it with an
  * installation token; `gh` stays read-only). Asks as the permission mode
- * says, except during an Autofix run.
+ * says; during an Autofix run replies, and resolving after a push, run
+ * unasked.
  */
 export const REPLY_TO_REVIEW_THREAD_TOOL = 'reply_to_review_thread';
 export const REPLY_TO_REVIEW_THREAD_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${REPLY_TO_REVIEW_THREAD_TOOL}`;
+/**
+ * The app's tool that merges one of the session's pull requests (the
+ * backend does it with an installation token). Asks as the permission mode
+ * says; runs unasked when automerge is on for the pull request and it is
+ * ready (see `PrAutomationService.mayMergeUnasked`).
+ */
+export const MERGE_PULL_REQUEST_TOOL = 'merge_pull_request';
+export const MERGE_PULL_REQUEST_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${MERGE_PULL_REQUEST_TOOL}`;
 /**
  * The app's tool that adds a repository to the running session, see
  * `RepositoryAdditions`.
@@ -55,30 +64,6 @@ export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
   SET_SESSION_TITLE_TOOL_NAME,
   SET_WAITING_STATE_TOOL_NAME,
   REQUEST_OWNER_DECISION_TOOL_NAME,
-]);
-
-/**
- * Claude Code's tools that only read the session's files or keep its own
- * bookkeeping (also the session's title and waiting state, and asking for
- * the owner's decision, which only pauses automerge): they run unasked
- * also during an
- * Autofix run. Everything
- * else asks there (also web access, which could send content away, and
- * subagents).
- */
-export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
-  'Read',
-  'Glob',
-  'Grep',
-  'LSP',
-  'TodoWrite',
-  SET_SESSION_TITLE_TOOL_NAME,
-  SET_WAITING_STATE_TOOL_NAME,
-  REQUEST_OWNER_DECISION_TOOL_NAME,
-  'ToolSearch',
-  'TaskGet',
-  'TaskList',
-  'ListAgents',
 ]);
 
 /** Commands that run the command after them. */

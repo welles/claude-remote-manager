@@ -187,6 +187,24 @@
         </dd>
       </div>
     </dl>
+    } @if (r.pullRequestMerge; as merge) {
+    <dl class="fields" data-testid="pull-request-merge">
+      <div class="field">
+        <dt>Pull request</dt>
+        <dd>
+          <code
+            >{{ merge.repository ?? 'not named' }}#{{ merge.pullRequest ?? '?'
+            }}</code
+          >@if (merge.title) { {{ merge.title }} }
+        </dd>
+      </div>
+      <div class="field">
+        <dt>Method</dt>
+        <dd data-testid="merge-method">
+          {{ merge.method ?? 'rebase, else squash, else merge commit' }}
+        </dd>
+      </div>
+    </dl>
     } @if (r.repositoryAddition; as add) {
     <dl class="fields" data-testid="repository-addition">
       <div class="field">

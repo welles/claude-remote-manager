@@ -63,6 +63,7 @@ import {
 } from './autofix-context';
 import {
   PullRequestFeedback,
+  type CheckResult,
   type FeedbackRepository,
   type ReviewFeedback,
   type ReviewThread,
@@ -154,10 +155,16 @@ interface Triggers {
   feedback: ReviewFeedback[];
   /** New approvals with text: context of a run, never its cause. */
   approvals: ReviewFeedback[];
-  /** The head commit passed all checks and is approved (not told yet). */
+  /** The head commit is ready to merge, see `passed` (not told yet). */
   ready: boolean;
-  /** The head commit passed all checks and is approved (told or not). */
+  /**
+   * The head commit passed all checks and is approved; with automerge,
+   * approval is not needed (the owner's decision): at least one check
+   * reported and nobody who counts requests changes (told or not).
+   */
   passed: boolean;
+  /** Someone who counts approved the head commit. */
+  approved: boolean;
   /** GitHub reports at least one check for the head commit. */
   checked: boolean;
   headSha: string | null;
@@ -167,6 +174,16 @@ interface Triggers {
 
 /** Conclusions (and status states) of checks that passed. */
 const PASSED_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
+
+/** Whether every check is completed and passed (none: `true`). */
+function allPassed(checks: CheckResult[]): boolean {
+  return checks.every(
+    (check) =>
+      check.status === 'completed' &&
+      check.conclusion !== null &&
+      PASSED_CONCLUSIONS.has(check.conclusion),
+  );
+}
 
 /** Review states that decide whether a reviewer approves. */
 const DECIDING_REVIEW_STATES = new Set([
@@ -194,6 +211,11 @@ export class PrAutomationService
   private readonly again = new Set<number>();
   /** Pull requests whose check found the session busy. */
   private readonly deferred = new Set<number>();
+  /**
+   * Merged or closed pull requests whose autoclose waits for the end of
+   * the session's turn (Claude merged it with `merge_pull_request`).
+   */
+  private readonly closeDeferred = new Set<number>();
   /**
    * Since when failed checks or new feedback per `pullRequestId:sha` wait
    * for the commit's other checks to finish.
@@ -238,6 +260,8 @@ export class PrAutomationService
     this.hooks.holdAutomerge = (sessionId, question) =>
       this.holdAutomerge(sessionId, question);
     this.hooks.ownerMessage = (sessionId) => this.ownerMessage(sessionId);
+    this.hooks.mayMergeUnasked = (sessionId, repositoryId, number) =>
+      this.mayMergeUnasked(sessionId, repositoryId, number);
     this.subscriptions.push(
       this.sessionGit.closed$.subscribe((pull) => {
         void this.handleClosed(pull.id).catch((error: unknown) =>
@@ -273,6 +297,7 @@ export class PrAutomationService
     this.hooks.autofixCommand = null;
     this.hooks.holdAutomerge = null;
     this.hooks.ownerMessage = null;
+    this.hooks.mayMergeUnasked = null;
   }
 
   // --- Switches ------------------------------------------------------------
@@ -690,7 +715,7 @@ export class PrAutomationService
           }
         }
       } else {
-        // Not green and approved, or there is something to fix first.
+        // Not ready, or there is something to fix first.
         this.setWaiting(pull.id, null);
       }
     }
@@ -774,7 +799,8 @@ export class PrAutomationService
 
   /**
    * Merges a pull request with automerge whose head commit passed all
-   * checks and is approved, with nothing new to fix: unless Claude asked
+   * checks (approval not needed) and nobody who counts requests changes,
+   * with nothing new to fix: unless Claude asked
    * for the owner's decision, it is a draft, GitHub refused this commit
    * before, or a review thread is unresolved. The merge is exactly of the
    * head commit that was checked; GitHub's refusal is told to the owner
@@ -871,7 +897,7 @@ export class PrAutomationService
       this.sessions.recordEvent(pull.sessionId, {
         type: 'notice',
         level: 'info',
-        text: `Automerge merged ${name} at ${headSha.slice(0, 7)}${method ? ` (${method === 'merge' ? 'merge commit' : method})` : ''}: all checks passed, the head commit is approved and no review thread is unresolved.`,
+        text: `Automerge merged ${name} at ${headSha.slice(0, 7)}${method ? ` (${method === 'merge' ? 'merge commit' : method})` : ''}: all checks passed, nobody requests changes and no review thread is unresolved.`,
       });
       this.logger.log(
         `Automerge merged ${name}${method ? ` (${method})` : ''}`,
@@ -910,6 +936,91 @@ export class PrAutomationService
     );
     this.sessions.publishUpdate(pull.sessionId);
     return { kind: 'blocked' };
+  }
+
+  /**
+   * Whether Claude's tool `merge_pull_request` may merge a pull request of
+   * the session without asking (the owner's decision): automerge is on for
+   * it and it is ready as automerge sees it, read fresh from GitHub: open,
+   * no draft, automerge not paused, all checks of the head commit passed
+   * (at least one reported), nobody who counts requests changes, no new
+   * reviews or comments since the last run and no unresolved review
+   * thread. Approval is not needed. Returns the head commit it checked
+   * (the tool merges exactly that one), `null` when it may not.
+   */
+  async mayMergeUnasked(
+    sessionId: string,
+    repositoryId: string,
+    number: number,
+  ): Promise<string | null> {
+    if (!this.github.configured) {
+      return null;
+    }
+    const known = this.records
+      .get(sessionId)
+      ?.pullRequests.find(
+        (entry) =>
+          entry.repositoryId === repositoryId && entry.number === number,
+      );
+    if (!known?.automerge) {
+      return null;
+    }
+    const pull = await this.sessionGit.refreshPullRequest(known.id);
+    const repository = pull ? this.feedbackRepository(pull) : null;
+    if (
+      !pull ||
+      !repository ||
+      pull.state !== 'open' ||
+      !pull.automerge ||
+      pull.automergeHeldAt ||
+      pull.draft ||
+      !pull.headSha
+    ) {
+      return null;
+    }
+    const headSha = pull.headSha;
+    const checks = await this.feedback.checks(repository, headSha);
+    if (checks.length === 0 || !allPassed(checks)) {
+      return null;
+    }
+    const after = pull.autofixReviewsAfter?.getTime() ?? 0;
+    const items = await this.feedback.reviews(
+      repository,
+      number,
+      new Date(after),
+    );
+    if (
+      (await this.reviewVerdict(repository, items, headSha)).changesRequested
+    ) {
+      return null;
+    }
+    for (const item of items) {
+      if (
+        new Date(item.createdAt).getTime() > after &&
+        !(
+          item.kind === 'review' &&
+          (item.body.trim() === '' ||
+            item.state === 'DISMISSED' ||
+            item.state === 'APPROVED')
+        ) &&
+        (await this.counts(repository, item))
+      ) {
+        // New feedback may ask for changes first.
+        return null;
+      }
+    }
+    if (
+      (await this.feedback.unresolvedThreads(repository, number)).length > 0
+    ) {
+      return null;
+    }
+    const current = this.records.pullRequest(pull.id);
+    return current?.state === 'open' &&
+      current.automerge &&
+      !current.automergeHeldAt &&
+      current.headSha === headSha
+      ? headSha
+      : null;
   }
 
   /** Stores what keeps automerge waiting (published only on a change). */
@@ -980,17 +1091,18 @@ export class PrAutomationService
         : feedback
       ).push(item);
     }
-    const passed =
-      headSha !== null &&
-      checks.every(
-        (check) =>
-          check.status === 'completed' &&
-          check.conclusion !== null &&
-          PASSED_CONCLUSIONS.has(check.conclusion),
-      ) &&
-      (await this.approved(repository, items, headSha));
-    const ready = passed && headSha !== pull.autofixReadySha;
     const checked = checks.length > 0;
+    const green = headSha !== null && allPassed(checks);
+    const verdict =
+      green && headSha
+        ? await this.reviewVerdict(repository, items, headSha)
+        : { approved: false, changesRequested: false };
+    // Automerge needs no approval (the owner's decision), but CI.
+    const passed =
+      green &&
+      (verdict.approved ||
+        (pull.automerge && checked && !verdict.changesRequested));
+    const ready = passed && headSha !== pull.autofixReadySha;
     const key = `${pull.id}:${headSha}`;
     this.forgetWaiting(pull.id, key);
     if (pending.length === 0) {
@@ -1007,6 +1119,7 @@ export class PrAutomationService
           approvals: [],
           ready,
           passed,
+          approved: verdict.approved,
           checked,
           headSha,
         };
@@ -1018,6 +1131,7 @@ export class PrAutomationService
       approvals,
       ready,
       passed,
+      approved: verdict.approved,
       checked,
       headSha,
     };
@@ -1055,15 +1169,16 @@ export class PrAutomationService
   }
 
   /**
-   * Whether the head commit is approved: someone who counts (see
-   * {@link counts}) approved exactly this commit with their latest
-   * deciding review, and nobody who counts requests changes.
+   * Whether the head commit is approved (someone who counts, see
+   * {@link counts}, approved exactly this commit with their latest deciding
+   * review, and nobody who counts requests changes), and whether someone
+   * who counts requests changes.
    */
-  private async approved(
+  private async reviewVerdict(
     repository: FeedbackRepository,
     items: ReviewFeedback[],
     headSha: string,
-  ): Promise<boolean> {
+  ): Promise<{ approved: boolean; changesRequested: boolean }> {
     const latest = new Map<string, ReviewFeedback>();
     for (const item of [...items].sort((a, b) =>
       a.createdAt.localeCompare(b.createdAt),
@@ -1088,11 +1203,11 @@ export class PrAutomationService
         continue;
       }
       if (review.state === 'CHANGES_REQUESTED') {
-        return false;
+        return { approved: false, changesRequested: true };
       }
       approved = true;
     }
-    return approved;
+    return { approved, changesRequested: false };
   }
 
   private giveUp(
@@ -1224,6 +1339,7 @@ export class PrAutomationService
                   : 'none',
             attempt: counted ? attempt : null,
             maxAttempts: current.autofixMaxAttempts,
+            approved: triggers.approved,
             automerge,
           })
         : autofixMessage({
@@ -1271,10 +1387,7 @@ export class PrAutomationService
         text,
         origin: 'app',
         untrusted,
-        // The run works on untrusted GitHub content: nothing runs without
-        // the user (`auto` and `bypassPermissions` run as `default` until
-        // the turn ends).
-        holdAutoMode: true,
+        autofixRun: true,
       });
     } catch (error) {
       // The run did not start: it does not count.
@@ -1307,6 +1420,17 @@ export class PrAutomationService
    * that found the session busy are repeated once it waits for a message.
    */
   private sessionChanged(session: SessionDto): void {
+    if (session.status !== 'running') {
+      for (const pull of session.pullRequests) {
+        if (this.closeDeferred.delete(pull.id)) {
+          void this.handleClosed(pull.id).catch((error: unknown) =>
+            this.logger.error(
+              `Handling the close of ${pull.repository}#${pull.number} failed: ${errorText(error)}`,
+            ),
+          );
+        }
+      }
+    }
     const turnOver =
       session.status === 'finished' ||
       session.status === 'failed' ||
@@ -1610,6 +1734,21 @@ export class PrAutomationService
     if (!pull || pull.state === 'open' || pull.closeHandledAt) {
       return;
     }
+    const running = this.records.get(pull.sessionId);
+    if (
+      running?.status === 'running' &&
+      !running.autoclosedAt &&
+      running.pullRequests.some((entry) => entry.autoclose) &&
+      running.pullRequests.every(
+        (entry) => entry.id === pull.id || entry.state !== 'open',
+      )
+    ) {
+      // Autoclose would end the turn that merged it (Claude's tool): it
+      // waits until the turn is over (`sessionChanged`).
+      this.closeDeferred.add(pull.id);
+      return;
+    }
+    this.closeDeferred.delete(pull.id);
     this.forgetWaiting(pull.id);
     this.records.updatePullRequest(pull.id, {
       closeHandledAt: new Date(),

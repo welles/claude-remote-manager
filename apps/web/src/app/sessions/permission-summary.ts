@@ -119,6 +119,8 @@ export function requestSummary(
         action = 'Create a pull request';
       } else if (request.repositoryAddition) {
         action = 'Add a repository';
+      } else if (request.pullRequestMerge) {
+        action = 'Merge a pull request';
       } else if (request.reviewThreadReply) {
         const reply = request.reviewThreadReply;
         action =
@@ -134,6 +136,7 @@ export function requestSummary(
         !request.pullRequest &&
         !request.repositoryAddition &&
         !request.reviewThreadReply &&
+        !request.pullRequestMerge &&
         Object.keys(input).length > 0
       ) {
         add('Input', JSON.stringify(input, null, 2), true);

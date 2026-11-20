@@ -99,6 +99,21 @@ export interface ReviewThreadReplyCall {
   resolve: boolean;
 }
 
+/** A `merge_pull_request` call as the approval shows it. */
+export interface PullRequestMergeCall {
+  /** `owner/name`; filled in when Claude omitted it and it is unambiguous. */
+  repository: string | null;
+  /** Number of the pull request. */
+  pullRequest: number | null;
+  /** Title of the pull request, if it is one of the session's. */
+  title: string | null;
+  /**
+   * How Claude asks to merge; `null`: rebase, else squash, a merge commit
+   * only when neither is possible.
+   */
+  method: 'rebase' | 'squash' | 'merge' | null;
+}
+
 /** Longest reply `reply_to_review_thread` takes. */
 export const MAX_REVIEW_REPLY_LENGTH = 65_536;
 
@@ -207,11 +222,6 @@ export const PERMISSION_MODE_OVERRIDE_INFO: Record<
     label: 'bypass unavailable',
     description:
       'Claude Code refused to bypass permissions (disabled in the settings), so Claude asks as in Ask.',
-  },
-  autofix: {
-    label: 'Autofix run',
-    description:
-      'An Autofix run is going: it works on untrusted GitHub content, so it runs as Ask until its turn ends.',
   },
 };
 

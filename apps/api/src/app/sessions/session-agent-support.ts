@@ -23,6 +23,7 @@ import {
   CREATE_PULL_REQUEST_TOOL,
   EXPOSE_PORT_TOOL,
   EXPOSE_PORT_TOOL_NAME,
+  MERGE_PULL_REQUEST_TOOL,
   REPLY_TO_REVIEW_THREAD_TOOL,
   REQUEST_OWNER_DECISION_TOOL,
   REQUEST_OWNER_DECISION_TOOL_NAME,
@@ -80,6 +81,14 @@ interface ResolveGrant {
   headSha: string;
 }
 
+/** A `merge_pull_request` allowed unasked: the head commit checked. */
+interface MergeGrant {
+  toolUseId: string;
+  repositoryId: string;
+  number: number;
+  headSha: string;
+}
+
 /** Hooks of the sessions service for the app's integrations. */
 export abstract class SessionAgentSupport {
   /** Environment, tools and settings for a process about to start. */
@@ -120,6 +129,22 @@ export abstract class SessionAgentSupport {
     void sessionId;
     void input;
     void runStartedAt;
+    void toolUseId;
+    return Promise.resolve(false);
+  }
+  /**
+   * Whether a `merge_pull_request` call may run unasked: automerge is on
+   * for the pull request and it is ready. When it may, the tool use
+   * `toolUseId` merges exactly the head commit checked. `false` without
+   * integrations.
+   */
+  mayMergeUnasked(
+    sessionId: string,
+    input: Record<string, unknown>,
+    toolUseId: string,
+  ): Promise<boolean> {
+    void sessionId;
+    void input;
     void toolUseId;
     return Promise.resolve(false);
   }
@@ -235,6 +260,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   private readonly filesByProcess = new Map<string, WrittenFiles>();
   /** Resolves an Autofix run allowed unasked, by session. */
   private readonly resolveGrants = new Map<string, ResolveGrant[]>();
+  /** Merges allowed unasked (automerge), by session. */
+  private readonly mergeGrants = new Map<string, MergeGrant[]>();
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -325,6 +352,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
           ? [
               this.createPullRequestTool(record.id),
               this.replyToReviewThreadTool(record.id),
+              this.mergePullRequestTool(record.id),
               this.requestOwnerDecisionTool(record.id),
             ]
           : []),
@@ -384,6 +412,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   released(sessionId: string): void {
     this.pushes.delete(sessionId);
     this.resolveGrants.delete(sessionId);
+    this.mergeGrants.delete(sessionId);
     this.githubTokens?.release(sessionId);
     this.releaseEnvironmentFiles(sessionId);
   }
@@ -776,6 +805,85 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   }
 
   /**
+   * The tool `merge_pull_request` of a session: merges one of the session's
+   * own pull requests, done by the backend with an installation token for
+   * that repository. Asks as the permission mode says; unasked when
+   * automerge is on for the pull request and it is ready (see
+   * `SessionsService`), and then merges exactly the head commit checked.
+   */
+  mergePullRequestTool(sessionId: string): AgentTool {
+    return {
+      name: MERGE_PULL_REQUEST_TOOL,
+      description:
+        "Merge one of this session's own pull requests on GitHub. Merge only when the user " +
+        'asked you to, or when automerge is on for the pull request (shown in the session ' +
+        "manager's messages): it then runs without approval if all checks of the head commit " +
+        'passed, nobody requests changes, there are no new reviews or comments to handle and ' +
+        'no review thread is unresolved; otherwise the user is asked as the permission mode ' +
+        'says. Without method: rebase, else squash, a merge commit only when neither is ' +
+        'possible. GitHub may still refuse (conflict, branch protection, draft).',
+      inputSchema: (z) => ({
+        repository: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            'owner/name of the repository; may be omitted if the session has only one GitHub repository',
+          ),
+        pull_request: z
+          .number()
+          .int()
+          .positive()
+          .describe('Number of the pull request'),
+        method: z
+          .enum(['rebase', 'squash', 'merge'])
+          .optional()
+          .describe(
+            'How to merge; default: rebase, else squash, else a merge commit',
+          ),
+      }),
+      handler: async (input, { toolUseId }) => {
+        try {
+          const repositoryId = this.repositoryOf(
+            sessionId,
+            typeof input['repository'] === 'string'
+              ? input['repository']
+              : null,
+          );
+          const number = Number(input['pull_request']);
+          const grant = this.takeMergeGrant(
+            sessionId,
+            toolUseId,
+            repositoryId,
+            number,
+          );
+          const method = input['method'];
+          const outcome = await this.sessionGit.mergePullRequest(
+            sessionId,
+            repositoryId,
+            number,
+            {
+              sha: grant?.headSha ?? null,
+              method:
+                method === 'rebase' || method === 'squash' || method === 'merge'
+                  ? method
+                  : null,
+            },
+          );
+          return {
+            text: `Merged ${outcome.pullRequest} at ${outcome.sha.slice(0, 12)} (${outcome.method === 'merge' ? 'merge commit' : outcome.method}).`,
+          };
+        } catch (error) {
+          return {
+            isError: true,
+            text: `merge_pull_request failed: ${errorText(error)}`,
+          };
+        }
+      },
+    };
+  }
+
+  /**
    * The tool `request_owner_decision`: Claude asks for the owner's
    * decision on a review finding; automerge of the session's pull requests
    * pauses until the owner's next message, and the owner is notified. No
@@ -861,6 +969,65 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       headSha,
     });
     return true;
+  }
+
+  override async mayMergeUnasked(
+    sessionId: string,
+    input: Record<string, unknown>,
+    toolUseId: string,
+  ): Promise<boolean> {
+    const check = this.automation?.mayMergeUnasked;
+    const number = input['pull_request'];
+    if (
+      !check ||
+      typeof number !== 'number' ||
+      !Number.isSafeInteger(number) ||
+      number < 1
+    ) {
+      return false;
+    }
+    const repositoryId = this.repositoryOf(
+      sessionId,
+      typeof input['repository'] === 'string' ? input['repository'] : null,
+    );
+    const headSha = await check(sessionId, repositoryId, number);
+    if (!headSha) {
+      return false;
+    }
+    let grants = this.mergeGrants.get(sessionId);
+    if (!grants) {
+      grants = [];
+      this.mergeGrants.set(sessionId, grants);
+    }
+    grants.push({ toolUseId, repositoryId, number, headSha });
+    return true;
+  }
+
+  /**
+   * The grant of a merge allowed unasked for this call (its pull request,
+   * and its tool use if known), taken out of the list.
+   */
+  private takeMergeGrant(
+    sessionId: string,
+    toolUseId: string | null,
+    repositoryId: string,
+    number: number,
+  ): MergeGrant | null {
+    const grants = this.mergeGrants.get(sessionId) ?? [];
+    const index = grants.findIndex(
+      (grant) =>
+        grant.repositoryId === repositoryId &&
+        grant.number === number &&
+        (!toolUseId || grant.toolUseId === toolUseId),
+    );
+    if (index < 0) {
+      return null;
+    }
+    const [grant] = grants.splice(index, 1);
+    if (grants.length === 0) {
+      this.mergeGrants.delete(sessionId);
+    }
+    return grant;
   }
 
   /**

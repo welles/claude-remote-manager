@@ -284,7 +284,7 @@ describe('PrAutomationService', () => {
       expect(appMessages()).toHaveLength(1);
     });
 
-    it('runs a session in auto mode as default during the run', async () => {
+    it('runs a session in auto mode in auto during the run', async () => {
       const { session, pull } = await sessionWithPullRequest();
       await harness.service.update(session.id, { permissionMode: 'auto' });
       const run = harness.runner.last;
@@ -302,17 +302,16 @@ describe('PrAutomationService', () => {
 
       await automation.check(pull.id);
       expect(appMessages()).toHaveLength(1);
-      // No classifier approvals while Claude works on GitHub content.
-      expect(run.switches.at(-1)).toEqual({ permissionMode: 'default' });
+      // The owner's decision: Autofix keeps the session's mode.
+      expect(run.switches).toEqual([{ permissionMode: 'auto' }]);
       expect(harness.service.get(session.id)).toMatchObject({
         permissionMode: 'auto',
-        permissionModeOverride: { mode: 'default', reason: 'autofix' },
+        permissionModeOverride: null,
       });
 
       run.emit(resultMessage(20, 0.02));
       await waitFor(() => !record(pull).autofixRunning);
-      expect(run.switches.at(-1)).toEqual({ permissionMode: 'auto' });
-      expect(harness.service.get(session.id).permissionModeOverride).toBeNull();
+      expect(run.switches).toEqual([{ permissionMode: 'auto' }]);
     });
 
     it('ignores failures of an older commit (stale) and checks that still run', async () => {
@@ -766,7 +765,8 @@ describe('PrAutomationService', () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].text).toContain('alice/app#1');
       expect(messages[0].text).toContain('is ready to merge');
-      expect(messages[0].text).toContain('merging needs the approval');
+      expect(messages[0].text).toContain('merge_pull_request');
+      expect(messages[0].text).toContain('it is approved');
       expect(messages[0].text).not.toContain('@');
       const context = messages[0].context?.text ?? '';
       expect(context).toContain('No open findings.');
@@ -1077,6 +1077,21 @@ describe('PrAutomationService', () => {
       return head;
     };
 
+    /** Head commit green, without any review. */
+    const green = (pull: PullRequestDto) => {
+      const head = fakePull(pull.number).headSha;
+      harness.github.checkRuns.set(head, [
+        {
+          id: 92,
+          name: 'test',
+          status: 'completed',
+          conclusion: 'success',
+          app: 'github-actions',
+        },
+      ]);
+      return head;
+    };
+
     const enableAutomerge = (sessionId: string, pull: PullRequestDto) =>
       automation.update(sessionId, pull.id, { automerge: true });
 
@@ -1123,6 +1138,172 @@ describe('PrAutomationService', () => {
             event.text.startsWith(`Automerge merged alice/app#${pull.number}`),
           ),
       ).toBe(true);
+    });
+
+    it('merges without approval when nobody requests changes', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutomerge(session.id, pull);
+      const head = green(pull);
+      // Changes requested by someone who counts hold it back.
+      addReview(pull, {
+        kind: 'review',
+        author: REVIEWER,
+        authorType: 'Bot',
+        state: 'CHANGES_REQUESTED',
+        body: '',
+        commitId: head,
+      });
+      await automation.check(pull.id);
+      expect(harness.github.merges).toHaveLength(0);
+
+      // Withdrawn by a later comment-only review: no approval needed.
+      addReview(pull, {
+        kind: 'review',
+        author: REVIEWER,
+        authorType: 'Bot',
+        state: 'DISMISSED',
+        body: '',
+        commitId: head,
+      });
+      await automation.check(pull.id);
+      expect(harness.github.merges).toEqual([
+        { number: pull.number, method: 'rebase', sha: head },
+      ]);
+      expect(
+        harness
+          .eventsOfType(session.id, 'notice')
+          .some((event) => event.text.includes('nobody requests changes')),
+      ).toBe(true);
+    });
+
+    it('lets Claude merge unasked once ready, and autoclose waits for the end of its turn', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutomerge(session.id, pull);
+      automation.update(session.id, pull.id, { autoclose: true });
+      const head = green(pull);
+      // Claude works on a message of the user.
+      await harness.service.send(session.id, { text: 'Merge it when ready' });
+      await waitFor(() => harness.service.get(session.id).status === 'running');
+      const run = harness.runner.last;
+      const gate = run.options.gate;
+      const tool = run.options.tools?.find(
+        (entry) => entry.name === 'merge_pull_request',
+      );
+      if (!gate || !tool) {
+        throw new Error('no gate or tool');
+      }
+      const call = (toolUseId: string) =>
+        gate({
+          toolName: 'mcp__crm__merge_pull_request',
+          input: { pull_request: pull.number },
+          toolUseId,
+          agentId: null,
+          mcpServer: { name: 'crm', source: 'sdk' },
+        });
+      // An unresolved thread: left to Claude Code (the mode asks).
+      threadsOf(pull).push({
+        resolved: false,
+        author: REVIEWER,
+        authorType: 'Bot',
+        body: 'Hint: rename this.',
+      });
+      await expect(call('tu-1')).resolves.toBeNull();
+      threadsOf(pull)[0].resolved = true;
+      // New feedback waits to be handled first.
+      addReview(pull, {
+        kind: 'review_comment',
+        author: REVIEWER,
+        authorType: 'Bot',
+        body: 'One more thing.',
+      });
+      await expect(call('tu-2')).resolves.toBeNull();
+      harness.sessions.updatePullRequest(pull.id, {
+        autofixReviewsAfter: new Date(Date.now() + 60_000),
+      });
+      // Automerge off: the mode decides.
+      harness.sessions.updatePullRequest(pull.id, { automerge: false });
+      await expect(call('tu-3')).resolves.toBeNull();
+      harness.sessions.updatePullRequest(pull.id, { automerge: true });
+
+      await expect(call('tu-4')).resolves.toMatchObject({ decision: 'allow' });
+      const result = await tool.handler(
+        { pull_request: pull.number },
+        { toolUseId: 'tu-4' },
+      );
+      expect(result).toMatchObject({
+        text: expect.stringContaining(`Merged alice/app#${pull.number}`),
+      });
+      expect(harness.github.merges).toEqual([
+        { number: pull.number, method: 'rebase', sha: head },
+      ]);
+      expect(harness.sessions.pullRequest(pull.id)?.state).toBe('merged');
+      // The turn that merged it goes on; autoclose (and the notification
+      // with what it did) comes after it.
+      expect(harness.service.get(session.id).status).toBe('running');
+      expect(notifications.closed).toHaveLength(0);
+      run.emit(resultMessage(20, 0.02));
+      await waitFor(() => notifications.closed.length === 1);
+      expect(harness.service.get(session.id)).toMatchObject({
+        status: 'finished',
+        autoclosedAt: expect.any(String),
+      });
+    });
+
+    it('merges for Claude after the approval dialog, also without automerge', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      const run = harness.runner.last;
+      const tool = run.options.tools?.find(
+        (entry) => entry.name === 'merge_pull_request',
+      );
+      if (!tool || !run.options.gate) {
+        throw new Error('no tool');
+      }
+      await expect(
+        run.options.gate({
+          toolName: 'mcp__crm__merge_pull_request',
+          input: { pull_request: pull.number },
+          toolUseId: 'tu-1',
+          agentId: null,
+          mcpServer: { name: 'crm', source: 'sdk' },
+        }),
+      ).resolves.toBeNull();
+      harness.approver.autoAnswer = { decision: 'allow' };
+      await expect(
+        run.options.canUseTool(
+          'mcp__crm__merge_pull_request',
+          { pull_request: pull.number, method: 'squash' },
+          {
+            signal: new AbortController().signal,
+            toolUseID: 'tu-1',
+            requestId: 'r1',
+            mcpServer: { name: 'crm', source: 'sdk' },
+          } as never,
+        ),
+      ).resolves.toMatchObject({ behavior: 'allow' });
+      expect(harness.approver.requests.at(-1)?.pullRequestMerge).toEqual({
+        repository: 'alice/app',
+        pullRequest: pull.number,
+        title: 'Work',
+        method: 'squash',
+      });
+      await tool.handler(
+        { pull_request: pull.number, method: 'squash' },
+        { toolUseId: 'tu-1' },
+      );
+      expect(harness.github.merges).toEqual([
+        {
+          number: pull.number,
+          method: 'squash',
+          sha: fakePull(pull.number).headSha,
+        },
+      ]);
+      // Only the session's own pull requests.
+      await expect(
+        tool.handler({ pull_request: 999 }, { toolUseId: 'tu-2' }),
+      ).resolves.toMatchObject({
+        isError: true,
+        text: expect.stringContaining('not a pull request of this session'),
+      });
     });
 
     it('falls back to squash, and to a merge commit only when neither is allowed', async () => {

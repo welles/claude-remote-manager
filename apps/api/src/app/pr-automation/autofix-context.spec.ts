@@ -144,13 +144,16 @@ describe('autofix context', () => {
       headSha: 'b'.repeat(40),
       branch: 'claude/fix-k3x9q2',
       context: 'none',
+      approved: true,
       attempt: null,
       maxAttempts: 3,
     });
     expect(plain).toContain('acme/app#3');
     expect(plain).toContain('bbbbbbbbbbbb');
     expect(plain).toContain('ready to merge');
-    expect(plain).toContain('merging needs the approval of the user');
+    expect(plain).toContain('it is approved');
+    expect(plain).toContain('merge_pull_request');
+    expect(plain).toContain("as the session's permission mode says");
     expect(plain).not.toContain('untrusted context');
     expect(plain).not.toContain('@');
     const withFeedback = readyMessage({
@@ -159,6 +162,7 @@ describe('autofix context', () => {
       headSha: 'not a sha',
       branch: 'claude/fix-k3x9q2',
       context: 'feedback',
+      approved: true,
       attempt: 2,
       maxAttempts: 3,
     });
@@ -274,10 +278,13 @@ describe('autofix context', () => {
       headSha: null,
       branch: 'claude/x',
       context: 'feedback',
+      approved: false,
       attempt: 1,
       maxAttempts: 3,
       automerge: { state: 'threads', count: 2, counting: 1 },
     });
+    // Automerge needs no approval.
+    expect(threads).toContain('nobody with write access requests changes');
     // Said once, with the threads.
     expect(threads.match(/reply_to_review_thread/g)).toHaveLength(1);
     expect(threads).toContain('without replying to or resolving them');
@@ -289,6 +296,7 @@ describe('autofix context', () => {
         headSha: null,
         branch: 'claude/x',
         context: 'none',
+        approved: true,
         attempt: null,
         maxAttempts: 3,
         automerge: { state: 'threads', count: 2, counting: 0 },
