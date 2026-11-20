@@ -189,6 +189,61 @@ describe('PrAutomationService', () => {
       run.sent.filter((message) => message.text.startsWith('Autofix')),
     );
 
+  /** Messages that woke Claude after a merge or close. */
+  const wakeMessages = () =>
+    harness.runner.runs.flatMap((run) =>
+      run.sent
+        .map((message) => message.text)
+        .filter((text) =>
+          /was (merged into|closed without merging)/.test(text),
+        ),
+    );
+
+  /** Claude calls set_waiting_state in the running turn. */
+  const setWaiting = async (on: 'work' | 'user') => {
+    const tool = harness.runner.last.options.tools?.find(
+      (entry) => entry.name === 'set_waiting_state',
+    );
+    if (!tool) {
+      throw new Error('set_waiting_state is missing');
+    }
+    await tool.handler(
+      on === 'work'
+        ? { waiting_on: 'work', reason: 'CI of PR #1' }
+        : { waiting_on: 'user' },
+      { toolUseId: 'toolu_wait' },
+    );
+  };
+
+  /** A turn in which Claude says what follows (default: it goes on by itself), then ends. */
+  const claudeGoesOn = async (
+    sessionId: string,
+    on: 'work' | 'user' = 'work',
+  ) => {
+    await harness.service.sendMessage(sessionId, { text: 'Open the PR' });
+    // A switched directory starts a new process for the message.
+    await waitFor(
+      () =>
+        !harness.runner.last.closed &&
+        harness.runner.last.sent.some((m) => m.text === 'Open the PR'),
+    );
+    await setWaiting(on);
+    harness.runner.last.emit(resultMessage(30, 0.03));
+    await waitFor(
+      () =>
+        harness.service.get(sessionId).waitingFor ===
+        (on === 'work' ? 'background' : 'message'),
+    );
+  };
+
+  /** Calls that would wake Claude after a merge or close (synchronous). */
+  const wakeSends = (spy: jest.SpyInstance) =>
+    spy.mock.calls.filter(([, input]) =>
+      /was (merged into|closed without merging)/.test(
+        (input as { text: string }).text,
+      ),
+    );
+
   const later = (seconds = 5) =>
     new Date(Date.now() + seconds * 1000).toISOString();
 
@@ -2490,37 +2545,37 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       expect(notifications.closed).toHaveLength(1);
       expect(harness.service.get(session.id).status).not.toBe('finished');
       expect(existsSync(clone)).toBe(true);
-      expect(wakeMessages()).toEqual([]);
     });
 
-    /** Messages that woke Claude after a merge or close. */
-    const wakeMessages = () =>
-      harness.runner.runs.flatMap((run) =>
-        run.sent
-          .map((message) => message.text)
-          .filter((text) =>
-            /was (merged into|closed without merging)/.test(text),
-          ),
-      );
+    it('does not wake Claude when it said the user is next', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      await claudeGoesOn(session.id, 'user');
+      const send = jest.spyOn(harness.service, 'sendMessage');
+      merge(pull.number);
 
-    /** A turn in which Claude says it goes on by itself, then ends. */
-    const claudeGoesOn = async (sessionId: string) => {
-      await harness.service.sendMessage(sessionId, { text: 'Open the PR' });
-      const tool = harness.runner.last.options.tools?.find(
-        (entry) => entry.name === 'set_waiting_state',
-      );
-      if (!tool) {
-        throw new Error('set_waiting_state is missing');
-      }
-      await tool.handler(
-        { waiting_on: 'work', reason: 'CI of PR #1' },
-        { toolUseId: 'toolu_wait' },
-      );
+      await automation.check(pull.id);
+      await waitFor(() => notifications.closed.length === 1);
+
+      expect(wakeSends(send)).toEqual([]);
+      expect(harness.service.get(session.id).status).toBe('waiting');
+    });
+
+    it('does not wake Claude for a merge during its turn, also when it then says it goes on', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      await harness.service.sendMessage(session.id, { text: 'Merge it' });
+      const send = jest.spyOn(harness.service, 'sendMessage');
+      merge(pull.number);
+      await automation.check(pull.id);
+      await waitFor(() => notifications.closed.length === 1);
+
+      await setWaiting('work');
       harness.runner.last.emit(resultMessage(30, 0.03));
       await waitFor(
-        () => harness.service.get(sessionId).waitingFor === 'background',
+        () => harness.service.get(session.id).waitingFor === 'background',
       );
-    };
+
+      expect(wakeSends(send)).toEqual([]);
+    });
 
     it('wakes Claude when a pull request is merged while it said it goes on by itself', async () => {
       const { session, pull } = await sessionWithPullRequest();
@@ -2843,6 +2898,52 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       const note = run.sent.at(-1)?.note?.text ?? '';
       expect(note).toContain(`Your working directory is now ${clone}`);
       expect(note).toContain('was removed');
+    });
+
+    it("wakes Claude in the remaining clone when its working directory's pull request is merged while it goes on by itself", async () => {
+      const { session, clone } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      const switcher = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'switch_directory',
+      );
+      if (!switcher) {
+        throw new Error('no switch_directory tool');
+      }
+      // In a turn, Claude moves to the second clone and says it goes on.
+      await harness.service.sendMessage(session.id, { text: 'Next PR' });
+      await switcher.handler({ branch: second.branch }, { toolUseId: 't1' });
+      await setWaiting('work');
+      harness.runner.last.emit(resultMessage(30, 0.03));
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'background',
+      );
+      merge(second.pull.number);
+      await automation.check(second.pull.id);
+      await waitFor(() => wakeMessages().length === 1);
+
+      expect(existsSync(second.path)).toBe(false);
+      expect(harness.runner.last.options.cwd).toBe(clone);
+      expect(wakeMessages()[0]).toContain(
+        `alice/app#${second.pull.number} was merged into main`,
+      );
+    }, 20_000);
+
+    it('does not wake Claude after the turn for a further branch it merged in that turn', async () => {
+      const { session } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      await harness.service.sendMessage(session.id, { text: 'Merge it' });
+      const send = jest.spyOn(harness.service, 'sendMessage');
+      merge(second.pull.number);
+      await automation.check(second.pull.id);
+      // Deferred until the turn is over.
+      expect(notifications.closed).toHaveLength(0);
+
+      await setWaiting('work');
+      harness.runner.last.emit(resultMessage(30, 0.03));
+      await waitFor(() => notifications.closed.length === 1);
+      await waitFor(() => !existsSync(second.path));
+
+      expect(wakeSends(send)).toEqual([]);
     });
 
     it('removes the first clone after its pull request when another clone stays, and never the last one', async () => {

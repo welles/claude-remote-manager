@@ -229,6 +229,8 @@ export class PrAutomationService
   private readonly again = new Set<number>();
   /** Pull requests whose check found the session busy. */
   private readonly deferred = new Set<number>();
+  /** Pull requests closed while a turn ran: their close wakes nobody. */
+  private readonly closedInTurn = new Set<number>();
   /** Whether the first poll looked for closes left unhandled. */
   private closesSwept = false;
   /**
@@ -1894,11 +1896,23 @@ export class PrAutomationService
       owner.pullRequests.every(
         (entry) => entry.id === pull.id || entry.state !== 'open',
       );
+    const turnRuns = !!owner && !turnIsOver(this.sessions.get(owner.id));
+    if (turnRuns) {
+      // Claude sees it in this turn (or merged it itself): no wake later.
+      this.closedInTurn.add(pull.id);
+    }
+    // Claude said it goes on by itself: the close wakes it. Its own wait
+    // then does not keep the process (the wake starts a new turn).
+    const wake =
+      !!owner &&
+      !owner.autoclosedAt &&
+      !autocloseDue &&
+      !this.closedInTurn.has(pull.id) &&
+      this.sessions.claudeGoesOn(owner.id);
     if (
       owner &&
       !owner.autoclosedAt &&
-      (((autocloseDue || ownClone) &&
-        !turnIsOver(this.sessions.get(owner.id))) ||
+      (((autocloseDue || ownClone) && turnRuns) ||
         // Claude Code works in the clone and its process must stay
         // (background tasks, its own wait, previews): moving it away
         // would end them. Also when the working directory was switched
@@ -1907,7 +1921,9 @@ export class PrAutomationService
           ownClone !== null &&
           (workingDirectoryOf(owner).position === ownClone.position ||
             this.sessions.processDirectory(owner.id) === ownClone.path) &&
-          this.sessions.processMustStay(owner.id)))
+          this.sessions.processMustStay(owner.id, {
+            exceptClaudeWait: wake,
+          })))
     ) {
       // Autoclose would end the turn that is going (e.g. the one that
       // merged it with Claude's tool, or one waiting for an approval), or
@@ -1918,10 +1934,16 @@ export class PrAutomationService
       return;
     }
     this.forgetWaiting(pull.id);
+    this.closedInTurn.delete(pull.id);
     this.records.updatePullRequest(pull.id, {
       closeHandledAt: new Date(),
       autofixRunning: false,
     });
+    if (wake) {
+      // Synchronously, before any await: a second close at the same time
+      // finds no wait left and sends no second wake.
+      this.sessions.releaseClaudeWait(pull.sessionId);
+    }
     const session = this.records.get(pull.sessionId);
     if (!session) {
       return;
@@ -1957,7 +1979,7 @@ export class PrAutomationService
       note,
     );
     this.sessions.publishUpdate(session.id);
-    if (!autoclose && this.sessions.claudeGoesOn(session.id)) {
+    if (wake && !autoclose) {
       await this.wakeAfterClose(session.id, pull);
     }
   }
@@ -1973,9 +1995,14 @@ export class PrAutomationService
     pull: PullRequestRecord,
   ): Promise<void> {
     const name = `${pull.repositoryName}#${pull.number}`;
+    // Branch names come from GitHub: only plain ones go into the text
+    // (app text must not contain @).
+    const base = /^[\w./-]+$/.test(pull.baseBranch)
+      ? pull.baseBranch
+      : 'its base branch';
     const text =
       pull.state === 'merged'
-        ? `${name} was merged into ${pull.baseBranch}. You said you go on by yourself: continue with what comes next. Fetch ${pull.baseBranch} before you build on it; the merge may have rewritten the commits of the session branch.`
+        ? `${name} was merged into ${base}. You said you go on by yourself: continue with what comes next. Fetch ${base} before you build on it; the merge may have rewritten the commits of the session branch.`
         : `${name} was closed without merging. You said you go on by yourself: decide what follows, and ask the user if it needs their decision.`;
     try {
       await this.sessions.sendMessage(sessionId, { text, origin: 'app' });
@@ -1984,6 +2011,11 @@ export class PrAutomationService
       this.logger.warn(
         `Could not wake ${sessionId} after ${name} was ${pull.state}: ${errorText(error)}`,
       );
+      this.sessions.recordEvent(sessionId, {
+        type: 'notice',
+        level: 'warning',
+        text: `${name} was ${pull.state}, but Claude could not be woken to go on: ${errorText(error)}`,
+      });
     }
   }
 
