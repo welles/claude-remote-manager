@@ -397,8 +397,10 @@ describe('SessionManagementService', () => {
           commit,
           unmergedCount: 1,
           mergedBy: null,
+          pullRequestsChecked: false,
           safe: false,
           blocked: null,
+          error: null,
         },
       ]);
 
@@ -428,6 +430,7 @@ describe('SessionManagementService', () => {
     });
 
     it('offers a merged branch as safe and deletes it when archiving, also after its clone was removed', async () => {
+      fromGitHub();
       const { session, commit, branch } = await pushedSession();
       await git(repository.origin, 'update-ref', 'refs/heads/main', commit);
       await management.cleanup(session.id, {
@@ -447,6 +450,45 @@ describe('SessionManagementService', () => {
       ]);
       expect(await onOrigin(branch)).toBe(false);
       expect(await git(repository.origin, 'rev-parse', 'main')).toBe(commit);
+    });
+
+    it('discards the clone and deletes the merged branch in one step; without GitHub it is not offered checked', async () => {
+      const { session, commit, branch } = await pushedSession();
+      await git(repository.origin, 'update-ref', 'refs/heads/main', commit);
+      // Open pull (merge) requests elsewhere are unknown.
+      expect(
+        (await management.cleanupPreview(session.id)).remoteBranches[0],
+      ).toMatchObject({
+        unmergedCount: 0,
+        pullRequestsChecked: false,
+        safe: false,
+      });
+      const result = await management.archive(session.id, {
+        cleanup: [{ position: 0, action: 'discard' }],
+        remoteBranches: [{ position: 0 }],
+      });
+      expect(result.outcomes[0].result).toBe('removed');
+      expect(result.remoteBranches[0].result).toBe('deleted');
+      expect(await onOrigin(branch)).toBe(false);
+      expect(existsSync(session.cwd)).toBe(false);
+    });
+
+    it('reports a branch that could not be checked as failed and keeps it', async () => {
+      const { session, branch } = await pushedSession();
+      harness.repositoryRecords.update(repository.id, {
+        cloneUrl: join(harness.dir, 'missing-origin'),
+      });
+      const preview = await management.cleanupPreview(session.id);
+      expect(preview.remoteBranches[0]).toMatchObject({
+        safe: false,
+        error: expect.stringContaining('could not be read'),
+      });
+      const result = await management.cleanup(session.id, {
+        directories: [],
+        remoteBranches: [{ position: 0, acceptLoss: true }],
+      });
+      expect(result.remoteBranches[0].result).toBe('failed');
+      expect(await onOrigin(branch)).toBe(true);
     });
 
     it('counts a branch merged by a pull request (squash) as safe, and never deletes one with an open pull request', async () => {

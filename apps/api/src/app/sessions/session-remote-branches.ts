@@ -131,8 +131,10 @@ export class SessionRemoteBranches {
       commit: null,
       unmergedCount: 0,
       mergedBy: null,
+      pullRequestsChecked: false,
       safe: false,
       blocked: null,
+      error: null,
     };
     let mirror: RepositoryRecord;
     try {
@@ -140,7 +142,7 @@ export class SessionRemoteBranches {
     } catch (error) {
       return {
         ...base,
-        blocked: `The remote could not be read: ${errorText(error)}`,
+        error: `The remote could not be read: ${errorText(error)}`,
       };
     }
     const commit = await this.git.branchCommit(
@@ -160,7 +162,7 @@ export class SessionRemoteBranches {
     } catch (error) {
       return {
         ...base,
-        blocked: `What the branch holds could not be read: ${errorText(error)}`,
+        error: `What the branch holds could not be read: ${errorText(error)}`,
       };
     }
     if (isGitHubRepository(mirror)) {
@@ -175,6 +177,7 @@ export class SessionRemoteBranches {
         if (open.length > 0) {
           base.blocked = `${open.length === 1 ? 'Pull request' : 'Pull requests'} ${open.map((pull) => `#${pull.number}`).join(', ')} ${open.length === 1 ? 'is' : 'are'} open; deleting the branch would close ${open.length === 1 ? 'it' : 'them'}`;
         }
+        base.pullRequestsChecked = true;
         base.mergedBy =
           pulls.find(
             (pull) => pull.state === 'merged' && pull.headSha === commit,
@@ -182,14 +185,19 @@ export class SessionRemoteBranches {
       } catch (error) {
         return {
           ...base,
-          blocked: `Its pull requests could not be read: ${errorText(error)}`,
+          error: `Its pull requests could not be read: ${errorText(error)}`,
         };
       }
     }
     if (base.mergedBy !== null) {
       base.unmergedCount = 0;
     }
-    base.safe = base.blocked === null && base.unmergedCount === 0;
+    // Without GitHub, open pull (merge) requests are unknown: never
+    // offered checked.
+    base.safe =
+      base.blocked === null &&
+      base.unmergedCount === 0 &&
+      base.pullRequestsChecked;
     return base;
   }
 
@@ -220,13 +228,16 @@ export class SessionRemoteBranches {
       );
     }
     if (!state) {
-      return outcome('deleted', `${directory.branch} is not on the remote`);
+      return outcome('gone', `${directory.branch} is not on the remote`);
     }
-    if (state.blocked || !state.commit) {
+    if (state.error || !state.commit) {
       return outcome(
-        'kept',
-        `${directory.branch} kept: ${state.blocked ?? 'its commit is unknown'}`,
+        'failed',
+        `${directory.branch} kept: ${state.error ?? 'its commit is unknown'}`,
       );
+    }
+    if (state.blocked) {
+      return outcome('kept', `${directory.branch} kept: ${state.blocked}`);
     }
     if (state.unmergedCount > 0 && choice.acceptLoss !== true) {
       return outcome(
@@ -251,16 +262,21 @@ export class SessionRemoteBranches {
         `${directory.branch} could not be deleted on the remote (${errorText(error)})`,
       );
     }
+    let note = '';
     if (state.unmergedCount > 0) {
       // Its commits are on the remote no more: a clone still there must
       // count them as lost again.
-      if (directory.state === 'ready') {
-        await this.git.forgetRemoteBranch(directory.path, directory.branch);
-      }
       this.sessions.updateDirectory(sessionId, directory.position, {
         pushedCommit: null,
         pushedAt: null,
       });
+      if (directory.state === 'ready') {
+        try {
+          await this.git.forgetRemoteBranch(directory.path, directory.branch);
+        } catch (error) {
+          note = `; the clone still counts its commits as pushed (${errorText(error)})`;
+        }
+      }
     }
     return outcome(
       'deleted',
@@ -270,7 +286,7 @@ export class SessionRemoteBranches {
           : state.unmergedCount > 0
             ? ` (lost ${plural(state.unmergedCount, 'commit', 'commits')})`
             : ''
-      }`,
+      }${note}`,
     );
   }
 }

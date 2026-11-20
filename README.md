@@ -787,7 +787,10 @@ session processes (see [Authentication](#authentication)).
   remote has; for GitHub repositories the branch's pull requests are read too. A merged pull
   request whose head is the branch's commit (squash or rebase merges) counts as merged; an
   open one blocks deleting (deleting the branch would close it). A branch that loses nothing
-  is offered checked; one with unmerged commits needs "I accept losing these commits"
+  is offered checked, but only for GitHub repositories: elsewhere open pull (merge) requests
+  are unknown (`pullRequestsChecked: false`), so it is offered unchecked with a note. If the
+  remote or GitHub cannot be read, the branch shows the `error` and is not deleted (outcome
+  `failed`). One with unmerged commits needs "I accept losing these commits"
   (`remoteBranches: [{ position, acceptLoss }]` in the cleanup and archive requests). The
   branches are deleted after the directories' choices, each checked again right before, with
   `git push --force-with-lease=<ref>:<checked commit> origin :<ref>` from the mirror (a branch

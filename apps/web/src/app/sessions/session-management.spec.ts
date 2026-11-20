@@ -206,8 +206,10 @@ describe('session management', () => {
       commit: 'a'.repeat(40),
       unmergedCount: 0,
       mergedBy: null,
+      pullRequestsChecked: true,
       safe: true,
       blocked: null,
+      error: null,
       ...overrides,
     });
     const view = await openCleanup('archive', {
@@ -282,6 +284,43 @@ describe('session management', () => {
         lines: ['acme/app: deleted claude/x on the remote (merged by #3)'],
       },
     ]);
+  });
+
+  it('does not delete a branch whose clone is pushed in the same cleanup', async () => {
+    const view = await openCleanup('cleanup', {
+      sessionId: 's1',
+      blocked: null,
+      archiveBlocked: null,
+      directories: [directory({ lossAfterIntegration: clean })],
+      remoteBranches: [
+        {
+          position: 0,
+          name: 'acme/app',
+          branch: 'claude/x',
+          commit: 'a'.repeat(40),
+          unmergedCount: 0,
+          mergedBy: 1,
+          pullRequestsChecked: true,
+          safe: true,
+          blocked: null,
+          error: null,
+        },
+      ],
+      previews: 0,
+    });
+    await view.click('[data-testid="choice-push"] input');
+    const box = view.element.querySelector(
+      '[data-testid="delete-remote-branch"] input',
+    ) as HTMLInputElement;
+    expect([box.checked, box.disabled]).toEqual([false, true]);
+    expect(view.all('remote-branch')[0]).toContain('pushed in this cleanup');
+    await view.click('[data-testid="cleanup-confirm"]');
+    const request = http.expectOne('/api/sessions/s1/cleanup');
+    expect(request.request.body).toEqual({
+      directories: [{ position: 0, action: 'push', acceptLoss: false }],
+      remoteBranches: [],
+    });
+    request.flush({ session: sessionDto(), outcomes: [], remoteBranches: [] });
   });
 
   it('reports a partial failure as a toast that stays, and errors in the dialog', async () => {

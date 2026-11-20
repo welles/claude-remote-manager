@@ -69,17 +69,27 @@ export function lossOf(
 
 /** What deleting a remote branch means, in one line. */
 export function remoteBranchState(branch: RemoteBranch): string {
-  if (branch.blocked) {
-    return branch.blocked;
+  if (branch.error) {
+    return `${branch.error}.`;
   }
+  if (branch.blocked) {
+    return `${branch.blocked}.`;
+  }
+  const unknown = branch.pullRequestsChecked
+    ? ''
+    : ' Open pull or merge requests could not be checked (no GitHub App).';
   if (branch.mergedBy !== null) {
     return `Merged by pull request #${branch.mergedBy}; deleting it loses nothing.`;
   }
   if (branch.unmergedCount === 0) {
-    return 'Its commits are on other branches too; deleting it loses nothing.';
+    return `Its commits are on other branches too; deleting it loses nothing.${unknown}`;
   }
-  return `${branch.unmergedCount} ${branch.unmergedCount === 1 ? 'commit is' : 'commits are'} on no other branch; deleting it loses ${branch.unmergedCount === 1 ? 'it' : 'them'}.`;
+  return `${branch.unmergedCount} ${branch.unmergedCount === 1 ? 'commit is' : 'commits are'} on no other branch; deleting it loses ${branch.unmergedCount === 1 ? 'it' : 'them'}.${unknown}`;
 }
+
+/** The branch cannot be deleted at all (open pull request, check failed). */
+const unavailable = (branch: RemoteBranch) =>
+  !!branch.blocked || !!branch.error;
 
 /**
  * Cleans up a session's clones and scratch directory, or archives the
@@ -200,7 +210,10 @@ export function remoteBranchState(branch: RemoteBranch): string {
                     <strong>{{ branch.name }}</strong>
                     <span class="muted"> · {{ branch.branch }}</span>
                   </legend>
-                  <p [class.warning]="!branch.safe">
+                  <p
+                    [class.warning]="!branch.safe"
+                    [id]="'remote-branch-state-' + branch.position"
+                  >
                     {{ remoteBranchState(branch) }}
                   </p>
                   @if (pushes(branch.position)) {
@@ -208,12 +221,15 @@ export function remoteBranchState(branch: RemoteBranch): string {
                   }
                   <mat-checkbox
                     [checked]="deletesBranch(branch)"
-                    [disabled]="!!branch.blocked || pushes(branch.position)"
+                    [disabled]="unavailable(branch) || pushes(branch.position)"
+                    [aria-describedby]="
+                      'remote-branch-state-' + branch.position
+                    "
                     (change)="chooseBranch(branch, $event.checked)"
                     data-testid="delete-remote-branch"
                     >Delete {{ branch.branch }} on the remote</mat-checkbox
                   >
-                  @if (deletesBranch(branch) && !branch.safe) {
+                  @if (deletesBranch(branch) && branch.unmergedCount > 0) {
                     <mat-checkbox
                       [checked]="branchAccepted().has(branch.position)"
                       (change)="acceptBranch(branch, $event.checked)"
@@ -247,7 +263,7 @@ export function remoteBranchState(branch: RemoteBranch): string {
           <button
             matButton="filled"
             type="button"
-            [class.app-danger]="removes() || deletesBranches()"
+            [class.app-danger]="removes() || losesCommits()"
             [disabled]="!ready() || busy()"
             (click)="confirm()"
             data-testid="cleanup-confirm"
@@ -315,6 +331,7 @@ export class CleanupDialog {
   protected readonly actionLabel = actionLabel;
   protected readonly lossOf = lossOf;
   protected readonly remoteBranchState = remoteBranchState;
+  protected readonly unavailable = unavailable;
   protected readonly open = signal(false);
   protected readonly mode = signal<CleanupMode>('cleanup');
   protected readonly preview = signal<CleanupPreview | null>(null);
@@ -353,6 +370,10 @@ export class CleanupDialog {
         this.deletesBranch(branch),
       ) ?? [],
   );
+  /** A chosen branch deletion loses commits. */
+  protected readonly losesCommits = computed(() =>
+    this.chosenBranches().some((branch) => branch.unmergedCount > 0),
+  );
   protected readonly deletesBranches = computed(
     () => this.chosenBranches().length > 0,
   );
@@ -382,7 +403,9 @@ export class CleanupDialog {
         );
       }) &&
       this.chosenBranches().every(
-        (branch) => branch.safe || this.branchAccepted().has(branch.position),
+        (branch) =>
+          branch.unmergedCount === 0 ||
+          this.branchAccepted().has(branch.position),
       )
     );
   });
@@ -424,10 +447,13 @@ export class CleanupDialog {
           ),
         );
       },
-      error: (error: unknown) =>
-        this.error.set(
-          errorMessage(error, 'What the directories hold could not be read.'),
-        ),
+      error: (error: unknown) => {
+        if (run === this.run) {
+          this.error.set(
+            errorMessage(error, 'What the directories hold could not be read.'),
+          );
+        }
+      },
     });
   }
 
@@ -447,7 +473,7 @@ export class CleanupDialog {
   protected deletesBranch(branch: RemoteBranch): boolean {
     return (
       this.branches().has(branch.position) &&
-      !branch.blocked &&
+      !unavailable(branch) &&
       !this.pushes(branch.position)
     );
   }
