@@ -786,7 +786,8 @@ session processes (see [Authentication](#authentication)).
   fetched and `GitService.commitsOnlyOn` counts the commits no other branch or tag of the
   remote has; for GitHub repositories the branch's pull requests are read too. A merged pull
   request whose head is the branch's commit (squash or rebase merges) counts as merged; an
-  open one blocks deleting (deleting the branch would close it). A branch that loses nothing
+  open one from the branch, or into it (`base`, e.g. of a session started on this branch),
+  blocks deleting (deleting the branch would close it). A branch that loses nothing
   is offered checked, but only for GitHub repositories: elsewhere open pull (merge) requests
   are unknown (`pullRequestsChecked: false`), so it is offered unchecked with a note. If the
   remote or GitHub cannot be read, the branch shows the `error` and is not deleted (outcome

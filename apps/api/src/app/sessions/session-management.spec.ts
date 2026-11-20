@@ -512,6 +512,36 @@ describe('SessionManagementService', () => {
       expect(await onOrigin(branch)).toBe(true);
     });
 
+    it('never deletes a branch that an open pull request targets as its base', async () => {
+      const remote = fromGitHub();
+      const { session, commit, branch } = await pushedSession();
+      // Merged itself, but another session's pull request builds on it.
+      await git(repository.origin, 'update-ref', 'refs/heads/main', commit);
+      harness.github.pulls.push({
+        number: 7,
+        repositoryId: remote.id,
+        title: 'Follow-up',
+        body: '',
+        head: 'claude/other',
+        base: branch,
+        draft: false,
+        state: 'open',
+        merged: false,
+        createdAt: new Date().toISOString(),
+        headSha: 'b'.repeat(40),
+      });
+      const preview = (await management.cleanupPreview(session.id))
+        .remoteBranches[0];
+      expect(preview).toMatchObject({ unmergedCount: 0, safe: false });
+      expect(preview.blocked).toContain('#7 is open from or into this branch');
+      const kept = await management.cleanup(session.id, {
+        directories: [],
+        remoteBranches: [{ position: 0 }],
+      });
+      expect(kept.remoteBranches[0].result).toBe('kept');
+      expect(await onOrigin(branch)).toBe(true);
+    });
+
     it('leaves a branch alone that moved since it was checked', async () => {
       const { commit, branch } = await pushedSession();
       // Someone pushes on top after the check.
