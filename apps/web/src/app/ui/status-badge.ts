@@ -65,7 +65,7 @@ export const STATUS_KIND_CLASS: Record<StatusKind, string> = {
 
 /**
  * A session's status as a small tag in its state's colour (see
- * `statusKind`), in the session details; running sessions as muted text.
+ * `statusKind`), in the session details.
  */
 @Component({
   selector: 'app-status-badge',
