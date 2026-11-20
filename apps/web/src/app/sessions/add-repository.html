@@ -8,7 +8,7 @@
   [title]="adding() ? 'A repository is being added' : ''"
   data-testid="add-repository"
 >
-  <app-icon name="plus" />Add repository
+  <app-icon matButtonIcon name="plus" />Add repository
 </button>
 } @else {
 <form class="form" (ngSubmit)="add()" data-testid="add-repository-form">
