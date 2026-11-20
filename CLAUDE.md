@@ -37,20 +37,22 @@ Instructions for Claude sessions working on this repository. What the app is and
 - Real Claude requests for testing sparingly, with the smallest model, a minimal environment
   (`env -i`) and never this repository as working directory.
 - Never use or delete the default data locations (`data/db`, `~/.local/share/claude-remote-manager`)
-  or the running service's `/var/lib/claude-remote-manager`; local runs use temporary directories.
+  or a running deployment's data directory; local runs use temporary directories.
 - No host-wide Docker or Nix cleanup; no deploying, `nh` or SSH to the owner's machines.
 
 ## Deployment
 
-- Runs as a NixOS service on the owner's devbox, as the owner's user without sandbox (sessions
-  are Claude Code of that user with `~/.claude`), behind a Cloudflare Tunnel and Access. The host
+- Runs as the Docker image (`ghcr.io/welles/claude-remote-manager:sha-<commit>`) in the Docker
+  Compose stack `claude_remote_manager` on the owner's home server, with the API and the sessions
+  as separate users in the container, behind a Cloudflare Tunnel and Access. The host
   configuration is the private repository `welles/nixos-config`
-  (`modules/claude-remote-manager.nix`, the devbox host under `hosts/`, Cloudflare in `cloudflare/`
-  with OpenTofu).
+  (`modules/stacks/claude_remote_manager/docker-compose.yaml`, its secrets in
+  `hosts/nico-schokoladenelch-nixos/`, Cloudflare in `cloudflare/` with OpenTofu). The NixOS
+  module `nix/module.nix` is no longer deployed.
 - After a green CI run on `main`, the job `update-nixos-config` dispatches
-  `update-claude-remote-manager.yml` in nixos-config, which updates the flake input; the owner
-  deploys with the next switch. Breaking changes to `nix/module.nix` need a matching nixos-config
-  PR merged together.
+  `update-claude-remote-manager.yml` in nixos-config, which sets the stack's image tag to that
+  commit; the owner deploys with the next switch. Breaking changes to the image's environment
+  variables, volumes or users need a matching nixos-config PR merged together.
 
 ## State (2026-11-19)
 
