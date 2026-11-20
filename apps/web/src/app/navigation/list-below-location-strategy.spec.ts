@@ -74,12 +74,13 @@ class FakeHistory extends PlatformLocation {
     this.historyGo(-1);
   }
   override historyGo(delta = 0) {
-    this.index = Math.max(
-      0,
-      Math.min(this.entries.length - 1, this.index + delta),
-    );
-    const state = this.current.state;
+    // As in browsers: the URL and state change with the traversal, later.
     setTimeout(() => {
+      this.index = Math.max(
+        0,
+        Math.min(this.entries.length - 1, this.index + delta),
+      );
+      const state = this.current.state;
       for (const fn of this.listeners) {
         fn({ type: 'popstate', state } as PopStateEvent);
       }
@@ -94,16 +95,26 @@ function clone(state: unknown): unknown {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 describe('ListBelowLocationStrategy', () => {
-  const start = async (url: string, state: unknown = null) => {
+  /** Starts on `url`, after `before` (entries of an earlier load). */
+  const start = async (url: string, state: unknown = null, before?: string) => {
     TestBed.configureTestingModule({
       providers: [
         { provide: PlatformLocation, useClass: FakeHistory },
         { provide: LocationStrategy, useClass: ListBelowLocationStrategy },
-        provideRouter([{ path: '**', component: Page }]),
+        provideRouter([
+          { path: '', component: Page },
+          { path: 'sessions/**', component: Page },
+          { path: '**', redirectTo: '' },
+        ]),
       ],
     });
     const platform = TestBed.inject(PlatformLocation) as FakeHistory;
-    platform.replaceState(state, '', url);
+    if (before === undefined) {
+      platform.replaceState(state, '', url);
+    } else {
+      platform.replaceState(null, '', before);
+      platform.pushState(state, '', url);
+    }
     const router = TestBed.inject(Router);
     // As at the start of the app: also follows popstate from then on.
     router.initialNavigation();
@@ -132,27 +143,45 @@ describe('ListBelowLocationStrategy', () => {
     expect(app.history()).toEqual(['/', '/sessions/b']);
     await app.back();
     expect(app.router.url).toBe('/');
+    expect(app.history()).toEqual(['/']);
   });
 
-  it('goes back to the list instead of pushing another one', async () => {
-    const app = await start('/?q=fix');
-    await app.go('/sessions/a');
-    await app.go('/');
-    expect(app.history()).toEqual(['/?q=fix']);
-    // The router follows the entry below, with its query.
-    await new Promise((resolve) => setTimeout(resolve));
-    expect(app.router.url).toBe('/?q=fix');
-  });
-
-  it('pushes a list with a query like any navigation', async () => {
+  it('goes back to the list below instead of adding another one', async () => {
     const app = await start('/');
     await app.go('/sessions/a');
-    await app.go('/?q=fix');
-    expect(app.history()).toEqual(['/', '/sessions/a', '/?q=fix']);
+    await app.go('/');
+    expect(app.history()).toEqual(['/']);
+    expect(app.router.url).toBe('/');
   });
 
-  it('puts the list below a page opened directly', async () => {
+  it('goes back to a list with a query only for the same list', async () => {
+    const app = await start('/?waiting=1');
+    await app.go('/sessions/a');
+    await app.go('/?waiting=1');
+    expect(app.history()).toEqual(['/?waiting=1']);
+    await app.go('/sessions/a');
+    // Another list (the back arrow leads to all sessions) is pushed.
+    await app.go('/');
+    expect(app.history()).toEqual(['/?waiting=1', '/sessions/a', '/']);
+    expect(app.router.url).toBe('/');
+  });
+
+  it('goes back to the list when a page redirects to it', async () => {
+    const app = await start('/');
+    await app.go('/sessions/a');
+    await app.router.navigateByUrl('/nowhere', { replaceUrl: true });
+    await settle();
+    expect(app.history()).toEqual(['/']);
+    expect(app.router.url).toBe('/');
+  });
+
+  it('puts the list below a page opened directly, at the first tap', async () => {
     const app = await start('/sessions/a?mention=x');
+    // Without user activation, Chrome would skip the list on Back.
+    expect(app.history()).toEqual(['/sessions/a?mention=x']);
+    window.dispatchEvent(new Event('pointerup'));
+    expect(app.history()).toEqual(['/', '/sessions/a?mention=x']);
+    window.dispatchEvent(new Event('pointerup'));
     expect(app.history()).toEqual(['/', '/sessions/a?mention=x']);
     await app.go('/sessions/b');
     expect(app.history()).toEqual(['/', '/sessions/b']);
@@ -160,10 +189,25 @@ describe('ListBelowLocationStrategy', () => {
     expect(app.router.url).toBe('/');
   });
 
-  it('does not add another list on a reload', async () => {
+  it('keeps the list below on a reload', async () => {
+    const app = await start(
+      '/sessions/a',
+      { navigationId: 3, crmListBelow: '/' },
+      '/',
+    );
+    window.dispatchEvent(new Event('pointerup'));
+    expect(app.history()).toEqual(['/', '/sessions/a']);
+    await app.go('/sessions/b');
+    expect(app.history()).toEqual(['/', '/sessions/b']);
+    await app.go('/');
+    expect(app.history()).toEqual(['/']);
+    expect(app.router.url).toBe('/');
+  });
+
+  it('pushes pages over an entry from before', async () => {
     const app = await start('/sessions/a', { navigationId: 3 });
+    window.dispatchEvent(new Event('pointerup'));
     expect(app.history()).toEqual(['/sessions/a']);
-    // What is below is unknown: pages are pushed as before.
     await app.go('/sessions/b');
     expect(app.history()).toEqual(['/sessions/a', '/sessions/b']);
   });
