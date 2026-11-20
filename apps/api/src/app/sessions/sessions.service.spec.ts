@@ -648,6 +648,38 @@ describe('SessionsService', () => {
     });
   });
 
+  describe('holding messages', () => {
+    it('holds messages until all overlapping holds are done', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      let releaseFirst: () => void = () => undefined;
+      let releaseSecond: () => void = () => undefined;
+      const first = service.holdMessagesWhile(
+        session.id,
+        () => new Promise<void>((resolve) => (releaseFirst = resolve)),
+      );
+      const second = service.holdMessagesWhile(
+        session.id,
+        () => new Promise<void>((resolve) => (releaseSecond = resolve)),
+      );
+      const texts = () => runner.last.sent.map((message) => message.text);
+      const sending = service.send(session.id, { text: 'Next' });
+
+      // The second removal ends first: the message still waits.
+      releaseSecond();
+      await second;
+      await flush();
+      expect(texts()).not.toContain('Next');
+
+      releaseFirst();
+      await first;
+      await sending;
+      await flush();
+      expect(texts()).toContain('Next');
+    });
+  });
+
   describe('approval requests', () => {
     const PERMISSION_ID = /^[0-9a-f-]{36}$/;
 
