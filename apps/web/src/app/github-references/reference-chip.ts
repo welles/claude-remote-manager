@@ -49,7 +49,7 @@ const canHover = () =>
   template: `
     <button
       type="button"
-      class="chip state-{{ state() }}"
+      class="ref-chip state-{{ state() }}"
       #origin
       (click)="toggle()"
       (mouseenter)="hover(true)"
@@ -76,7 +76,7 @@ const canHover = () =>
       display: inline;
       max-width: 100%;
     }
-    .chip {
+    .ref-chip {
       display: inline-flex;
       align-items: center;
       gap: 4px;
@@ -92,7 +92,7 @@ const canHover = () =>
       cursor: pointer;
     }
     @media (max-width: 480px) {
-      .chip {
+      .ref-chip {
         max-width: 15em;
       }
     }
