@@ -82,8 +82,9 @@ describe('SessionList', () => {
       }),
     });
     await fixture.whenStable();
-    expect(rows()[0]).toContain('Older');
-    expect(rows()[0]).toContain('Running');
+    // Running comes after the ready session, before the recent ones.
+    expect(rows()[1]).toContain('Older');
+    expect(rows()[1]).toContain('Running');
   });
 
   const rows = (fixture: { nativeElement: unknown }) =>
@@ -185,6 +186,12 @@ describe('SessionList', () => {
           status: 'running',
           waitingFor: null,
         }),
+        sessionDto({
+          id: 's4',
+          title: 'Done',
+          status: 'finished',
+          waitingFor: null,
+        }),
       ],
     });
     await fixture.whenStable();
@@ -193,11 +200,11 @@ describe('SessionList', () => {
       [...element.querySelectorAll('.group-label')].map((label) =>
         label.textContent?.trim(),
       ),
-    ).toEqual(['Needs you', 'Running', 'Recent']);
+    ).toEqual(['Needs you', 'Ready', 'Running', 'Recent']);
     const titles = [
       ...element.querySelectorAll('[data-testid="session"] .title'),
     ].map((title) => title.textContent?.trim());
-    expect(titles).toEqual(['Ask', 'Busy', 'Idle']);
+    expect(titles).toEqual(['Ask', 'Idle', 'Busy', 'Done']);
     // What the session needs, not only that it needs the user.
     expect(rows(fixture)[0]).toContain('2 questions');
   });

@@ -33,12 +33,7 @@ import {
   statusKind,
   type StatusKind,
 } from '../ui/status-badge';
-import {
-  formatCost,
-  formatTokens,
-  needLabel,
-  totalTokens,
-} from './format';
+import { formatCost, formatTokens, needLabel, totalTokens } from './format';
 import { ModelsStore, modelLabel } from './models-store';
 import { loadSessionList, saveSessionList } from './session-list-cache';
 import { SessionSearch } from './session-search';
@@ -62,8 +57,8 @@ function active(session: SessionDto): boolean {
 }
 
 /**
- * Start page: the sessions, grouped by what they need (needs you, running,
- * recent), with search and filters; "New session" leads to `/new`. Query
+ * Start page: the sessions, grouped by what they need (needs you, ready,
+ * running, recent), with search and filters; "New session" leads to `/new`. Query
  * parameters (app shortcuts, links): `waiting` shows only sessions that
  * need the user (open approval, question, plan or failed setup; the same
  * count as the badge), `running` only working ones, `archived` the archive.
@@ -143,7 +138,10 @@ export class SessionList implements OnInit {
         return sessions;
     }
   });
-  /** Needs you, running, then the rest; the archive and filters as one. */
+  /**
+   * Needs you, ready (the user's turn), running, then the rest; the archive
+   * and filters as one.
+   */
   protected readonly groups = computed<SessionGroup[]>(() => {
     const shown = this.shown();
     if (this.filter() !== 'all') {
@@ -151,11 +149,20 @@ export class SessionList implements OnInit {
     }
     const groups: SessionGroup[] = [
       { key: 'waiting', label: 'Needs you', sessions: [] },
+      { key: 'ready', label: 'Ready', sessions: [] },
       { key: 'running', label: 'Running', sessions: [] },
       { key: 'recent', label: 'Recent', sessions: [] },
     ];
     for (const session of shown) {
-      const index = needsUser(session) ? 0 : active(session) ? 1 : 2;
+      const kind = statusKind(session);
+      const index =
+        kind === 'attention'
+          ? 0
+          : kind === 'idle'
+            ? 1
+            : active(session)
+              ? 2
+              : 3;
       groups[index].sessions.push(session);
     }
     return groups.filter((group) => group.sessions.length > 0);
