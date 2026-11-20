@@ -147,30 +147,39 @@ export class AppDatePipe implements PipeTransform {
   }
 }
 
+/** The IANA time zone if the browser knows it, else `undefined`. */
+export function supportedTimeZone(
+  timeZone: string | null | undefined,
+): string | undefined {
+  if (!timeZone) {
+    return undefined;
+  }
+  try {
+    new Intl.DateTimeFormat(APP_LOCALE, { timeZone });
+    return timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * `yyyy-MM-dd HH:mm` in the given IANA time zone (e.g. the server's, for
- * build times), whatever the browser's; in the browser's zone when the
- * zone is unknown to it.
+ * build times), whatever the browser's; in the browser's zone without one
+ * or when the browser does not know it (see {@link supportedTimeZone}).
  */
 export function formatIsoMinute(
   value: string | number | Date,
   timeZone?: string,
 ): string {
-  const options: Intl.DateTimeFormatOptions = {
+  const parts = dateFormat({
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
-  };
-  let format: Intl.DateTimeFormat;
-  try {
-    format = dateFormat({ ...options, timeZone });
-  } catch {
-    format = dateFormat(options);
-  }
-  const parts = format.formatToParts(toDate(value));
+    timeZone: supportedTimeZone(timeZone),
+  }).formatToParts(toDate(value));
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((entry) => entry.type === type)?.value ?? '';
   return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`;

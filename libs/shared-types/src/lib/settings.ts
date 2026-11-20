@@ -11,4 +11,9 @@ export interface AppSettingsDto {
    */
   gitAuthorName: string | null;
   gitAuthorEmail: string | null;
+  /**
+   * The server's IANA time zone, from `TZ` (`UTC` when unset or invalid),
+   * e.g. for showing the server's build time.
+   */
+  timeZone: string;
 }

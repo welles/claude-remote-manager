@@ -6,6 +6,7 @@ import {
   GIT_AUTHOR_NAME_VARIABLE,
   type AppConfig,
 } from '../config/app-config';
+import { serverTimeZone } from '../common/time-zone';
 import type { GitIdentity } from '../git/git-auth';
 
 /** Message when a session or project needs the commit identity. */
@@ -25,6 +26,7 @@ export class SettingsService {
     return {
       gitAuthorName: identity?.name ?? null,
       gitAuthorEmail: identity?.email ?? null,
+      timeZone: serverTimeZone(process.env['TZ']),
     };
   }
 

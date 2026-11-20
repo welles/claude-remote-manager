@@ -18,6 +18,7 @@ describe('settings REST API', () => {
       {
         gitAuthorName: 'Ada',
         gitAuthorEmail: 'ada@example.com',
+        timeZone: expect.any(String),
       },
     );
     const put = await rawRequest(
@@ -36,6 +37,7 @@ describe('settings REST API', () => {
       {
         gitAuthorName: null,
         gitAuthorEmail: null,
+        timeZone: expect.any(String),
       },
     );
     const response = await postJson(app.port, '/api/repositories', {

@@ -3,6 +3,7 @@ import {
   formatDate,
   formatIsoMinute,
   formatRelative,
+  supportedTimeZone,
 } from './dates';
 
 describe('dates', () => {
@@ -43,5 +44,11 @@ describe('dates', () => {
     expect(formatIsoMinute('2027-01-05T08:05:00Z', 'UTC')).toBe(
       '2027-01-05 08:05',
     );
+    expect(formatIsoMinute(late, 'Not/AZone')).toMatch(
+      /^\d{4}-\d\d-\d\d \d\d:\d\d$/,
+    );
+    expect(supportedTimeZone('Europe/Berlin')).toBe('Europe/Berlin');
+    expect(supportedTimeZone('Not/AZone')).toBeUndefined();
+    expect(supportedTimeZone(null)).toBeUndefined();
   });
 });
