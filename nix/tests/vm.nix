@@ -150,6 +150,10 @@ pkgs.testers.runNixOSTest {
         auth.mode = "none";
         # Reachable on the machine's own address too, to test refusals there.
         listenAddress = "0.0.0.0";
+        gitAuthor = {
+          name = "Test Owner";
+          email = "owner@example.com";
+        };
         github = {
           appId = 12345;
           privateKeyFile = "/run/secrets/crm/github-app-key";
@@ -243,8 +247,8 @@ pkgs.testers.runNixOSTest {
           assert "Claude Code" in version, version
 
       with subtest("a local project: mirror, session clone, session process"):
-          status, text = api("PUT", "/api/settings", {"gitAuthorName": "Test Owner", "gitAuthorEmail": "owner@example.com"})
-          assert status == 200, text
+          status, text = api("GET", "/api/settings")
+          assert status == 200 and json.loads(text)["gitAuthorName"] == "Test Owner", text
           status, text = api("POST", "/api/sessions", {"prompt": "hello", "newProject": {"name": "demo"}, "permissionMode": "bypassPermissions"})
           assert status in (200, 201, 204), (status, text)
           session = json.loads(text)

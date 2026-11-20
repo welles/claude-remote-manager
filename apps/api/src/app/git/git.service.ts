@@ -541,6 +541,40 @@ export class GitService {
     await inClone(['config', '--', 'user.email', identity?.email ?? '']);
   }
 
+  /** Whether a clone's own configuration holds exactly this identity. */
+  async hasIdentity(
+    path: string,
+    identity: GitIdentity | null,
+  ): Promise<boolean> {
+    let output: string;
+    try {
+      output = await this.inClone(path, [
+        'config',
+        '--local',
+        '--get-regexp',
+        '^user\\.(name|email|useconfigonly)$',
+      ]);
+    } catch {
+      // none of them set
+      return false;
+    }
+    const values = new Map<string, string>();
+    for (const line of output.split('\n')) {
+      if (line) {
+        const space = line.indexOf(' ');
+        values.set(
+          space < 0 ? line : line.slice(0, space),
+          space < 0 ? '' : line.slice(space + 1),
+        );
+      }
+    }
+    return (
+      values.get('user.useconfigonly') === 'true' &&
+      values.get('user.name') === (identity?.name ?? '') &&
+      values.get('user.email') === (identity?.email ?? '')
+    );
+  }
+
   /** Points `origin` of a session clone to another URL. */
   async setOrigin(path: string, url: string): Promise<void> {
     await this.inClone(path, ['config', '--', 'remote.origin.url', url]);

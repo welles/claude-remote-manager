@@ -172,7 +172,7 @@ describe('session preparation', () => {
     );
   });
 
-  it('applies the commit identity to clones, also when it changes', async () => {
+  it('applies the commit identity to clones, a changed one at startup', async () => {
     const repository = await harness.addRepository('acme', 'app');
     const session = await create({
       repositories: [{ repositoryId: repository.id }],
@@ -184,13 +184,14 @@ describe('session preparation', () => {
       'Test Author <author@example.com>',
     );
 
-    harness.settings.update({
-      gitAuthorName: 'Grace Hopper',
-      gitAuthorEmail: 'grace@example.com',
-    });
-    await waitFor(
-      async () => (await git(path, 'config', 'user.name')) === 'Grace Hopper',
-    );
+    // The environment changed, then the API restarts.
+    harness.config.gitIdentity = {
+      name: 'Grace Hopper',
+      email: 'grace@example.com',
+    };
+    await harness.start();
+    expect(await git(path, 'config', 'user.name')).toBe('Grace Hopper');
+    expect(await harness.workspaces.applyIdentity()).toBe(0);
     await commitFile(path, 'b.txt', 'b');
     expect(await git(path, 'log', '-1', '--format=%an <%ae>')).toBe(
       'Grace Hopper <grace@example.com>',
@@ -199,10 +200,10 @@ describe('session preparation', () => {
 
   it('starts no session with repositories without a commit identity', async () => {
     const repository = await harness.addRepository('acme', 'app');
-    harness.settings.update({ gitAuthorName: null, gitAuthorEmail: null });
+    harness.config.gitIdentity = null;
     await expect(
       create({ repositories: [{ repositoryId: repository.id }] }),
-    ).rejects.toThrow('Settings page');
+    ).rejects.toThrow('CRM_GIT_AUTHOR_NAME');
     await expect(create({ newProject: { name: 'p' } })).rejects.toThrow(
       ConflictException,
     );

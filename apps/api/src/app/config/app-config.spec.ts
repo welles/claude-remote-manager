@@ -29,6 +29,41 @@ describe('loadAppConfig', () => {
     ).toThrow('session user nobody2 does not exist');
   });
 
+  it('reads the commit identity: both variables or neither', () => {
+    expect(
+      loadAppConfig({
+        ...DEV,
+        CRM_GIT_AUTHOR_NAME: ' Ada Lovelace ',
+        CRM_GIT_AUTHOR_EMAIL: 'ada@example.com',
+      }).gitIdentity,
+    ).toEqual({ name: 'Ada Lovelace', email: 'ada@example.com' });
+    expect(
+      loadAppConfig({
+        ...DEV,
+        CRM_GIT_AUTHOR_NAME: '',
+        CRM_GIT_AUTHOR_EMAIL: ' ',
+      }).gitIdentity,
+    ).toBeNull();
+    for (const [env, message] of [
+      [{ CRM_GIT_AUTHOR_NAME: 'Ada' }, 'or neither'],
+      [{ CRM_GIT_AUTHOR_EMAIL: 'a@b.c' }, 'or neither'],
+      [
+        { CRM_GIT_AUTHOR_NAME: 'A <b>', CRM_GIT_AUTHOR_EMAIL: 'a@b.c' },
+        'without <',
+      ],
+      [
+        { CRM_GIT_AUTHOR_NAME: 'Line\nbreak', CRM_GIT_AUTHOR_EMAIL: 'a@b.c' },
+        'control characters',
+      ],
+      [
+        { CRM_GIT_AUTHOR_NAME: 'A', CRM_GIT_AUTHOR_EMAIL: 'not-an-email' },
+        'CRM_GIT_AUTHOR_EMAIL is not an email address',
+      ],
+    ] as const) {
+      expect(() => loadAppConfig({ ...DEV, ...env })).toThrow(message);
+    }
+  });
+
   it('reads the session PATH for separate users', () => {
     const env = { ...DEV, PROCESS_ISOLATION: 'separate-users' };
     expect(
@@ -63,6 +98,7 @@ describe('loadAppConfig', () => {
       legacyClaudeConfigDir: null,
       apiGitConfigGlobal: null,
       memoryDir: join(devData, 'memory'),
+      gitIdentity: null,
       github: null,
       isolation: { mode: 'single-user' },
       auth: { mode: 'none' },
@@ -96,6 +132,8 @@ describe('loadAppConfig', () => {
           ALLOWED_HOSTS: 'crm.example.com,crm.internal',
           PORT: '8080',
           CLAUDE_CONFIG_DIR: '/data/claude',
+          CRM_GIT_AUTHOR_NAME: 'Jane Doe',
+          CRM_GIT_AUTHOR_EMAIL: 'jane@example.com',
           GITHUB_APP_ID: '12345',
           GITHUB_APP_PRIVATE_KEY_FILE: '/run/secrets/github-app-key',
           PROCESS_ISOLATION: 'separate-users',
@@ -134,6 +172,7 @@ describe('loadAppConfig', () => {
       legacyClaudeConfigDir: null,
       apiGitConfigGlobal: null,
       memoryDir: '/data/claude/repository-memory',
+      gitIdentity: { name: 'Jane Doe', email: 'jane@example.com' },
       github: {
         appId: '12345',
         privateKeyFile: '/run/secrets/github-app-key',

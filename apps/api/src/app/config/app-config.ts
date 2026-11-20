@@ -7,6 +7,7 @@ import {
   type ProcessIsolation,
 } from '../common/process-isolation';
 import { join, resolve } from 'node:path';
+import type { GitIdentity } from '../git/git-auth';
 
 /** Settings of the API, read from the environment once at startup. */
 export interface AppConfig {
@@ -81,6 +82,12 @@ export interface AppConfig {
    * temporary directory, so they do not outlive a reboot).
    */
   environmentFilesDir: string;
+  /**
+   * Author of the commits in session clones (`CRM_GIT_AUTHOR_NAME`,
+   * `CRM_GIT_AUTHOR_EMAIL`): the user, not the GitHub App. `null` when
+   * not configured: sessions with repositories are refused then.
+   */
+  gitIdentity: GitIdentity | null;
   /** GitHub App; `null` when not configured. */
   github: GitHubAppConfig | null;
   /** Who runs the session processes, see ProcessIsolation. */
@@ -286,6 +293,7 @@ export function loadAppConfig(
     environmentFilesDir: resolve(
       value('ENVIRONMENT_FILES_DIR') ?? join(tmpdir(), 'crm-environment-files'),
     ),
+    gitIdentity: loadGitIdentity(value),
     github: appId
       ? {
           appId,
@@ -305,6 +313,42 @@ export function loadAppConfig(
     prAutomation: loadPrAutomation(value),
     previews: loadPreviews(value, auth),
   };
+}
+
+export const GIT_AUTHOR_NAME_VARIABLE = 'CRM_GIT_AUTHOR_NAME';
+export const GIT_AUTHOR_EMAIL_VARIABLE = 'CRM_GIT_AUTHOR_EMAIL';
+
+/** Simple shape check; git accepts anything without newlines and <>. */
+const EMAIL_PATTERN = /^[^\s<>@]+@[^\s<>@]+$/;
+// eslint-disable-next-line no-control-regex
+const FORBIDDEN_IN_NAME = /[<>\u0000-\u001f\u007f]/;
+
+/**
+ * The commit identity of session clones: both variables or neither. A
+ * value git cannot use stops the start instead of failing every commit.
+ */
+function loadGitIdentity(
+  value: (name: string) => string | undefined,
+): GitIdentity | null {
+  const name = value(GIT_AUTHOR_NAME_VARIABLE);
+  const email = value(GIT_AUTHOR_EMAIL_VARIABLE);
+  if (name === undefined && email === undefined) {
+    return null;
+  }
+  if (name === undefined || email === undefined) {
+    throw new Error(
+      `Set both ${GIT_AUTHOR_NAME_VARIABLE} and ${GIT_AUTHOR_EMAIL_VARIABLE}, or neither`,
+    );
+  }
+  if (name.length > 200 || FORBIDDEN_IN_NAME.test(name)) {
+    throw new Error(
+      `${GIT_AUTHOR_NAME_VARIABLE} must be at most 200 characters without <, > or control characters`,
+    );
+  }
+  if (email.length > 320 || !EMAIL_PATTERN.test(email)) {
+    throw new Error(`${GIT_AUTHOR_EMAIL_VARIABLE} is not an email address`);
+  }
+  return { name, email };
 }
 
 /** Host names that can never be a preview domain (the app's loopback names). */
@@ -594,6 +638,7 @@ export function testAppConfig(
     memoryDir: join(dir, 'memory'),
     environmentKeyFile: join(dir, 'environment.key'),
     environmentFilesDir: join(dir, 'environment-files'),
+    gitIdentity: null,
     github: null,
     isolation: { mode: 'single-user' },
     auth: { mode: 'none' },

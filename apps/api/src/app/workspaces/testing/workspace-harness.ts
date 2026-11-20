@@ -76,15 +76,6 @@ export const TEST_IDENTITY = {
   email: 'author@example.com',
 };
 
-/** Settings with the test commit identity. */
-export function withTestIdentity(settings: SettingsService): SettingsService {
-  settings.update({
-    gitAuthorName: TEST_IDENTITY.name,
-    gitAuthorEmail: TEST_IDENTITY.email,
-  });
-  return settings;
-}
-
 /**
  * Sessions service with real git, real setup scripts and real temporary
  * repositories; only Claude Code is faked.
@@ -98,14 +89,16 @@ export class WorkspaceHarness {
   readonly transcripts = new FakeTranscriptReader();
   readonly sessions = new SessionRepository(this.db);
   readonly repositoryRecords = new RepositoryRepository(this.db);
-  readonly settings = withTestIdentity(new SettingsService(this.db));
   readonly github = new FakeGitHub();
   readonly credentials = new RepositoryCredentials(
     this.github.service,
     this.repositoryRecords,
   );
   readonly events: SessionEventEnvelope[] = [];
-  readonly config: AppConfig = testAppConfig(this.dir);
+  readonly config: AppConfig = testAppConfig(this.dir, {
+    gitIdentity: TEST_IDENTITY,
+  });
+  readonly settings = new SettingsService(this.config);
   readonly approver = new RecordingApprover();
   readonly environments = new EnvironmentsService(
     this.db,
@@ -145,7 +138,6 @@ export class WorkspaceHarness {
       this.environments,
       this.environmentFiles,
     );
-    this.workspaces.onModuleInit();
     this.additions = new RepositoryAdditions(this.repositories);
     this.sessionGit = new SessionGitService(
       this.sessions,
@@ -259,7 +251,6 @@ export class WorkspaceHarness {
 
   async close(): Promise<void> {
     await this.service?.onModuleDestroy();
-    this.workspaces?.onModuleDestroy();
     this.db.$client.close();
     this.sandbox.cleanup();
   }

@@ -1,16 +1,14 @@
 /**
- * Settings of the app, edited on the Settings page and stored in the
- * database. Secrets (GitHub App key, tokens) are never settings: they come
- * from the environment.
+ * Settings of the app shown on the Settings page, read-only: they come from
+ * the API's environment. Secrets (GitHub App key, tokens) are never
+ * settings.
  */
 export interface AppSettingsDto {
   /**
    * Author of the commits in session clones (the user, not the GitHub
-   * App). Sessions with repositories cannot start while it is unset.
+   * App), from `CRM_GIT_AUTHOR_NAME` and `CRM_GIT_AUTHOR_EMAIL`. Sessions
+   * with repositories cannot start while it is unset.
    */
   gitAuthorName: string | null;
   gitAuthorEmail: string | null;
 }
-
-/** Body of `PUT /api/settings`; fields left out stay unchanged. */
-export type UpdateSettingsRequest = Partial<AppSettingsDto>;

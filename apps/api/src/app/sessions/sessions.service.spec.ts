@@ -21,7 +21,7 @@ import { SessionWorkspaceService } from '../workspaces/session-workspace.service
 import { FakeGitHub } from '../github/testing/fake-github';
 import { RepositoryCredentials } from '../repositories/repository-credentials';
 import { SettingsService } from '../settings/settings.service';
-import { withTestIdentity } from '../workspaces/testing/workspace-harness';
+import { TEST_IDENTITY } from '../workspaces/testing/workspace-harness';
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { DENIED_STOP_MESSAGE } from './permission-requests';
 import { SessionEventRepository } from './session-event.repository';
@@ -80,7 +80,7 @@ describe('SessionsService', () => {
 
   const createService = async () => {
     const sessions = new SessionRepository(db);
-    const settings = withTestIdentity(new SettingsService(db));
+    const settings = new SettingsService(config);
     const records = new RepositoryRepository(db);
     const repositories = new RepositoriesService(
       config,
@@ -170,7 +170,7 @@ describe('SessionsService', () => {
     dir = sandbox.dir;
     db = openDatabase(':memory:');
     git = new GitService();
-    config = testAppConfig(dir);
+    config = testAppConfig(dir, { gitIdentity: TEST_IDENTITY });
     const origin = join(dir, 'origin', 'acme', 'tool');
     await createOrigin(origin);
     new RepositoryRepository(db).create({

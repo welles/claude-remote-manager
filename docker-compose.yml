@@ -25,6 +25,10 @@ services:
       # Public host name the app is reached under (behind the tunnel); the
       # API refuses other Host headers except loopback names.
       # ALLOWED_HOSTS: crm.example.com
+      # Author of the commits in session clones (both or neither); without
+      # them sessions with repositories cannot start.
+      # CRM_GIT_AUTHOR_NAME: Jane Doe
+      # CRM_GIT_AUTHOR_EMAIL: jane@example.com
       # GitHub App (optional): App ID and the private key as secret file.
       # Without them the app runs without GitHub (local projects and clone
       # URLs still work).
