@@ -186,7 +186,7 @@
             (click)="cleanupDialog()?.show('archive')"
             data-testid="archive-offer-archive"
           >
-            <app-icon name="archive" />Archive…
+            <app-icon matButtonIcon name="archive" />Archive…
           </button>
           @if (resumable()) {
           <button
@@ -389,7 +389,7 @@
           (click)="cleanupDialog()?.show('cleanup')"
           data-testid="cleanup"
         >
-          <app-icon name="clean" />Clean up…
+          <app-icon matButtonIcon name="clean" />Clean up…
         </button>
         } @if (s.archivedAt) {
         <button
@@ -407,7 +407,7 @@
           (click)="cleanupDialog()?.show('archive')"
           data-testid="archive"
         >
-          <app-icon name="archive" />Archive…
+          <app-icon matButtonIcon name="archive" />Archive…
         </button>
         } @if (canDelete()) {
         <button
@@ -417,7 +417,7 @@
           (click)="deleteDialog()?.show()"
           data-testid="delete"
         >
-          <app-icon name="trash" />Delete…
+          <app-icon matButtonIcon name="trash" />Delete…
         </button>
         }
       </div>

@@ -5,15 +5,6 @@
 
 // "New session": a button in the app bar from 600 px, a floating button
 // above the bottom navigation on phones.
-.new-session {
-  --mat-button-filled-icon-spacing: 6px;
-
-  app-icon {
-    --app-icon-size: 18px;
-    margin-right: 6px;
-  }
-}
-
 @media (max-width: 599px) {
   .new-session {
     position: fixed;

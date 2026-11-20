@@ -110,7 +110,7 @@
           (click)="removeEntry('variables', entry.key)"
           data-testid="variable-remove"
         >
-          <app-icon name="trash" />Remove
+          <app-icon matButtonIcon name="trash" />Remove
         </button>
       </div>
       @if (problem('variable-' + entry.key); as text) {
@@ -124,7 +124,7 @@
       (click)="addVariable()"
       data-testid="add-variable"
     >
-      <app-icon name="plus" />Add variable
+      <app-icon matButtonIcon name="plus" />Add variable
     </button>
   </section>
 
@@ -233,7 +233,7 @@
           (click)="removeEntry('files', entry.key)"
           data-testid="file-remove"
         >
-          <app-icon name="trash" />Remove
+          <app-icon matButtonIcon name="trash" />Remove
         </button>
       </div>
       @if (problem('file-' + entry.key); as text) {
@@ -242,7 +242,7 @@
     </div>
     }
     <button matButton type="button" (click)="addFile()" data-testid="add-file">
-      <app-icon name="plus" />Add file
+      <app-icon matButtonIcon name="plus" />Add file
     </button>
     @if (problem('entries'); as text) {
     <p class="error">{{ text }}</p>
@@ -369,7 +369,7 @@
       (click)="addRepository()"
       data-testid="add-preset-repository"
     >
-      <app-icon name="plus" />Add repository
+      <app-icon matButtonIcon name="plus" />Add repository
     </button>
     }
     <div class="row">
