@@ -125,6 +125,13 @@ export interface FakeReviewItem {
 
 /** A review thread of a pull request (GraphQL `reviewThreads`). */
 export interface FakeReviewThread {
+  /** GraphQL node ID; default `T_<repository id>_<number>_<index>`. */
+  id?: string;
+  /**
+   * REST IDs (`databaseId`) of the thread's comments, the first one's
+   * first; replies through the fake are added.
+   */
+  commentIds?: number[];
   resolved: boolean;
   outdated?: boolean;
   author: string;
@@ -184,6 +191,16 @@ export class FakeGitHub {
   readonly jobLogs = new Map<number, string>();
   /** Review threads per `<repository id>#<number>`. */
   readonly reviewThreads = new Map<string, FakeReviewThread[]>();
+  /** Replies to review comments posted through the API. */
+  readonly reviewReplies: {
+    repositoryId: number;
+    number: number;
+    commentId: number;
+    id: number;
+    body: string;
+  }[] = [];
+  /** GraphQL IDs of the review threads resolved through the API. */
+  readonly resolvedThreads: string[] = [];
   /** Merge methods the repositories allow. */
   allowedMergeMethods = new Set(['rebase', 'squash', 'merge']);
   /** Merges done: pull request number and method. */
@@ -722,7 +739,119 @@ export class FakeGitHub {
         });
   }
 
-  /** GraphQL: only the review threads of a pull request. */
+  /** GraphQL ID of a review thread (`<repository id>#<number>`, index). */
+  private threadId(key: string, index: number, thread: FakeReviewThread) {
+    return thread.id ?? `T_${key.replace('#', '_')}_${index}`;
+  }
+
+  /**
+   * `POST /repos/{owner}/{repo}/pulls/{number}/comments/{id}/replies`: the
+   * comment must be a review comment of the pull request (in
+   * {@link reviewItems} or a thread's `commentIds`).
+   */
+  private replyRoute(request: RecordedRequest): Response | undefined {
+    const { method, path, auth } = request;
+    const match =
+      /^\/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/comments\/(\d+)\/replies$/.exec(
+        path,
+      );
+    if (method !== 'POST' || !match) {
+      return undefined;
+    }
+    const found = this.repositoryByName(
+      decodeURIComponent(match[1]),
+      decodeURIComponent(match[2]),
+    );
+    const number = Number(match[3]);
+    const commentId = Number(match[4]);
+    if (
+      !found ||
+      !this.pulls.some(
+        (pull) =>
+          pull.repositoryId === found.repository.id && pull.number === number,
+      )
+    ) {
+      return json(404, { message: 'Not Found' });
+    }
+    const { repository } = found;
+    if (!this.allows(auth, repository, 'pull_requests', 'write')) {
+      return json(403, { message: 'Resource not accessible by integration' });
+    }
+    const key = `${repository.id}#${number}`;
+    const thread = (this.reviewThreads.get(key) ?? []).find((entry) =>
+      entry.commentIds?.includes(commentId),
+    );
+    const known =
+      !!thread ||
+      (this.reviewItems.get(key) ?? []).some(
+        (item) => item.kind === 'review_comment' && item.id === commentId,
+      );
+    if (!known) {
+      return json(404, { message: 'Not Found' });
+    }
+    const body = (request.body ?? {}) as { body?: unknown };
+    if (typeof body.body !== 'string' || body.body === '') {
+      return json(422, {
+        message: 'Validation Failed',
+        errors: [{ message: 'body is missing' }],
+      });
+    }
+    const id = this.nextId++;
+    this.reviewReplies.push({
+      repositoryId: repository.id,
+      number,
+      commentId,
+      id,
+      body: body.body,
+    });
+    thread?.commentIds?.push(id);
+    return json(201, {
+      id,
+      body: body.body,
+      in_reply_to_id: commentId,
+      html_url: `https://github.com/${repository.owner}/${repository.name}/pull/${number}#discussion_r${id}`,
+    });
+  }
+
+  /** GraphQL mutation `resolveReviewThread`. */
+  private resolveThread(
+    auth: RecordedRequest['auth'],
+    threadId: string,
+  ): Response {
+    for (const [key, threads] of this.reviewThreads) {
+      const index = threads.findIndex(
+        (thread, position) => this.threadId(key, position, thread) === threadId,
+      );
+      if (index < 0) {
+        continue;
+      }
+      const repositoryId = Number(key.split('#')[0]);
+      const repository = this.repositoryById(repositoryId);
+      if (!this.allows(auth, repository, 'pull_requests', 'write')) {
+        return json(200, {
+          data: { resolveReviewThread: null },
+          errors: [{ message: 'Resource not accessible by integration' }],
+        });
+      }
+      threads[index].resolved = true;
+      this.resolvedThreads.push(threadId);
+      return json(200, {
+        data: {
+          resolveReviewThread: { thread: { id: threadId, isResolved: true } },
+        },
+      });
+    }
+    return json(200, {
+      data: { resolveReviewThread: null },
+      errors: [
+        {
+          message: `Could not resolve to a node with the global id of '${threadId}'`,
+        },
+      ],
+    });
+  }
+
+  /** GraphQL: the review threads of a pull request, and resolving one. */
   private graphqlRoute(request: RecordedRequest): Response | undefined {
     const { method, path, auth } = request;
     if (method !== 'POST' || path !== '/graphql') {
@@ -735,9 +864,13 @@ export class FakeGitHub {
         name?: string;
         number?: number;
         after?: string | null;
+        threadId?: string;
       };
     };
     const variables = body.variables ?? {};
+    if (body.query?.includes('resolveReviewThread')) {
+      return this.resolveThread(auth, variables.threadId ?? '');
+    }
     const found = this.repositoryByName(
       variables.owner ?? '',
       variables.name ?? '',
@@ -751,12 +884,18 @@ export class FakeGitHub {
         errors: [{ message: 'Resource not accessible by integration' }],
       });
     }
-    const all =
-      this.reviewThreads.get(`${found.repository.id}#${variables.number}`) ??
-      [];
+    const key = `${found.repository.id}#${variables.number}`;
+    const all = this.reviewThreads.get(key) ?? [];
     // Pages of two, to exercise the cursor.
     const start = Number(variables.after ?? 0);
     const page = all.slice(start, start + 2);
+    const later = (thread: FakeReviewThread) =>
+      (thread.commentIds ?? []).slice(1).map((databaseId) => ({
+        databaseId,
+        body: 'A reply',
+        createdAt: thread.createdAt ?? '2026-01-01T00:00:00Z',
+        author: { __typename: 'User', login: 'someone' },
+      }));
     return json(200, {
       data: {
         repository: {
@@ -766,7 +905,8 @@ export class FakeGitHub {
                 hasNextPage: start + 2 < all.length,
                 endCursor: String(start + 2),
               },
-              nodes: page.map((thread) => ({
+              nodes: page.map((thread, index) => ({
+                id: this.threadId(key, start + index, thread),
                 isResolved: thread.resolved,
                 isOutdated: thread.outdated ?? false,
                 path: thread.path ?? 'src/app.ts',
@@ -775,6 +915,7 @@ export class FakeGitHub {
                 comments: {
                   nodes: [
                     {
+                      databaseId: thread.commentIds?.[0] ?? null,
                       body: thread.body,
                       createdAt: thread.createdAt ?? '2026-01-01T00:00:00Z',
                       author: {
@@ -783,6 +924,7 @@ export class FakeGitHub {
                         login: thread.author.replace(/\[bot\]$/, ''),
                       },
                     },
+                    ...later(thread),
                   ],
                 },
               })),
@@ -878,7 +1020,8 @@ export class FakeGitHub {
     const automationResponse =
       this.automationRoute(request) ??
       this.graphqlRoute(request) ??
-      this.mergeRoute(request);
+      this.mergeRoute(request) ??
+      this.replyRoute(request);
     if (automationResponse) {
       return automationResponse;
     }

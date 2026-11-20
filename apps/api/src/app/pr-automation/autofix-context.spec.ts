@@ -192,4 +192,107 @@ describe('autofix context', () => {
     // The header names the closing tag once; the item has the only real one.
     expect(text.match(/<\/untrusted-content-x>/g)).toHaveLength(2);
   });
+
+  it('gives the comment IDs for reply_to_review_thread and says how to answer threads', () => {
+    const context = autofixContext({
+      repository: 'acme/app',
+      number: 3,
+      failed: [],
+      feedback: [
+        {
+          kind: 'review_comment',
+          id: 4711,
+          author: 'owner',
+          authorType: 'User',
+          body: 'Rename this',
+          createdAt: '2026-11-13T10:00:00Z',
+          state: null,
+          commitId: null,
+          path: 'a.ts',
+          line: 3,
+          diffHunk: null,
+        },
+      ],
+      threads: [
+        {
+          author: 'reviewer[bot]',
+          authorType: 'Bot',
+          body: 'Missing test',
+          createdAt: '2026-11-13T10:00:00Z',
+          path: 'b.ts',
+          line: 9,
+          outdated: false,
+          commentId: 815,
+        },
+        {
+          author: 'owner',
+          authorType: 'User',
+          body: 'Unknown ID',
+          createdAt: '2026-11-13T10:00:00Z',
+          path: null,
+          line: null,
+          outdated: false,
+          commentId: null,
+        },
+      ],
+    });
+    expect(context.items.map((item) => item.attributes['comment-id'])).toEqual([
+      '4711',
+      '815',
+      undefined,
+    ]);
+
+    const review = autofixMessage({
+      repository: 'acme/app',
+      number: 3,
+      trigger: 'review',
+      attempt: 1,
+      maxAttempts: 3,
+      headSha: null,
+      branch: 'claude/x',
+      automerge: true,
+    });
+    expect(review).toContain('reply_to_review_thread');
+    expect(review).toContain('resolve the thread');
+    expect(review).toContain('leave the thread unresolved');
+    expect(review).not.toContain('do not resolve review threads');
+    // CI failures have no threads to answer.
+    expect(
+      autofixMessage({
+        repository: 'acme/app',
+        number: 3,
+        trigger: 'ci',
+        attempt: 1,
+        maxAttempts: 3,
+        headSha: null,
+        branch: 'claude/x',
+      }),
+    ).not.toContain('reply_to_review_thread');
+    const threads = readyMessage({
+      repository: 'acme/app',
+      number: 3,
+      headSha: null,
+      branch: 'claude/x',
+      context: 'feedback',
+      attempt: 1,
+      maxAttempts: 3,
+      automerge: { state: 'threads', count: 2, counting: 1 },
+    });
+    // Said once, with the threads.
+    expect(threads.match(/reply_to_review_thread/g)).toHaveLength(1);
+    expect(threads).toContain('without replying to or resolving them');
+    // Threads of reviewers the app does not trust stay the user's.
+    expect(
+      readyMessage({
+        repository: 'acme/app',
+        number: 3,
+        headSha: null,
+        branch: 'claude/x',
+        context: 'none',
+        attempt: null,
+        maxAttempts: 3,
+        automerge: { state: 'threads', count: 2, counting: 0 },
+      }),
+    ).toContain('do not reply to or resolve review threads');
+  });
 });

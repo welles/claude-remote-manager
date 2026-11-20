@@ -4,6 +4,14 @@ export const CREATE_PULL_REQUEST_TOOL = 'create_pull_request';
 /** The tool's name as Claude Code reports it to `canUseTool`. */
 export const CREATE_PULL_REQUEST_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${CREATE_PULL_REQUEST_TOOL}`;
 /**
+ * The app's tool that replies on a review thread of one of the session's
+ * pull requests and/or resolves it (the backend does it with an
+ * installation token; `gh` stays read-only). Asks as the permission mode
+ * says, except during an Autofix run.
+ */
+export const REPLY_TO_REVIEW_THREAD_TOOL = 'reply_to_review_thread';
+export const REPLY_TO_REVIEW_THREAD_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${REPLY_TO_REVIEW_THREAD_TOOL}`;
+/**
  * The app's tool that adds a repository to the running session, see
  * `RepositoryAdditions`.
  */

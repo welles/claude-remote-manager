@@ -119,12 +119,21 @@ export function requestSummary(
         action = 'Create a pull request';
       } else if (request.repositoryAddition) {
         action = 'Add a repository';
+      } else if (request.reviewThreadReply) {
+        const reply = request.reviewThreadReply;
+        action =
+          reply.body && reply.resolve
+            ? 'Reply to and resolve a review thread'
+            : reply.body
+              ? 'Reply to a review thread'
+              : 'Resolve a review thread';
       } else if (name) {
         action = `Use ${name}`;
       }
       if (
         !request.pullRequest &&
         !request.repositoryAddition &&
+        !request.reviewThreadReply &&
         Object.keys(input).length > 0
       ) {
         add('Input', JSON.stringify(input, null, 2), true);

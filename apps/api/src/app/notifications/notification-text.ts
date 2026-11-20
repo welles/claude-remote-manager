@@ -91,6 +91,22 @@ export function approvalSummary(
       ),
     };
   }
+  if (request.reviewThreadReply) {
+    const reply = request.reviewThreadReply;
+    const action =
+      reply.body && reply.resolve
+        ? 'Reply to and resolve a review thread'
+        : reply.body
+          ? 'Reply to a review thread'
+          : 'Resolve a review thread';
+    return {
+      action,
+      detail: shorten(
+        `${reply.repository ?? ''}#${reply.pullRequest ?? '?'}${reply.body ? `: ${reply.body.replace(/\s+/g, ' ').trim()}` : ''}`,
+        DETAIL_LENGTH,
+      ),
+    };
+  }
   if (request.repositoryAddition) {
     const addition = request.repositoryAddition;
     const from =

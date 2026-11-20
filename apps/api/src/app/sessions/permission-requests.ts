@@ -175,6 +175,7 @@ export function describeRequest(
     gitPushes: request.gitPushes,
     pullRequest: request.pullRequest,
     repositoryAddition: request.repositoryAddition ?? null,
+    reviewThreadReply: request.reviewThreadReply ?? null,
     sessionAllow: offer,
     questions: kind === 'question' ? parseQuestions(request.input) : null,
     plan: kind === 'plan' ? planText(request.input) : null,

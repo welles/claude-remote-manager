@@ -348,7 +348,8 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
 - Auto mode (`auto`): Claude Code's classifier approves or blocks each tool use and asks the
   user through `canUseTool` only when it cannot decide; plan mode stays without it
   (`useAutoModeDuringPlan: false`). The app adds no limits of its own: `git push`,
-  `create_pull_request` and `add_repository` are decided like any tool use, by the mode and the
+  `create_pull_request`, `reply_to_review_thread` and `add_repository` are decided like any tool
+  use, by the mode and the
   permission rules (the user's, the project's and those allowed for the session).
 - Autofix hold: an Autofix run (untrusted GitHub content) of a session in `auto` or
   `bypassPermissions` runs in `default`: the process switches before the run's message and back
@@ -363,13 +364,15 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   subagents, backgrounded commands, monitors, schedules, workflows and teammates; a task the
   run started anyway (a command moved to the background at its timeout) is stopped when the
   run ends. Still unasked: the app's own tools that never ask (showing a file, previews, the
-  session title).
+  session title), and `reply_to_review_thread`, which can only answer and resolve review
+  threads of the session's own pull requests (allowed in `canUseTool` during the run).
   Not covered: a `PermissionRequest` hook in the user's or the project's Claude Code settings
   that approves requests itself. Injected text in a CI
   log or comment cannot push elsewhere with the user's credentials. The app's narrow
   `git add`/`commit`/`push` allowance for Autofix stays (see
   [git during autofix](#git-during-autofix)); what Claude may read unasked could still end up
-  in a commit message pushed to the pull request. Where auto mode is not available (plan, model,
+  in a commit message pushed to the pull request or in a reply on one of its review threads.
+  Where auto mode is not available (plan, model,
   settings), Claude Code starts in or falls back to `default` and reports it (`status`/`init`);
   the chosen mode stays, and the session's `permissionModeOverride` (`{ mode, reason }`, reason
   `auto_unavailable`, `bypass_unavailable` or `autofix`) says which mode is in effect while the
@@ -405,7 +408,8 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   `set_session_title` (unless the user chose the title, see
   [Managing sessions](#managing-sessions)), `add_repository` (always, see
   [Adding repositories to a running session](#adding-repositories-to-a-running-session)) and
-  `create_pull_request` (when the session has a GitHub repository; all in the in-process MCP
+  `create_pull_request`, `reply_to_review_thread` and `request_owner_decision` (when the
+  session has a GitHub repository; all in the in-process MCP
   server `crm`), and the auto-memory directory of its main repository. No credentials: git uses
   the user's own (see [Push and pull requests](#push-and-pull-requests)).
 - Session files are read by the API only through `apps/api/src/assets/session-files.cjs`, run
@@ -1576,7 +1580,16 @@ Both work two ways:
    old one (it hid the user's) when their session's next Claude Code process starts. Pull
    requests come from the tool `create_pull_request` (repository, title, body, base branch,
    draft), which never pushes and makes the pull request with the GitHub App, so the session
-   shows it and the PR automation follows it. Claude may use `gh` as well.
+   shows it and the PR automation follows it. Claude may use `gh` as well (read only in the
+   container). Review threads of the session's own pull requests (`record.pullRequests`)
+   are answered with the tool `reply_to_review_thread` (repository, pull request, the REST ID
+   of any review comment of the thread, a Markdown reply and/or `resolve`): the API posts
+   the reply (`POST /repos/{owner}/{repo}/pulls/{number}/comments/{id}/replies`) and
+   resolves the thread (GraphQL `resolveReviewThread`, the thread found through
+   `reviewThreads` by the comment's `databaseId`) with an installation token for exactly that
+   repository and `pull_requests: write`. Other pull requests are refused. It asks as the
+   permission mode says (the dialog shows the pull request, the comment, the reply and
+   whether it resolves), except during an Autofix run.
 
 **CI checks**: every open pull request of a session shows the checks of its head commit
 (check runs and commit statuses), with or without PR automation: one line with the overall
@@ -1757,10 +1770,13 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
 - **Findings first**: unresolved threads on a green, approved head commit go along with the
   ready message (once per head commit, as untrusted context, only those whose author counts;
   an attempt only when such threads go along), which asks Claude to fix every finding, also
-  hints, commit and push; the
-  reviewer resolves what it finds fixed with its next review, which starts the next round.
+  hints, commit and push, then reply on each thread with what changed and resolve it with
+  `reply_to_review_thread` (the context gives each review comment and thread its
+  `comment-id`); findings it does not fix get a reply with the reason and stay unresolved.
+  The reviewer's next review starts the next round.
   The UI shows "Automerge waits: 2 unresolved review threads". Messages to Claude while
-  automerge is on say that the app merges and Claude must neither merge nor resolve threads.
+  automerge is on say that the app merges and Claude must not merge; threads of people the
+  app does not trust are left to the owner, without replying to or resolving them.
   After a run ends, the pull request is checked again (nothing left may mean ready). When
   threads stay open that no run works on (Claude left them without asking the owner, or none
   of them is by someone who counts, whose text never reaches Claude), the owner is notified
@@ -1783,11 +1799,13 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
 - **Known limit (decided)**: the approval and the resolved threads are the gate, and the
   owner's own approval counts. Sessions run as the owner's user, with the owner's GitHub
   credentials (`gh`) where the machine has them, so in a turn outside an Autofix run (e.g. in
-  `auto` mode) Claude could approve as the owner or resolve threads itself. That Claude must
+  `auto` mode) Claude could approve as the owner. That Claude must
   not do so is only an instruction in the app's messages, not enforced. Where that matters,
   keep the session user without GitHub credentials or leave automerge off. In the container
-  sessions cannot approve or resolve threads (`gh`'s token is read only, approvals by bots
-  count only when listed in `PR_TRUSTED_BOTS`; never list the app's own bot there), but the
+  sessions cannot approve (`gh`'s token is read only, approvals by bots
+  count only when listed in `PR_TRUSTED_BOTS`; never list the app's own bot there); they can
+  resolve threads of their own pull requests, but only through `reply_to_review_thread`
+  (the owner's decision), which asks outside Autofix runs and shows in the history. The
   `git` token's `contents: write` can merge a pull request or push to the default branch
   directly (e.g. with `curl` and the token from `git credential fill`). The gate therefore
   holds only together with branch protection on GitHub (required reviews and checks, no
@@ -1960,7 +1978,8 @@ What a session process can and cannot reach (checked in the container):
 
 The session user `claude` has no GitHub credentials of its own (no SSH key, no token; its
 home is not a volume). Repositories are fetched by the API (installation tokens, `/data/git`),
-the Push and Create PR buttons and the tool `create_pull_request` use the GitHub App, and
+the Push and Create PR buttons and the tools `create_pull_request` and `reply_to_review_thread`
+use the GitHub App, and
 Claude's own `git` and `gh` get short-lived installation tokens of the app from the API
 (`apps/api/src/app/sessions/session-github-tokens.service.ts`):
 
@@ -1983,7 +2002,8 @@ Claude's own `git` and `gh` get short-lived installation tokens of the app from 
   for all of the session's repositories in the installation of the working directory's
   `origin` (or of the session's first GitHub repository), read only: metadata, contents, pull
   requests, issues, checks, statuses, Actions. It cannot comment, approve, merge, resolve
-  review threads or change settings. Outside a session it runs `gh` without a token. A `gh`
+  review threads or change settings; replies on and resolving review threads of the session's
+  own pull requests go through the app's tool `reply_to_review_thread` instead. Outside a session it runs `gh` without a token. A `gh`
   from a Nix shell comes first on the PATH and gets no token; commands that need a user
   (`gh pr status`, `gh auth status`) do not work with installation tokens.
 - Tokens are minted for the session alone (never the API's cached ones), reused for at most

@@ -209,6 +209,36 @@ describe('PermissionCard', () => {
     expect(pull?.querySelector('strong')?.textContent).toBe('CSV');
   });
 
+  it('shows the reply on a review thread and whether it resolves it', async () => {
+    const element = await render(
+      permissionRequest({
+        toolName: 'mcp__crm__reply_to_review_thread',
+        title: null,
+        displayName: null,
+        input: { pull_request: 4, comment_id: 501, body: 'x', resolve: true },
+        reviewThreadReply: {
+          repository: 'acme/app',
+          pullRequest: 4,
+          commentId: 501,
+          body: 'Fixed in **abc123**',
+          resolve: true,
+        },
+      }),
+    );
+    expect(element.textContent).toContain(
+      'Reply to and resolve a review thread',
+    );
+    const reply = element.querySelector('[data-testid="review-thread-reply"]');
+    expect(reply?.textContent).toContain('acme/app#4');
+    expect(reply?.textContent).toContain('501');
+    expect(reply?.querySelector('strong')?.textContent).toBe('abc123');
+    expect(
+      reply?.querySelector('[data-testid="reply-resolve"]')?.textContent,
+    ).toContain('yes');
+    // The summary does not repeat the raw input.
+    expect(element.textContent).not.toContain('"comment_id"');
+  });
+
   it('collects answers to Claude’s questions', async () => {
     const element = await render(
       permissionRequest({

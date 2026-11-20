@@ -159,6 +159,34 @@
       </div>
       }
     </dl>
+    } @if (r.reviewThreadReply; as reply) {
+    <dl class="fields" data-testid="review-thread-reply">
+      <div class="field">
+        <dt>Pull request</dt>
+        <dd>
+          <code
+            >{{ reply.repository ?? 'not named' }}#{{ reply.pullRequest ?? '?'
+            }}</code
+          >
+        </dd>
+      </div>
+      <div class="field">
+        <dt>Thread of comment</dt>
+        <dd><code>{{ reply.commentId ?? '?' }}</code></dd>
+      </div>
+      @if (reply.body) {
+      <div class="field">
+        <dt>Reply</dt>
+        <dd class="markdown body" [innerHTML]="reply.body | markdown"></dd>
+      </div>
+      }
+      <div class="field">
+        <dt>Resolve</dt>
+        <dd data-testid="reply-resolve">
+          {{ reply.resolve ? 'yes, resolve the thread' : 'no' }}
+        </dd>
+      </div>
+    </dl>
     } @if (r.repositoryAddition; as add) {
     <dl class="fields" data-testid="repository-addition">
       <div class="field">

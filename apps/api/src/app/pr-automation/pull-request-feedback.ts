@@ -71,6 +71,11 @@ export interface ReviewThread {
   line: number | null;
   /** The code it refers to changed since. */
   outdated: boolean;
+  /**
+   * REST ID of its first comment (for `reply_to_review_thread`); `null`
+   * if GitHub did not say.
+   */
+  commentId: number | null;
 }
 
 /** Pages of 100 review threads read at most. */
@@ -88,7 +93,7 @@ const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: In
           line
           originalLine
           comments(first: 1) {
-            nodes { body createdAt author { __typename login } }
+            nodes { databaseId body createdAt author { __typename login } }
           }
         }
       }
@@ -110,6 +115,7 @@ interface RawThreadPage {
             originalLine?: number | null;
             comments?: {
               nodes?: ({
+                databaseId?: number | null;
                 body?: string | null;
                 createdAt?: string;
                 author?: { __typename?: string; login?: string } | null;
@@ -403,6 +409,8 @@ export class PullRequestFeedback {
           path: node.path ?? null,
           line: node.line ?? node.originalLine ?? null,
           outdated: node.isOutdated === true,
+          commentId:
+            typeof first?.databaseId === 'number' ? first.databaseId : null,
         });
       }
       if (!connection.pageInfo?.hasNextPage) {

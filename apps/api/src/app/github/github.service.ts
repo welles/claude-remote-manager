@@ -142,6 +142,75 @@ interface RawInstallation {
   html_url?: string;
 }
 
+/** A review thread of a pull request (GraphQL). */
+export interface ReviewThreadInfo {
+  /** GraphQL node ID. */
+  id: string;
+  resolved: boolean;
+}
+
+/** Pages of 100 review threads searched at most for a comment. */
+export const MAX_REVIEW_THREAD_PAGES = 5;
+
+const REVIEW_THREAD_LOOKUP_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          isResolved
+          comments(first: 100) { nodes { databaseId } }
+        }
+      }
+    }
+  }
+}`;
+
+const RESOLVE_REVIEW_THREAD_MUTATION = `mutation($threadId: ID!) {
+  resolveReviewThread(input: { threadId: $threadId }) {
+    thread { id isResolved }
+  }
+}`;
+
+interface GraphQLResponse<T> {
+  data?: T | null;
+  errors?: { message?: string }[];
+}
+
+type RawThreadLookup = GraphQLResponse<{
+  repository?: {
+    pullRequest?: {
+      reviewThreads?: {
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+        nodes?: ({
+          id?: string;
+          isResolved?: boolean;
+          comments?: { nodes?: ({ databaseId?: number | null } | null)[] };
+        } | null)[];
+      };
+    } | null;
+  } | null;
+}>;
+
+type RawResolveThread = GraphQLResponse<{
+  resolveReviewThread?: {
+    thread?: { id?: string; isResolved?: boolean } | null;
+  } | null;
+}>;
+
+/**
+ * The data of a GraphQL answer; GitHub reports errors (also missing
+ * permissions) with status 200 in `errors`.
+ */
+function graphqlData<T>(response: GraphQLResponse<T>, what: string): T {
+  const message = response?.errors?.[0]?.message;
+  if (message !== undefined || !response?.data) {
+    throw new Error(`GitHub did not ${what}${message ? `: ${message}` : ''}`);
+  }
+  return response.data;
+}
+
 /** `owner/name` with both parts URL-encoded. */
 function repoPath(fullName: string): string {
   return fullName.split('/').map(encodeURIComponent).join('/');
@@ -494,6 +563,106 @@ export class GitHubService {
   }
 
   /**
+   * The review thread of a pull request that contains the review comment
+   * `commentId` (its REST ID, GraphQL's `databaseId`), through GraphQL
+   * (REST knows no threads). `null` when no thread has it. Uses a token
+   * with `pull_requests: write`, the one {@link resolveReviewThread} and
+   * {@link replyToReviewComment} need as well.
+   */
+  async findReviewThread(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    number: number,
+    commentId: number,
+  ): Promise<ReviewThreadInfo | null> {
+    const token = await this.reviewToken(installationId, repositoryId);
+    const [owner, name] = fullName.split('/');
+    let after: string | null = null;
+    for (let page = 0; page < MAX_REVIEW_THREAD_PAGES; page++) {
+      const response: { data: RawThreadLookup } =
+        await this.http.request<RawThreadLookup>({
+          method: 'POST',
+          path: '/graphql',
+          token,
+          body: {
+            query: REVIEW_THREAD_LOOKUP_QUERY,
+            variables: { owner, name, number, after },
+          },
+        });
+      const connection = graphqlData(response.data, 'list the review threads')
+        .repository?.pullRequest?.reviewThreads;
+      if (!connection?.nodes) {
+        throw new Error(
+          `GitHub did not list the review threads of ${fullName}#${number}`,
+        );
+      }
+      for (const node of connection.nodes) {
+        if (
+          node?.id &&
+          node.comments?.nodes?.some(
+            (comment) => comment?.databaseId === commentId,
+          )
+        ) {
+          return { id: node.id, resolved: node.isResolved === true };
+        }
+      }
+      if (!connection.pageInfo?.hasNextPage) {
+        return null;
+      }
+      after = connection.pageInfo.endCursor ?? null;
+    }
+    throw new Error(
+      `${fullName}#${number} has more than ${MAX_REVIEW_THREAD_PAGES * 100} review threads`,
+    );
+  }
+
+  /** Resolves a review thread (its GraphQL node ID). */
+  async resolveReviewThread(
+    installationId: number,
+    repositoryId: number,
+    threadId: string,
+  ): Promise<void> {
+    const token = await this.reviewToken(installationId, repositoryId);
+    const response = await this.http.request<RawResolveThread>({
+      method: 'POST',
+      path: '/graphql',
+      token,
+      body: {
+        query: RESOLVE_REVIEW_THREAD_MUTATION,
+        variables: { threadId },
+      },
+    });
+    const thread = graphqlData(response.data, 'resolve the review thread')
+      .resolveReviewThread?.thread;
+    if (thread?.isResolved !== true) {
+      throw new Error('GitHub did not resolve the review thread');
+    }
+  }
+
+  /**
+   * Replies to a review comment of a pull request: the reply goes into
+   * the comment's thread. Returns the reply's URL.
+   */
+  async replyToReviewComment(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    number: number,
+    commentId: number,
+    body: string,
+  ): Promise<{ id: number; url: string }> {
+    const token = await this.reviewToken(installationId, repositoryId);
+    const response = await this.http.request<{ id: number; html_url: string }>({
+      method: 'POST',
+      path: `/repos/${repoPath(fullName)}/pulls/${number}/comments/${commentId}/replies`,
+      token,
+      body: { body },
+    });
+    return { id: response.data.id, url: response.data.html_url };
+  }
+
+  /**
    * Merges a pull request, exactly at `sha` (GitHub refuses when the head
    * moved), trying the methods in order: a method the repository does not
    * allow, or a rebase GitHub cannot do, goes on to the next one. Returns
@@ -587,6 +756,18 @@ export class GitHubService {
   }
 
   // -------------------------------------------------------------------------
+
+  /** Token for replying on and resolving review threads of one repository. */
+  private async reviewToken(
+    installationId: number,
+    repositoryId: number,
+  ): Promise<string> {
+    return (
+      await this.repositoryToken(installationId, repositoryId, {
+        pull_requests: 'write',
+      })
+    ).token;
+  }
 
   private appInfo(): Promise<{ name: string; slug: string; url: string }> {
     if (!this.app || this.now() - this.app.at > APP_CACHE_MS) {

@@ -10,6 +10,7 @@ import type {
   PermissionResolvedEvent,
   PullRequestCall,
   RepositoryAdditionCall,
+  ReviewThreadReplyCall,
 } from '@claude-remote-manager/shared-types';
 
 /** A `permission.request` event before the log assigns `seq` and `at`. */
@@ -44,6 +45,8 @@ export interface ToolApprovalRequest {
   gitPushes: GitPushAnalysis[];
   /** For the app's `create_pull_request` tool: the pull request. */
   pullRequest: PullRequestCall | null;
+  /** For the app's `reply_to_review_thread` tool: the reply. */
+  reviewThreadReply?: ReviewThreadReplyCall | null;
   /** For the app's `add_repository` tool: what it would add (checked). */
   repositoryAddition?: RepositoryAdditionCall | null;
   /** For file changes: the change it would make. */

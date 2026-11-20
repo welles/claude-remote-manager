@@ -14,6 +14,7 @@ import type {
   PermissionResolutionCause,
   PermissionResponse,
   PullRequestCall,
+  ReviewThreadReplyCall,
   SessionAllowOffer,
   UserQuestion,
 } from './permissions';
@@ -238,6 +239,11 @@ export interface PermissionRequestEvent extends SessionEventBase {
    * servers). Only ever allowed once: never for the whole session.
    */
   repositoryAddition?: RepositoryAdditionCall | null;
+  /**
+   * For the app's `reply_to_review_thread` tool: the thread, the reply and
+   * whether it is resolved (absent from older servers).
+   */
+  reviewThreadReply?: ReviewThreadReplyCall | null;
   /**
    * For file changes (`Edit`, `Write`, `NotebookEdit`): the change it would
    * make, against the file's current content where it could be read
