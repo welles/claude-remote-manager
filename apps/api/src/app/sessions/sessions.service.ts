@@ -4089,14 +4089,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Whether the session's process must stay: background tasks, Claude's own
-   * wait or previews of its dev servers would end with it.
+   * wait or previews of its dev servers would end with it. With
+   * `exceptClaudeWait`, Claude's own wait does not count (the app is about
+   * to wake it).
    */
-  processMustStay(sessionId: string): boolean {
+  processMustStay(
+    sessionId: string,
+    options: { exceptClaudeWait?: boolean } = {},
+  ): boolean {
     const live = this.live.get(sessionId);
-    return (
-      !!live?.run &&
-      (this.keepsProcess(live) || this.keptForPreviews(sessionId))
-    );
+    if (!live?.run) {
+      return false;
+    }
+    const keeps = options.exceptClaudeWait
+      ? live.backgroundTasks.size > 0 || live.backgroundGrace !== null
+      : this.keepsProcess(live);
+    return keeps || this.keptForPreviews(sessionId);
   }
 
   /**
@@ -4142,14 +4150,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Whether a message of the app (such as an autofix run) may start a turn
-   * now: the session waits for a message, or only because Claude said it
-   * goes on by itself (`set_waiting_state` with `work`, e.g. "CI of PR #12")
-   * while no background task of it still runs or is about to report back,
-   * or only for the CI of its pull requests. Claude may well be waiting for
-   * exactly what the app brings.
-   */
-  /**
    * Claude's turn is over and it said it goes on by itself
    * (`set_waiting_state` "work", not expired yet): the app may wake it,
    * e.g. when one of its pull requests was merged or closed.
@@ -4164,6 +4164,25 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /**
+   * The app takes over Claude's word that it goes on by itself (it is about
+   * to wake it): the wait ends without publishing, the wake's turn follows.
+   */
+  releaseClaudeWait(sessionId: string): void {
+    const live = this.live.get(sessionId);
+    if (live) {
+      this.clearClaudeWait(live);
+    }
+  }
+
+  /**
+   * Whether a message of the app (such as an autofix run) may start a turn
+   * now: the session waits for a message, or only because Claude said it
+   * goes on by itself (`set_waiting_state` with `work`, e.g. "CI of PR #12")
+   * while no background task of it still runs or is about to report back,
+   * or only for the CI of its pull requests. Claude may well be waiting for
+   * exactly what the app brings.
+   */
   acceptsAppMessage(sessionId: string): boolean {
     const record = this.sessions.get(sessionId);
     if (!record) {
