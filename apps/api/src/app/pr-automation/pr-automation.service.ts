@@ -553,6 +553,8 @@ export class PrAutomationService
         automergeHeldAt: pull.automergeHeldAt,
         automergeHoldReason: pull.automergeHoldReason,
       });
+      // `update` published the session without the hold.
+      this.sessions.publishUpdate(sessionId);
     }
     const updated = this.records.pullRequest(pull.id) ?? pull;
     this.sessions.recordEvent(sessionId, {
