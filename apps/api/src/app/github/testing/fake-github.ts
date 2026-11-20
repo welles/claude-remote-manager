@@ -789,6 +789,13 @@ export class FakeGitHub {
     if (!known) {
       return json(404, { message: 'Not Found' });
     }
+    if (thread && thread.commentIds?.[0] !== commentId) {
+      // GitHub takes replies only to a thread's first comment.
+      return json(422, {
+        message: 'Validation Failed',
+        errors: [{ message: 'Replies to replies are not supported.' }],
+      });
+    }
     const body = (request.body ?? {}) as { body?: unknown };
     if (typeof body.body !== 'string' || body.body === '') {
       return json(422, {

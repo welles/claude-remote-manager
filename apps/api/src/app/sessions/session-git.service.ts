@@ -18,7 +18,7 @@ import { GitError } from '../git/git-runner';
 import { GitService, isValidBranchName } from '../git/git.service';
 import { KeyedMutex } from '../git/keyed-mutex';
 import { GitHubApiError } from '../github/github-errors';
-import { GitHubService, type ReviewThreadInfo } from '../github/github.service';
+import { GitHubService } from '../github/github.service';
 import {
   isGitHubRepository,
   RepositoryCredentials,
@@ -390,9 +390,9 @@ export class SessionGitService {
    * Replies on a review thread of one of the session's own pull requests
    * and/or resolves it (Claude's tool `reply_to_review_thread`). The thread
    * is named by any of its review comments (REST ID). Pull requests not
-   * recorded for the session are refused. When it resolves, the thread is
-   * looked up first, so that nothing is posted for a comment that is in
-   * no thread of the pull request.
+   * recorded for the session are refused. The thread is looked up first
+   * (GraphQL), so that nothing is posted for a comment that is in no
+   * thread of the pull request; the reply goes to its first comment.
    */
   async replyToReviewThread(
     sessionId: string,
@@ -438,20 +438,19 @@ export class SessionGitService {
     }
     const installation = repository.githubInstallationId;
     const githubId = repository.githubRepositoryId;
-    let thread: ReviewThreadInfo | null = null;
-    if (resolve) {
-      thread = await this.github.findReviewThread(
-        installation,
-        githubId,
-        fullName,
-        number,
-        commentId,
+    // Also checks that the comment belongs to this pull request; GitHub
+    // takes replies only to a thread's first comment.
+    const thread = await this.github.findReviewThread(
+      installation,
+      githubId,
+      fullName,
+      number,
+      commentId,
+    );
+    if (!thread) {
+      throw new NotFoundException(
+        `No review thread of ${fullName}#${number} has the comment ${commentId}`,
       );
-      if (!thread) {
-        throw new NotFoundException(
-          `No review thread of ${fullName}#${number} has the comment ${commentId}`,
-        );
-      }
     }
     let reply: { id: number; url: string } | null = null;
     if (body !== null) {
@@ -461,23 +460,23 @@ export class SessionGitService {
           githubId,
           fullName,
           number,
-          commentId,
+          thread.rootCommentId,
           body,
         );
       } catch (error) {
         if (error instanceof GitHubApiError && error.githubStatus === 404) {
           throw new NotFoundException(
-            `The review comment ${commentId} of ${fullName}#${number} was not found (${error.message})`,
+            `The review comment ${thread.rootCommentId} of ${fullName}#${number} was not found (${error.message})`,
           );
         }
         throw error;
       }
     }
-    if (!thread || thread.resolved) {
+    if (!resolve || thread.resolved) {
       return {
         pullRequest: `${fullName}#${number}`,
         replyUrl: reply?.url ?? null,
-        resolved: thread ? 'already' : null,
+        resolved: resolve ? 'already' : null,
       };
     }
     try {

@@ -147,6 +147,11 @@ export interface ReviewThreadInfo {
   /** GraphQL node ID. */
   id: string;
   resolved: boolean;
+  /**
+   * REST ID of its first (root) comment: GitHub takes replies only to
+   * that one ("Replies to replies are not supported").
+   */
+  rootCommentId: number;
 }
 
 /** Pages of 100 review threads searched at most for a comment. */
@@ -204,8 +209,8 @@ type RawResolveThread = GraphQLResponse<{
  * permissions) with status 200 in `errors`.
  */
 function graphqlData<T>(response: GraphQLResponse<T>, what: string): T {
-  const message = response?.errors?.[0]?.message;
-  if (message !== undefined || !response?.data) {
+  const message = response?.errors?.find((error) => error?.message)?.message;
+  if (response?.errors?.length || !response?.data) {
     throw new Error(`GitHub did not ${what}${message ? `: ${message}` : ''}`);
   }
   return response.data;
@@ -564,8 +569,9 @@ export class GitHubService {
 
   /**
    * The review thread of a pull request that contains the review comment
-   * `commentId` (its REST ID, GraphQL's `databaseId`), through GraphQL
-   * (REST knows no threads). `null` when no thread has it. Uses a token
+   * `commentId` (its REST ID, GraphQL's `databaseId`; one of its first 100
+   * comments), through GraphQL (REST knows no threads). `null` when no
+   * thread of this pull request has it. Uses a token
    * with `pull_requests: write`, the one {@link resolveReviewThread} and
    * {@link replyToReviewComment} need as well.
    */
@@ -604,7 +610,17 @@ export class GitHubService {
             (comment) => comment?.databaseId === commentId,
           )
         ) {
-          return { id: node.id, resolved: node.isResolved === true };
+          const root = node.comments.nodes[0]?.databaseId;
+          if (typeof root !== 'number') {
+            throw new Error(
+              `GitHub did not name the first comment of the review thread of ${commentId}`,
+            );
+          }
+          return {
+            id: node.id,
+            resolved: node.isResolved === true,
+            rootCommentId: root,
+          };
         }
       }
       if (!connection.pageInfo?.hasNextPage) {
