@@ -256,11 +256,12 @@ export function zeroTurnMessages(message: AgentUserMessage): number {
 
 /**
  * The PreToolUse hook through which `gate` looks at tool calls before
- * Claude Code's own permission check. `ask` is not left to allow rules or
+ * Claude Code's own permission check. `allow` runs the call without
+ * asking (deny rules still apply). `ask` is not left to allow rules or
  * the mode: Claude Code then calls `canUseTool` once (with its title,
  * reason and suggestions; deny rules and its safety checks still apply).
  * `deny` refuses the call with the reason. The hook only answers, it never
- * waits; a failure blocks the call (`onFailure: 'block'`).
+ * waits for the user; a failure blocks the call (`onFailure: 'block'`).
  */
 export function gateHooks(
   gate: NonNullable<AgentStartOptions['gate']>,
@@ -278,7 +279,7 @@ export function gateHooks(
               typeof input.tool_input === 'object' && input.tool_input !== null
                 ? (input.tool_input as Record<string, unknown>)
                 : {};
-            const verdict = gate({
+            const verdict = await gate({
               toolName: input.tool_name,
               input: toolInput,
               toolUseId: input.tool_use_id,

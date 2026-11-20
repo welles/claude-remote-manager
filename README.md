@@ -28,8 +28,9 @@ permission mode allows, up to `bypassPermissions`); usage is recorded per reques
 (approvals with Allow and Deny right in the notification), and the web app is an installable
 PWA with an offline shell, badge, shortcuts and a share target. Per open pull request,
 autofix continues the session when CI fails or reviewers with write access comment,
-automerge merges once CI is green, the head commit is approved and no review thread is open
-(Claude can pause it for the owner's decision), and
+automerge merges once CI is green, nobody requests changes and no review thread is open
+(no approval needed; Claude can pause it for the owner's decision, or merge it itself with
+`merge_pull_request`), and
 autoclose ends the session and removes its clones when the pull request is merged or closed
 (see [PR automation](#pr-automation)). Dev servers Claude starts become previews on host names
 of their own, opened as links or embedded (see [Previews](#previews-of-dev-servers)).
@@ -351,46 +352,29 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   `create_pull_request`, `reply_to_review_thread` and `add_repository` are decided like any tool
   use, by the mode and the
   permission rules (the user's, the project's and those allowed for the session).
-- Autofix hold: an Autofix run (untrusted GitHub content) of a session in `auto` or
-  `bypassPermissions` runs in `default`: the process switches before the run's message and back
-  to the chosen mode when its turn ends. During that turn every tool call except reading
-  (`Read`, `Glob`, `Grep`, `LSP`, `ToolSearch`, to-dos and task lists) and setting the session
-  title (`set_session_title`; injected text could only change the displayed title, and every
-  change is a line in the history) goes to the user, in any
-  mode and whatever allow rules say (the user's own, the project's, "Allow for this
-  session"): a PreToolUse hook answers `ask`, which Claude Code does not leave to allow rules,
-  and the dialog does not offer to allow it for the session (in `dontAsk` it is refused).
-  Work that would go on unheld after the run and start a turn of its own is refused:
-  subagents, backgrounded commands, monitors, schedules, workflows and teammates; a task the
-  run started anyway (a command moved to the background at its timeout) is stopped when the
-  run ends. Still unasked: the app's own tools that never ask (showing a file, previews, the
-  session title), and replies with `reply_to_review_thread`, which only touches the session's
-  own pull requests (allowed in `canUseTool` during the run). Resolving a thread with it
-  (`resolve: true`) goes through the gate like any action, and `canUseTool` lets it run
-  unasked only when GitHub's own data shows a push in this run since the thread's last
-  comment (never the clone's recorded push): the pull request's current head (read from
-  GitHub) is the `after` of the branch's latest push or force push in the repository activity
-  (`GET /repos/{owner}/{repo}/activity`, `contents: read`, GitHub's timestamp), and that push
-  is later than the start of the run (when its message went to Claude Code) and than the
-  thread's last comment not written by the app (GraphQL `viewerDidAuthor`; per comment the
-  latest of `createdAt`, `publishedAt`, which for a review comment is when the review was
-  submitted, and `lastEditedAt`). Missing or malformed data counts as not met. Right before
-  resolving, the tool checks again (no newer comment, the same head); if that fails it only
-  replies and says the thread stays open. This is a push since the comment in this run, not
-  proof that the thread was fixed. Otherwise, and on any error, the user gets the approval
-  dialog. In
-  `dontAsk` Claude Code never calls `canUseTool`, so the tool is refused there unless an
-  allow rule covers a reply, like the Autofix `git` allowance.
-  Not covered: a `PermissionRequest` hook in the user's or the project's Claude Code settings
-  that approves requests itself. Injected text in a CI
-  log or comment cannot push elsewhere with the user's credentials. The app's narrow
-  `git add`/`commit`/`push` allowance for Autofix stays (see
-  [git during autofix](#git-during-autofix)); what Claude may read unasked could still end up
-  in a commit message pushed to the pull request or in a reply on one of its review threads.
+- Autofix runs (untrusted GitHub content as context) run in the session's chosen mode with its
+  permission rules like any turn, `auto` and `bypassPermissions` included (the owner's
+  decision: sessions work on trusted repositories). On top of the mode, the app's narrow
+  `git add`/`commit`/`push` allowance (see [git during autofix](#git-during-autofix)) and
+  replies with `reply_to_review_thread`, which only touch the session's own pull requests,
+  run unasked during the run's turn when Claude Code asks (`canUseTool`). Resolving a thread
+  with it (`resolve: true`) runs unasked there only when GitHub's own data shows a push in this
+  run since the thread's last comment (never the clone's recorded push): the pull request's
+  current head (read from GitHub) is the `after` of the branch's latest push or force push in
+  the repository activity (`GET /repos/{owner}/{repo}/activity`, `contents: read`, GitHub's
+  timestamp), and that push is later than the start of the run (when its message went to
+  Claude Code) and than the thread's last comment not written by the app (GraphQL
+  `viewerDidAuthor`; per comment the latest of `createdAt`, `publishedAt`, which for a review
+  comment is when the review was submitted, and `lastEditedAt`). Missing or malformed data
+  counts as not met. Right before resolving, the tool checks again (no newer comment, the
+  same head); if that fails it only replies and says the thread stays open. This is a push
+  since the comment in this run, not proof that the thread was fixed. Otherwise, and on any
+  error, the user gets the approval dialog. In `dontAsk` Claude Code never calls
+  `canUseTool`, so these allowances do not apply there.
   Where auto mode is not available (plan, model,
   settings), Claude Code starts in or falls back to `default` and reports it (`status`/`init`);
   the chosen mode stays, and the session's `permissionModeOverride` (`{ mode, reason }`, reason
-  `auto_unavailable`, `bypass_unavailable` or `autofix`) says which mode is in effect while the
+  `auto_unavailable` or `bypass_unavailable`) says which mode is in effect while the
   process runs. The view shows it in the strip ("Ask (auto unavailable)") and under the mode
   control. Switching a running process to `auto` fails with Claude Code's reason when it cannot
   use it; after a model change the app asks for `auto` again (Claude Code does not return to it
@@ -1555,7 +1539,7 @@ or logs:
 | clone and fetch of a mirror               | `contents: read`                                                             |
 | push by button                            | `contents: write` (+ `workflows: write` if workflow files changed)           |
 | create / read a pull request              | `pull_requests: write` + `contents: read` / `pull_requests: read`            |
-| merge a pull request (automerge)          | `pull_requests: write` + `contents: write`                                   |
+| merge a pull request (automerge, Claude)  | `pull_requests: write` + `contents: write`                                   |
 | create a repository                       | `administration: write`, fresh, revoked afterwards                           |
 | `#` references: issues, comments          | `issues: read` + `pull_requests: read`                                       |
 | `#` references: a pull request's diff     | `issues: read` + `pull_requests: read` + `contents: read`                    |
@@ -1604,8 +1588,20 @@ Both work two ways:
    `reviewThreads` by the comment's `databaseId`) with an installation token for exactly that
    repository and `pull_requests: write`. Other pull requests are refused. It asks as the
    permission mode says (the dialog shows the pull request, the comment, the reply and
-   whether it resolves), except during an Autofix run: replies run unasked, resolving only
-   after a push in this run since the thread's last comment (see the Autofix hold above).
+   whether it resolves); during an Autofix run replies run unasked, resolving only after a
+   push in this run since the thread's last comment (see Autofix runs above). Pull requests
+   of the session are merged with the tool `merge_pull_request` (repository, pull request,
+   optional `method`): the API merges exactly the head commit (`PUT .../pulls/{number}/merge`
+   with `sha`; without `method` rebase, else squash, else a merge commit, as automerge does)
+   with an installation token for that repository, and records the merge at once. Other pull
+   requests are refused. It asks as the permission mode says (the dialog shows the pull
+   request and the method). When automerge is on for the pull request, a PreToolUse hook lets
+   it run unasked (before the mode and rules) if the pull request is ready as automerge sees
+   it, read fresh from GitHub: open, no draft, automerge not paused, all checks of the head
+   commit passed (at least one reported), nobody who counts requests changes, no new reviews
+   or comments since the last autofix run, no unresolved review thread; it then merges
+   exactly the head commit it checked. Autoclose after a merge waits until the session's
+   turn is over, so Claude's own merge does not end the turn it runs in.
 
 **CI checks**: every open pull request of a session shows the checks of its head commit
 (check runs and commit statuses), with or without PR automation: one line with the overall
@@ -1621,8 +1617,7 @@ Neither check changes nor re-reading an unchanged pull request move the session 
 Approval: both are tool uses like any other; whether they ask depends on the session's
 permission mode and rules (see [Approval requests](#approval-requests)): `default` asks for
 each, "allow for this session" can cover them, `auto` lets the classifier decide,
-`bypassPermissions` runs them without asking. Only during an Autofix run does the app hold
-`auto` and `bypassPermissions` in `default` (see [Autofix](#autofix)).
+`bypassPermissions` runs them without asking, also during an Autofix run.
 
 When Claude Code asks, the approval request carries, for every `git push` in a Bash command,
 what it would update (`gitPushes`: remote, destinations, force, deletes, all branches or tags,
@@ -1727,12 +1722,13 @@ at a time; one asked for meanwhile runs afterwards.
 - **Ready to merge**: once all checks of the head commit have finished with `success`,
   `neutral` or `skipped` (a cancelled check is not passed) and
   the commit is approved (the latest approving or change-requesting review of someone who
-  counts as above approves exactly the head commit, and nobody who counts requests changes),
-  the app tells the session so in its own words, once per head commit
+  counts as above approves exactly the head commit, and nobody who counts requests changes;
+  with automerge on, no approval is needed: at least one check reported and nobody who counts
+  requests changes), the app tells the session so in its own words, once per head commit
   (`autofix_ready_sha`). New reviews and comments go along as untrusted context; the message
-  asks Claude to address what should be changed, or else to merge if the user asked for that
-  (merging still needs the owner's approval, as the turn runs like an autofix run), or to tell
-  the user. Such a message is no attempt unless reviews or comments that may ask for changes
+  asks Claude to address what should be changed, or else to merge with `merge_pull_request`
+  if the user asked for that (asked as the session's permission mode says), or to tell the
+  user. Such a message is no attempt unless reviews or comments that may ask for changes
   come along. At the limit it is sent with the text of approvals only, and the rest gets the
   usual give-up notice. The last trigger shows as "ready to merge". A check that never
   finishes (a status stuck at `pending`, a job waiting for an environment approval) delays
@@ -1770,9 +1766,9 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
 "Stop autofix") turns it off. Turning it on (again) lifts a hold and retries a refused merge.
 
 - **When it merges**: in a check, once the head commit is ready as above (all checks passed,
-  exactly this commit approved by someone who counts, nobody who counts requests changes;
-  never without an approval; at least one check reported, so a fresh push whose checks GitHub
-  does not list yet is not green), no failed check or new review or comment waits for a run, the
+  nobody who counts requests changes; no approval needed, the owner's decision; at least one
+  check reported, so a fresh push whose checks GitHub does not list yet is not green), no
+  failed check or new review or comment waits for a run, the
   pull request is no draft, Claude did not ask for the owner's decision, GitHub did not
   refuse this head commit before, and **no review thread is unresolved** (GraphQL
   `reviewThreads`, as REST has no resolution state; every unresolved thread counts, also
@@ -1783,7 +1779,7 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   if it moved), trying `rebase`, then `squash`, then `merge` (the next one only when GitHub
   says the method is not allowed or the branch cannot be rebased). The merge is then seen like
   any other: notification "Merged", autoclose if on. The history says how it merged.
-- **Findings first**: unresolved threads on a green, approved head commit go along with the
+- **Findings first**: unresolved threads on a ready head commit go along with the
   ready message (once per head commit, as untrusted context, only those whose author counts;
   an attempt only when such threads go along), which asks Claude to fix every finding, also
   hints, commit and push, then reply on each thread with what changed and resolve it with
@@ -1791,8 +1787,10 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   `comment-id`); findings it does not fix get a reply with the reason and stay unresolved.
   The reviewer's next review starts the next round.
   The UI shows "Automerge waits: 2 unresolved review threads". Messages to Claude while
-  automerge is on say that the app merges and Claude must not merge; threads of people the
-  app does not trust are left to the owner, without replying to or resolving them.
+  automerge is on say that the app merges and that Claude's own `merge_pull_request` runs
+  unasked only once the pull request is ready that way (see
+  [Push and pull requests](#push-and-pull-requests)); threads of people the app does not
+  trust are left to the owner, without replying to or resolving them.
   After a run ends, the pull request is checked again (nothing left may mean ready). When
   threads stay open that no run works on (Claude left them without asking the owner, or none
   of them is by someone who counts, whose text never reaches Claude), the owner is notified
@@ -1812,8 +1810,9 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   files the app may not merge), the head commit and GitHub's reason are stored, the history says so, the owner is
   notified once, and the session's ready message says it was refused. A new head commit, or
   turning automerge off and on, tries again.
-- **Known limit (decided)**: the approval and the resolved threads are the gate, and the
-  owner's own approval counts. Sessions run as the owner's user, with the owner's GitHub
+- **Known limit (decided)**: green checks, no change requests and the resolved threads are
+  the gate (approval is not needed), and the owner's own approval counts where reviews are
+  required. Sessions run as the owner's user, with the owner's GitHub
   credentials (`gh`) where the machine has them, so in a turn outside an Autofix run (e.g. in
   `auto` mode) Claude could approve as the owner. That Claude must
   not do so is only an instruction in the app's messages, not enforced. Where that matters,

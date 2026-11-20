@@ -107,6 +107,16 @@ export function approvalSummary(
       ),
     };
   }
+  if (request.pullRequestMerge) {
+    const merge = request.pullRequestMerge;
+    return {
+      action: 'Merge a pull request',
+      detail: shorten(
+        `${merge.repository ?? ''}#${merge.pullRequest ?? '?'}${merge.title ? `: ${merge.title}` : ''}`,
+        DETAIL_LENGTH,
+      ),
+    };
+  }
   if (request.repositoryAddition) {
     const addition = request.repositoryAddition;
     const from =

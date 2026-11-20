@@ -18,7 +18,11 @@ import { GitError } from '../git/git-runner';
 import { GitService, isValidBranchName } from '../git/git.service';
 import { KeyedMutex } from '../git/keyed-mutex';
 import { GitHubApiError } from '../github/github-errors';
-import { GitHubService } from '../github/github.service';
+import {
+  GitHubService,
+  MERGE_METHODS,
+  type MergeMethod,
+} from '../github/github.service';
 import {
   isGitHubRepository,
   RepositoryCredentials,
@@ -75,6 +79,15 @@ export interface ReviewThreadReplyOutcome {
    * no; `null`: not asked to.
    */
   resolved: 'resolved' | 'already' | 'withheld' | null;
+}
+
+/** What {@link SessionGitService.mergePullRequest} did. */
+export interface PullRequestMergeOutcome {
+  /** `owner/name#number`. */
+  pullRequest: string;
+  method: MergeMethod;
+  /** The head commit that was merged. */
+  sha: string;
 }
 
 function errorText(error: unknown): string {
@@ -520,6 +533,74 @@ export class SessionGitService {
       replyUrl: reply?.url ?? null,
       resolved: 'resolved',
     };
+  }
+
+  /**
+   * Merges one of the session's own open pull requests (Claude's tool
+   * `merge_pull_request`) with an installation token for that repository:
+   * exactly the head commit `sha` (the one a check saw), else the head
+   * GitHub reports now. With `method`, only that way; else as automerge
+   * does (rebase, else squash, a merge commit only when neither is
+   * possible). Pull requests not recorded for the session are refused. The
+   * merge is recorded right away (notification, autoclose).
+   */
+  async mergePullRequest(
+    sessionId: string,
+    repositoryId: string,
+    number: number,
+    options: { sha: string | null; method: MergeMethod | null },
+  ): Promise<PullRequestMergeOutcome> {
+    if (!Number.isSafeInteger(number) || number < 1) {
+      throw new BadRequestException('pull_request must be a positive number');
+    }
+    const session = this.sessionRecord(sessionId);
+    const repository = this.repositories.get(repositoryId);
+    if (!repository || !isGitHubRepository(repository)) {
+      throw new ConflictException(
+        'Merging needs a repository registered from GitHub',
+      );
+    }
+    const fullName = `${repository.owner}/${repository.name}`;
+    const pull = session.pullRequests.find(
+      (entry) => entry.repositoryId === repositoryId && entry.number === number,
+    );
+    if (!pull) {
+      const own = session.pullRequests
+        .filter((entry) => entry.repositoryId === repositoryId)
+        .map((entry) => `#${entry.number}`);
+      throw new ForbiddenException(
+        `${fullName}#${number} is not a pull request of this session (${own.length > 0 ? `its pull requests there: ${own.join(', ')}` : `it has none in ${fullName}`}); only the session's own pull requests can be merged`,
+      );
+    }
+    const current = options.sha ? pull : await this.refreshPullRequest(pull.id);
+    if (!current || current.state !== 'open') {
+      throw new ConflictException(
+        `${fullName}#${number} is ${current?.state ?? 'not readable'}, not open`,
+      );
+    }
+    const sha = options.sha ?? current.headSha;
+    if (!sha) {
+      throw new ConflictException(
+        `The head commit of ${fullName}#${number} is not known`,
+      );
+    }
+    const method = await this.github.mergePullRequest(
+      repository.githubInstallationId,
+      repository.githubRepositoryId,
+      fullName,
+      number,
+      sha,
+      options.method ? [options.method] : MERGE_METHODS,
+    );
+    try {
+      await this.refreshPullRequest(pull.id);
+    } catch (error) {
+      // Merged all the same; polling records it later.
+      this.logger.warn(
+        `Could not read ${fullName}#${number} after merging it: ${errorText(error)}`,
+      );
+    }
+    return { pullRequest: `${fullName}#${number}`, method, sha };
   }
 
   /**

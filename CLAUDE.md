@@ -57,8 +57,9 @@ Instructions for Claude sessions working on this repository. What the app is and
 ## State (2026-11-19)
 
 - Specification steps 1–11 are done and deployed; since then: `auto` and `bypassPermissions`
-  modes with an Autofix lock, sessions without sandbox, `/` autocomplete for slash commands,
-  the file browser.
+  modes, sessions without sandbox, `/` autocomplete for slash commands, the file browser;
+  since 2026-11-20 Autofix runs in the chosen mode (no lock), automerge needs no approval, and
+  Claude merges with the app tool `merge_pull_request`.
 - Deferred by the owner: **Rewind** (undo a turn with its file changes).
 - Open: previews of dev servers are built but off on the devbox (no preview domain yet; a
   wildcard two labels below the app's domain needs Cloudflare's Advanced Certificate, or a

@@ -34,6 +34,7 @@ import {
   type PermissionRequestEvent,
   type PermissionResponseResult,
   type PullRequestCall,
+  type PullRequestMergeCall,
   type RepositoryAddedBy,
   type ReviewThreadReplyCall,
   type SessionDto,
@@ -78,7 +79,7 @@ import {
   APP_MCP_SERVER,
   APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
-  READ_ONLY_TOOLS,
+  MERGE_PULL_REQUEST_TOOL_NAME,
   REPLY_TO_REVIEW_THREAD_TOOL_NAME,
   SET_SESSION_TITLE_TOOL,
   SET_SESSION_TITLE_TOOL_NAME,
@@ -217,12 +218,13 @@ export interface SessionMessageInput {
    */
   untrusted?: UntrustedContext;
   /**
-   * The turn this message starts runs in `default` where the session uses
-   * `auto` or `bypassPermissions` (an Autofix run, which works on untrusted
-   * GitHub content): nothing runs without the user's approval until that
-   * turn ends.
+   * The message starts an Autofix run (the PR automation's message with
+   * untrusted GitHub content). Its turn runs in the session's mode with its
+   * rules like any other (the owner's decision: sessions work on trusted
+   * repositories); on top, Autofix's own `git add`, `commit` and `push` of
+   * the session branch and replies on review threads run unasked.
    */
-  holdAutoMode?: boolean;
+  autofixRun?: boolean;
 }
 
 /** What a message's references and untrusted content became. */
@@ -238,50 +240,13 @@ interface QueuedMessage extends UserMessage {
 }
 
 /**
- * Modes in which tool calls run without the user (a classifier or nothing
- * decides): an Autofix run, which works on untrusted GitHub content, runs
- * in `default` instead until its turn ends.
+ * Modes Claude Code may be unable to use (`auto`: plan, model, settings;
+ * `bypassPermissions`: disabled in the settings): it runs as `default`
+ * then, which the session shows as an override.
  */
-export function heldForUntrusted(mode: SessionPermissionMode): boolean {
+export function fallsBackToDefault(mode: SessionPermissionMode): boolean {
   return mode === 'auto' || mode === 'bypassPermissions';
 }
-
-/**
- * Shown for a `reply_to_review_thread` call of an Autofix run that
- * resolves without a push since the thread's last comment.
- */
-export const AUTOFIX_RESOLVE_REASON =
-  "Autofix run: resolving a review thread is confirmed unless the session pushed to the pull request after the thread's last comment";
-
-/** Shown in the approval dialog for the calls of an Autofix run. */
-export const AUTOFIX_ASK_REASON =
-  'Autofix run on GitHub content: every action but reading is confirmed, whatever allow rules say';
-
-/**
- * Whether a call asks to run in the background (Claude Code also accepts
- * the string).
- */
-function runsInBackground(call: AgentToolCall): boolean {
-  const background = call.input['run_in_background'];
-  return background === true || background === 'true';
-}
-
-/**
- * Tools whose work goes on after their call (subagents, which may run in
- * the background whatever the call says; monitors, schedules, workflows,
- * teammates): refused during an Autofix run.
- */
-const LATER_WORK_TOOLS: ReadonlySet<string> = new Set([
-  'Agent',
-  'Task',
-  'Monitor',
-  'CronCreate',
-  'ScheduleWakeup',
-  'Workflow',
-  'RemoteTrigger',
-  'TeamCreate',
-  'SendMessage',
-]);
 
 /**
  * The app's tool that may run without asking during an Autofix run (and
@@ -295,11 +260,23 @@ function autofixAppTool(
   mcpServer: { name: string; source: string } | null,
 ): boolean {
   return (
-    toolName === REPLY_TO_REVIEW_THREAD_TOOL_NAME &&
-    (mcpServer === null ||
-      (mcpServer.name === APP_MCP_SERVER && mcpServer.source === 'sdk'))
+    toolName === REPLY_TO_REVIEW_THREAD_TOOL_NAME && isAppServer(mcpServer)
   );
 }
+
+/** Whether a tool call goes to the app's own MCP server (`sdk`). */
+function isAppServer(
+  mcpServer: { name: string; source: string } | null,
+): boolean {
+  return (
+    mcpServer === null ||
+    (mcpServer.name === APP_MCP_SERVER && mcpServer.source === 'sdk')
+  );
+}
+
+/** Shown when `merge_pull_request` runs unasked. */
+export const AUTOMERGE_ALLOW_REASON =
+  'Automerge is on for this pull request and it is ready: all checks passed, nobody requests changes, no review thread is unresolved';
 
 /** Error text, completed with Claude Code's last stderr line if any. */
 function errorMessage(error: unknown, run?: AgentRun): string {
@@ -414,22 +391,15 @@ interface LiveSession {
    */
   reopen: { continueWith: string | null } | null;
   /**
-   * Set from sending a message with `holdAutoMode` until the end of the
-   * turn it started (`delivered`: it reached Claude Code): a session in
-   * `auto` or `bypassPermissions` runs in `default` meanwhile.
+   * Set from sending a message with `autofixRun` until the end of the turn
+   * it started (`delivered`: it reached Claude Code): the Autofix run.
    */
-  autoHold: {
+  autofixTurn: {
     messageId: string;
     delivered: boolean;
-    /** When the held message went to Claude Code: the run's start. */
+    /** When the message went to Claude Code: the run's start. */
     deliveredAt?: Date;
   } | null;
-  /**
-   * Tasks (subagents, background commands) started during an Autofix run
-   * and not settled yet: stopped when the run ends, so nothing it started
-   * goes on unheld.
-   */
-  heldTasks: Set<string>;
   /**
    * Background tasks of the current process that still run, by task ID
    * (`background_tasks_changed`, without ambient ones such as watchers):
@@ -938,8 +908,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           // added repository): the message goes to the next one.
           await live.consuming;
         }
-        if (input.holdAutoMode) {
-          await this.holdAutoMode(live, id);
+        if (input.autofixRun) {
+          live.autofixTurn = { messageId: id, delivered: false };
         }
       } finally {
         live.sending.delete(id);
@@ -983,7 +953,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     } finally {
       // Not sent, not queued (a duplicate, or an error): no turn to hold.
       if (!live.queue.some((queued) => queued.id === id)) {
-        this.dropHeld(live, id);
+        this.dropAutofixTurn(live, id);
       }
       release();
     }
@@ -1056,7 +1026,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
     }
     live.queue.splice(index, 1);
-    this.dropHeld(live, messageId);
+    this.dropAutofixTurn(live, messageId);
     this.append(live, {
       type: 'message.dequeued',
       id: messageId,
@@ -1261,11 +1231,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (run && live) {
       try {
         if (changes.permissionMode) {
-          await this.requestMode(
-            live,
-            run,
-            this.processMode(live, changes.permissionMode),
-          );
+          await this.requestMode(live, run, changes.permissionMode);
         }
         if (changes.model !== undefined) {
           await run.setModel(changes.model);
@@ -1282,8 +1248,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Claude Code leaves `auto` for a model without auto mode and does
       // not return by itself: ask again (fails for such a model).
       if (
-        this.processMode(live, this.requireRecord(sessionId).permissionMode) ===
-          'auto' &&
+        this.requireRecord(sessionId).permissionMode === 'auto' &&
         live.reportedMode !== 'auto'
       ) {
         void this.requestMode(live, run, 'auto').catch(() => undefined);
@@ -1627,8 +1592,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       addition: null,
       additionGrants: new Map(),
       reopen: null,
-      autoHold: null,
-      heldTasks: new Set(),
+      autofixTurn: null,
       backgroundTasks: new Set(),
       backgroundGrace: null,
       backgroundLimit: null,
@@ -1885,10 +1849,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             ),
           ],
           model: record.model,
-          permissionMode: this.processMode(live, record.permissionMode),
+          permissionMode: record.permissionMode,
           ...(await this.resumeTarget(record)),
           canUseTool: this.canUseTool(live),
-          gate: (call) => this.autofixGate(live, call),
+          gate: (call) => this.mergeGate(live, call),
           allowedTools: [
             ...allowed.rules,
             ...(extras.allowedTools ?? []),
@@ -1972,9 +1936,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.approver.cancelSession(live.id, 'process_exit');
     live.run = null;
     live.consuming = null;
-    // A held turn is over with its process.
-    live.autoHold = null;
-    live.heldTasks.clear();
+    // An Autofix turn is over with its process.
+    live.autofixTurn = null;
     const hadBackgroundTasks =
       live.backgroundTasks.size > 0 || live.claudeWait?.on === 'work';
     live.backgroundTasks.clear();
@@ -2076,14 +2039,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (message.type === 'system' && message.subtype === 'commands_changed') {
       this.slashCommands?.remember(live.id, message.commands);
       return;
-    }
-    if (message.type === 'system' && message.subtype === 'task_started') {
-      if (live.autoHold?.delivered) {
-        live.heldTasks.add(message.task_id);
-      }
-    }
-    if (message.type === 'system' && message.subtype === 'task_notification') {
-      live.heldTasks.delete(message.task_id);
     }
     if (
       message.type === 'system' &&
@@ -2207,13 +2162,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     if (
-      live.autoHold?.delivered &&
+      live.autofixTurn?.delivered &&
       !live.reopen &&
       (result.queued_turn_count ?? 0) === 0
     ) {
-      // The held turn (Autofix run) is over: back to `auto`. With a reopen
-      // pending, the hold goes on with the new process (reopenAfterTurn).
-      this.releaseAutoHold(live);
+      // The Autofix run is over. With a reopen pending, it goes on with the
+      // new process (reopenAfterTurn).
+      live.autofixTurn = null;
     }
     if (live.reopen && (result.queued_turn_count ?? 0) === 0) {
       // An added repository needs a new process: it continues there, with
@@ -2327,7 +2282,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   /** Drops the queued messages; the user sees them as not sent. */
   private withdrawQueue(live: LiveSession, reason: string): void {
     for (const message of live.queue.splice(0)) {
-      this.dropHeld(live, message.id);
+      this.dropAutofixTurn(live, message.id);
       this.append(live, {
         type: 'message.dequeued',
         id: message.id,
@@ -2382,8 +2337,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * Records a mode Claude Code reports, if it is one this app uses. While
    * the session is in `auto` or `bypassPermissions`, `default` is not a
    * change of the chosen mode: Claude Code could not use that mode (plan,
-   * model, settings), or the app holds it for an Autofix run; the override
-   * shows it.
+   * model, settings); the override shows it.
    */
   private syncPermissionMode(live: LiveSession, mode: PermissionMode): void {
     live.reportedMode = mode;
@@ -2396,7 +2350,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     if (
       mode === record.permissionMode ||
-      (heldForUntrusted(record.permissionMode) && mode === 'default')
+      (fallsBackToDefault(record.permissionMode) && mode === 'default')
     ) {
       this.publishOverride(live);
       return;
@@ -2406,18 +2360,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       { permissionMode: mode as SessionPermissionMode },
       'claude',
     );
-  }
-
-  /**
-   * The mode the session's process should run in: the chosen one, except
-   * `default` for `auto` and `bypassPermissions` while a turn is held
-   * (Autofix run).
-   */
-  private processMode(
-    live: LiveSession,
-    mode: SessionPermissionMode,
-  ): SessionPermissionMode {
-    return heldForUntrusted(mode) && live.autoHold ? 'default' : mode;
   }
 
   /** Switches the running process's mode; rejects if Claude Code refuses. */
@@ -2438,74 +2380,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Holds `auto` or `bypassPermissions` for the turn of message `id` (an
-   * Autofix run): the process switches to `default` before the message
-   * reaches it, or starts in it. Throws (and releases the hold) if Claude
-   * Code refuses.
-   */
-  private async holdAutoMode(live: LiveSession, id: string): Promise<void> {
-    live.autoHold = { messageId: id, delivered: false };
-    const run = live.run;
-    if (run && heldForUntrusted(this.requireRecord(live.id).permissionMode)) {
-      try {
-        await this.requestMode(live, run, 'default');
-      } catch (error) {
-        live.autoHold = null;
-        this.publishOverride(live);
-        throw new Error(
-          `Claude Code did not leave ${this.requireRecord(live.id).permissionMode} mode for the run: ${errorMessage(error)}`,
-        );
-      }
-    }
-    this.publishOverride(live);
-  }
-
-  /** The held message `id` goes to Claude Code now. */
+  /** The message `id` of an Autofix run goes to Claude Code now. */
   private markDelivered(live: LiveSession, id: string): void {
-    if (live.autoHold?.messageId === id) {
-      live.autoHold.delivered = true;
-      live.autoHold.deliveredAt = new Date();
+    if (live.autofixTurn?.messageId === id) {
+      live.autofixTurn.delivered = true;
+      live.autofixTurn.deliveredAt = new Date();
     }
   }
 
   /**
-   * The held message `id` will never reach Claude Code (withdrawn,
-   * removed from the queue, not sent): its hold ends, the process returns
-   * to the chosen mode.
+   * The message `id` of an Autofix run will never reach Claude Code
+   * (withdrawn, removed from the queue, not sent): there is no run.
    */
-  private dropHeld(live: LiveSession, id: string): void {
-    if (live.autoHold?.messageId === id && !live.autoHold.delivered) {
-      this.releaseAutoHold(live);
+  private dropAutofixTurn(live: LiveSession, id: string): void {
+    if (live.autofixTurn?.messageId === id && !live.autofixTurn.delivered) {
+      live.autofixTurn = null;
     }
-  }
-
-  /** The held turn ended: the process returns to the chosen mode. */
-  private releaseAutoHold(live: LiveSession): void {
-    live.autoHold = null;
-    const run = live.run;
-    // What the run started and is still going (a command moved to the
-    // background at its timeout, a subagent) stops with it.
-    const tasks = [...live.heldTasks];
-    live.heldTasks.clear();
-    for (const taskId of tasks) {
-      void run
-        ?.stopTask(taskId)
-        .catch((error: unknown) =>
-          this.logger.warn(
-            `Could not stop task ${taskId} of ${live.id} after the Autofix run: ${errorMessage(error)}`,
-          ),
-        );
-    }
-    const mode = this.requireRecord(live.id).permissionMode;
-    if (run && heldForUntrusted(mode)) {
-      void this.requestMode(live, run, mode).catch((error: unknown) =>
-        this.logger.warn(
-          `Claude Code of ${live.id} did not return to ${mode} mode: ${errorMessage(error)}`,
-        ),
-      );
-    }
-    this.publishOverride(live);
   }
 
   /**
@@ -2516,11 +2406,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     record: SessionRecord,
   ): PermissionModeOverride | null {
     const live = this.live.get(record.id);
-    if (!heldForUntrusted(record.permissionMode) || !live) {
+    if (!fallsBackToDefault(record.permissionMode) || !live) {
       return null;
-    }
-    if (live.autoHold) {
-      return { mode: 'default', reason: 'autofix' };
     }
     if (
       live.run &&
@@ -2638,55 +2525,34 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * never get here.
    */
   /**
-   * During an Autofix run (its turn, `autoHold` delivered) every tool call
-   * but reading goes to the user (`canUseTool`, with Autofix's own git add,
-   * commit and push), whatever allow rules of the user, the project or
-   * "Allow for this session" say: the run works on untrusted GitHub
-   * content, which could make Claude push elsewhere with the user's
-   * credentials. Background work is refused: it would go on after the run
-   * (unheld) and start a turn of its own with what it found. Outside a run
-   * Claude Code decides (`null`).
+   * `merge_pull_request` runs without asking, before Claude Code's own
+   * permission check, when automerge is on for the pull request and it is
+   * ready (see `SessionAgentSupport.mayMergeUnasked`, which also records the
+   * head commit to merge); otherwise Claude Code decides (`null`), as the
+   * mode and rules say. Fail-closed: any error leaves it to Claude Code.
    */
-  private autofixGate(
+  private async mergeGate(
     live: LiveSession,
     call: AgentToolCall,
-  ): AgentGateDecision | null {
+  ): Promise<AgentGateDecision | null> {
     if (
-      !live.autoHold?.delivered ||
-      READ_ONLY_TOOLS.has(call.toolName) ||
-      (autofixAppTool(call.toolName, call.mcpServer) &&
-        call.input['resolve'] !== true)
+      call.toolName !== MERGE_PULL_REQUEST_TOOL_NAME ||
+      !isAppServer(call.mcpServer)
     ) {
-      // A reply without resolving: allowed in `canUseTool` if asked.
       return null;
     }
-    if (LATER_WORK_TOOLS.has(call.toolName)) {
-      return {
-        decision: 'deny',
-        reason: `${call.toolName} is not available during an Autofix run: what it starts would go on after the run.`,
-      };
+    try {
+      if (
+        await this.support.mayMergeUnasked(live.id, call.input, call.toolUseId)
+      ) {
+        return { decision: 'allow', reason: AUTOMERGE_ALLOW_REASON };
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not check whether ${live.id} may merge unasked: ${errorMessage(error)}`,
+      );
     }
-    if (this.requireRecord(live.id).permissionMode === 'dontAsk') {
-      // The session's mode asks nobody: refused, as Claude Code would.
-      return {
-        decision: 'deny',
-        reason: 'Not pre-approved, and this session does not ask (dontAsk).',
-      };
-    }
-    if (runsInBackground(call)) {
-      return {
-        decision: 'deny',
-        reason:
-          'Not during an Autofix run: background work would go on after the run. Run it in the foreground.',
-      };
-    }
-    return {
-      decision: 'ask',
-      // Resolving is decided in `canUseTool` (unasked after a push).
-      reason: autofixAppTool(call.toolName, call.mcpServer)
-        ? AUTOFIX_RESOLVE_REASON
-        : AUTOFIX_ASK_REASON,
-    };
+    return null;
   }
 
   /**
@@ -2699,7 +2565,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     toolUseId: string,
   ): Promise<boolean> {
     const sessionId = live.id;
-    const runStartedAt = live.autoHold?.deliveredAt;
+    const runStartedAt = live.autofixTurn?.deliveredAt;
     if (!runStartedAt) {
       return false;
     }
@@ -2731,7 +2597,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         return { behavior: 'allow', updatedInput: input };
       }
       if (
-        live.autoHold?.delivered &&
+        live.autofixTurn?.delivered &&
         autofixAppTool(toolName, options.mcpServer ?? null) &&
         (input['resolve'] !== true ||
           (await this.mayResolveUnasked(live, input, options.toolUseID)))
@@ -2825,6 +2691,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           (mcpServer === null || mcpServer.source === 'sdk')
             ? this.reviewThreadReplyCall(live.id, input)
             : null,
+        pullRequestMerge:
+          toolName === MERGE_PULL_REQUEST_TOOL_NAME && isAppServer(mcpServer)
+            ? this.pullRequestMergeCall(live.id, input)
+            : null,
         diff: await this.proposedChange(live.id, toolName, input),
         toolUseId: options.toolUseID,
         title: options.title ?? null,
@@ -2835,10 +2705,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         agentId: options.agentID ?? null,
         mcpServer,
         suggestions: options.suggestions ?? [],
-        // During an Autofix run every call asks anyway (`autofixGate`).
-        suppressAlwaysAllow:
-          options.suppressAlwaysAllowRule === true ||
-          live.autoHold?.delivered === true,
+        suppressAlwaysAllow: options.suppressAlwaysAllowRule === true,
         signal: options.signal,
         onRequest: (event) => {
           this.append(live, event);
@@ -2966,6 +2833,39 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       commentId: integer('comment_id'),
       body: typeof body === 'string' && body.trim() ? body : null,
       resolve: input['resolve'] === true,
+    };
+  }
+
+  /**
+   * A `merge_pull_request` call as the approval shows it: the repository
+   * filled in when Claude omitted it, the title if it is the session's.
+   */
+  private pullRequestMergeCall(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): PullRequestMergeCall {
+    const number = input['pull_request'];
+    const pullRequest =
+      typeof number === 'number' && Number.isSafeInteger(number)
+        ? number
+        : null;
+    const { named, clone } = this.namedGitHubClone(sessionId, input);
+    const pull = clone
+      ? this.requireRecord(sessionId).pullRequests.find(
+          (entry) =>
+            entry.repositoryId === clone.repositoryId &&
+            entry.number === pullRequest,
+        )
+      : undefined;
+    const method = input['method'];
+    return {
+      repository: named ?? clone?.repositoryName ?? null,
+      pullRequest,
+      title: pull?.title ?? null,
+      method:
+        method === 'rebase' || method === 'squash' || method === 'merge'
+          ? method
+          : null,
     };
   }
 
@@ -3188,24 +3088,25 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     live.reopen = null;
-    // The end of the process ends the hold; it carries over to the new one.
-    const hold = live.autoHold;
+    // The end of the process ends the Autofix turn; it carries over to the
+    // new one.
+    const autofix = live.autofixTurn;
     this.closeForRestart(live);
     const next = (live.consuming ?? Promise.resolve()).then(async () => {
       if (
-        hold &&
-        !hold.delivered &&
-        live.queue.some((queued) => queued.id === hold.messageId)
+        autofix &&
+        !autofix.delivered &&
+        live.queue.some((queued) => queued.id === autofix.messageId)
       ) {
-        // The held message still waits in the queue: still held.
-        live.autoHold = hold;
+        // The Autofix message still waits in the queue.
+        live.autofixTurn = autofix;
       }
       if (reopen.continueWith) {
         await this.sendMessage(live.id, {
           text: reopen.continueWith,
           origin: 'app',
-          // The continuation of a held turn (Autofix run) is held as well.
-          holdAutoMode: hold?.delivered === true,
+          // The continuation of an Autofix run is part of it.
+          autofixRun: autofix?.delivered === true,
         });
         return;
       }
@@ -3528,8 +3429,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   private failRun(live: LiveSession, error: unknown, run?: AgentRun): void {
     live.run = null;
-    live.autoHold = null;
-    live.heldTasks.clear();
+    live.autofixTurn = null;
     live.backgroundTasks.clear();
     this.clearBackgroundGrace(live);
     this.clearBackgroundLimit(live);

@@ -1409,19 +1409,6 @@ describe('SessionView', () => {
     socket.receive({
       type: 'session.updated',
       session: sessionDto({
-        status: 'running',
-        waitingFor: null,
-        permissionMode: 'auto',
-        permissionModeOverride: { mode: 'default', reason: 'autofix' },
-      }),
-    });
-    await harness.fixture.whenStable();
-    expect(text('strip-settings')).toContain('Ask (Autofix run)');
-    expect(text('mode-override')).toContain('untrusted GitHub content');
-
-    socket.receive({
-      type: 'session.updated',
-      session: sessionDto({
         status: 'waiting',
         permissionMode: 'auto',
         permissionModeOverride: null,
@@ -1433,7 +1420,7 @@ describe('SessionView', () => {
     expect(element.querySelector('[data-testid="mode-override"]')).toBeNull();
   });
 
-  it('marks bypassing permissions as dangerous, unless an Autofix run holds it', async () => {
+  it('marks bypassing permissions as dangerous, unless Claude Code refused it', async () => {
     const { harness, socket, element, text } = await open();
     history(
       socket,
@@ -1458,11 +1445,14 @@ describe('SessionView', () => {
         status: 'running',
         waitingFor: null,
         permissionMode: 'bypassPermissions',
-        permissionModeOverride: { mode: 'default', reason: 'autofix' },
+        permissionModeOverride: {
+          mode: 'default',
+          reason: 'bypass_unavailable',
+        },
       }),
     });
     await harness.fixture.whenStable();
-    expect(text('strip-settings')).toContain('Ask (Autofix run)');
+    expect(text('strip-settings')).toContain('Ask (bypass unavailable)');
     expect(chip().classList).not.toContain('danger');
   });
 });

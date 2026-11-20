@@ -13,7 +13,6 @@ import {
   SHOW_FILE_TOOL_NAME,
 } from './app-tools';
 import { SESSION_SETTINGS } from './session-agent-support';
-import { AUTOFIX_ASK_REASON, AUTOFIX_RESOLVE_REASON } from './sessions.service';
 import { pngImage } from '../attachments/testing/images';
 import { flush, resultMessage, waitFor } from './testing/fake-agent';
 
@@ -103,6 +102,7 @@ describe('session integrations (tools, memory, pushes)', () => {
       'show_file',
       'create_pull_request',
       'reply_to_review_thread',
+      'merge_pull_request',
       'request_owner_decision',
       'set_session_title',
       'set_waiting_state',
@@ -667,7 +667,8 @@ describe('session integrations (tools, memory, pushes)', () => {
           agentId: null,
           mcpServer,
         });
-      expect(call(sdk)).toBeNull();
+      // The gate is only for merge_pull_request.
+      await expect(call(sdk)).resolves.toBeNull();
 
       // An Autofix run.
       harness.runner.last.emit(resultMessage(1, 0));
@@ -675,7 +676,7 @@ describe('session integrations (tools, memory, pushes)', () => {
       await harness.service.sendMessage(session.id, {
         text: 'Fix the review findings',
         origin: 'app',
-        holdAutoMode: true,
+        autofixRun: true,
       });
       await waitFor(() =>
         harness.runner.last.sent.some((message) =>
@@ -686,17 +687,15 @@ describe('session integrations (tools, memory, pushes)', () => {
       const before = requests();
       // A reply alone runs without asking.
       const replyOnly = { pull_request: 1, comment_id: 501, body: 'Fixed' };
-      expect(call(sdk, replyOnly)).toBeNull();
+      await expect(call(sdk, replyOnly)).resolves.toBeNull();
       await expect(
         ask(REPLY_TO_REVIEW_THREAD_TOOL_NAME, replyOnly, 'tu-2', sdk),
       ).resolves.toEqual({ behavior: 'allow', updatedInput: replyOnly });
       expect(requests()).toBe(before);
 
-      // Resolving without a push since the thread's last comment asks.
-      expect(call(sdk)).toEqual({
-        decision: 'ask',
-        reason: AUTOFIX_RESOLVE_REASON,
-      });
+      // Resolving without a push since the thread's last comment asks (as
+      // the mode says: Claude Code calls canUseTool).
+      await expect(call(sdk)).resolves.toBeNull();
       await expect(
         ask(REPLY_TO_REVIEW_THREAD_TOOL_NAME, input, 'tu-3', sdk),
       ).resolves.toMatchObject({ behavior: 'deny' });
@@ -705,10 +704,14 @@ describe('session integrations (tools, memory, pushes)', () => {
         expect.objectContaining({ resolve: true, commentId: 501 }),
       );
       // A tool of that name from another server is not the app's.
-      expect(call({ name: 'crm', source: 'user' }, replyOnly)).toMatchObject({
-        decision: 'ask',
-        reason: AUTOFIX_ASK_REASON,
-      });
+      const other = await ask(
+        REPLY_TO_REVIEW_THREAD_TOOL_NAME,
+        replyOnly,
+        'tu-4',
+        { name: 'crm', source: 'user' },
+      );
+      expect(other).toMatchObject({ behavior: 'deny' });
+      expect(requests()).toBe(before + 2);
     });
 
     describe('resolving during an Autofix run', () => {
@@ -724,7 +727,7 @@ describe('session integrations (tools, memory, pushes)', () => {
         await harness.service.sendMessage(setup.session.id, {
           text: 'Fix the review findings',
           origin: 'app',
-          holdAutoMode: true,
+          autofixRun: true,
         });
         await waitFor(() =>
           harness.runner.last.sent.some((message) =>
@@ -895,29 +898,10 @@ describe('session integrations (tools, memory, pushes)', () => {
         expect(harness.github.reviewReplies).toHaveLength(2);
       });
 
-      it('is refused in dontAsk, and never checked outside a run', async () => {
-        const { session, push } = await inAutofix();
+      it('is never checked outside a run', async () => {
+        const { push } = await inAutofix();
         push(at(1));
         const check = jest.spyOn(harness.sessionGit, 'mayResolveUnasked');
-        const gate = options().gate;
-        if (!gate) {
-          throw new Error('no gate');
-        }
-        await harness.service.update(session.id, {
-          permissionMode: 'dontAsk',
-        });
-        expect(
-          gate({
-            toolName: REPLY_TO_REVIEW_THREAD_TOOL_NAME,
-            input: { pull_request: 1, comment_id: 501, resolve: true },
-            toolUseId: 'tu-d',
-            agentId: null,
-            mcpServer: { name: 'crm', source: 'sdk' },
-          }),
-        ).toMatchObject({ decision: 'deny' });
-        await harness.service.update(session.id, {
-          permissionMode: 'default',
-        });
 
         // After the run: the mode decides, no Autofix check.
         harness.runner.last.emit(resultMessage(1, 0));

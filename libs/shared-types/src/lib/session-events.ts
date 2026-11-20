@@ -14,6 +14,7 @@ import type {
   PermissionResolutionCause,
   PermissionResponse,
   PullRequestCall,
+  PullRequestMergeCall,
   ReviewThreadReplyCall,
   SessionAllowOffer,
   UserQuestion,
@@ -244,6 +245,11 @@ export interface PermissionRequestEvent extends SessionEventBase {
    * whether it is resolved (absent from older servers).
    */
   reviewThreadReply?: ReviewThreadReplyCall | null;
+  /**
+   * For the app's `merge_pull_request` tool: the pull request and how it
+   * is merged (absent from older servers).
+   */
+  pullRequestMerge?: PullRequestMergeCall | null;
   /**
    * For file changes (`Edit`, `Write`, `NotebookEdit`): the change it would
    * make, against the file's current content where it could be read

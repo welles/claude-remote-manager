@@ -38,6 +38,19 @@ export class SessionAutomationHooks {
   holdAutomerge: ((sessionId: string, question: string) => string) | null =
     null;
 
+  /**
+   * Whether Claude's `merge_pull_request` may merge the session's pull
+   * request `number` of `repositoryId` without asking: automerge is on for
+   * it and it is ready. Returns the head commit checked, `null` if not.
+   */
+  mayMergeUnasked:
+    | ((
+        sessionId: string,
+        repositoryId: string,
+        number: number,
+      ) => Promise<string | null>)
+    | null = null;
+
   /** The owner sent the session a message (not the app). */
   ownerMessage: ((sessionId: string) => void) | null = null;
 }

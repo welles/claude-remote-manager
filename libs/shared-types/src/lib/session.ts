@@ -101,8 +101,7 @@ export const SET_WAITING_STATE_TOOL_NAME = 'mcp__crm__set_waiting_state';
  * Permission modes a session may use: the Agent SDK's modes. In `auto` a
  * model classifier of Claude Code approves or denies tool uses and asks the
  * user only when it cannot decide; `bypassPermissions` runs everything
- * without asking. An Autofix run holds both in `default` (see
- * `PermissionModeOverride` and the README).
+ * without asking. Autofix runs in the chosen mode like any turn.
  */
 export type SessionPermissionMode =
   | 'default'
@@ -132,14 +131,12 @@ export const DANGEROUS_PERMISSION_MODES: readonly SessionPermissionMode[] = [
  * - `auto_unavailable`: Claude Code cannot use auto mode here (plan,
  *   model or settings) and fell back to `default`;
  * - `bypass_unavailable`: Claude Code refused `bypassPermissions` (e.g.
- *   `disableBypassPermissionsMode` in the settings) and runs in `default`;
- * - `autofix`: an Autofix run is going; it works on untrusted GitHub
- *   content and therefore runs in `default` until its turn ends.
+ *   `disableBypassPermissionsMode` in the settings) and runs in `default`.
  */
 export interface PermissionModeOverride {
   /** The mode in effect. */
   mode: SessionPermissionMode;
-  reason: 'auto_unavailable' | 'bypass_unavailable' | 'autofix';
+  reason: 'auto_unavailable' | 'bypass_unavailable';
 }
 
 /** Token counts and theoretical API cost (USD), summed over requests. */

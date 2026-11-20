@@ -558,7 +558,7 @@ describe('adding repositories to a running session', () => {
       const message = harness.eventsOfType(session.id, 'user.message').at(-1);
       expect(message).toMatchObject({ origin: 'app' });
     });
-    it('keeps an Autofix run held in default across the restart', async () => {
+    it('keeps an Autofix run in the chosen mode across the restart', async () => {
       const main = await harness.addRepository('acme', 'app');
       const session = await harness.service.create({
         prompt: 'Do the work',
@@ -574,9 +574,10 @@ describe('adding repositories to a running session', () => {
       await harness.service.sendMessage(session.id, {
         text: 'Fix the failing checks',
         origin: 'app',
-        holdAutoMode: true,
+        autofixRun: true,
       });
-      expect(run.switches).toEqual([{ permissionMode: 'default' }]);
+      // Autofix runs in the session's mode like any turn.
+      expect(run.switches).toEqual([]);
 
       run.failAddDirectories = new Error('unknown control request');
       await harness.addRepository('acme', 'lib');
@@ -594,19 +595,18 @@ describe('adding repositories to a running session', () => {
       run.emit(resultMessage(10, 0.01));
       await waitFor(() => harness.runner.runs.length === 2);
       const next = harness.runner.last;
-      // The old process never returned to auto; the new one starts held.
-      expect(run.switches).toEqual([{ permissionMode: 'default' }]);
-      expect(next.options.permissionMode).toBe('default');
+      // Neither process left auto.
+      expect(run.switches).toEqual([]);
+      expect(next.options.permissionMode).toBe('auto');
       expect(harness.service.get(session.id)).toMatchObject({
         permissionMode: 'auto',
-        permissionModeOverride: { mode: 'default', reason: 'autofix' },
+        permissionModeOverride: null,
       });
-
-      // The continuation's turn ends the run: back to auto.
       next.emit(resultMessage(15, 0.01));
-      await waitFor(() => next.switches.length > 0);
-      expect(next.switches).toEqual([{ permissionMode: 'auto' }]);
-      expect(harness.service.get(session.id).permissionModeOverride).toBeNull();
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'message',
+      );
+      expect(next.switches).toEqual([]);
     });
   });
 

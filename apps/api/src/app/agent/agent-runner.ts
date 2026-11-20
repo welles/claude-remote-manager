@@ -51,7 +51,7 @@ export interface AgentToolCall {
 
 /** What `AgentStartOptions.gate` makes of a tool call. */
 export interface AgentGateDecision {
-  decision: 'ask' | 'deny';
+  decision: 'allow' | 'ask' | 'deny';
   /** Shown in the approval dialog, or told Claude when refused. */
   reason: string;
 }
@@ -70,12 +70,16 @@ export interface AgentStartOptions {
   /** Decides tool uses that need the user's approval. */
   canUseTool: CanUseTool;
   /**
-   * Looks at a tool call before Claude Code's own permission check: `ask`
-   * sends it to `canUseTool` whatever allow rules and the mode say, `deny`
-   * refuses it with the reason, `null` leaves it to Claude Code. Claude
-   * Code learns it through a PreToolUse hook; used for Autofix runs.
+   * Looks at a tool call before Claude Code's own permission check:
+   * `allow` runs it without asking (deny rules still apply), `ask` sends it
+   * to `canUseTool` whatever allow rules and the mode say, `deny` refuses
+   * it with the reason, `null` leaves it to Claude Code. Claude Code learns
+   * it through a PreToolUse hook; used for `merge_pull_request` with
+   * automerge.
    */
-  gate?: (call: AgentToolCall) => AgentGateDecision | null;
+  gate?: (
+    call: AgentToolCall,
+  ) => AgentGateDecision | null | Promise<AgentGateDecision | null>;
   /**
    * Permission rules allowed for this process (in memory, like rules the
    * user allowed for the session; never written to settings files).

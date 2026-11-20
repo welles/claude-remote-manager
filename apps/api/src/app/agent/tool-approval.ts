@@ -9,6 +9,7 @@ import type {
   PermissionResolutionCause,
   PermissionResolvedEvent,
   PullRequestCall,
+  PullRequestMergeCall,
   RepositoryAdditionCall,
   ReviewThreadReplyCall,
 } from '@claude-remote-manager/shared-types';
@@ -47,6 +48,8 @@ export interface ToolApprovalRequest {
   pullRequest: PullRequestCall | null;
   /** For the app's `reply_to_review_thread` tool: the reply. */
   reviewThreadReply?: ReviewThreadReplyCall | null;
+  /** For the app's `merge_pull_request` tool: what it would merge. */
+  pullRequestMerge?: PullRequestMergeCall | null;
   /** For the app's `add_repository` tool: what it would add (checked). */
   repositoryAddition?: RepositoryAdditionCall | null;
   /** For file changes: the change it would make. */
