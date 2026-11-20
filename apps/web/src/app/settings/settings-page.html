@@ -126,7 +126,7 @@
         </dd>
         @if (server.date) {
         <dt>Date</dt>
-        <dd data-testid="server-date" [title]="server.timeZone">
+        <dd data-testid="server-date" [attr.title]="server.timeZone">
           {{ server.date }}
         </dd>
         }

@@ -6,6 +6,7 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type {
+  AppSettingsDto,
   GitHubStatusDto,
   HealthResponse,
 } from '@claude-remote-manager/shared-types';
@@ -18,7 +19,6 @@ const health = (overrides: Partial<HealthResponse> = {}): HealthResponse => ({
   version: '0.0.0',
   commit: '0123456789abcdef',
   commitTime: '2026-11-20T23:30:00Z',
-  timeZone: 'Europe/Berlin',
   ...overrides,
 });
 
@@ -71,9 +71,10 @@ describe('SettingsPage', () => {
   afterEach(() => http.verify());
 
   const render = async (
-    settings = {
-      gitAuthorName: null as string | null,
-      gitAuthorEmail: null as string | null,
+    settings: AppSettingsDto = {
+      gitAuthorName: null,
+      gitAuthorEmail: null,
+      timeZone: 'Europe/Berlin',
     },
     github: GitHubStatusDto = status(),
     server: HealthResponse | null = health(),
@@ -110,6 +111,7 @@ describe('SettingsPage', () => {
     const { element, all } = await render({
       gitAuthorName: 'Ada Lovelace',
       gitAuthorEmail: 'ada@example.com',
+      timeZone: 'UTC',
     });
     expect(all('identity-missing')).toEqual([]);
     expect(all('author-name')).toEqual(['Ada Lovelace']);
@@ -121,6 +123,7 @@ describe('SettingsPage', () => {
     const { element, all } = await render({
       gitAuthorName: 'Ada',
       gitAuthorEmail: 'ada@example.com',
+      timeZone: 'UTC',
     });
     expect(all('github-app')).toEqual(['My App']);
     expect(all('installation')).toEqual([
@@ -168,6 +171,6 @@ describe('SettingsPage', () => {
   it('shows the release version of tagged builds, else the image tag', () => {
     expect(displayVersion(health({ version: '1.2.3' }))).toBe('1.2.3');
     expect(displayVersion(health())).toBe('sha-0123456');
-    expect(displayVersion(health({ commit: null }))).toBe('local build');
+    expect(displayVersion(health({ commit: null }))).toBe('0.0.0');
   });
 });

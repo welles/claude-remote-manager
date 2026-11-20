@@ -1945,10 +1945,11 @@ docker build -t claude-remote-manager:local \
 
 The GitHub workflow `.github/workflows/docker.yml` runs lint, tests and builds, then publishes
 the image to `ghcr.io/<owner>/claude-remote-manager` (tags: branch, PR, semver from `v*` tags,
-commit SHA, `latest` on `main`). `VERSION`, `COMMIT` and `COMMIT_TIME` end up in `/api/health`
-(with the server's time zone from `TZ`, else UTC). The Settings page shows them in its Server
-card: the version, or the image tag `sha-<short commit>` for untagged builds (`0.0.0`), the
-short commit and the commit time as `yyyy-MM-dd HH:mm` in the server's time zone.
+commit SHA, `latest` on `main`). `VERSION`, `COMMIT` and `COMMIT_TIME` end up in `/api/health`.
+The Settings page shows them in its Server card: the version, or the image tag
+`sha-<short commit>` for untagged builds (`0.0.0`), the short commit and the commit time as
+`yyyy-MM-dd HH:mm` in the server's time zone (`TZ`, else UTC; reported by the authenticated
+`GET /api/settings`, not by the public health check).
 
 The image (linux/amd64, Debian based) contains Node.js 24, git, `gh` (wrapped, see
 [GitHub tokens in the container](#github-tokens-in-the-container)), openssh-client, curl, the

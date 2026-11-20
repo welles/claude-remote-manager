@@ -20,18 +20,19 @@ import { NotificationSettings } from './notification-settings';
 import { SettingsApi } from './settings-api';
 import { RouterLink } from '@angular/router';
 import { AppIcon } from '../ui/icon';
-import { formatIsoMinute } from '../ui/dates';
+import { formatIsoMinute, supportedTimeZone } from '../ui/dates';
 import { AppPageBar } from '../ui/page-bar';
 
 /**
  * The version to show: the release version of tagged builds, else the
- * image's tag `sha-<short commit>` (untagged builds report `0.0.0`).
+ * image's tag `sha-<short commit>` (untagged builds report `0.0.0`);
+ * `0.0.0` for local builds without a commit.
  */
 export function displayVersion(health: HealthResponse): string {
   if (health.version !== '0.0.0') {
     return health.version;
   }
-  return health.commit ? `sha-${health.commit.slice(0, 7)}` : 'local build';
+  return health.commit ? `sha-${health.commit.slice(0, 7)}` : health.version;
 }
 
 /**
@@ -62,20 +63,26 @@ export class SettingsPage implements OnInit {
   protected readonly error = signal(false);
 
   protected readonly health = httpResource<HealthResponse>(() => '/api/health');
-  /** Version, commit and build date of the server, for the template. */
+  /**
+   * Status, version, commit and commit time of the server, for the
+   * template; the time in the server's zone (from the settings), in the
+   * browser's until they are loaded or when the browser does not know it.
+   */
   protected readonly server = computed(() => {
     const health = this.health.hasValue() ? this.health.value() : undefined;
-    return health
-      ? {
-          status: health.status,
-          version: displayVersion(health),
-          commit: health.commit ? health.commit.slice(0, 7) : null,
-          date: health.commitTime
-            ? formatIsoMinute(health.commitTime, health.timeZone)
-            : null,
-          timeZone: health.timeZone,
-        }
-      : null;
+    if (!health) {
+      return null;
+    }
+    const timeZone = supportedTimeZone(this.settings()?.timeZone);
+    return {
+      status: health.status,
+      version: displayVersion(health),
+      commit: health.commit ? health.commit.slice(0, 7) : null,
+      date: health.commitTime
+        ? formatIsoMinute(health.commitTime, timeZone)
+        : null,
+      timeZone: timeZone ?? null,
+    };
   });
 
   protected readonly github = signal<GitHubStatusDto | null>(null);

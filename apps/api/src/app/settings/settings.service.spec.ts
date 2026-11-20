@@ -8,6 +8,7 @@ describe('SettingsService', () => {
     expect(settings.get()).toEqual({
       gitAuthorName: null,
       gitAuthorEmail: null,
+      timeZone: expect.any(String),
     });
     expect(settings.gitIdentity()).toBeNull();
     expect(() => settings.requireGitIdentity()).toThrow(ConflictException);
@@ -22,6 +23,7 @@ describe('SettingsService', () => {
     expect(settings.get()).toEqual({
       gitAuthorName: 'Ada Lovelace',
       gitAuthorEmail: 'ada@example.com',
+      timeZone: expect.any(String),
     });
     expect(settings.requireGitIdentity()).toEqual(identity);
   });
