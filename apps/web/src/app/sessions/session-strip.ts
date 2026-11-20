@@ -148,9 +148,14 @@ export type DetailSection =
       background: var(--app-status-attention-container);
       color: var(--app-status-on-attention-container);
     }
+    .state.status-waiting {
+      background: var(--app-status-ready-container);
+      color: var(--app-status-on-ready-container);
+    }
+    /* Claude goes on by itself: as quiet as the other chips. */
     .state.status-running {
-      background: var(--app-status-running-container);
-      color: var(--app-status-on-running-container);
+      font-weight: 500;
+      color: var(--mat-sys-on-surface-variant);
     }
     .state.status-failed {
       background: var(--app-status-failed-container);

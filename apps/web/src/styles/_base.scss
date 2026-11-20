@@ -231,7 +231,8 @@
   }
 
   // Session status badge (see `ui/status-badge.ts`): a small square tag in
-  // the state's colour; "needs you" is the only amber one.
+  // the state's colour. What waits for the user stands out ("needs you"
+  // amber, "ready" in the primary colour); running sessions are quiet.
   .status {
     display: inline-flex;
     align-items: center;
@@ -246,10 +247,19 @@
     color: var(--mat-sys-on-surface-variant);
   }
 
+  // Claude goes on by itself: plain muted text.
   .status-preparing,
   .status-running {
-    background: var(--app-status-running-container);
-    color: var(--app-status-on-running-container);
+    padding: 0;
+    background: transparent;
+    color: var(--mat-sys-on-surface-variant);
+    font-weight: 500;
+  }
+
+  // The turn is done, Claude waits for the next message.
+  .status-waiting {
+    background: var(--app-status-ready-container);
+    color: var(--app-status-on-ready-container);
   }
 
   .status-finished {

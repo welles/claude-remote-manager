@@ -29,13 +29,17 @@
   --app-ease: cubic-bezier(0.2, 0, 0, 1);
 
   // Session states. Attention (amber) is the only warm colour: it means
-  // "needs you" and nothing else.
+  // "needs you" and nothing else. Ready (the user's turn) is the other
+  // strong state; a running session (Claude goes on by itself) stays quiet
+  // in the idle colours. `--app-status-running` marks work in progress
+  // inside a session (tool rows, todos, meters), not the session's state.
   --app-status-attention: var(--mat-sys-tertiary);
   --app-status-attention-container: var(--mat-sys-tertiary-container);
   --app-status-on-attention-container: var(--mat-sys-on-tertiary-container);
+  --app-status-ready: var(--mat-sys-primary);
+  --app-status-ready-container: var(--mat-sys-primary-container);
+  --app-status-on-ready-container: var(--mat-sys-on-primary-container);
   --app-status-running: var(--mat-sys-primary);
-  --app-status-running-container: var(--mat-sys-primary-container);
-  --app-status-on-running-container: var(--mat-sys-on-primary-container);
   --app-status-failed: var(--mat-sys-error);
   --app-status-failed-container: var(--mat-sys-error-container);
   --app-status-on-failed-container: var(--mat-sys-on-error-container);
