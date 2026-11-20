@@ -57,6 +57,11 @@ export interface ReviewThreadReplyRequest {
   /** The reply (Markdown); `null` or blank: no reply. */
   body: string | null;
   resolve: boolean;
+  /**
+   * Checked right before resolving (after the reply); `false` or an error
+   * leaves the thread unresolved (`withheld`).
+   */
+  beforeResolve?: () => Promise<boolean>;
 }
 
 /** What {@link SessionGitService.replyToReviewThread} did. */
@@ -65,8 +70,11 @@ export interface ReviewThreadReplyOutcome {
   pullRequest: string;
   /** URL of the reply, `null` without one. */
   replyUrl: string | null;
-  /** `already`: it was resolved before; `null`: not asked to. */
-  resolved: 'resolved' | 'already' | null;
+  /**
+   * `already`: it was resolved before; `withheld`: `beforeResolve` said
+   * no; `null`: not asked to.
+   */
+  resolved: 'resolved' | 'already' | 'withheld' | null;
 }
 
 function errorText(error: unknown): string {
@@ -479,6 +487,24 @@ export class SessionGitService {
         resolved: resolve ? 'already' : null,
       };
     }
+    let verified = true;
+    if (request.beforeResolve) {
+      try {
+        verified = await request.beforeResolve();
+      } catch (error) {
+        this.logger.warn(
+          `Could not check again whether ${fullName}#${number} may be resolved: ${errorText(error)}`,
+        );
+        verified = false;
+      }
+    }
+    if (!verified) {
+      return {
+        pullRequest: `${fullName}#${number}`,
+        replyUrl: reply?.url ?? null,
+        resolved: 'withheld',
+      };
+    }
     try {
       await this.github.resolveReviewThread(installation, githubId, thread.id);
     } catch (error) {
@@ -498,10 +524,12 @@ export class SessionGitService {
 
   /**
    * Whether resolving the review thread of `commentId` may run unasked
-   * during an Autofix run (the owner's decision): only when the session
-   * changed something since the feedback, i.e. the pull request's current
-   * head (read from GitHub) on the session branch was pushed after the
-   * thread's last comment not written by the app. Everything comes from
+   * during an Autofix run that started at `runStartedAt` (the owner's
+   * decision): only when, in this run and after the thread's last comment
+   * not written by the app, a push to the session branch made the pull
+   * request's current head what it is. That is a push since the comment in
+   * this run, not proof that the thread was fixed. Returns the head commit
+   * it checked, `null` when it may not. Everything comes from
    * GitHub, nothing from the clone or the tool call: the head commit from
    * the pull request, the push and its time from the repository activity
    * (GitHub's own record), the comment times from GraphQL. `false` when
@@ -512,7 +540,8 @@ export class SessionGitService {
     repositoryId: string,
     number: number,
     commentId: number,
-  ): Promise<boolean> {
+    runStartedAt: Date,
+  ): Promise<string | null> {
     const session = this.sessionRecord(sessionId);
     const pull = session.pullRequests.find(
       (entry) => entry.repositoryId === repositoryId && entry.number === number,
@@ -526,9 +555,10 @@ export class SessionGitService {
       !directory?.branch ||
       pull.headBranch !== directory.branch ||
       !repository ||
-      !isGitHubRepository(repository)
+      !isGitHubRepository(repository) ||
+      !Number.isFinite(runStartedAt.getTime())
     ) {
-      return false;
+      return null;
     }
     const fullName = `${repository.owner}/${repository.name}`;
     const installation = repository.githubInstallationId;
@@ -541,7 +571,7 @@ export class SessionGitService {
       commentId,
     );
     if (!thread?.lastOtherCommentAt) {
-      return false;
+      return null;
     }
     const info = await this.github.getPullRequest(
       installation,
@@ -554,7 +584,7 @@ export class SessionGitService {
       info.headBranch !== directory.branch ||
       !info.headSha
     ) {
-      return false;
+      return null;
     }
     const push = await this.github.latestBranchPush(
       installation,
@@ -562,11 +592,12 @@ export class SessionGitService {
       fullName,
       info.headBranch,
     );
-    return (
-      push !== null &&
+    return push !== null &&
       push.after === info.headSha &&
-      push.at.getTime() > thread.lastOtherCommentAt.getTime()
-    );
+      push.at.getTime() > thread.lastOtherCommentAt.getTime() &&
+      push.at.getTime() > runStartedAt.getTime()
+      ? info.headSha
+      : null;
   }
 
   // -------------------------------------------------------------------------

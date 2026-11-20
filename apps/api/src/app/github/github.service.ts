@@ -154,8 +154,12 @@ export interface ReviewThreadInfo {
   rootCommentId: number;
   /**
    * When the last comment not written by the app itself (GraphQL
-   * `viewerDidAuthor`, the viewer being the app's installation) was made;
-   * `null` when there is none or GitHub did not list every comment.
+   * `viewerDidAuthor`, the viewer being the app's installation) appeared:
+   * per comment the latest of `createdAt`, `publishedAt` (a comment of a
+   * review is created when written, published when the review is
+   * submitted) and `lastEditedAt`. `null` (fail closed) when there is
+   * none, GitHub did not list every comment, or any comment lacks what
+   * this needs.
    */
   lastOtherCommentAt: Date | null;
 }
@@ -181,7 +185,7 @@ const REVIEW_THREAD_LOOKUP_QUERY = `query($owner: String!, $name: String!, $numb
           isResolved
           comments(first: 100) {
             totalCount
-            nodes { databaseId createdAt viewerDidAuthor }
+            nodes { databaseId createdAt publishedAt lastEditedAt viewerDidAuthor }
           }
         }
       }
@@ -213,6 +217,8 @@ type RawThreadLookup = GraphQLResponse<{
             nodes?: ({
               databaseId?: number | null;
               createdAt?: string | null;
+              publishedAt?: string | null;
+              lastEditedAt?: string | null;
               viewerDidAuthor?: boolean;
             } | null)[];
           };
@@ -234,6 +240,48 @@ type RawResolveThread = GraphQLResponse<{
     thread?: { id?: string; isResolved?: boolean } | null;
   } | null;
 }>;
+
+/**
+ * See {@link ReviewThreadInfo.lastOtherCommentAt}: anything incomplete or
+ * malformed gives `null`, never a skipped comment.
+ */
+function lastOtherCommentAt(comments: {
+  totalCount?: number;
+  nodes?: ({
+    createdAt?: string | null;
+    publishedAt?: string | null;
+    lastEditedAt?: string | null;
+    viewerDidAuthor?: boolean;
+  } | null)[];
+}): Date | null {
+  const nodes = comments.nodes ?? [];
+  if (comments.totalCount !== nodes.length) {
+    return null;
+  }
+  let latest: number | null = null;
+  for (const comment of nodes) {
+    if (!comment || typeof comment.viewerDidAuthor !== 'boolean') {
+      return null;
+    }
+    if (comment.viewerDidAuthor) {
+      continue;
+    }
+    const created = Date.parse(comment.createdAt ?? '');
+    const published = Date.parse(comment.publishedAt ?? '');
+    const edited =
+      comment.lastEditedAt == null ? null : Date.parse(comment.lastEditedAt);
+    if (
+      !Number.isFinite(created) ||
+      !Number.isFinite(published) ||
+      (edited !== null && !Number.isFinite(edited))
+    ) {
+      return null;
+    }
+    const time = Math.max(created, published, edited ?? created);
+    latest = latest === null ? time : Math.max(latest, time);
+  }
+  return latest === null ? null : new Date(latest);
+}
 
 /**
  * The data of a GraphQL answer; GitHub reports errors (also missing
@@ -647,21 +695,11 @@ export class GitHubService {
               `GitHub did not name the first comment of the review thread of ${commentId}`,
             );
           }
-          const comments = node.comments.nodes;
-          const complete = node.comments.totalCount === comments.length;
-          const times = comments
-            .filter((comment) => comment?.viewerDidAuthor === false)
-            .map((comment) => Date.parse(comment?.createdAt ?? ''));
           return {
             id: node.id,
             resolved: node.isResolved === true,
             rootCommentId: root,
-            lastOtherCommentAt:
-              complete &&
-              times.length > 0 &&
-              times.every((time) => Number.isFinite(time))
-                ? new Date(Math.max(...times))
-                : null,
+            lastOtherCommentAt: lastOtherCommentAt(node.comments),
           };
         }
       }
@@ -687,7 +725,8 @@ export class GitHubService {
     branch: string,
   ): Promise<BranchPush | null> {
     const { token } = await this.repositoryToken(installationId, repositoryId, {
-      metadata: 'read',
+      // GitHub lists the activity endpoint under Contents (read).
+      contents: 'read',
     });
     const response = await this.http.request<RawActivity[]>({
       path: `/repos/${repoPath(fullName)}/activity`,

@@ -69,6 +69,17 @@ export const SESSION_SETTINGS = {
   dialogExpiry: 'never',
 };
 
+/** An Autofix resolve allowed unasked, checked again before resolving. */
+interface ResolveGrant {
+  toolUseId: string;
+  repositoryId: string;
+  number: number;
+  commentId: number;
+  runStartedAt: Date;
+  /** The head commit the check saw. */
+  headSha: string;
+}
+
 /** Hooks of the sessions service for the app's integrations. */
 export abstract class SessionAgentSupport {
   /** Environment, tools and settings for a process about to start. */
@@ -95,15 +106,21 @@ export abstract class SessionAgentSupport {
   }
   /**
    * Whether a `reply_to_review_thread` call that resolves may run unasked
-   * during an Autofix run: only after the session pushed to the pull
-   * request since the thread's last comment. `false` without integrations.
+   * during an Autofix run that started at `runStartedAt`: only after a
+   * push in this run since the thread's last comment. When it may, the
+   * tool use `toolUseId` checks it again right before resolving. `false`
+   * without integrations.
    */
   mayResolveUnasked(
     sessionId: string,
     input: Record<string, unknown>,
+    runStartedAt: Date,
+    toolUseId: string,
   ): Promise<boolean> {
     void sessionId;
     void input;
+    void runStartedAt;
+    void toolUseId;
     return Promise.resolve(false);
   }
 }
@@ -216,6 +233,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   private readonly pushes = new Map<string, Set<string>>();
   /** Directory of the environment files of the running process, by session. */
   private readonly filesByProcess = new Map<string, WrittenFiles>();
+  /** Resolves an Autofix run allowed unasked, by session. */
+  private readonly resolveGrants = new Map<string, ResolveGrant[]>();
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -364,6 +383,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
 
   released(sessionId: string): void {
     this.pushes.delete(sessionId);
+    this.resolveGrants.delete(sessionId);
     this.githubTokens?.release(sessionId);
     this.releaseEnvironmentFiles(sessionId);
   }
@@ -688,7 +708,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
           .optional()
           .describe('Resolve the thread as well (default: false)'),
       }),
-      handler: async (input) => {
+      handler: async (input, { toolUseId }) => {
         try {
           const repositoryId = this.repositoryOf(
             sessionId,
@@ -696,14 +716,37 @@ export class SessionAgentSupportService extends SessionAgentSupport {
               ? input['repository']
               : null,
           );
+          const number = Number(input['pull_request']);
+          const commentId = Number(input['comment_id']);
+          const grant = this.takeResolveGrant(
+            sessionId,
+            toolUseId,
+            repositoryId,
+            number,
+            commentId,
+          );
           const outcome = await this.sessionGit.replyToReviewThread(
             sessionId,
             repositoryId,
             {
-              number: Number(input['pull_request']),
-              commentId: Number(input['comment_id']),
+              number,
+              commentId,
               body: typeof input['body'] === 'string' ? input['body'] : null,
               resolve: input['resolve'] === true,
+              // Allowed unasked by the Autofix check: it must still hold
+              // (no newer comment, the same head) when resolving.
+              ...(grant
+                ? {
+                    beforeResolve: async () =>
+                      (await this.sessionGit.mayResolveUnasked(
+                        sessionId,
+                        repositoryId,
+                        number,
+                        commentId,
+                        grant.runStartedAt,
+                      )) === grant.headSha,
+                  }
+                : {}),
             },
           );
           return {
@@ -715,7 +758,9 @@ export class SessionAgentSupportService extends SessionAgentSupport {
                 ? `Resolved the thread on ${outcome.pullRequest}.`
                 : outcome.resolved === 'already'
                   ? `The thread on ${outcome.pullRequest} was resolved already.`
-                  : null,
+                  : outcome.resolved === 'withheld'
+                    ? `Did not resolve the thread on ${outcome.pullRequest}: the condition for resolving without approval no longer holds (a newer comment, or the pull request's head changed since your push). It stays unresolved; push again or leave it to the user.`
+                    : null,
             ]
               .filter(Boolean)
               .join(' '),
@@ -775,6 +820,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   override async mayResolveUnasked(
     sessionId: string,
     input: Record<string, unknown>,
+    runStartedAt: Date,
+    toolUseId: string,
   ): Promise<boolean> {
     const number = input['pull_request'];
     const commentId = input['comment_id'];
@@ -790,12 +837,59 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       sessionId,
       typeof input['repository'] === 'string' ? input['repository'] : null,
     );
-    return this.sessionGit.mayResolveUnasked(
+    const headSha = await this.sessionGit.mayResolveUnasked(
       sessionId,
       repositoryId,
       number,
       commentId,
+      runStartedAt,
     );
+    if (!headSha) {
+      return false;
+    }
+    let grants = this.resolveGrants.get(sessionId);
+    if (!grants) {
+      grants = [];
+      this.resolveGrants.set(sessionId, grants);
+    }
+    grants.push({
+      toolUseId,
+      repositoryId,
+      number,
+      commentId,
+      runStartedAt,
+      headSha,
+    });
+    return true;
+  }
+
+  /**
+   * The grant of an Autofix resolve allowed unasked for this call (by its
+   * tool use, else by thread), taken out of the list.
+   */
+  private takeResolveGrant(
+    sessionId: string,
+    toolUseId: string | null,
+    repositoryId: string,
+    number: number,
+    commentId: number,
+  ): ResolveGrant | null {
+    const grants = this.resolveGrants.get(sessionId) ?? [];
+    const index = grants.findIndex((grant) =>
+      toolUseId
+        ? grant.toolUseId === toolUseId
+        : grant.repositoryId === repositoryId &&
+          grant.number === number &&
+          grant.commentId === commentId,
+    );
+    if (index < 0) {
+      return null;
+    }
+    const [grant] = grants.splice(index, 1);
+    if (grants.length === 0) {
+      this.resolveGrants.delete(sessionId);
+    }
+    return grant;
   }
 
   // -------------------------------------------------------------------------

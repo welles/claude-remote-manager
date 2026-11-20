@@ -712,6 +712,10 @@ describe('session integrations (tools, memory, pushes)', () => {
     });
 
     describe('resolving during an Autofix run', () => {
+      /** An ISO time `minutes` from now (the run starts now). */
+      const at = (minutes: number) =>
+        new Date(Date.now() + minutes * 60_000).toISOString();
+
       /** A session in an Autofix run, with pull request #1. */
       const inAutofix = async () => {
         const setup = await withPullRequest();
@@ -728,22 +732,26 @@ describe('session integrations (tools, memory, pushes)', () => {
           ),
         );
         const pull = harness.github.pulls[0];
-        const push = (timestamp: string, after = pull.headSha) =>
+        const push = (
+          timestamp: string,
+          after = pull.headSha,
+          activityType = 'push',
+        ) =>
           harness.github.activity.set(setup.remoteId, [
             {
-              activity_type: 'push',
+              activity_type: activityType,
               ref: `refs/heads/${pull.head}`,
               after,
               timestamp,
             },
           ]);
         harness.approver.autoAnswer = { decision: 'deny', message: 'No' };
-        const resolve = async (commentId = 501) => {
+        const resolve = async (commentId = 501, toolUseId = 'tu-r') => {
           const before = harness.approver.requests.length;
           const result = await ask(
             REPLY_TO_REVIEW_THREAD_TOOL_NAME,
             { pull_request: 1, comment_id: commentId, resolve: true },
-            'tu-r',
+            toolUseId,
             { name: 'crm', source: 'sdk' },
           );
           return {
@@ -751,53 +759,77 @@ describe('session integrations (tools, memory, pushes)', () => {
             asked: harness.approver.requests.length > before,
           };
         };
-        return { ...setup, push, resolve };
+        const unasked = { behavior: 'allow', asked: false };
+        const asks = { behavior: 'deny', asked: true };
+        return { ...setup, pull, push, resolve, unasked, asks };
       };
 
-      it('runs unasked after a push of the pull request head since the last comment', async () => {
-        const { push, resolve, threads } = await inAutofix();
-        // The thread's comments are from 2026-01-01.
-        push('2026-02-01T00:00:00Z');
-        await expect(resolve()).resolves.toEqual({
-          behavior: 'allow',
-          asked: false,
-        });
+      it('runs unasked after a push of the pull request head in this run since the last comment', async () => {
+        const { push, resolve, threads, unasked } = await inAutofix();
+        // The thread's comments are from 2026-01-01, before the run.
+        push(at(1));
+        await expect(resolve()).resolves.toEqual(unasked);
         // The app's own replies do not count as feedback.
-        threads[1].replyDates = ['2026-01-01T00:00:00Z'];
+        threads[1].replyDates = ['2026-01-01T00:00:00Z', at(5)];
         threads[1].commentIds?.push(603);
-        threads[1].replyDates.push('2026-03-01T00:00:00Z');
         threads[1].appCommentIds = [603];
-        await expect(resolve(601)).resolves.toEqual({
-          behavior: 'allow',
-          asked: false,
-        });
+        await expect(resolve(601)).resolves.toEqual(unasked);
+        // A force push counts as a push.
+        push(at(1), undefined, 'force_push');
+        await expect(resolve()).resolves.toEqual(unasked);
       });
 
       it('asks without such a push', async () => {
-        const { push, resolve, threads } = await inAutofix();
+        const { pull, push, resolve, threads, asks } = await inAutofix();
         // No push at all.
-        await expect(resolve()).resolves.toEqual({
-          behavior: 'deny',
-          asked: true,
-        });
+        await expect(resolve()).resolves.toEqual(asks);
+        // A push before this run (after the comment).
+        push(at(-60));
+        await expect(resolve()).resolves.toEqual(asks);
         // A push before the last comment.
-        push('2026-02-01T00:00:00Z');
-        threads[1].replyDates = ['2026-03-01T00:00:00Z'];
-        await expect(resolve(601)).resolves.toEqual({
-          behavior: 'deny',
-          asked: true,
-        });
+        push(at(1));
+        threads[1].replyDates = [at(2)];
+        await expect(resolve(601)).resolves.toEqual(asks);
+        // A comment of a review submitted after the push (written before).
+        threads[0].publishedAt = at(2);
+        await expect(resolve()).resolves.toEqual(asks);
+        // ... or one GitHub gives no publication time for.
+        threads[0].publishedAt = null;
+        await expect(resolve()).resolves.toEqual(asks);
+        threads[0].publishedAt = undefined;
         // A later push, but not of the pull request's head.
-        push('2026-04-01T00:00:00Z', 'c'.repeat(40));
-        await expect(resolve(601)).resolves.toEqual({
-          behavior: 'deny',
-          asked: true,
-        });
+        push(at(3), 'c'.repeat(40));
+        await expect(resolve()).resolves.toEqual(asks);
+        // The latest activity of the branch is no push.
+        push(at(3), undefined, 'branch_creation');
+        await expect(resolve()).resolves.toEqual(asks);
+        push(at(3), undefined, 'pr_merge');
+        await expect(resolve()).resolves.toEqual(asks);
+        // The pull request is closed, or its head is another branch.
+        push(at(3));
+        pull.state = 'closed';
+        await expect(resolve()).resolves.toEqual(asks);
+        pull.state = 'open';
+        const head = pull.head;
+        pull.head = 'elsewhere';
+        await expect(resolve()).resolves.toEqual(asks);
+        pull.head = head;
+        await expect(resolve()).resolves.toMatchObject({ asked: false });
+      });
+
+      it('asks when GitHub did not list every comment or only the app wrote', async () => {
+        const { push, resolve, threads, asks } = await inAutofix();
+        push(at(1));
+        threads[0].totalCount = 5;
+        await expect(resolve()).resolves.toEqual(asks);
+        threads[0].totalCount = undefined;
+        threads[0].appCommentIds = [501];
+        await expect(resolve()).resolves.toEqual(asks);
       });
 
       it('asks when the check fails', async () => {
-        const { push, resolve } = await inAutofix();
-        push('2026-02-01T00:00:00Z');
+        const { push, resolve, asks } = await inAutofix();
+        push(at(1));
         harness.github.intercept = (request) =>
           request.path.endsWith('/activity')
             ? new Response(JSON.stringify({ message: 'Forbidden' }), {
@@ -805,16 +837,100 @@ describe('session integrations (tools, memory, pushes)', () => {
                 headers: { 'content-type': 'application/json' },
               })
             : undefined;
-        await expect(resolve()).resolves.toEqual({
-          behavior: 'deny',
-          asked: true,
-        });
+        await expect(resolve()).resolves.toEqual(asks);
         // An unknown comment asks as well (the tool refuses it then).
         harness.github.intercept = null;
-        await expect(resolve(999)).resolves.toEqual({
-          behavior: 'deny',
-          asked: true,
+        await expect(resolve(999)).resolves.toEqual(asks);
+      });
+
+      it('reads the activity with a token for contents', async () => {
+        const { repository, push, resolve, unasked } = await inAutofix();
+        push(at(1));
+        await expect(resolve()).resolves.toEqual(unasked);
+        const activity = harness.github.requestsTo('GET', /\/activity$/);
+        expect(activity.at(-1)?.auth).toMatchObject({
+          permissions: { contents: 'read' },
         });
+        // The fake refuses it without contents, as GitHub does.
+        const record = harness.repositoryRecords.get(repository.id);
+        const { token } = await harness.github.service.repositoryToken(
+          record?.githubInstallationId as number,
+          record?.githubRepositoryId as number,
+          { metadata: 'read' },
+        );
+        await expect(
+          harness.github.http.request({
+            path: '/repos/alice/app/activity',
+            token,
+          }),
+        ).rejects.toThrow('Resource not accessible by integration');
+      });
+
+      it('checks again right before resolving', async () => {
+        const { push, resolve, threads, unasked } = await inAutofix();
+        push(at(1));
+        await expect(resolve(501, 'tu-a')).resolves.toEqual(unasked);
+        const resolveTool = tool('reply_to_review_thread');
+        await expect(
+          resolveTool.handler(
+            { pull_request: 1, comment_id: 501, body: 'Fixed', resolve: true },
+            { toolUseId: 'tu-a' },
+          ),
+        ).resolves.toMatchObject({
+          text: expect.stringContaining('Resolved the thread'),
+        });
+        expect(threads[0].resolved).toBe(true);
+
+        // A new comment between the check and the call: reply only.
+        await expect(resolve(601, 'tu-b')).resolves.toEqual(unasked);
+        threads[1].replyDates = [at(2)];
+        const result = await resolveTool.handler(
+          { pull_request: 1, comment_id: 601, body: 'Fixed', resolve: true },
+          { toolUseId: 'tu-b' },
+        );
+        expect(result.isError).toBeUndefined();
+        expect(result.text).toContain('Replied on the review thread');
+        expect(result.text).toContain('Did not resolve the thread');
+        expect(threads[1].resolved).toBe(false);
+        expect(harness.github.reviewReplies).toHaveLength(2);
+      });
+
+      it('is refused in dontAsk, and never checked outside a run', async () => {
+        const { session, push } = await inAutofix();
+        push(at(1));
+        const check = jest.spyOn(harness.sessionGit, 'mayResolveUnasked');
+        const gate = options().gate;
+        if (!gate) {
+          throw new Error('no gate');
+        }
+        await harness.service.update(session.id, {
+          permissionMode: 'dontAsk',
+        });
+        expect(
+          gate({
+            toolName: REPLY_TO_REVIEW_THREAD_TOOL_NAME,
+            input: { pull_request: 1, comment_id: 501, resolve: true },
+            toolUseId: 'tu-d',
+            agentId: null,
+            mcpServer: { name: 'crm', source: 'sdk' },
+          }),
+        ).toMatchObject({ decision: 'deny' });
+        await harness.service.update(session.id, {
+          permissionMode: 'default',
+        });
+
+        // After the run: the mode decides, no Autofix check.
+        harness.runner.last.emit(resultMessage(1, 0));
+        await flush();
+        const before = harness.approver.requests.length;
+        await ask(
+          REPLY_TO_REVIEW_THREAD_TOOL_NAME,
+          { pull_request: 1, comment_id: 501, resolve: true },
+          'tu-o',
+          { name: 'crm', source: 'sdk' },
+        );
+        expect(harness.approver.requests.length).toBe(before + 1);
+        expect(check).not.toHaveBeenCalled();
       });
     });
   });
