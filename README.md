@@ -712,8 +712,10 @@ session. It has:
   the session or the app needs (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `NODE_OPTIONS`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `BASH_ENV`, `ENV`, `GH_TOKEN`, `GITHUB_TOKEN`, `CLAUDE_*`,
   `ANTHROPIC_*`, `CRM_*`, `GIT_CONFIG_*`) are refused.
 - **Files** (e.g. a service account JSON, a kubeconfig): written for each process into a directory of
-  its own below `ENVIRONMENT_FILES_DIR` (`0700`, files `0600`, owned by the session user, outside the
-  clones), the path in a variable named per file; removed when the process ends.
+  its own below `ENVIRONMENT_FILES_DIR`, outside the clones, the path in a variable named per file;
+  removed when the process ends. The directories stay the app's (`0711` with separate users, else
+  `0700`) and only the files (`0600`) belong to the session user, so a session cannot plant
+  symlinks where the app removes them; removal unlinks the known files, nothing recursive.
 - **Secret switch** per variable and file: secrets are stored with AES-256-GCM (key from
   `ENVIRONMENT_KEY_FILE` / `CRM_SECRET_ENVIRONMENT_KEY`, else generated next to the database) and
   never returned by the API (only their length); the UI can replace or remove them. Secret values of
