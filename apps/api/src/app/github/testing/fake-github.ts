@@ -1042,6 +1042,7 @@ export class FakeGitHub {
       }
       if (method === 'GET') {
         const head = request.query.get('head')?.split(':')[1];
+        const state = request.query.get('state') ?? 'open';
         return json(
           200,
           this.pulls
@@ -1049,7 +1050,7 @@ export class FakeGitHub {
               (entry) =>
                 entry.repositoryId === repository.id &&
                 (!head || entry.head === head) &&
-                entry.state === 'open',
+                (state === 'all' || entry.state === state),
             )
             .map((entry) => this.rawPull(entry)),
         );

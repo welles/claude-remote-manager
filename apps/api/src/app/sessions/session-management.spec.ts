@@ -9,6 +9,7 @@ import { commitFile, git } from '../git/testing/git-fixtures';
 import { WorkspaceEntries } from '../workspaces/workspace-entries';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import { SessionManagementService } from './session-management.service';
+import { SessionRemoteBranches } from './session-remote-branches';
 import { SessionEventRepository } from './session-event.repository';
 import { resultMessage, waitFor } from './testing/fake-agent';
 import { UsageRepository } from './usage.repository';
@@ -35,6 +36,14 @@ describe('SessionManagementService', () => {
       new WorkspaceEntries(harness.config),
       new UsageRepository(harness.db),
       harness.transcripts,
+      new SessionRemoteBranches(
+        harness.repositories,
+        harness.repositoryRecords,
+        harness.credentials,
+        harness.git,
+        harness.github.service,
+        harness.sessions,
+      ),
       undefined,
       harness.shownFiles,
     );
@@ -322,6 +331,178 @@ describe('SessionManagementService', () => {
       await harness.service.send(session.id, { text: 'continue' });
       expect(harness.service.get(session.id).status).toBe('running');
       await waitFor(() => harness.runner.runs.length === 2);
+    });
+  });
+
+  describe('remote branches', () => {
+    const onOrigin = async (branch: string) =>
+      (await git(repository.origin, 'branch', '--list', branch)).trim() !== '';
+
+    /** An ended session whose branch has one commit pushed to the remote. */
+    const pushedSession = async () => {
+      const session = await endedSession();
+      const commit = await commitFile(session.cwd, 'work.txt', 'w');
+      await harness.sessionGit.push(session.id, repository.id);
+      return { session, commit, branch: `claude/${session.slug}` };
+    };
+
+    /** Registers the repository as one from (fake) GitHub. */
+    const fromGitHub = () => {
+      const installation = harness.github.addInstallation('acme');
+      const remote = harness.github.addRepository(installation, 'app');
+      harness.repositoryRecords.update(repository.id, {
+        githubRepositoryId: remote.id,
+        githubInstallationId: installation.id,
+      });
+      return remote;
+    };
+
+    const pull = (
+      remoteId: number,
+      head: string,
+      headSha: string,
+      state: 'open' | 'merged',
+    ) =>
+      harness.github.pulls.push({
+        number: harness.github.pulls.length + 1,
+        repositoryId: remoteId,
+        title: 'Work',
+        body: '',
+        head,
+        base: 'main',
+        draft: false,
+        state: state === 'open' ? 'open' : 'closed',
+        merged: state === 'merged',
+        createdAt: new Date().toISOString(),
+        headSha,
+      });
+
+    it('lists no branch that is not on the remote', async () => {
+      const session = await endedSession();
+      await commitFile(session.cwd, 'work.txt', 'w');
+      expect(
+        (await management.cleanupPreview(session.id)).remoteBranches,
+      ).toEqual([]);
+    });
+
+    it('deletes a branch with commits no other branch has only after the loss was accepted', async () => {
+      const { session, commit, branch } = await pushedSession();
+      expect(
+        (await management.cleanupPreview(session.id)).remoteBranches,
+      ).toEqual([
+        {
+          position: 0,
+          name: 'acme/app',
+          branch,
+          commit,
+          unmergedCount: 1,
+          mergedBy: null,
+          safe: false,
+          blocked: null,
+        },
+      ]);
+
+      const kept = await management.cleanup(session.id, {
+        directories: [],
+        remoteBranches: [{ position: 0 }],
+      });
+      expect(kept.remoteBranches[0]).toMatchObject({
+        result: 'kept',
+        message: expect.stringContaining('1 commit no other branch has'),
+      });
+      expect(await onOrigin(branch)).toBe(true);
+
+      const deleted = await management.cleanup(session.id, {
+        directories: [],
+        remoteBranches: [{ position: 0, acceptLoss: true }],
+      });
+      expect(deleted.remoteBranches[0]).toMatchObject({
+        result: 'deleted',
+        message: expect.stringContaining('lost 1 commit'),
+      });
+      expect(await onOrigin(branch)).toBe(false);
+      // The kept clone counts its commit as not on the remote again.
+      const after = await management.cleanupPreview(session.id);
+      expect(after.remoteBranches).toEqual([]);
+      expect(after.directories[0].loss).toMatchObject({ unpushedCount: 1 });
+    });
+
+    it('offers a merged branch as safe and deletes it when archiving, also after its clone was removed', async () => {
+      const { session, commit, branch } = await pushedSession();
+      await git(repository.origin, 'update-ref', 'refs/heads/main', commit);
+      await management.cleanup(session.id, {
+        directories: [{ position: 0, action: 'discard' }],
+      });
+
+      const preview = await management.cleanupPreview(session.id);
+      expect(preview.directories).toEqual([]);
+      expect(preview.remoteBranches).toEqual([
+        expect.objectContaining({ branch, unmergedCount: 0, safe: true }),
+      ]);
+      const result = await management.archive(session.id, {
+        remoteBranches: [{ position: 0 }],
+      });
+      expect(result.remoteBranches).toEqual([
+        expect.objectContaining({ result: 'deleted', branch }),
+      ]);
+      expect(await onOrigin(branch)).toBe(false);
+      expect(await git(repository.origin, 'rev-parse', 'main')).toBe(commit);
+    });
+
+    it('counts a branch merged by a pull request (squash) as safe, and never deletes one with an open pull request', async () => {
+      const remote = fromGitHub();
+      const { session, commit, branch } = await pushedSession();
+      pull(remote.id, branch, commit, 'merged');
+      expect(
+        (await management.cleanupPreview(session.id)).remoteBranches[0],
+      ).toMatchObject({ unmergedCount: 0, mergedBy: 1, safe: true });
+
+      pull(remote.id, branch, commit, 'open');
+      const blocked = (await management.cleanupPreview(session.id))
+        .remoteBranches[0];
+      expect(blocked.safe).toBe(false);
+      expect(blocked.blocked).toContain('#2 is open');
+      const kept = await management.cleanup(session.id, {
+        directories: [],
+        remoteBranches: [{ position: 0, acceptLoss: true }],
+      });
+      expect(kept.remoteBranches[0].result).toBe('kept');
+      expect(await onOrigin(branch)).toBe(true);
+    });
+
+    it('leaves a branch alone that moved since it was checked', async () => {
+      const { commit, branch } = await pushedSession();
+      // Someone pushes on top after the check.
+      const other = join(harness.dir, 'other');
+      await git(harness.dir, 'clone', '--quiet', repository.origin, other);
+      await git(other, 'checkout', '--quiet', branch);
+      const moved = await commitFile(other, 'more.txt', 'm');
+      await git(other, 'push', '--quiet', 'origin', branch);
+      await expect(
+        harness.git.deleteRemoteBranch(
+          repository.localPath,
+          branch,
+          commit,
+          async () => null,
+        ),
+      ).rejects.toThrow();
+      expect(await git(repository.origin, 'rev-parse', branch)).toBe(moved);
+    });
+
+    it('refuses pushing and deleting the same branch at once', async () => {
+      const { session } = await pushedSession();
+      await expect(
+        management.cleanup(session.id, {
+          directories: [{ position: 0, action: 'push' }],
+          remoteBranches: [{ position: 0 }],
+        }),
+      ).rejects.toThrow('pushed and deleted');
+      await expect(
+        management.cleanup(session.id, {
+          directories: [],
+          remoteBranches: [{ position: 'x' }],
+        }),
+      ).rejects.toThrow('position');
     });
   });
 

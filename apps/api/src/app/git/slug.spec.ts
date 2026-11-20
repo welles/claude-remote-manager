@@ -1,29 +1,15 @@
-import { newSlug, randomSuffix, SLUG_PATTERN, slugBase } from './slug';
+import { newSlug, randomSuffix, SLUG_PATTERN, slugDate } from './slug';
 
 describe('slugs', () => {
-  it.each([
-    ['Fix the login bug', 'fix-the-login-bug'],
-    ['  Größe ändern: Ärger & Ölwechsel!  ', 'grosse-andern-arger-olwechsel'],
-    ['../../etc/passwd', 'etc-passwd'],
-    ['--force', 'force'],
-    ['refs/heads/main.lock', 'refs-heads-main-lock'],
-    ['日本語', 'session'],
-    ['', 'session'],
-    [
-      'Implement the new repository overview with orphaned worktrees marked',
-      'implement-the-new-repository-overview',
-    ],
-    ['x'.repeat(60), 'x'.repeat(40)],
-  ])('derives %j -> %j', (text, base) => {
-    expect(slugBase(text)).toBe(base);
-    expect(slugBase(text).length).toBeLessThanOrEqual(40);
+  it('is the local date plus a random suffix', () => {
+    expect(newSlug(new Date(2026, 10, 20, 23, 59), 'abc123')).toBe(
+      '2026-11-20-abc123',
+    );
+    expect(slugDate(new Date(2027, 0, 5))).toBe('2027-01-05');
   });
 
-  it('appends a random suffix and stays a safe name', () => {
-    expect(newSlug('Fix it', 'abc123')).toBe('fix-it-abc123');
-    const slugs = new Set(
-      Array.from({ length: 200 }, () => newSlug('Same title')),
-    );
+  it('is unique and stays a safe name', () => {
+    const slugs = new Set(Array.from({ length: 200 }, () => newSlug()));
     expect(slugs.size).toBe(200);
     for (const slug of slugs) {
       expect(slug).toMatch(SLUG_PATTERN);

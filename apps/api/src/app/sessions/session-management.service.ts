@@ -21,6 +21,8 @@ import type {
   CleanupResult,
   DeletionPreview,
   DirectoryLoss,
+  RemoteBranchChoice,
+  RemoteBranchOutcome,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { AttachmentStore } from '../attachments/attachment.store';
@@ -44,6 +46,10 @@ import {
   type WorkspaceRule,
 } from '../workspaces/workspace-entries';
 import { SessionGitService } from './session-git.service';
+import {
+  parseRemoteBranchChoices,
+  SessionRemoteBranches,
+} from './session-remote-branches';
 import {
   SessionRepository,
   type SessionDirectoryRecord,
@@ -125,6 +131,7 @@ export class SessionManagementService {
     private readonly entries: WorkspaceEntries,
     private readonly usage: UsageRepository,
     private readonly transcripts: TranscriptReader,
+    private readonly remoteBranches: SessionRemoteBranches,
     @Optional() private readonly attachmentStore?: AttachmentStore,
     @Optional() private readonly shownFileStore?: ShownFilesService,
     @Optional() private readonly previews?: PreviewsService,
@@ -142,6 +149,7 @@ export class SessionManagementService {
         ? 'The session is archived already'
         : this.cleanupBlocked(record, true),
       directories: (await this.describeAll(record)).map((entry) => entry.view),
+      remoteBranches: await this.remoteBranches.describe(record),
       previews: this.previews?.forSession(sessionId).length ?? 0,
     };
   }
@@ -152,15 +160,26 @@ export class SessionManagementService {
    * (e.g. a push the remote refused) keeps that directory and goes on.
    */
   async cleanup(sessionId: string, request: unknown): Promise<CleanupResult> {
-    const choices = parseChoices(requireObject(request)['directories']);
+    const body = requireObject(request);
+    const choices = parseChoices(body['directories']);
+    const branches = parseRemoteBranchChoices(body['remoteBranches']);
+    checkBranchChoices(choices, branches);
     return this.locks.run(sessionId, async () => {
       const record = this.require(sessionId);
       const blocked = this.cleanupBlocked(record, false);
       if (blocked) {
         throw new ConflictException(blocked);
       }
-      const outcomes = await this.runCleanup(record, choices);
-      return { session: this.sessions.get(sessionId), outcomes };
+      const { outcomes, remoteBranches } = await this.runCleanup(
+        record,
+        choices,
+        branches,
+      );
+      return {
+        session: this.sessions.get(sessionId),
+        outcomes,
+        remoteBranches,
+      };
     });
   }
 
@@ -177,6 +196,8 @@ export class SessionManagementService {
       Record<string, unknown>;
     const choices =
       body['cleanup'] === undefined ? [] : parseChoices(body['cleanup']);
+    const branches = parseRemoteBranchChoices(body['remoteBranches']);
+    checkBranchChoices(choices, branches);
     return this.locks.run(sessionId, async () => {
       const record = this.require(sessionId);
       if (record.archivedAt) {
@@ -189,14 +210,18 @@ export class SessionManagementService {
       if (record.status !== 'finished') {
         await this.sessions.end(sessionId);
       }
-      const outcomes = await this.runCleanup(this.require(sessionId), choices);
+      const { outcomes, remoteBranches } = await this.runCleanup(
+        this.require(sessionId),
+        choices,
+        branches,
+      );
       this.sessions.recordEvent(sessionId, {
         type: 'notice',
         level: 'info',
         text: 'The session was archived.',
       });
       const session = this.sessions.setArchived(sessionId, new Date());
-      return { session, outcomes };
+      return { session, outcomes, remoteBranches };
     });
   }
 
@@ -493,14 +518,22 @@ export class SessionManagementService {
       : null;
   }
 
+  /**
+   * Runs the directories' choices, then deletes the chosen remote branches
+   * (afterwards: a clone is discarded checked against the remote as it was).
+   */
   private async runCleanup(
     record: SessionRecord,
     choices: CleanupChoice[],
-  ): Promise<CleanupOutcome[]> {
-    if (choices.length === 0) {
-      return [];
+    branches: RemoteBranchChoice[],
+  ): Promise<{
+    outcomes: CleanupOutcome[];
+    remoteBranches: RemoteBranchOutcome[];
+  }> {
+    if (choices.length === 0 && branches.length === 0) {
+      return { outcomes: [], remoteBranches: [] };
     }
-    const described = await this.describeAll(record);
+    const described = choices.length > 0 ? await this.describeAll(record) : [];
     const outcomes: CleanupOutcome[] = [];
     for (const choice of choices) {
       const entry = described.find(
@@ -518,6 +551,10 @@ export class SessionManagementService {
       }
       outcomes.push(await this.cleanupOne(record, entry, choice));
     }
+    const remoteBranches =
+      branches.length > 0
+        ? await this.remoteBranches.delete(this.require(record.id), branches)
+        : [];
     const removed = outcomes.filter((outcome) => outcome.result === 'removed');
     if (removed.length > 0) {
       await this.removeEmptyParents(record);
@@ -532,17 +569,22 @@ export class SessionManagementService {
     const done = outcomes.filter(
       (outcome) => outcome.action !== 'keep' || outcome.result !== 'kept',
     );
-    if (done.length > 0) {
+    const lines = [...done, ...remoteBranches].map(
+      (outcome) => `${outcome.name}: ${outcome.message}`,
+    );
+    if (lines.length > 0) {
       this.sessions.recordEvent(record.id, {
         type: 'notice',
-        level: outcomes.some((outcome) => outcome.result === 'failed')
+        level: [...outcomes, ...remoteBranches].some(
+          (outcome) => outcome.result === 'failed',
+        )
           ? 'warning'
           : 'info',
-        text: `Cleanup: ${done.map((outcome) => `${outcome.name}: ${outcome.message}`).join('; ')}.${removed.length > 0 ? ' The session can be read but no longer continued.' : ''}`,
+        text: `Cleanup: ${lines.join('; ')}.${removed.length > 0 ? ' The session can be read but no longer continued.' : ''}`,
       });
     }
     this.sessions.publishUpdate(record.id);
-    return outcomes;
+    return { outcomes, remoteBranches };
   }
 
   private async cleanupOne(
@@ -727,6 +769,28 @@ function toLoss(loss: {
       loss.unpushedCount === 0 &&
       loss.stashes === 0,
   };
+}
+
+/**
+ * A branch is not deleted on the remote where its clone is pushed in the
+ * same cleanup: that would undo the push at once.
+ */
+function checkBranchChoices(
+  choices: CleanupChoice[],
+  branches: RemoteBranchChoice[],
+): void {
+  for (const branch of branches) {
+    if (
+      choices.some(
+        (choice) =>
+          choice.position === branch.position && choice.action === 'push',
+      )
+    ) {
+      throw new BadRequestException(
+        'A branch cannot be pushed and deleted on the remote in the same cleanup',
+      );
+    }
+  }
 }
 
 function parseChoices(value: unknown): CleanupChoice[] {

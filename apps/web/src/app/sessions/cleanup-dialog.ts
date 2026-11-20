@@ -19,6 +19,8 @@ import type {
   CleanupPreview,
   CleanupResult,
   DirectoryLoss,
+  RemoteBranch,
+  RemoteBranchOutcome,
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { LossDetails } from './loss-details';
@@ -65,12 +67,28 @@ export function lossOf(
   return directory.loss;
 }
 
+/** What deleting a remote branch means, in one line. */
+export function remoteBranchState(branch: RemoteBranch): string {
+  if (branch.blocked) {
+    return branch.blocked;
+  }
+  if (branch.mergedBy !== null) {
+    return `Merged by pull request #${branch.mergedBy}; deleting it loses nothing.`;
+  }
+  if (branch.unmergedCount === 0) {
+    return 'Its commits are on other branches too; deleting it loses nothing.';
+  }
+  return `${branch.unmergedCount} ${branch.unmergedCount === 1 ? 'commit is' : 'commits are'} on no other branch; deleting it loses ${branch.unmergedCount === 1 ? 'it' : 'them'}.`;
+}
+
 /**
  * Cleans up a session's clones and scratch directory, or archives the
  * session with the same choices: per directory push (or fast-forward a
  * local project), discard or keep, with what each choice would lose read
  * fresh when the dialog opens. A choice that loses work needs an explicit
- * "accept" first. A native modal `<dialog>`, like the other dialogs.
+ * "accept" first. The session's branches on the remotes can be deleted
+ * too: checked when that loses nothing, never with an open pull request.
+ * A native modal `<dialog>`, like the other dialogs.
  */
 @Component({
   selector: 'app-cleanup-dialog',
@@ -174,6 +192,39 @@ export function lossOf(
             } @empty {
               <p class="muted">The session has no directories left.</p>
             }
+            @if (preview.remoteBranches.length > 0) {
+              <h3 class="section">Branches on the remote</h3>
+              @for (branch of preview.remoteBranches; track branch.position) {
+                <fieldset class="directory" data-testid="remote-branch">
+                  <legend>
+                    <strong>{{ branch.name }}</strong>
+                    <span class="muted"> · {{ branch.branch }}</span>
+                  </legend>
+                  <p [class.warning]="!branch.safe">
+                    {{ remoteBranchState(branch) }}
+                  </p>
+                  @if (pushes(branch.position)) {
+                    <p class="muted">It is pushed in this cleanup; kept.</p>
+                  }
+                  <mat-checkbox
+                    [checked]="deletesBranch(branch)"
+                    [disabled]="!!branch.blocked || pushes(branch.position)"
+                    (change)="chooseBranch(branch, $event.checked)"
+                    data-testid="delete-remote-branch"
+                    >Delete {{ branch.branch }} on the remote</mat-checkbox
+                  >
+                  @if (deletesBranch(branch) && !branch.safe) {
+                    <mat-checkbox
+                      [checked]="branchAccepted().has(branch.position)"
+                      (change)="acceptBranch(branch, $event.checked)"
+                      data-testid="accept-branch-loss"
+                      >Delete it anyway: I accept losing these
+                      commits</mat-checkbox
+                    >
+                  }
+                </fieldset>
+              }
+            }
             @if (removes()) {
               <p class="note" data-testid="no-resume-note">
                 Afterwards the session can still be read, but not continued.
@@ -196,7 +247,7 @@ export function lossOf(
           <button
             matButton="filled"
             type="button"
-            [class.app-danger]="removes()"
+            [class.app-danger]="removes() || deletesBranches()"
             [disabled]="!ready() || busy()"
             (click)="confirm()"
             data-testid="cleanup-confirm"
@@ -246,6 +297,10 @@ export function lossOf(
     .note {
       font-weight: 500;
     }
+    .section {
+      font: var(--mat-sys-title-small);
+      margin: 16px 0 0;
+    }
   `,
 })
 export class CleanupDialog {
@@ -259,11 +314,16 @@ export class CleanupDialog {
 
   protected readonly actionLabel = actionLabel;
   protected readonly lossOf = lossOf;
+  protected readonly remoteBranchState = remoteBranchState;
   protected readonly open = signal(false);
   protected readonly mode = signal<CleanupMode>('cleanup');
   protected readonly preview = signal<CleanupPreview | null>(null);
   protected readonly choices = signal(new Map<number, CleanupAction>());
   protected readonly accepted = signal(new Set<number>());
+  /** Remote branches to delete, by position. */
+  protected readonly branches = signal(new Set<number>());
+  /** Remote branches whose lost commits were accepted. */
+  protected readonly branchAccepted = signal(new Set<number>());
   protected readonly error = signal<string | null>(null);
   protected readonly busy = signal(false);
   /** Counts the openings, so that a late answer finds a newer one. */
@@ -286,6 +346,16 @@ export class CleanupDialog {
       )
     );
   });
+  /** The remote branches the cleanup deletes (not blocked or pushed). */
+  protected readonly chosenBranches = computed(
+    () =>
+      this.preview()?.remoteBranches.filter((branch) =>
+        this.deletesBranch(branch),
+      ) ?? [],
+  );
+  protected readonly deletesBranches = computed(
+    () => this.chosenBranches().length > 0,
+  );
   /** Why the chosen operation cannot run now. */
   protected readonly blockedReason = computed(() => {
     const preview = this.preview();
@@ -301,20 +371,25 @@ export class CleanupDialog {
     if (!preview || this.blockedReason()) {
       return false;
     }
-    return preview.directories.every((directory) => {
-      const action = this.choices().get(directory.position) ?? 'keep';
-      const loss = lossOf(action, directory);
-      return (
-        action === 'keep' ||
-        (loss !== null &&
-          (loss.clean || this.accepted().has(directory.position)))
-      );
-    });
+    return (
+      preview.directories.every((directory) => {
+        const action = this.choices().get(directory.position) ?? 'keep';
+        const loss = lossOf(action, directory);
+        return (
+          action === 'keep' ||
+          (loss !== null &&
+            (loss.clean || this.accepted().has(directory.position)))
+        );
+      }) &&
+      this.chosenBranches().every(
+        (branch) => branch.safe || this.branchAccepted().has(branch.position),
+      )
+    );
   });
   protected readonly confirmLabel = computed(() =>
     this.mode() === 'archive'
       ? 'Archive'
-      : this.removes()
+      : this.removes() || this.deletesBranches()
         ? 'Clean up'
         : 'Nothing to do',
   );
@@ -327,11 +402,28 @@ export class CleanupDialog {
     this.preview.set(null);
     this.choices.set(new Map());
     this.accepted.set(new Set());
+    this.branches.set(new Set());
+    this.branchAccepted.set(new Set());
     this.error.set(null);
     this.busy.set(false);
     this.dialog().open();
+    const run = this.run;
     this.api.cleanupPreview(this.sessionId()).subscribe({
-      next: (preview) => this.preview.set(preview),
+      next: (preview) => {
+        if (run !== this.run) {
+          return;
+        }
+        const remoteBranches = preview.remoteBranches ?? [];
+        this.preview.set({ ...preview, remoteBranches });
+        // Deleting what loses nothing is the default.
+        this.branches.set(
+          new Set(
+            remoteBranches
+              .filter((branch) => branch.safe)
+              .map((branch) => branch.position),
+          ),
+        );
+      },
       error: (error: unknown) =>
         this.error.set(
           errorMessage(error, 'What the directories hold could not be read.'),
@@ -345,6 +437,27 @@ export class CleanupDialog {
 
   protected choose(directory: CleanupDirectory, action: CleanupAction): void {
     this.choices.update((map) => new Map(map).set(directory.position, action));
+  }
+
+  /** The directory at this position is pushed in this cleanup. */
+  protected pushes(position: number): boolean {
+    return this.choices().get(position) === 'push';
+  }
+
+  protected deletesBranch(branch: RemoteBranch): boolean {
+    return (
+      this.branches().has(branch.position) &&
+      !branch.blocked &&
+      !this.pushes(branch.position)
+    );
+  }
+
+  protected chooseBranch(branch: RemoteBranch, on: boolean): void {
+    this.branches.update((set) => toggled(set, branch.position, on));
+  }
+
+  protected acceptBranch(branch: RemoteBranch, on: boolean): void {
+    this.branchAccepted.update((set) => toggled(set, branch.position, on));
   }
 
   protected accept(directory: CleanupDirectory, on: boolean): void {
@@ -371,7 +484,15 @@ export class CleanupDialog {
         acceptLoss: this.accepted().has(directory.position),
       }))
       .filter((choice) => choice.action !== 'keep');
-    if (this.mode() === 'cleanup' && choices.length === 0) {
+    const branches = this.chosenBranches().map((branch) => ({
+      position: branch.position,
+      acceptLoss: this.branchAccepted().has(branch.position),
+    }));
+    if (
+      this.mode() === 'cleanup' &&
+      choices.length === 0 &&
+      branches.length === 0
+    ) {
       this.close();
       return;
     }
@@ -384,15 +505,15 @@ export class CleanupDialog {
     const current = () => run === this.run && this.open();
     const request =
       mode === 'archive'
-        ? this.api.archive(this.sessionId(), choices)
-        : this.api.cleanup(this.sessionId(), choices);
+        ? this.api.archive(this.sessionId(), choices, branches)
+        : this.api.cleanup(this.sessionId(), choices, branches);
     request.subscribe({
       next: (result) => {
         if (current()) {
           this.busy.set(false);
           this.close();
         }
-        this.report(mode, result.outcomes);
+        this.report(mode, result.outcomes, result.remoteBranches ?? []);
         this.done.emit(result);
       },
       error: (error: unknown) => {
@@ -415,9 +536,14 @@ export class CleanupDialog {
   }
 
   /** What happened, as a toast: it needs nothing from the user. */
-  private report(mode: CleanupMode, outcomes: CleanupOutcome[]): void {
+  private report(
+    mode: CleanupMode,
+    outcomes: CleanupOutcome[],
+    branches: RemoteBranchOutcome[],
+  ): void {
     const archive = mode === 'archive';
-    const failed = outcomes.some((outcome) => outcome.result === 'failed');
+    const all = [...outcomes, ...branches];
+    const failed = all.some((outcome) => outcome.result === 'failed');
     this.toasts.show({
       title: archive
         ? failed
@@ -427,8 +553,8 @@ export class CleanupDialog {
           ? 'The cleanup failed in part'
           : 'Cleaned up',
       lines:
-        outcomes.length > 0
-          ? outcomes.map(
+        all.length > 0
+          ? all.map(
               (outcome) =>
                 `${outcome.result === 'failed' ? 'Failed: ' : ''}${outcome.name}: ${outcome.message}`,
             )
@@ -447,4 +573,14 @@ export class CleanupDialog {
     this.dialog().close();
     this.open.set(false);
   }
+}
+
+function toggled(set: Set<number>, value: number, on: boolean): Set<number> {
+  const next = new Set(set);
+  if (on) {
+    next.add(value);
+  } else {
+    next.delete(value);
+  }
+  return next;
 }

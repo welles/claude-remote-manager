@@ -42,6 +42,7 @@ import { SessionRepository } from './session.repository';
 import { SessionsController } from './sessions.controller';
 import { SessionManagementController } from './session-management.controller';
 import { SessionManagementService } from './session-management.service';
+import { SessionRemoteBranches } from './session-remote-branches';
 import { WorkspaceController } from '../workspaces/workspace.controller';
 import { WorkspaceOrphansService } from '../workspaces/workspace-orphans.service';
 import { SessionsGateway } from './sessions.gateway';
@@ -82,6 +83,7 @@ import { SlashCommandsService } from './slash-commands.service';
     UsageRepository,
     SessionsService,
     SessionManagementService,
+    SessionRemoteBranches,
     WorkspaceOrphansService,
     SessionsGateway,
     { provide: ViewerPresence, useValue: new ViewerPresence() },

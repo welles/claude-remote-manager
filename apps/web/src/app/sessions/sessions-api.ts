@@ -6,6 +6,7 @@ import type {
   BrowseResponse,
   BrowsedFileDto,
   CleanupChoice,
+  RemoteBranchChoice,
   CleanupPreview,
   CleanupResult,
   CloneLossReport,
@@ -65,18 +66,22 @@ export class SessionsApi {
   cleanup(
     sessionId: string,
     choices: CleanupChoice[],
+    remoteBranches: RemoteBranchChoice[] = [],
   ): Observable<CleanupResult> {
     return this.http.post<CleanupResult>(`${sessionPath(sessionId)}/cleanup`, {
       directories: choices,
+      remoteBranches,
     });
   }
 
   archive(
     sessionId: string,
     choices: CleanupChoice[],
+    remoteBranches: RemoteBranchChoice[] = [],
   ): Observable<CleanupResult> {
     return this.http.post<CleanupResult>(`${sessionPath(sessionId)}/archive`, {
       cleanup: choices,
+      remoteBranches,
     });
   }
 

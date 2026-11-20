@@ -749,7 +749,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       : null;
 
     this.attachmentStore(attachmentIds).check(attachmentIds);
-    const plan = await this.workspaces.plan(request, title);
+    const plan = await this.workspaces.plan(request);
     const message = { id: randomUUID(), text: prompt };
     // Resolved now, so the chips show at once; sent with the message later.
     const context = await this.prepareContext(referenceRequests);

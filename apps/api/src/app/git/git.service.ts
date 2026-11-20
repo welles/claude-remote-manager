@@ -265,6 +265,83 @@ export class GitService {
     }
   }
 
+  /**
+   * Commits that only `branch` of the mirror has: reachable from `commit`
+   * (its tip) but from no other branch or tag. With a fetched mirror these
+   * are the commits deleting the branch on the remote would lose.
+   */
+  async commitsOnlyOn(
+    mirrorPath: string,
+    branch: string,
+    commit: string,
+  ): Promise<number> {
+    if (!isValidBranchName(branch) || !/^[0-9a-f]{40,64}$/.test(commit)) {
+      throw new Error(`"${branch}" at "${commit}" is not a valid branch tip`);
+    }
+    const output = await this.git(mirrorPath, [
+      'rev-list',
+      '--count',
+      commit,
+      '--not',
+      // Session branch names have no glob characters; `--exclude` takes
+      // them without `refs/heads/` for `--branches`.
+      `--exclude=${branch}`,
+      '--branches',
+      '--tags',
+    ]);
+    return Number(output.trim()) || 0;
+  }
+
+  /**
+   * Deletes `branch` on the mirror's remote, but only while it still points
+   * to `expected` (`--force-with-lease`: a branch that moved meanwhile is
+   * left alone), then in the mirror too.
+   */
+  async deleteRemoteBranch(
+    mirrorPath: string,
+    branch: string,
+    expected: string,
+    auth: () => Promise<GitAuth | null>,
+  ): Promise<void> {
+    if (!isValidBranchName(branch) || !/^[0-9a-f]{40,64}$/.test(expected)) {
+      throw new Error(`"${branch}" at "${expected}" is not a valid branch tip`);
+    }
+    const ref = `refs/heads/${branch}`;
+    await this.locks.run(mirrorPath, async () => {
+      const env = (await auth())?.env;
+      await this.git(
+        mirrorPath,
+        [
+          'push',
+          '--quiet',
+          '--no-verify',
+          `--force-with-lease=${ref}:${expected}`,
+          'origin',
+          `:${ref}`,
+        ],
+        { timeoutMs: GIT_NETWORK_TIMEOUT_MS, env },
+      );
+      await this.git(mirrorPath, ['update-ref', '-d', ref, expected]).catch(
+        () => undefined,
+      );
+    });
+  }
+
+  /**
+   * Forgets `origin/<branch>` in a session clone (after the branch was
+   * deleted on the remote), so its commits no longer count as pushed.
+   */
+  async forgetRemoteBranch(path: string, branch: string): Promise<void> {
+    if (!isValidBranchName(branch)) {
+      throw new Error(`"${branch}" is not a valid branch name`);
+    }
+    await this.inClone(path, [
+      'update-ref',
+      '-d',
+      `refs/remotes/origin/${branch}`,
+    ]).catch(() => undefined);
+  }
+
   /** Whether the mirror has no branches (empty remote or new project). */
   async isEmpty(mirrorPath: string): Promise<boolean> {
     return (await this.branches(mirrorPath)).length === 0;
