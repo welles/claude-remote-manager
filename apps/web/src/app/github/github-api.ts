@@ -11,8 +11,11 @@ import type {
 export class GitHubApi {
   private readonly http = inject(HttpClient);
 
-  status(): Observable<GitHubStatusDto> {
-    return this.http.get<GitHubStatusDto>('/api/github/status');
+  /** `refresh` reads GitHub again instead of the server's short cache. */
+  status(refresh = false): Observable<GitHubStatusDto> {
+    return this.http.get<GitHubStatusDto>('/api/github/status', {
+      params: refresh ? new HttpParams().set('refresh', '1') : undefined,
+    });
   }
 
   repositories(

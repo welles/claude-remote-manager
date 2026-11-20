@@ -408,7 +408,11 @@ export class GitHubService implements OnApplicationBootstrap {
     }
   }
 
-  async status(): Promise<GitHubStatusDto> {
+  /**
+   * The app, its installations and what its settings lack; `refresh`
+   * bypasses the caches.
+   */
+  async status(refresh = false): Promise<GitHubStatusDto> {
     const base: GitHubStatusDto = {
       configured: this.configured,
       problem: this.configured ? null : this.credentials.problem,
@@ -424,11 +428,13 @@ export class GitHubService implements OnApplicationBootstrap {
     if (!this.configured) {
       return base;
     }
+    let setup: GitHubSetupDto | null = null;
     try {
-      const app = await this.appInfo();
-      const installations = await this.installations();
-      const listing = await this.listing();
-      const setup = this.setupOf(app);
+      const app = await this.appInfo(refresh);
+      // Kept when the installations cannot be read.
+      setup = this.setupOf(app);
+      const installations = await this.installations(refresh);
+      const listing = await this.listing(refresh);
       return {
         ...base,
         appName: app.name,
@@ -444,13 +450,16 @@ export class GitHubService implements OnApplicationBootstrap {
             ...installation,
             repositoryCount: listing.counts.get(installation.id) ?? null,
             error: listing.errors.get(installation.id) ?? null,
-            ...this.installationGaps(setup, { permissions, events }),
+            ...this.installationGaps(setup as GitHubSetupDto, {
+              permissions,
+              events,
+            }),
           }),
         ),
         setup,
       };
     } catch (error) {
-      return { ...base, error: errorText(error) };
+      return { ...base, setup, error: errorText(error) };
     }
   }
 

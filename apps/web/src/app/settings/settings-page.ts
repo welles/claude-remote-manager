@@ -111,9 +111,9 @@ export class SettingsPage implements OnInit {
     return parts.join(' and ');
   }
 
-  protected loadGitHub(): void {
+  protected loadGitHub(refresh = false): void {
     this.githubError.set(null);
-    this.githubApi.status().subscribe({
+    this.githubApi.status(refresh).subscribe({
       next: (status) => this.github.set(status),
       error: (error: unknown) =>
         this.githubError.set(

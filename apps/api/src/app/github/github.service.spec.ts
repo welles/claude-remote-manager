@@ -169,6 +169,88 @@ describe('GitHubService', () => {
       ]);
     });
 
+    it('counts too low access as missing, and admin as enough', async () => {
+      const alice = github.addInstallation('alice');
+      github.appPermissions = { ...github.appPermissions, contents: 'admin' };
+      alice.permissions = { ...github.appPermissions, pull_requests: 'read' };
+      const status = await github.service.status();
+      expect(status.setup?.permissions).toEqual([]);
+      expect(status.installations[0].missingPermissions).toEqual([
+        expect.objectContaining({
+          permission: 'pull_requests',
+          needed: 'write',
+          granted: 'read',
+        }),
+      ]);
+    });
+
+    it('reads GitHub again on refresh, after the app settings were fixed', async () => {
+      github.addInstallation('alice');
+      const { actions: _actions, ...withoutActions } = github.appPermissions;
+      github.appPermissions = withoutActions;
+      expect((await github.service.status()).setup?.permissions).toHaveLength(
+        1,
+      );
+      github.appPermissions = { ...withoutActions, actions: 'read' };
+      // Cached without refresh, read again with it.
+      expect((await github.service.status()).setup?.permissions).toHaveLength(
+        1,
+      );
+      expect((await github.service.status(true)).setup?.permissions).toEqual(
+        [],
+      );
+    });
+
+    it('keeps the setup report when the installations cannot be read', async () => {
+      github.addInstallation('alice');
+      github.appPermissions = { ...github.appPermissions, issues: 'none' };
+      github.intercept = (request) =>
+        request.path === '/app/installations'
+          ? new Response(JSON.stringify({ message: 'Server Error' }), {
+              status: 500,
+            })
+          : undefined;
+      const status = await github.service.status();
+      expect(status.error).not.toBeNull();
+      expect(status.setup?.permissions).toEqual([
+        expect.objectContaining({ permission: 'issues' }),
+      ]);
+    });
+
+    it('checks at startup without failing it, and not without configuration', async () => {
+      const warnings: string[] = [];
+      const logger = (github.service as unknown as { logger: Logger }).logger;
+      const warn = jest
+        .spyOn(logger, 'warn')
+        .mockImplementation((message: unknown) => {
+          warnings.push(String(message));
+        });
+      github.intercept = (request) =>
+        request.path === '/app'
+          ? new Response(JSON.stringify({ message: 'Bad credentials' }), {
+              status: 401,
+            })
+          : undefined;
+      github.service.onApplicationBootstrap();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(warnings).toEqual([
+        expect.stringContaining("Could not check the GitHub App's permissions"),
+      ]);
+      warn.mockRestore();
+
+      const credentials = GitHubAppCredentials.load(null, {});
+      const http = new GitHubHttp(github.fetch);
+      const unconfigured = new GitHubService(
+        credentials,
+        http,
+        new InstallationTokens(credentials, http),
+      );
+      const before = github.requests.length;
+      unconfigured.onApplicationBootstrap();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(github.requests).toHaveLength(before);
+    });
+
     it('checks webhook events only with a webhook secret', async () => {
       github.addInstallation('alice');
       github.appEvents = [];

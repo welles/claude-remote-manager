@@ -186,7 +186,7 @@ describe('SettingsPage', () => {
       'Webhook event pull_request_review_thread not subscribed (the PR automation follows it)',
     ]);
     expect(all('installation-not-accepted')).toEqual([
-      "Has not accepted the app's new permissions checks and webhook events status: review the request under Configure",
+      "Has not accepted the app's new permissions checks and webhook events status: review the request in Configure",
     ]);
   });
 

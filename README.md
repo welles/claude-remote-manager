@@ -1618,7 +1618,8 @@ Permissions the app needs (repository permissions):
 Session processes get narrower tokens of their own (see
 [GitHub tokens in the container](#github-tokens-in-the-container)). The app checks its own settings against
 this list (`apps/api/src/app/github/required-setup.ts`): once at startup, logging a warning per
-missing permission, and with every `GET /api/github/status`, shown on the Settings page.
+permission or webhook event the app lacks or an installation has not accepted yet, and with every `GET /api/github/status`, shown on the Settings page (its Refresh reads GitHub
+again with `?refresh=1`, past the short caches).
 `GET /app` gives the app's permissions and webhook events, `GET /app/installations` what each
 installation accepted; an installation that has not accepted new permissions yet (GitHub asks
 the account's owner after the app's settings changed) is named with what it lacks. With a
