@@ -643,8 +643,8 @@ export class SessionView implements OnInit {
     });
   }
 
-  /** The session was deleted: back to the list. */
-  protected deleted(): void {
+  /** The session was deleted or archived: back to the list. */
+  protected toList(): void {
     void this.router.navigate(['/']);
   }
 

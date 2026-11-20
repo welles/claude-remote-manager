@@ -427,8 +427,12 @@
 </div>
 
 @if (session(); as s) {
-<app-cleanup-dialog [sessionId]="s.id" (done)="session.set($event.session)" />
-<app-delete-session-dialog [sessionId]="s.id" (deleted)="deleted()" />
+<app-cleanup-dialog
+  [sessionId]="s.id"
+  (done)="session.set($event.session)"
+  (archived)="toList()"
+/>
+<app-delete-session-dialog [sessionId]="s.id" (deleted)="toList()" />
 } @if (viewing(); as file) {
 <app-file-viewer [file]="file" (closed)="viewing.set(null)" />
 } @if (embedded(); as preview) {

@@ -66,13 +66,15 @@ const directory = (
 @Component({
   imports: [CleanupDialog, DeleteSessionDialog],
   template: `
-    <app-cleanup-dialog sessionId="s1" />
+    <app-cleanup-dialog sessionId="s1" (archived)="archived = archived + 1" />
     <app-delete-session-dialog sessionId="s1" />
   `,
 })
 class Host {
   readonly cleanup = viewChild.required(CleanupDialog);
   readonly remove = viewChild.required(DeleteSessionDialog);
+  /** How often the dialog reported an archived session. */
+  archived = 0;
 }
 
 describe('session management', () => {
@@ -146,6 +148,8 @@ describe('session management', () => {
       },
     ]);
     expect(view.all('cleanup-confirm')).toEqual([]);
+    // The session view goes back to the list then.
+    expect(view.fixture.componentInstance.archived).toBe(1);
   });
 
   it('shows what a push leaves behind and needs the loss accepted', async () => {
@@ -196,6 +200,8 @@ describe('session management', () => {
         kind: 'info',
       },
     ]);
+    // A cleanup stays on the session.
+    expect(view.fixture.componentInstance.archived).toBe(0);
   });
 
   it('offers deleting the remote branches: checked when safe, never with an open pull request', async () => {

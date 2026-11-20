@@ -327,6 +327,8 @@ export class CleanupDialog {
   readonly sessionId = input.required<string>();
   /** Emitted after a cleanup or archiving ran. */
   readonly done = output<CleanupResult>();
+  /** Emitted after the session was archived (after `done`). */
+  readonly archived = output<void>();
 
   protected readonly actionLabel = actionLabel;
   protected readonly lossOf = lossOf;
@@ -541,6 +543,9 @@ export class CleanupDialog {
         }
         this.report(mode, result.outcomes, result.remoteBranches ?? []);
         this.done.emit(result);
+        if (mode === 'archive') {
+          this.archived.emit();
+        }
       },
       error: (error: unknown) => {
         const message = errorMessage(error, 'Nothing was changed.');
