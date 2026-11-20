@@ -148,6 +148,11 @@ export abstract class SessionAgentSupport {
     void toolUseId;
     return Promise.resolve(false);
   }
+  /** Drops the merge grant of tool use `toolUseId` (it was not used). */
+  dropMergeGrant(sessionId: string, toolUseId: string): void {
+    void sessionId;
+    void toolUseId;
+  }
 }
 
 /** Without integrations (tests of the session lifecycle). */
@@ -857,6 +862,21 @@ export class SessionAgentSupportService extends SessionAgentSupport {
             repositoryId,
             number,
           );
+          if (grant) {
+            // Allowed unasked by the automerge check: it must still hold
+            // (no change request, thread or pause since), for the same head.
+            const again = await this.automation?.mayMergeUnasked?.(
+              sessionId,
+              repositoryId,
+              number,
+            );
+            if (again !== grant.headSha) {
+              return {
+                isError: true,
+                text: 'merge_pull_request did not merge: the pull request is no longer ready for a merge without approval (a new review, comment, thread, push or pause since the check). Look at it again; call the tool again to merge (it then asks as the permission mode says, unless it is ready again).',
+              };
+            }
+          }
           const method = input['method'];
           const outcome = await this.sessionGit.mergePullRequest(
             sessionId,
@@ -1001,6 +1021,17 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     }
     grants.push({ toolUseId, repositoryId, number, headSha });
     return true;
+  }
+
+  override dropMergeGrant(sessionId: string, toolUseId: string): void {
+    const grants = this.mergeGrants.get(sessionId);
+    const index = grants?.findIndex((grant) => grant.toolUseId === toolUseId);
+    if (grants && index !== undefined && index >= 0) {
+      grants.splice(index, 1);
+      if (grants.length === 0) {
+        this.mergeGrants.delete(sessionId);
+      }
+    }
   }
 
   /**
