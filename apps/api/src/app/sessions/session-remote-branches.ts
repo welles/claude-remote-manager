@@ -173,9 +173,23 @@ export class SessionRemoteBranches {
           base.name,
           directory.branch,
         );
-        const open = pulls.filter((pull) => pull.state === 'open');
+        // Open pull requests from the branch, and into it (e.g. of a
+        // session started on this branch): deleting it closes both.
+        const into = await this.github.openPullRequestsInto(
+          mirror.githubInstallationId,
+          mirror.githubRepositoryId,
+          base.name,
+          directory.branch,
+        );
+        const open = [
+          ...pulls.filter((pull) => pull.state === 'open'),
+          ...into,
+        ].filter(
+          (pull, index, all) =>
+            all.findIndex((other) => other.number === pull.number) === index,
+        );
         if (open.length > 0) {
-          base.blocked = `${open.length === 1 ? 'Pull request' : 'Pull requests'} ${open.map((pull) => `#${pull.number}`).join(', ')} ${open.length === 1 ? 'is' : 'are'} open; deleting the branch would close ${open.length === 1 ? 'it' : 'them'}`;
+          base.blocked = `${open.length === 1 ? 'Pull request' : 'Pull requests'} ${open.map((pull) => `#${pull.number}`).join(', ')} ${open.length === 1 ? 'is' : 'are'} open from or into this branch; deleting it would close ${open.length === 1 ? 'it' : 'them'}`;
         }
         base.pullRequestsChecked = true;
         base.mergedBy =

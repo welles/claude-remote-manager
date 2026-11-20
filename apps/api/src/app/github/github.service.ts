@@ -473,6 +473,27 @@ export class GitHubService {
   }
 
   /**
+   * Open pull requests whose base is `branch` (deleting the branch would
+   * close them), at most 100.
+   */
+  async openPullRequestsInto(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    branch: string,
+  ): Promise<PullRequestInfo[]> {
+    const { token } = await this.repositoryToken(installationId, repositoryId, {
+      pull_requests: 'read',
+    });
+    const response = await this.http.request<RawPullRequest[]>({
+      path: `/repos/${repoPath(fullName)}/pulls`,
+      token,
+      query: { base: branch, state: 'open', per_page: 100 },
+    });
+    return response.data.map(toPullRequest);
+  }
+
+  /**
    * Merges a pull request, exactly at `sha` (GitHub refuses when the head
    * moved), trying the methods in order: a method the repository does not
    * allow, or a rebase GitHub cannot do, goes on to the next one. Returns
