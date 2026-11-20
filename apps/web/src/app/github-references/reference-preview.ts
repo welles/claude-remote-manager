@@ -18,7 +18,7 @@ import {
   imports: [MarkdownPipe],
   template: `
     <p class="meta">
-      <span class="badge state-{{ state() }}">{{ state() }}</span>
+      <span class="badge tone-{{ state() }}">{{ state() }}</span>
       {{ kindLabel() }} {{ chip().repository }}#{{ chip().number }}
     </p>
     @if (chip().title) {
@@ -123,24 +123,6 @@ import {
     }
     .title {
       font: var(--mat-sys-title-small);
-    }
-    .badge {
-      padding: 0 6px;
-      border-radius: var(--mat-sys-corner-extra-small);
-      color: var(--app-gh-on-state);
-      background: var(--app-gh-draft);
-    }
-    .state-open {
-      background: var(--app-gh-open);
-    }
-    .state-merged {
-      background: var(--app-gh-merged);
-    }
-    .state-closed {
-      background: var(--app-gh-closed);
-    }
-    .state-draft {
-      background: var(--app-gh-draft);
     }
     .error {
       color: var(--mat-sys-error);

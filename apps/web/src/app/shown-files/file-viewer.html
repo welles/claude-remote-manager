@@ -15,7 +15,7 @@
     @if (actionLabel(); as label) {
     <button
       type="button"
-      class="app-icon-btn"
+      class="icon-btn"
       (click)="action.emit()"
       [title]="label"
       data-testid="viewer-action"
@@ -24,7 +24,7 @@
     </button>
     }
     <a
-      class="app-icon-btn"
+      class="icon-btn"
       [href]="downloadUrl()"
       title="Download"
       data-testid="download"
@@ -34,7 +34,7 @@
     >
     @if (f.kind !== 'binary') {
     <a
-      class="app-icon-btn"
+      class="icon-btn"
       [href]="url()"
       target="_blank"
       rel="noopener"
@@ -46,7 +46,7 @@
     }
     <button
       type="button"
-      class="app-icon-btn"
+      class="icon-btn"
       (click)="closed.emit()"
       title="Close"
       data-testid="close-viewer"

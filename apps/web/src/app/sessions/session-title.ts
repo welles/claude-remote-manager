@@ -63,7 +63,7 @@ export function sessionSubtitle(session: SessionDto): string {
     </div>
     <button
       type="button"
-      class="app-icon-btn"
+      class="icon-btn"
       (click)="start()"
       aria-label="Rename"
       title="Rename"

@@ -8,7 +8,7 @@
   <header class="card-header">
     <span class="heading">{{ heading() }}</span>
     @if (r.agentId) {
-    <span class="app-tag">subagent</span>
+    <span class="badge">subagent</span>
     } @if (position(); as position) {
     <span class="position">{{ position }}</span>
     }
@@ -22,7 +22,7 @@
       <fieldset class="question" data-testid="question">
         <legend>
           @if (question.header) {
-          <span class="app-tag">{{ question.header }}</span>
+          <span class="badge">{{ question.header }}</span>
           }
           <span class="question-text">{{ question.question }}</span>
         </legend>
@@ -380,7 +380,7 @@
     </button>
     @if (r.sessionAllow) {
     <button
-      matButton="outlined"
+      matButton
       (click)="allow('session')"
       [disabled]="!enabled()"
       data-testid="allow-session"
@@ -389,7 +389,7 @@
     </button>
     } } }
     <button
-      matButton="outlined"
+      matButton
       (click)="denying.set(true)"
       [disabled]="!enabled()"
       data-testid="deny"

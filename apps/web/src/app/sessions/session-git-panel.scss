@@ -102,29 +102,6 @@
   display: none;
 }
 
-.state {
-  padding: 0 6px;
-  border-radius: var(--mat-sys-corner-extra-small);
-  font: var(--mat-sys-label-medium);
-  background: var(--mat-sys-surface-container-high);
-}
-
-.state-open,
-.state-merged {
-  background: var(--app-gh-open);
-  color: var(--app-gh-on-state);
-}
-
-.state-merged {
-  background: var(--app-gh-merged);
-}
-
-// Like GitHub: a draft is grey, not green.
-.state-draft {
-  background: var(--app-gh-draft);
-  color: var(--app-gh-on-state);
-}
-
 .pull-checks,
 .pull-automation {
   flex-basis: 100%;

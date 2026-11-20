@@ -42,7 +42,7 @@ import { AppIcon } from './icon';
       @if (!docked()) {
         <button
           type="button"
-          class="app-icon-btn"
+          class="icon-btn"
           aria-label="Close"
           (click)="close()"
           data-testid="panel-close"

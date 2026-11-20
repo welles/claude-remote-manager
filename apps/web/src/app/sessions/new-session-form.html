@@ -60,14 +60,13 @@
 
   <div class="workspace">
     <div
-      class="app-chip-group"
+      class="inline-flex flex-wrap gap-1 self-start"
       role="group"
       aria-label="Where the session works"
     >
       <button
         type="button"
-        class="app-chip"
-        [class.on]="mode() === 'repository'"
+        class="chip"
         [attr.aria-pressed]="mode() === 'repository'"
         (click)="pickMode('repository')"
         data-testid="mode-repository"
@@ -76,8 +75,7 @@
       </button>
       <button
         type="button"
-        class="app-chip"
-        [class.on]="mode() === 'project'"
+        class="chip"
         [attr.aria-pressed]="mode() === 'project'"
         (click)="pickMode('project')"
         data-testid="mode-project"
@@ -86,8 +84,7 @@
       </button>
       <button
         type="button"
-        class="app-chip"
-        [class.on]="mode() === 'scratch'"
+        class="chip"
         [attr.aria-pressed]="mode() === 'scratch'"
         (click)="pickMode('scratch')"
         data-testid="mode-scratch"
@@ -177,7 +174,7 @@
         @if (mode() === 'project' || index > 0) {
         <button
           type="button"
-          class="app-icon-btn"
+          class="icon-btn"
           (click)="removeRepository(index)"
           title="Remove this repository"
           data-testid="remove-repository"

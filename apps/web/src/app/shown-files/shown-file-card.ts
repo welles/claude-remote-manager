@@ -44,11 +44,7 @@ const KIND_LABELS: Record<ShownFileDto['kind'], string> = {
             <span class="caption">{{ f.caption }}</span>
           }
         </div>
-        <button
-          matButton="outlined"
-          (click)="open.emit(f)"
-          data-testid="open-file"
-        >
+        <button matButton (click)="open.emit(f)" data-testid="open-file">
           Open
         </button>
       </div>

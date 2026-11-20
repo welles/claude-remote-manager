@@ -1,4 +1,5 @@
 import { Component, computed, input, output, signal } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
 import { AppIcon } from '../ui/icon';
 import type { ConversationItem } from './conversation';
 
@@ -11,7 +12,7 @@ import type { ConversationItem } from './conversation';
  */
 @Component({
   selector: 'app-queued-messages',
-  imports: [AppIcon],
+  imports: [AppIcon, MatButtonModule],
   template: `
     <div class="header">
       <button
@@ -29,8 +30,9 @@ import type { ConversationItem } from './conversation';
         <app-icon [name]="expanded() ? 'chevron-down' : 'chevron-right'" />
       </button>
       <button
+        matButton
         type="button"
-        class="send-all"
+        class="flex-none"
         (click)="sendNow.emit(null)"
         [disabled]="!enabled() || allSending()"
         title="Stop the turn and send the queued messages now"
@@ -56,7 +58,7 @@ import type { ConversationItem } from './conversation';
           }}</span>
           <button
             type="button"
-            class="app-icon-btn"
+            class="icon-btn"
             (click)="sendNow.emit(item.id)"
             [disabled]="!enabled() || sending().has(item.id)"
             title="Stop the turn and send this message now"
@@ -67,7 +69,7 @@ import type { ConversationItem } from './conversation';
           </button>
           <button
             type="button"
-            class="app-icon-btn"
+            class="icon-btn"
             (click)="remove.emit(item.id)"
             [disabled]="!enabled()"
             title="Remove from the queue"

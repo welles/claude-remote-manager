@@ -5,22 +5,29 @@
     <li class="directory" data-testid="directory">
       <span class="directory-name">
         <strong>{{ directoryName(directory) }}</strong>
-        <span class="tag"
+        <span class="badge"
           >{{ directory.role === 'main' ? 'working directory' : 'additional'
           }}</span
         >
         @if (directory.repository?.local) {
-        <span class="tag">local project</span>
+        <span class="badge">local project</span>
         } @if (directory.addition; as addition) {
         <span
-          class="tag tag-addition-{{ addition.state }}"
+          class="badge"
+          [class.tone-error]="addition.state === 'failed' || addition.state === 'held'"
           data-testid="addition-state"
           >{{ additionLabels[addition.state] }}</span
         >
         } @else if (directory.state !== 'ready') {
-        <span class="tag tag-{{ directory.state }}">{{ directory.state }}</span>
+        <span
+          class="badge"
+          [class.tone-error]="directory.state === 'failed' || directory.state === 'removed'"
+          >{{ directory.state }}</span
+        >
         } @if (directory.setupStatus !== 'none') {
-        <span class="tag tag-setup-{{ directory.setupStatus }}"
+        <span
+          class="badge"
+          [class.tone-error]="directory.setupStatus === 'failed' || directory.setupStatus === 'timed_out'"
           >setup {{ directory.setupStatus.replace('_', ' ') }}</span
         >
         }

@@ -26,7 +26,7 @@
       />
       } @if (session(); as s) { @if (hasRepositories()) {
       <a
-        class="app-icon-btn"
+        class="icon-btn"
         [routerLink]="['/sessions', s.id, 'changes']"
         aria-label="Changes"
         title="Changes"
@@ -35,7 +35,7 @@
       /></a>
       }
       <a
-        class="app-icon-btn"
+        class="icon-btn"
         [routerLink]="['/sessions', s.id, 'files']"
         aria-label="Files"
         title="Files"
@@ -45,7 +45,7 @@
       } @if (!docked()) {
       <button
         type="button"
-        class="app-icon-btn"
+        class="icon-btn"
         [attr.aria-expanded]="panelOpen()"
         aria-label="Session details"
         title="Session details"
@@ -74,7 +74,7 @@
         history readable. @if (removedDirectories(); as removed) { {{
         removed.text }} {{ removed.verb }} removed, so it cannot be continued. }
         @else { Unarchive it to continue it. }
-        <div banner-actions>
+        <div banner-actions class="ml-auto flex flex-wrap gap-2">
           <button
             matButton
             type="button"
@@ -139,7 +139,7 @@
       <app-banner kind="attention" data-testid="held-back">
         A setup script failed, so the first message waits: send it anyway, run
         the setup again, or end the session.
-        <div banner-actions>
+        <div banner-actions class="ml-auto flex flex-wrap gap-2">
           <button
             matButton="filled"
             (click)="sendPending()"
@@ -149,7 +149,7 @@
             Send anyway
           </button>
           <button
-            matButton="outlined"
+            matButton
             (click)="rerunSetup()"
             [disabled]="!connected()"
             data-testid="rerun-setup"
@@ -179,7 +179,7 @@
         @if (resumable()) { The session has ended. Archive it, or continue it
         with a new message. } @else { The session has ended and cannot be
         continued. Archive it to hide it from the session list. }
-        <div banner-actions>
+        <div banner-actions class="ml-auto flex flex-wrap gap-2">
           <button
             matButton="filled"
             type="button"
@@ -190,7 +190,7 @@
           </button>
           @if (resumable()) {
           <button
-            matButton="outlined"
+            matButton
             type="button"
             (click)="continueSession()"
             data-testid="archive-offer-continue"
@@ -339,7 +339,8 @@
         @if (environment.setupStatus && environment.setupStatus !== 'none' &&
         environment.setupStatus !== 'succeeded') {
         <span
-          class="tag tag-setup-{{ environment.setupStatus }}"
+          class="badge"
+          [class.tone-error]="environment.setupStatus === 'failed' || environment.setupStatus === 'timed_out'"
           data-testid="session-environment-setup"
           >setup {{ environment.setupStatus.replace('_', ' ') }}</span
         >
@@ -375,7 +376,7 @@
       <div class="manage">
         @if (s.status !== 'finished' && !s.archivedAt) {
         <button
-          matButton="outlined"
+          matButton
           (click)="end()"
           [disabled]="!connected()"
           data-testid="end"
@@ -384,7 +385,7 @@
         </button>
         } @if (canCleanUp()) {
         <button
-          matButton="outlined"
+          matButton
           type="button"
           (click)="cleanupDialog()?.show('cleanup')"
           data-testid="cleanup"
@@ -393,7 +394,7 @@
         </button>
         } @if (s.archivedAt) {
         <button
-          matButton="outlined"
+          matButton
           type="button"
           (click)="unarchive()"
           data-testid="unarchive"
@@ -402,7 +403,7 @@
         </button>
         } @else if (canArchive()) {
         <button
-          matButton="outlined"
+          matButton
           type="button"
           (click)="cleanupDialog()?.show('archive')"
           data-testid="archive"
@@ -411,7 +412,7 @@
         </button>
         } @if (canDelete()) {
         <button
-          matButton="outlined"
+          matButton
           class="app-danger delete"
           type="button"
           (click)="deleteDialog()?.show()"

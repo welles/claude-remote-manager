@@ -22,8 +22,7 @@
     </li>
     }
   </ul>
-  }
-  @if (suggestingCommands()) {
+  } @if (suggestingCommands()) {
   <ul
     id="command-list"
     class="mentions commands"
@@ -68,7 +67,7 @@
   <div class="composer-row">
     <button
       type="button"
-      class="app-icon-btn attach"
+      class="icon-btn attach"
       (click)="picker.click()"
       title="Attach images (or paste or drop them)"
       data-testid="attach-image"
@@ -130,7 +129,7 @@
     >
     <button
       type="button"
-      class="app-icon-btn take"
+      class="icon-btn take"
       (mousedown)="$event.preventDefault()"
       (click)="takeSuggestion()"
       title="Edit the suggestion (Tab)"
@@ -143,7 +142,7 @@
     } @if (running()) {
     <button
       type="button"
-      class="app-icon-btn stop"
+      class="icon-btn stop"
       (click)="interrupt.emit()"
       title="Stop Claude"
       data-testid="interrupt"
@@ -153,7 +152,7 @@
     }
     <button
       type="button"
-      class="app-icon-btn send"
+      class="icon-btn send"
       [class.ready]="canSend()"
       (click)="submit()"
       [disabled]="!canSend()"

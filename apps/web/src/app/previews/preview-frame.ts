@@ -53,7 +53,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
         @if (p.state !== 'stopped') {
           <button
             type="button"
-            class="app-icon-btn"
+            class="icon-btn"
             (click)="reload()"
             title="Reload"
             data-testid="preview-reload"
@@ -64,7 +64,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
           </button>
           @if (href(); as link) {
             <a
-              class="app-icon-btn"
+              class="icon-btn"
               [href]="link"
               target="_blank"
               rel="noopener noreferrer"
@@ -78,7 +78,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
         }
         <button
           type="button"
-          class="app-icon-btn"
+          class="icon-btn"
           (click)="closed.emit()"
           title="Close"
           data-testid="close-preview"

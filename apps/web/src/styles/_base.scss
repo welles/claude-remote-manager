@@ -96,76 +96,6 @@
     margin-inline-end: 6px;
   }
 
-  // Icon-only buttons and links (plain elements, no Material module):
-  // 40 px, 44 px on touch screens. They carry an aria-label.
-  .app-icon-btn {
-    display: inline-grid;
-    place-items: center;
-    flex: none;
-    width: 40px;
-    height: 40px;
-    padding: 0;
-    border: 0;
-    border-radius: var(--mat-sys-corner-small);
-    background: none;
-    color: var(--mat-sys-on-surface-variant);
-    cursor: pointer;
-    text-decoration: none;
-
-    &:hover {
-      background: var(--mat-sys-surface-container-high);
-      color: var(--mat-sys-on-surface);
-      text-decoration: none;
-    }
-
-    &:disabled {
-      opacity: 0.38;
-      cursor: default;
-      background: none;
-    }
-
-    @media (pointer: coarse) {
-      width: 44px;
-      height: 44px;
-    }
-  }
-
-  // Filter chips (toggle buttons with aria-pressed); `.on` when chosen.
-  .app-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex: none;
-    height: 32px;
-    padding: 0 12px;
-    border: 1px solid var(--mat-sys-outline-variant);
-    border-radius: var(--mat-sys-corner-small);
-    background: none;
-    color: var(--mat-sys-on-surface-variant);
-    font: var(--mat-sys-label-large);
-    cursor: pointer;
-
-    &:hover {
-      background: var(--mat-sys-surface-container);
-    }
-
-    &.on {
-      border-color: var(--mat-sys-outline);
-      background: var(--mat-sys-surface-container-highest);
-      color: var(--mat-sys-on-surface);
-    }
-
-    @media (pointer: coarse) {
-      height: 36px;
-    }
-  }
-
-  .app-chip-group {
-    display: inline-flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-
   // A small text centred on a hairline (turn footers).
   .app-divider {
     display: flex;
@@ -223,9 +153,7 @@
     --mat-button-filled-container-color: var(--mat-sys-error);
     --mat-button-filled-label-text-color: var(--mat-sys-on-error);
     --mat-button-text-label-text-color: var(--mat-sys-error);
-    --mat-button-outlined-label-text-color: var(--mat-sys-error);
     --mat-button-text-state-layer-color: var(--mat-sys-error);
-    --mat-button-outlined-state-layer-color: var(--mat-sys-error);
     --mat-menu-item-label-text-color: var(--mat-sys-error);
   }
 
@@ -236,66 +164,6 @@
 
   .app-muted {
     color: var(--mat-sys-on-surface-variant);
-  }
-
-  // Session status badge (see `ui/status-badge.ts`): a small square tag in
-  // the state's colour. What waits for the user stands out ("needs you"
-  // amber, "ready" in the primary colour); running sessions are quiet.
-  .status {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--app-space-1);
-    padding: 0 6px;
-    border-radius: var(--mat-sys-corner-extra-small);
-    font: var(--mat-sys-label-medium);
-    font-weight: 600;
-    line-height: 20px;
-    white-space: nowrap;
-    background: var(--app-status-idle-container);
-    color: var(--mat-sys-on-surface-variant);
-  }
-
-  // Claude goes on by itself: plain muted text.
-  .status-running {
-    padding: 0;
-    background: transparent;
-    color: var(--mat-sys-on-surface-variant);
-    font-weight: 500;
-  }
-
-  // The turn is done, Claude waits for the next message.
-  .status-waiting {
-    background: var(--app-status-ready-container);
-    color: var(--app-status-on-ready-container);
-  }
-
-  .status-finished {
-    background: transparent;
-    color: var(--mat-sys-on-surface-variant);
-    box-shadow: inset 0 0 0 1px var(--mat-sys-outline-variant);
-  }
-
-  .status-failed {
-    background: var(--app-status-failed-container);
-    color: var(--app-status-on-failed-container);
-  }
-
-  // Blocked on the user: approval, question, plan, failed setup.
-  .status-permission {
-    background: var(--app-status-attention-container);
-    color: var(--app-status-on-attention-container);
-  }
-
-  // Neutral small tag ("Archived", "subagent", PR state).
-  .app-tag {
-    display: inline-block;
-    padding: 0 6px;
-    border-radius: var(--mat-sys-corner-extra-small);
-    background: var(--mat-sys-surface-container-highest);
-    color: var(--mat-sys-on-surface-variant);
-    font: var(--mat-sys-label-medium);
-    line-height: 20px;
-    white-space: nowrap;
   }
 }
 

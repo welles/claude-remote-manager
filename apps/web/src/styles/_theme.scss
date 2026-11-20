@@ -90,19 +90,14 @@ $color: (
     map.merge(map.merge($type, $shape), $color)
   );
 
-  // Small radii on all buttons (Material's default is fully round).
+  // Two kinds of buttons: filled for the main action, text for the rest
+  // (no outlined, tonal or protected). Small radii (Material's default is
+  // fully round).
   @include mat.button-overrides(
     (
       filled-container-shape: var(--mat-sys-corner-small),
-      outlined-container-shape: var(--mat-sys-corner-small),
       text-container-shape: var(--mat-sys-corner-small),
-      tonal-container-shape: var(--mat-sys-corner-small),
-      protected-container-shape: var(--mat-sys-corner-small),
       filled-horizontal-padding: 16px,
-      outlined-horizontal-padding: 16px,
-      tonal-horizontal-padding: 16px,
-      outlined-outline-color: var(--mat-sys-outline-variant),
-      outlined-label-text-color: var(--mat-sys-on-surface),
     )
   );
   // One card style: hairline border on the low container, medium radius.

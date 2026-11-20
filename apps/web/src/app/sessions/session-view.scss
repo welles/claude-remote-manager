@@ -86,33 +86,6 @@
   background: var(--mat-sys-surface);
 }
 
-// Details panel: one size for its actions (32 px buttons, small switches)
-// with a mouse, so the sections read as one column; touch screens keep the
-// larger targets. Inherited by the components inside (dialogs reset them,
-// see `ui/dialog.ts`).
-@media (pointer: fine) {
-  .details {
-    --mat-button-outlined-container-height: 32px;
-    --mat-button-text-container-height: 32px;
-    --mat-button-filled-container-height: 32px;
-    --mat-slide-toggle-track-height: 20px;
-    --mat-slide-toggle-track-width: 36px;
-    --mat-slide-toggle-unselected-handle-size: 12px;
-    --mat-slide-toggle-selected-handle-size: 14px;
-    --mat-slide-toggle-with-icon-handle-size: 14px;
-    --mat-slide-toggle-pressed-handle-size: 16px;
-    --mat-slide-toggle-selected-icon-size: 10px;
-    --mat-slide-toggle-unselected-icon-size: 10px;
-    --mat-slide-toggle-state-layer-size: 28px;
-  }
-}
-
-.details {
-  --mat-slide-toggle-label-text-size: var(--mat-sys-body-medium-size);
-  --mat-select-trigger-text-size: var(--mat-sys-body-medium-size);
-  --mat-select-trigger-text-line-height: var(--mat-sys-body-medium-line-height);
-}
-
 // The resize handles stick out of their columns: above the bars of the
 // conversation column (z 3).
 .list-pane,
@@ -185,18 +158,4 @@
   gap: 8px;
   margin: 4px 0 0;
   overflow-wrap: anywhere;
-
-  .tag {
-    padding: 0 6px;
-    border-radius: var(--mat-sys-corner-extra-small);
-    background: var(--mat-sys-surface-container-highest);
-    color: var(--mat-sys-on-surface-variant);
-    font: var(--mat-sys-label-small);
-  }
-
-  .tag-setup-failed,
-  .tag-setup-timed_out {
-    background: var(--mat-sys-error-container);
-    color: var(--mat-sys-on-error-container);
-  }
 }

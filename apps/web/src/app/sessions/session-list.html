@@ -2,7 +2,7 @@
 <header class="pane-head">
   <h2 class="pane-title">Sessions</h2>
   <a
-    class="app-icon-btn"
+    class="icon-btn"
     routerLink="/new"
     aria-label="New session"
     title="New session"
@@ -28,8 +28,7 @@
 <div class="filters" role="group" aria-label="Show">
   <button
     type="button"
-    class="app-chip"
-    [class.on]="filter() === 'all'"
+    class="chip"
     [attr.aria-pressed]="filter() === 'all'"
     (click)="setFilter('all')"
     data-testid="all-filter"
@@ -38,8 +37,7 @@
   </button>
   <button
     type="button"
-    class="app-chip"
-    [class.on]="filter() === 'waiting'"
+    class="chip"
     [attr.aria-pressed]="filter() === 'waiting'"
     (click)="setFilter('waiting')"
     data-testid="waiting-filter"
@@ -51,8 +49,7 @@
   </button>
   <button
     type="button"
-    class="app-chip"
-    [class.on]="filter() === 'running'"
+    class="chip"
     [attr.aria-pressed]="filter() === 'running'"
     (click)="setFilter('running')"
     data-testid="running-filter"
@@ -63,8 +60,7 @@
   </button>
   <button
     type="button"
-    class="app-chip"
-    [class.on]="archived()"
+    class="chip"
     [attr.aria-pressed]="archived()"
     (click)="setFilter('archived')"
     data-testid="archived-filter"
@@ -116,7 +112,7 @@
     >
     <span class="meta">
       @if (tagged(kind)) {
-      <span class="status {{ kindClass[kind] }}" data-testid="session-status"
+      <span [class]="kindClass[kind]" data-testid="session-status"
         >{{ needLabel(session) }}</span
       >
       } @else {
@@ -126,7 +122,7 @@
       } @if (workspaceLabel(session); as workspace) {
       <span class="repo">{{ workspace }}</span>
       } @if (!resumable(session)) {
-      <span class="app-tag" data-testid="not-resumable"
+      <span class="badge" data-testid="not-resumable"
         >{{ session.archivedAt ? 'Archived' : 'Clones removed' }}</span
       >
       }

@@ -31,7 +31,7 @@
     @if (endpoint()) {
     <span data-testid="device-on">On for this device.</span>
     <button
-      matButton="outlined"
+      matButton
       type="button"
       (click)="disable()"
       [disabled]="busy()"
@@ -90,7 +90,7 @@
   </ul>
   <div class="row">
     <button
-      matButton="outlined"
+      matButton
       type="button"
       (click)="test('webPush')"
       [disabled]="!!status.webPush.problem"
@@ -127,7 +127,7 @@
   </p>
   <div class="row">
     <button
-      matButton="outlined"
+      matButton
       type="button"
       (click)="test('ntfy')"
       data-testid="test-ntfy"

@@ -1,6 +1,6 @@
 @if (available()) { @if (!open()) {
 <button
-  matButton="outlined"
+  matButton
   type="button"
   class="open"
   (click)="show()"
@@ -16,7 +16,7 @@
     <span class="title">Add a repository</span>
     <button
       type="button"
-      class="app-icon-btn"
+      class="icon-btn"
       (click)="hide()"
       aria-label="Close"
       title="Close"
@@ -25,11 +25,14 @@
       <app-icon name="close" />
     </button>
   </div>
-  <div class="app-chip-group" role="group" aria-label="Where it comes from">
+  <div
+    class="inline-flex flex-wrap gap-1 self-start"
+    role="group"
+    aria-label="Where it comes from"
+  >
     <button
       type="button"
-      class="app-chip"
-      [class.on]="source() === 'registered'"
+      class="chip"
       [attr.aria-pressed]="source() === 'registered'"
       (click)="setSource('registered')"
       data-testid="add-source-registered"
@@ -38,8 +41,7 @@
     </button>
     <button
       type="button"
-      class="app-chip"
-      [class.on]="source() === 'github'"
+      class="chip"
       [attr.aria-pressed]="source() === 'github'"
       (click)="setSource('github')"
       data-testid="add-source-github"
@@ -48,8 +50,7 @@
     </button>
     <button
       type="button"
-      class="app-chip"
-      [class.on]="source() === 'url'"
+      class="chip"
       [attr.aria-pressed]="source() === 'url'"
       (click)="setSource('url')"
       data-testid="add-source-url"
@@ -58,8 +59,7 @@
     </button>
     <button
       type="button"
-      class="app-chip"
-      [class.on]="source() === 'project'"
+      class="chip"
       [attr.aria-pressed]="source() === 'project'"
       (click)="setSource('project')"
       data-testid="add-source-project"
@@ -88,7 +88,7 @@
       />
     </mat-form-field>
     <button
-      matButton="outlined"
+      matButton
       type="button"
       (click)="register()"
       [disabled]="!cloneUrl.trim() || busy()"
@@ -112,7 +112,7 @@
       />
     </mat-form-field>
     <button
-      matButton="outlined"
+      matButton
       type="button"
       (click)="register()"
       [disabled]="!projectValid() || busy()"
