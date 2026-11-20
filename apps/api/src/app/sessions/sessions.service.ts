@@ -246,6 +246,13 @@ export function heldForUntrusted(mode: SessionPermissionMode): boolean {
   return mode === 'auto' || mode === 'bypassPermissions';
 }
 
+/**
+ * Shown for a `reply_to_review_thread` call of an Autofix run that
+ * resolves without a push since the thread's last comment.
+ */
+export const AUTOFIX_RESOLVE_REASON =
+  "Autofix run: resolving a review thread is confirmed unless the session pushed to the pull request after the thread's last comment";
+
 /** Shown in the approval dialog for the calls of an Autofix run. */
 export const AUTOFIX_ASK_REASON =
   'Autofix run on GitHub content: every action but reading is confirmed, whatever allow rules say';
@@ -277,10 +284,11 @@ const LATER_WORK_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The app's tools that run without asking during an Autofix run (and only
- * then; otherwise as the permission mode says): answering and resolving
- * review threads, which the tool allows only on the session's own pull
- * requests. Only the app's own server (`sdk`) counts.
+ * The app's tool that may run without asking during an Autofix run (and
+ * only then; otherwise as the permission mode says): replies on review
+ * threads, which the tool allows only on the session's own pull requests;
+ * resolving only after a push since the thread's last comment (checked in
+ * `canUseTool`). Only the app's own server (`sdk`) counts.
  */
 function autofixAppTool(
   toolName: string,
@@ -2640,8 +2648,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       !live.autoHold?.delivered ||
       READ_ONLY_TOOLS.has(call.toolName) ||
-      autofixAppTool(call.toolName, call.mcpServer)
+      (autofixAppTool(call.toolName, call.mcpServer) &&
+        call.input['resolve'] !== true)
     ) {
+      // A reply without resolving: allowed in `canUseTool` if asked.
       return null;
     }
     if (LATER_WORK_TOOLS.has(call.toolName)) {
@@ -2664,7 +2674,31 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           'Not during an Autofix run: background work would go on after the run. Run it in the foreground.',
       };
     }
-    return { decision: 'ask', reason: AUTOFIX_ASK_REASON };
+    return {
+      decision: 'ask',
+      // Resolving is decided in `canUseTool` (unasked after a push).
+      reason: autofixAppTool(call.toolName, call.mcpServer)
+        ? AUTOFIX_RESOLVE_REASON
+        : AUTOFIX_ASK_REASON,
+    };
+  }
+
+  /**
+   * Whether an Autofix run may resolve a review thread unasked (see
+   * `SessionAgentSupport.mayResolveUnasked`); fail-closed: any error asks.
+   */
+  private async mayResolveUnasked(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): Promise<boolean> {
+    try {
+      return await this.support.mayResolveUnasked(sessionId, input);
+    } catch (error) {
+      this.logger.warn(
+        `Could not check whether ${sessionId} may resolve a review thread unasked: ${errorMessage(error)}`,
+      );
+      return false;
+    }
   }
 
   private canUseTool(live: LiveSession): CanUseTool {
@@ -2681,10 +2715,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       if (
         live.autoHold?.delivered &&
-        autofixAppTool(toolName, options.mcpServer ?? null)
+        autofixAppTool(toolName, options.mcpServer ?? null) &&
+        (input['resolve'] !== true ||
+          (await this.mayResolveUnasked(live.id, input)))
       ) {
-        // During an Autofix run: answering review threads touches only
-        // the session's own pull requests (the tool refuses others).
+        // During an Autofix run: replies touch only the session's own pull
+        // requests (the tool refuses others); resolving only after the
+        // session pushed since the thread's last comment, otherwise the
+        // user is asked below.
         return { behavior: 'allow', updatedInput: input };
       }
       const command =

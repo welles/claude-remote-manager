@@ -92,11 +92,17 @@ describe('uniqueCommands', () => {
       { ...command('context'), aliases: [], builtin: false },
       { ...command('context'), aliases: [], builtin: true },
       { ...command('deploy'), aliases: [], builtin: false },
-      { ...command('deploy', { description: 'second' }), aliases: [], builtin: false },
+      {
+        ...command('deploy', { description: 'second' }),
+        aliases: [],
+        builtin: false,
+      },
     ]);
-    expect(rows.map((row) => [row.name, row.builtin, row.description])).toEqual([
-      ['context', true, 'context'],
-      ['deploy', false, 'deploy'],
-    ]);
+    expect(rows.map((row) => [row.name, row.builtin, row.description])).toEqual(
+      [
+        ['context', true, 'context'],
+        ['deploy', false, 'deploy'],
+      ],
+    );
   });
 });

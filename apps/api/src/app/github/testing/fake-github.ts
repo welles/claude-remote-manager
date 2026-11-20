@@ -132,6 +132,13 @@ export interface FakeReviewThread {
    * first; replies through the fake are added.
    */
   commentIds?: number[];
+  /**
+   * Times of the later comments (`commentIds` from the second on, same
+   * order); default `createdAt`. Replies through the fake add theirs.
+   */
+  replyDates?: string[];
+  /** Comments written by the app (GraphQL `viewerDidAuthor`). */
+  appCommentIds?: number[];
   resolved: boolean;
   outdated?: boolean;
   author: string;
@@ -201,6 +208,14 @@ export class FakeGitHub {
   }[] = [];
   /** GraphQL IDs of the review threads resolved through the API. */
   readonly resolvedThreads: string[] = [];
+  /**
+   * Repository activity (`GET /repos/{owner}/{repo}/activity`) per
+   * repository ID, in any order.
+   */
+  readonly activity = new Map<
+    number,
+    { activity_type: string; ref: string; after: string; timestamp: string }[]
+  >();
   /** Merge methods the repositories allow. */
   allowedMergeMethods = new Set(['rebase', 'squash', 'merge']);
   /** Merges done: pull request number and method. */
@@ -811,13 +826,48 @@ export class FakeGitHub {
       id,
       body: body.body,
     });
-    thread?.commentIds?.push(id);
+    if (thread?.commentIds) {
+      thread.replyDates ??= [];
+      thread.replyDates[thread.commentIds.length - 1] =
+        new Date().toISOString();
+      thread.commentIds.push(id);
+      (thread.appCommentIds ??= []).push(id);
+    }
     return json(201, {
       id,
       body: body.body,
       in_reply_to_id: commentId,
       html_url: `https://github.com/${repository.owner}/${repository.name}/pull/${number}#discussion_r${id}`,
     });
+  }
+
+  /** `GET /repos/{owner}/{repo}/activity` (newest first). */
+  private activityRoute(request: RecordedRequest): Response | undefined {
+    const { method, path, auth } = request;
+    const match = /^\/repos\/([^/]+)\/([^/]+)\/activity$/.exec(path);
+    if (method !== 'GET' || !match) {
+      return undefined;
+    }
+    const found = this.repositoryByName(
+      decodeURIComponent(match[1]),
+      decodeURIComponent(match[2]),
+    );
+    if (!found) {
+      return json(404, { message: 'Not Found' });
+    }
+    if (!this.allows(auth, found.repository, 'metadata', 'read')) {
+      return json(403, { message: 'Resource not accessible by integration' });
+    }
+    const ref = request.query.get('ref');
+    const perPage = Number(request.query.get('per_page') ?? 30);
+    return json(
+      200,
+      (this.activity.get(found.repository.id) ?? [])
+        .filter((entry) => !ref || entry.ref === ref)
+        .slice()
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+        .slice(0, perPage),
+    );
   }
 
   /** GraphQL mutation `resolveReviewThread`. */
@@ -897,10 +947,14 @@ export class FakeGitHub {
     const start = Number(variables.after ?? 0);
     const page = all.slice(start, start + 2);
     const later = (thread: FakeReviewThread) =>
-      (thread.commentIds ?? []).slice(1).map((databaseId) => ({
+      (thread.commentIds ?? []).slice(1).map((databaseId, index) => ({
         databaseId,
         body: 'A reply',
-        createdAt: thread.createdAt ?? '2026-01-01T00:00:00Z',
+        createdAt:
+          thread.replyDates?.[index] ??
+          thread.createdAt ??
+          '2026-01-01T00:00:00Z',
+        viewerDidAuthor: thread.appCommentIds?.includes(databaseId) ?? false,
         author: { __typename: 'User', login: 'someone' },
       }));
     return json(200, {
@@ -920,9 +974,11 @@ export class FakeGitHub {
                 line: thread.line ?? 1,
                 originalLine: thread.line ?? 1,
                 comments: {
+                  totalCount: 1 + later(thread).length,
                   nodes: [
                     {
                       databaseId: thread.commentIds?.[0] ?? null,
+                      viewerDidAuthor: false,
                       body: thread.body,
                       createdAt: thread.createdAt ?? '2026-01-01T00:00:00Z',
                       author: {
@@ -1028,7 +1084,8 @@ export class FakeGitHub {
       this.automationRoute(request) ??
       this.graphqlRoute(request) ??
       this.mergeRoute(request) ??
-      this.replyRoute(request);
+      this.replyRoute(request) ??
+      this.activityRoute(request);
     if (automationResponse) {
       return automationResponse;
     }

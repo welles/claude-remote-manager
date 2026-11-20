@@ -5,6 +5,7 @@ import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionDto } from '@claude-remote-manager/shared-types';
 import type { AgentTool } from '../agent/agent-runner';
 import { commitFile, git } from '../git/testing/git-fixtures';
+import type { FakeReviewThread } from '../github/testing/fake-github';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import {
   CREATE_PULL_REQUEST_TOOL_NAME,
@@ -12,6 +13,7 @@ import {
   SHOW_FILE_TOOL_NAME,
 } from './app-tools';
 import { SESSION_SETTINGS } from './session-agent-support';
+import { AUTOFIX_ASK_REASON, AUTOFIX_RESOLVE_REASON } from './sessions.service';
 import { pngImage } from '../attachments/testing/images';
 import { flush, resultMessage, waitFor } from './testing/fake-agent';
 
@@ -324,7 +326,7 @@ describe('session integrations (tools, memory, pushes)', () => {
       );
       const remoteId = harness.repositoryRecords.get(repository.id)
         ?.githubRepositoryId as number;
-      const threads = [
+      const threads: FakeReviewThread[] = [
         { resolved: false, author: 'bob', body: 'Fix this', commentIds: [501] },
         {
           resolved: false,
@@ -622,7 +624,7 @@ describe('session integrations (tools, memory, pushes)', () => {
       });
     });
 
-    it('asks as the permission mode says, but not during an Autofix run', async () => {
+    it('asks as the permission mode says; during an Autofix run replies run unasked', async () => {
       const { session } = await withPullRequest();
       const sdk = { name: 'crm', source: 'sdk' };
       const input = {
@@ -654,17 +656,20 @@ describe('session integrations (tools, memory, pushes)', () => {
       if (!gate) {
         throw new Error('no gate');
       }
-      const call = (mcpServer: { name: string; source: string } | null) =>
+      const call = (
+        mcpServer: { name: string; source: string } | null,
+        callInput: Record<string, unknown> = input,
+      ) =>
         gate({
           toolName: REPLY_TO_REVIEW_THREAD_TOOL_NAME,
-          input,
+          input: callInput,
           toolUseId: 'tu-g',
           agentId: null,
           mcpServer,
         });
       expect(call(sdk)).toBeNull();
 
-      // An Autofix run: it runs without asking.
+      // An Autofix run.
       harness.runner.last.emit(resultMessage(1, 0));
       await flush();
       await harness.service.sendMessage(session.id, {
@@ -677,26 +682,140 @@ describe('session integrations (tools, memory, pushes)', () => {
           message.text.includes('Fix the review findings'),
         ),
       );
-      const asked = harness.approver.requests.length;
-      // Not sent to the user by the gate, and allowed when Claude Code asks.
-      expect(call(sdk)).toBeNull();
+      const requests = () => harness.approver.requests.length;
+      const before = requests();
+      // A reply alone runs without asking.
+      const replyOnly = { pull_request: 1, comment_id: 501, body: 'Fixed' };
+      expect(call(sdk, replyOnly)).toBeNull();
       await expect(
-        ask(REPLY_TO_REVIEW_THREAD_TOOL_NAME, input, 'tu-2', sdk),
-      ).resolves.toEqual({ behavior: 'allow', updatedInput: input });
-      expect(harness.approver.requests).toHaveLength(asked);
+        ask(REPLY_TO_REVIEW_THREAD_TOOL_NAME, replyOnly, 'tu-2', sdk),
+      ).resolves.toEqual({ behavior: 'allow', updatedInput: replyOnly });
+      expect(requests()).toBe(before);
+
+      // Resolving without a push since the thread's last comment asks.
+      expect(call(sdk)).toEqual({
+        decision: 'ask',
+        reason: AUTOFIX_RESOLVE_REASON,
+      });
+      await expect(
+        ask(REPLY_TO_REVIEW_THREAD_TOOL_NAME, input, 'tu-3', sdk),
+      ).resolves.toMatchObject({ behavior: 'deny' });
+      expect(requests()).toBe(before + 1);
+      expect(harness.approver.requests.at(-1)?.reviewThreadReply).toEqual(
+        expect.objectContaining({ resolve: true, commentId: 501 }),
+      );
       // A tool of that name from another server is not the app's.
-      const other = { name: 'crm', source: 'user' };
-      expect(call(other)).toMatchObject({ decision: 'ask' });
-      // Other actions still ask during the run.
-      expect(
-        gate({
-          toolName: CREATE_PULL_REQUEST_TOOL_NAME,
-          input: {},
-          toolUseId: 'tu-c',
-          agentId: null,
-          mcpServer: sdk,
-        }),
-      ).toMatchObject({ decision: 'ask' });
+      expect(call({ name: 'crm', source: 'user' }, replyOnly)).toMatchObject({
+        decision: 'ask',
+        reason: AUTOFIX_ASK_REASON,
+      });
+    });
+
+    describe('resolving during an Autofix run', () => {
+      /** A session in an Autofix run, with pull request #1. */
+      const inAutofix = async () => {
+        const setup = await withPullRequest();
+        harness.runner.last.emit(resultMessage(1, 0));
+        await flush();
+        await harness.service.sendMessage(setup.session.id, {
+          text: 'Fix the review findings',
+          origin: 'app',
+          holdAutoMode: true,
+        });
+        await waitFor(() =>
+          harness.runner.last.sent.some((message) =>
+            message.text.includes('Fix the review findings'),
+          ),
+        );
+        const pull = harness.github.pulls[0];
+        const push = (timestamp: string, after = pull.headSha) =>
+          harness.github.activity.set(setup.remoteId, [
+            {
+              activity_type: 'push',
+              ref: `refs/heads/${pull.head}`,
+              after,
+              timestamp,
+            },
+          ]);
+        harness.approver.autoAnswer = { decision: 'deny', message: 'No' };
+        const resolve = async (commentId = 501) => {
+          const before = harness.approver.requests.length;
+          const result = await ask(
+            REPLY_TO_REVIEW_THREAD_TOOL_NAME,
+            { pull_request: 1, comment_id: commentId, resolve: true },
+            'tu-r',
+            { name: 'crm', source: 'sdk' },
+          );
+          return {
+            behavior: result?.behavior,
+            asked: harness.approver.requests.length > before,
+          };
+        };
+        return { ...setup, push, resolve };
+      };
+
+      it('runs unasked after a push of the pull request head since the last comment', async () => {
+        const { push, resolve, threads } = await inAutofix();
+        // The thread's comments are from 2026-01-01.
+        push('2026-02-01T00:00:00Z');
+        await expect(resolve()).resolves.toEqual({
+          behavior: 'allow',
+          asked: false,
+        });
+        // The app's own replies do not count as feedback.
+        threads[1].replyDates = ['2026-01-01T00:00:00Z'];
+        threads[1].commentIds?.push(603);
+        threads[1].replyDates.push('2026-03-01T00:00:00Z');
+        threads[1].appCommentIds = [603];
+        await expect(resolve(601)).resolves.toEqual({
+          behavior: 'allow',
+          asked: false,
+        });
+      });
+
+      it('asks without such a push', async () => {
+        const { push, resolve, threads } = await inAutofix();
+        // No push at all.
+        await expect(resolve()).resolves.toEqual({
+          behavior: 'deny',
+          asked: true,
+        });
+        // A push before the last comment.
+        push('2026-02-01T00:00:00Z');
+        threads[1].replyDates = ['2026-03-01T00:00:00Z'];
+        await expect(resolve(601)).resolves.toEqual({
+          behavior: 'deny',
+          asked: true,
+        });
+        // A later push, but not of the pull request's head.
+        push('2026-04-01T00:00:00Z', 'c'.repeat(40));
+        await expect(resolve(601)).resolves.toEqual({
+          behavior: 'deny',
+          asked: true,
+        });
+      });
+
+      it('asks when the check fails', async () => {
+        const { push, resolve } = await inAutofix();
+        push('2026-02-01T00:00:00Z');
+        harness.github.intercept = (request) =>
+          request.path.endsWith('/activity')
+            ? new Response(JSON.stringify({ message: 'Forbidden' }), {
+                status: 403,
+                headers: { 'content-type': 'application/json' },
+              })
+            : undefined;
+        await expect(resolve()).resolves.toEqual({
+          behavior: 'deny',
+          asked: true,
+        });
+        // An unknown comment asks as well (the tool refuses it then).
+        harness.github.intercept = null;
+        await expect(resolve(999)).resolves.toEqual({
+          behavior: 'deny',
+          asked: true,
+        });
+      });
     });
   });
 

@@ -93,6 +93,19 @@ export abstract class SessionAgentSupport {
     void records;
     return Promise.resolve();
   }
+  /**
+   * Whether a `reply_to_review_thread` call that resolves may run unasked
+   * during an Autofix run: only after the session pushed to the pull
+   * request since the thread's last comment. `false` without integrations.
+   */
+  mayResolveUnasked(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): Promise<boolean> {
+    void sessionId;
+    void input;
+    return Promise.resolve(false);
+  }
 }
 
 /** Without integrations (tests of the session lifecycle). */
@@ -757,6 +770,32 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         return { text: hold(sessionId, question) };
       },
     };
+  }
+
+  override async mayResolveUnasked(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): Promise<boolean> {
+    const number = input['pull_request'];
+    const commentId = input['comment_id'];
+    if (
+      typeof number !== 'number' ||
+      typeof commentId !== 'number' ||
+      !Number.isSafeInteger(number) ||
+      !Number.isSafeInteger(commentId)
+    ) {
+      return false;
+    }
+    const repositoryId = this.repositoryOf(
+      sessionId,
+      typeof input['repository'] === 'string' ? input['repository'] : null,
+    );
+    return this.sessionGit.mayResolveUnasked(
+      sessionId,
+      repositoryId,
+      number,
+      commentId,
+    );
   }
 
   // -------------------------------------------------------------------------
