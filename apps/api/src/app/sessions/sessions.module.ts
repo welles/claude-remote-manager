@@ -32,6 +32,7 @@ import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { SessionDiffController } from '../diffs/session-diff.controller';
 import { SessionDiffService } from '../diffs/session-diff.service';
 import { FileMentionsService } from '../files/file-mentions.service';
+import { RunningDirectories } from './running-directories';
 import {
   SessionBrowseController,
   SessionFilesController,
@@ -104,6 +105,7 @@ import { SlashCommandsService } from './slash-commands.service';
     SessionFileAccess,
     SessionDiffService,
     FileMentionsService,
+    RunningDirectories,
     { provide: AgentRunner, useClass: SdkAgentRunner },
     { provide: TranscriptReader, useClass: SdkTranscriptReader },
   ],

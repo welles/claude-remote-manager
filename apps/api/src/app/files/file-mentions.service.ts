@@ -18,11 +18,13 @@ import {
   type ProcessLauncher,
 } from '../common/process-isolation';
 import { runGit } from '../git/git-runner';
+import { RunningDirectories } from '../sessions/running-directories';
 import {
   isActiveDirectory,
   SessionRepository,
   workingDirectoryOf,
   type SessionDirectoryRecord,
+  type SessionRecord,
 } from '../sessions/session.repository';
 import { classifyFile } from '../shown-files/file-kind';
 import {
@@ -96,6 +98,8 @@ export class FileMentionsService {
     @Optional()
     @Inject(PROCESS_LAUNCHER)
     private readonly launcher: ProcessLauncher = SINGLE_USER,
+    @Optional()
+    private readonly running: RunningDirectories = new RunningDirectories(),
   ) {}
 
   async search(
@@ -132,7 +136,7 @@ export class FileMentionsService {
               repository: directory.repositoryName,
               path,
               mention: mentionText(
-                directory.position === workingDirectoryOf(record).position
+                this.mentionsRelative(record, directory.position)
                   ? path
                   : `${directory.path.replace(/\/+$/, '')}/${path}`,
               ),
@@ -253,7 +257,23 @@ export class FileMentionsService {
   /** Whether Claude Code works in the directory (mentions are relative). */
   private isWorkingDirectory(sessionId: string, position: number): boolean {
     const record = this.sessions.get(sessionId);
-    return !!record && workingDirectoryOf(record).position === position;
+    return !!record && this.mentionsRelative(record, position);
+  }
+
+  /**
+   * Whether mentions of files in the directory are relative: it is the
+   * session's working directory and, while a process runs, the one that
+   * process works in. After `switch_directory` the process keeps the old
+   * one until it restarts, and a message may still go to it (or already to
+   * the next one): absolute paths are right for both.
+   */
+  private mentionsRelative(record: SessionRecord, position: number): boolean {
+    const working = workingDirectoryOf(record);
+    if (working.position !== position) {
+      return false;
+    }
+    const running = this.running.get(record.id);
+    return running === null || running === working.path;
   }
 
   private readyDirectories(sessionId: string): SessionDirectoryRecord[] {
