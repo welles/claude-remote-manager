@@ -53,6 +53,11 @@ async function bootstrap() {
       ? `Session processes run as ${config.isolation.sessionUser.name}`
       : 'PROCESS_ISOLATION=single-user: session processes run as the API user, with its rights',
   );
+  if (!config.gitIdentity) {
+    Logger.warn(
+      'CRM_GIT_AUTHOR_NAME and CRM_GIT_AUTHOR_EMAIL are not set: sessions with repositories cannot start, existing clones cannot commit',
+    );
+  }
   configureApp(app);
   // Run onModuleDestroy/onApplicationShutdown hooks on SIGTERM/SIGINT, e.g.
   // to stop sessions and dev servers when the container stops.

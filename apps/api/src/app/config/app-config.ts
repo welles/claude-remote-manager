@@ -340,9 +340,14 @@ function loadGitIdentity(
       `Set both ${GIT_AUTHOR_NAME_VARIABLE} and ${GIT_AUTHOR_EMAIL_VARIABLE}, or neither`,
     );
   }
-  if (name.length > 200 || FORBIDDEN_IN_NAME.test(name)) {
+  // git strips these from the ends and refuses an empty name at commit time.
+  if (
+    name.length > 200 ||
+    FORBIDDEN_IN_NAME.test(name) ||
+    !/[^.,:;"'\s]/.test(name)
+  ) {
     throw new Error(
-      `${GIT_AUTHOR_NAME_VARIABLE} must be at most 200 characters without <, > or control characters`,
+      `${GIT_AUTHOR_NAME_VARIABLE} must be at most 200 characters without <, > or control characters, and not only punctuation`,
     );
   }
   if (email.length > 320 || !EMAIL_PATTERN.test(email)) {

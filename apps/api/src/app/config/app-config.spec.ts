@@ -56,6 +56,10 @@ describe('loadAppConfig', () => {
         'control characters',
       ],
       [
+        { CRM_GIT_AUTHOR_NAME: '...', CRM_GIT_AUTHOR_EMAIL: 'a@b.c' },
+        'not only punctuation',
+      ],
+      [
         { CRM_GIT_AUTHOR_NAME: 'A', CRM_GIT_AUTHOR_EMAIL: 'not-an-email' },
         'CRM_GIT_AUTHOR_EMAIL is not an email address',
       ],
