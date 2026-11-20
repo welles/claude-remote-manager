@@ -17,7 +17,7 @@
   }
   <app-discard-clone-dialog #discardDialog [sessionId]="session().id" />
 </section>
-} @if (clones().length > 0) {
+} @if (clones().length > 0 || retiredPullRequests().length > 0) {
 <section class="git" data-testid="git-panel">
   @for (clone of clones(); track clone.key) {
   <div class="clone" data-testid="git-clone">
@@ -149,6 +149,34 @@
       }
     </ul>
     }
+  </div>
+  } @for (group of retiredPullRequests(); track group.key) {
+  <div class="clone" data-testid="retired-pull-requests">
+    <div class="clone-head">
+      <strong>{{ group.name }}</strong>
+      <span class="working">clones removed after their pull requests</span>
+    </div>
+    <ul class="pulls">
+      @for (pull of group.pullRequests; track pull.id) {
+      <li data-testid="pull-request">
+        @let isDraft = pull.draft && pull.state === 'open';
+        <span
+          class="state state-{{ isDraft ? 'draft' : pull.state }}"
+          data-testid="pull-request-state"
+          >{{ isDraft ? 'Draft' : stateLabels[pull.state] }}</span
+        >
+        <a [href]="pull.url" target="_blank" rel="noopener"
+          >#{{ pull.number }} {{ pull.title }}</a
+        >
+        <code class="pull-branch" data-testid="pull-request-branch"
+          >{{ pull.headBranch }}</code
+        >
+        <span class="by"
+          >{{ pull.createdBy === 'claude' ? 'by Claude' : '' }}</span
+        >
+      </li>
+      }
+    </ul>
   </div>
   }
 </section>

@@ -43,7 +43,11 @@ import {
 import { parseAutofixGitCommand } from './autofix-git';
 import { PullRequestChecksService } from './pull-request-checks.service';
 import { SessionGitService } from '../sessions/session-git.service';
-import { cloneOf, cloneOfPull } from '../sessions/session-clones';
+import {
+  cloneOf,
+  cloneOfPull,
+  retiresAfterPullRequest,
+} from '../sessions/session-clones';
 import {
   isActiveDirectory,
   SessionRepository,
@@ -1882,21 +1886,32 @@ export class PrAutomationService
       return;
     }
     const owner = this.records.get(pull.sessionId);
+    const ownClone = owner ? extraCloneOf(owner, pull) : null;
+    const autocloseDue =
+      !!owner &&
+      owner.pullRequests.some((entry) => entry.autoclose) &&
+      owner.pullRequests.every(
+        (entry) => entry.id === pull.id || entry.state !== 'open',
+      );
     if (
       owner &&
       !owner.autoclosedAt &&
-      ((owner.pullRequests.some((entry) => entry.autoclose) &&
-        owner.pullRequests.every(
-          (entry) => entry.id === pull.id || entry.state !== 'open',
-        )) ||
-        extraCloneOf(owner, pull)) &&
-      !turnIsOver(this.sessions.get(owner.id))
+      (((autocloseDue || ownClone) &&
+        !turnIsOver(this.sessions.get(owner.id))) ||
+        // Claude Code works in the clone and its process must stay
+        // (background tasks, its own wait, previews): moving it away
+        // would end them.
+        (!autocloseDue &&
+          ownClone !== null &&
+          workingDirectoryOf(owner).position === ownClone.position &&
+          this.sessions.processMustStay(owner.id)))
     ) {
       // Autoclose would end the turn that is going (e.g. the one that
       // merged it with Claude's tool, or one waiting for an approval), or
       // the clone of the pull request's own branch would go while Claude
       // may still work in it: the close stays unhandled until the turn is
-      // over (`sessionChanged`, or the first poll after a restart).
+      // over, or the process is free (`sessionChanged`, or the first poll
+      // after a restart).
       return;
     }
     this.forgetWaiting(pull.id);
@@ -2056,10 +2071,11 @@ export class PrAutomationService
         `${what}: ${detail === null ? 'removed' : 'kept'} ${directory.path}`,
       );
     };
+    let switched: { from: number; note: string } | null = null;
     if (detail === null) {
       try {
         // Claude Code must not keep working in it.
-        this.switchAwayFrom(session, directory);
+        switched = this.switchAwayFrom(session, directory);
       } catch (error) {
         detail = `no other directory to work in (${errorText(error)})`;
       }
@@ -2087,6 +2103,14 @@ export class PrAutomationService
           additionState: directory.addition ? directory.addition.state : null,
           announce: false,
         });
+        if (switched) {
+          // Back where Claude worked; nothing to tell.
+          this.sessions.switchWorkingDirectory(session.id, switched.from);
+          switched = null;
+        }
+      }
+      if (switched) {
+        this.sessions.noteForClaude(session.id, switched.note);
       }
       finish();
       // An idle process is restarted without the directory.
@@ -2097,15 +2121,16 @@ export class PrAutomationService
   /**
    * Makes another directory the working directory when `directory`, about
    * to be removed, is it: another clone of its repository, else the first
-   * directory Claude works in.
+   * directory Claude works in. Returns what to undo and to tell Claude once
+   * the removal succeeded; `null` when it was not the working directory.
    */
   private switchAwayFrom(
     session: SessionRecord,
     directory: SessionDirectoryRecord,
-  ): void {
+  ): { from: number; note: string } | null {
     const current = this.records.get(session.id) ?? session;
     if (workingDirectoryOf(current).position !== directory.position) {
-      return;
+      return null;
     }
     const usable = current.directories.filter(
       (entry) =>
@@ -2122,12 +2147,13 @@ export class PrAutomationService
     if (!next) {
       throw new Error('no other directory to work in');
     }
-    this.sessions.switchWorkingDirectory(
-      session.id,
-      next.position,
-      `Your working directory is now ${next.path}${next.branch ? ` (branch ${next.branch})` : ''}: ` +
+    this.sessions.switchWorkingDirectory(session.id, next.position);
+    return {
+      from: directory.position,
+      note:
+        `Your working directory is now ${next.path}${next.branch ? ` (branch ${next.branch})` : ''}: ` +
         `the session manager switched to it because ${directory.path} was removed after its pull request.`,
-    );
+    };
   }
 
   // --- Kept clones ---------------------------------------------------------
@@ -2357,6 +2383,7 @@ function extraCloneOf(
     !directory ||
     directory.state !== 'ready' ||
     !isActiveDirectory(directory) ||
+    !retiresAfterPullRequest(session.directories, directory) ||
     !session.directories.some(
       (entry) =>
         entry.position !== directory.position &&

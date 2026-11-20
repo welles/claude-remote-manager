@@ -827,7 +827,7 @@ describe('adding repositories to a running session', () => {
       const switched = await tool.handler({ branch }, { toolUseId: 't2' });
       expect(switched.isError).toBeFalsy();
       expect(switched.text).toContain(
-        `From your next turn on, your working directory is ${second}`,
+        `Your working directory becomes ${second}`,
       );
       const dto = harness.service.get(session.id);
       expect(dto.cwd).toBe(second);
@@ -872,6 +872,96 @@ describe('adding repositories to a running session', () => {
       await waitFor(() => harness.runner.runs.length > before);
       expect(harness.runner.last.options.cwd).toBe(second);
       expect(harness.runner.last.options.resume).toBe('sdk-1');
+    });
+
+    /** A session with a second clone, its first turn still running. */
+    const twoClones = async () => {
+      const main = await harness.addRepository('acme', 'app');
+      const session = await harness.service.create({
+        prompt: 'Do the work',
+        repositories: [{ repositoryId: main.id }],
+      });
+      await harness.prepared(session.id);
+      const run = harness.runner.last;
+      run.emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
+      await named(run, 'add_branch').handler(
+        { reason: 'Second fix' },
+        { toolUseId: 't1' },
+      );
+      return {
+        session,
+        run,
+        second: `${clonePath(session, 'acme', 'app')}-2`,
+        branch: `claude/${session.slug}-2`,
+      };
+    };
+
+    it('closes an idle process at once', async () => {
+      const { session, run, branch } = await twoClones();
+      run.emit(resultMessage(10, 0.01));
+      await waitFor(() => harness.service.get(session.id).status === 'waiting');
+      expect(run.closed).toBe(false);
+      await named(run, 'switch_directory').handler(
+        { branch },
+        { toolUseId: 't2' },
+      );
+      await waitFor(() => run.closed);
+    });
+
+    it('keeps the process for background tasks and restarts once they ended', async () => {
+      const { session, run, second, branch } = await twoClones();
+      // Claude may report back a moment after its tasks ended.
+      harness.service.backgroundReportGraceMs = 30;
+      await named(run, 'switch_directory').handler(
+        { branch },
+        { toolUseId: 't2' },
+      );
+      const tasks = (...ids: string[]) =>
+        ({
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: ids.map((id) => ({
+            task_id: id,
+            task_type: 'local_bash',
+            description: id,
+          })),
+        }) as never;
+      run.emit(tasks('server'), resultMessage(10, 0.01));
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'background',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // The dev server would end with the process.
+      expect(run.closed).toBe(false);
+      run.emit(tasks());
+      await waitFor(() => run.closed);
+      const runs = harness.runner.runs.length;
+      await harness.service.send(session.id, { text: 'Go on' });
+      await waitFor(() => harness.runner.runs.length > runs);
+      expect(harness.runner.last.options.cwd).toBe(second);
+    });
+
+    it('does not restart again after a crash: the new process has the new directory', async () => {
+      const { session, run, second, branch } = await twoClones();
+      await named(run, 'switch_directory').handler(
+        { branch },
+        { toolUseId: 't2' },
+      );
+      run.crash(new Error('Claude Code process exited with code 1'));
+      await waitFor(() => harness.service.get(session.id).status === 'failed');
+      const runs = harness.runner.runs.length;
+      await harness.service.send(session.id, { text: 'Retry' });
+      await waitFor(() => harness.runner.runs.length > runs);
+      const next = harness.runner.last;
+      expect(next.options.cwd).toBe(second);
+      next.emit(resultMessage(10, 0.01));
+      await waitFor(() => harness.service.get(session.id).status === 'waiting');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(next.closed).toBe(false);
+      await harness.service.send(session.id, { text: 'More' });
+      await flush();
+      expect(harness.runner.runs).toHaveLength(runs + 1);
+      expect(next.sent.at(-1)?.text).toBe('More');
     });
 
     it('needs the branch when a repository has several clones', async () => {

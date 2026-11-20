@@ -175,6 +175,53 @@ describe('openDatabase', () => {
     db.$client.close();
   });
 
+  it('records closes earlier versions left unhandled, except those autoclose still has to handle (migration 0020)', () => {
+    const old = openDatabase(dir, migrationsUpTo(19));
+    const run = (sql: string) => old.$client.prepare(sql).run();
+    run(
+      "INSERT INTO repositories (id, owner, name, local_path, updated_at) VALUES ('r', 'acme', 'app', '/repos/acme/app', 1)",
+    );
+    // a: old merged PR next to an open one; b: autoclose due (all closed);
+    // c: autoclosed already; d: handled already.
+    run(
+      "INSERT INTO sessions (id, status, updated_at, autoclosed_at) VALUES ('a', 'waiting', 1, NULL), ('b', 'waiting', 1, NULL), ('c', 'finished', 1, 5), ('d', 'waiting', 1, NULL)",
+    );
+    const pull = (
+      id: number,
+      session: string,
+      state: string,
+      autoclose: number,
+      handled: number | null,
+    ) =>
+      run(
+        `INSERT INTO pull_requests (id, session_id, repository_id, number, url, title, state, head_branch, base_branch, created_by, opened_at, synced_at, autoclose, close_handled_at) VALUES (${id}, '${session}', 'r', ${id}, 'u', 't', '${state}', 'h${id}', 'main', 'user', 1, 1, ${autoclose}, ${handled ?? 'NULL'})`,
+      );
+    pull(1, 'a', 'merged', 0, null);
+    pull(2, 'a', 'open', 1, null);
+    pull(3, 'b', 'merged', 1, null);
+    pull(4, 'b', 'closed', 0, null);
+    pull(5, 'c', 'merged', 1, null);
+    pull(6, 'd', 'merged', 0, 42);
+    old.$client.close();
+
+    const db = openDatabase(dir);
+    const handled = Object.fromEntries(
+      (
+        db.$client
+          .prepare('SELECT id, close_handled_at FROM pull_requests')
+          .all() as { id: number; close_handled_at: number | null }[]
+      ).map((row) => [row.id, row.close_handled_at]),
+    );
+    expect(handled[1]).toEqual(expect.any(Number));
+    expect(handled[1]).toBeGreaterThan(1_700_000_000_000);
+    expect(handled[2]).toBeNull();
+    expect(handled[3]).toBeNull();
+    expect(handled[4]).toBeNull();
+    expect(handled[5]).toEqual(expect.any(Number));
+    expect(handled[6]).toBe(42);
+    db.$client.close();
+  });
+
   it('keeps the full-text index in step with the search documents', () => {
     const db = openDatabase(dir);
     const run = (sql: string) => db.$client.prepare(sql).run();

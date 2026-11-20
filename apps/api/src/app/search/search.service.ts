@@ -327,7 +327,9 @@ export class SearchService implements OnModuleInit, OnModuleDestroy {
   private async source(record: SessionRecord): Promise<string> {
     const cwd = transcriptDirectory(record);
     const id = record.sdkSessionId ?? record.id;
-    const stamp = cwd ? await this.transcripts.stamp(id, cwd) : null;
+    const stamp = cwd
+      ? await this.transcripts.stamp(id, cwd, record.workingDirectory !== null)
+      : null;
     return stamp ?? 'missing';
   }
 

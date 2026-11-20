@@ -1515,7 +1515,8 @@ given to Claude Code any more (an idle process is closed so that the next one st
 it), and is not listed in the session diff; Claude is told with its next message. When it is
 Claude Code's working directory, the app first switches to another (another clone of the
 repository, else the first directory left) and tells Claude so. Its pull requests stay listed
-under the repository's first clone left, with their branch. Dev servers and
+under the repository's first clone left, with their branch, or, when no clone of the
+repository is left, in a group of their own (repository name, branch). Dev servers and
 previews are not tracked per directory, so ones started in the clone keep running (the note
 asks Claude to stop them). Database:
 `session_directories` is unique per session, repository and branch (migration
@@ -1529,10 +1530,13 @@ directory with the tool `switch_directory` (`repository`, optional with one repo
 `branch`, needed when the repository has several clones), e.g. when the work goes on mainly in
 a clone from `add_branch`. It never asks (it only restarts Claude Code in a directory of the
 session). The choice is stored at once (`sessions.working_directory`, the directory's
-position, migration `0019_working_directory`; `null`: the first directory) and applies from
-the next turn: when the turn ends the process is closed (as after an addition that needs a new
-process), and the next message starts Claude Code in the new directory, resuming the same
-conversation (`resume` with the session's ID); an idle process is closed at once. The
+position, migration `0019_working_directory`; `null`: the first directory) and applies once
+the process can restart: it is closed as soon as no turn runs and nothing keeps it
+(background tasks, Claude's own wait with `set_waiting_state` `work`, previews of its dev
+servers would end with it), so when the turn ends, at once while idle, or after the
+background work (`restartPending`); the next message starts Claude Code in the new
+directory, resuming the same conversation (`resume` with the session's ID). A process that
+starts for another reason (e.g. after a crash) has the new directory already. The
 auto-memory follows the working directory's repository, `@` mentions are relative to it, and
 the session details and git panel mark it ("working directory").
 
@@ -1540,8 +1544,19 @@ Claude Code keeps the transcript in the project folder of the directory it start
 in and finds it by ID from any working directory (tested with Claude Code 2.1.322, also the
 Agent SDK's bundled one): it goes on writing there and records the current `cwd` per entry, so
 nothing is copied. The app reads it from the first directory's project folder
-(`transcriptDirectory`), else from any project folder; deleting a session removes Claude Code's
-files by ID across all of them.
+(`transcriptDirectory`), and only for a session whose working directory was switched also from
+any other project folder; deleting a session removes Claude Code's files by ID across all of
+them.
+
+Every clone is removed after its pull request (see above; the owner's decision: also a
+repository's only clone, e.g. the session's first or one added with `add_repository`; the
+rule is `retiresAfterPullRequest` in `apps/api/src/app/sessions/session-clones.ts`), as long
+as another directory Claude works in remains. When it is the working directory, the app
+switches away first; while the process must stay for background work or previews, the close
+stays unhandled until it is free. If removing the files fails, the clone stays the working
+directory and Claude is told nothing. Closes that earlier versions left unrecorded count as
+handled (migration `0020_record_old_closes`, except those autoclose still has to handle), so
+the first poll after the update removes no clones of older sessions.
 
 ### Isolation and concurrency
 

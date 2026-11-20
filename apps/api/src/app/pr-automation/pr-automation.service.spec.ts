@@ -2806,6 +2806,162 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       expect(after.cwd).toBe(second.path);
     });
 
+    it('keeps the working directory and tells Claude nothing when removing its clone fails', async () => {
+      const { session } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      const switcher = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'switch_directory',
+      );
+      if (!switcher) {
+        throw new Error('no switch_directory tool');
+      }
+      await switcher.handler({ branch: second.branch }, { toolUseId: 't1' });
+      const spy = jest
+        .spyOn(WorkspaceEntries.prototype, 'remove')
+        .mockRejectedValue(new Error('disk on fire'));
+      try {
+        merge(second.pull.number);
+        await automation.check(second.pull.id);
+        // Stored (the idle process was closed by the switch).
+        await waitFor(() =>
+          new SessionEventRepository(harness.db)
+            .list(session.id)
+            .some(
+              (stored) =>
+                stored.event.type === 'notice' &&
+                stored.event.text.includes('removing it failed'),
+            ),
+        );
+      } finally {
+        spy.mockRestore();
+      }
+      const after = harness.service.get(session.id);
+      expect(after.cwd).toBe(second.path);
+      expect(after.directories.at(-1)).toMatchObject({
+        state: 'ready',
+        addition: { state: 'ready' },
+      });
+      const runs = harness.runner.runs.length;
+      await harness.service.send(session.id, { text: 'Next' });
+      await waitFor(() => harness.runner.runs.length > runs);
+      expect(harness.runner.last.options.cwd).toBe(second.path);
+      expect(harness.runner.last.sent.at(-1)?.note).toBeUndefined();
+    }, 20_000);
+
+    it("waits with removing the working directory's clone while background tasks keep the process", async () => {
+      const { session } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      const switcher = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'switch_directory',
+      );
+      if (!switcher) {
+        throw new Error('no switch_directory tool');
+      }
+      await switcher.handler({ branch: second.branch }, { toolUseId: 't1' });
+      harness.service.backgroundReportGraceMs = 30;
+      // The switch closed the idle process; a new one runs a dev server.
+      await waitFor(() => harness.runner.last.closed);
+      const runs = harness.runner.runs.length;
+      await harness.service.send(session.id, { text: 'Start the server' });
+      await waitFor(() => harness.runner.runs.length > runs);
+      const run = harness.runner.last;
+      const tasks = (...ids: string[]) =>
+        ({
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: ids.map((id) => ({
+            task_id: id,
+            task_type: 'local_bash',
+            description: id,
+          })),
+        }) as never;
+      run.emit(tasks('server'), resultMessage(20, 0.02));
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'background',
+      );
+
+      merge(second.pull.number);
+      await automation.check(second.pull.id);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      // The server runs in the clone's process: nothing moves yet.
+      expect(existsSync(second.path)).toBe(true);
+      expect(run.closed).toBe(false);
+      expect(harness.service.get(session.id).cwd).toBe(second.path);
+
+      run.emit(tasks());
+      await waitFor(() => !existsSync(second.path));
+      expect(
+        harness.service.get(session.id).directories.at(-1)?.addition?.state,
+      ).toBe('retired');
+    }, 20_000);
+
+    it("retires a repository's only clone in a session with another repository, and add_branch brings it back", async () => {
+      const lib = await harness.addRepository('alice', 'lib');
+      const libRemote = harness.github.addRepository(
+        harness.github.installations[0],
+        'lib',
+      );
+      harness.repositoryRecords.update(lib.id, {
+        githubRepositoryId: libRemote.id,
+        githubInstallationId: harness.github.installations[0].id,
+      });
+      harness.github.headSha = (repository, head) =>
+        execFileSync('git', ['rev-parse', `refs/heads/${head}`], {
+          cwd: repository.name === 'lib' ? lib.origin : origin,
+        })
+          .toString()
+          .trim();
+      const created = await harness.service.create({
+        prompt: 'Work',
+        title: 'Two repositories',
+        repositories: [{ repositoryId }, { repositoryId: lib.id }],
+      });
+      await harness.prepared(created.id);
+      harness.runner.last.emit(resultMessage(10, 0.01));
+      await waitFor(
+        () => harness.service.get(created.id).waitingFor === 'message',
+      );
+      const [app, other] = harness.service.get(created.id).directories;
+      await commitFile(app.path, 'work.txt', 'w');
+      const pull = await harness.sessionGit.createPullRequest(
+        created.id,
+        repositoryId,
+        { title: 'Work' },
+        'user',
+      );
+
+      merge(pull.number);
+      await automation.check(pull.id);
+      await waitFor(() => !existsSync(app.path));
+      const after = harness.service.get(created.id);
+      // Claude works in the other repository now; the pull request stays.
+      expect(after.cwd).toBe(other.path);
+      expect(after.directories[0]).toMatchObject({
+        state: 'removed',
+        addition: { state: 'retired' },
+      });
+      expect(after.pullRequests.map((entry) => entry.number)).toEqual([
+        pull.number,
+      ]);
+
+      // A further pull request of the first repository: add_branch.
+      const tool = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'add_branch',
+      );
+      if (!tool) {
+        throw new Error('no add_branch tool');
+      }
+      const added = await tool.handler(
+        { repository: 'alice/app', reason: 'Follow-up' },
+        { toolUseId: 't1' },
+      );
+      expect(added.isError).toBe(false);
+      expect(harness.service.get(created.id).directories.at(-1)).toMatchObject({
+        path: `${app.path}-2`,
+        state: 'ready',
+      });
+    }, 20_000);
+
     it('keeps the clone of a further branch with work that is not on GitHub', async () => {
       const { session } = await sessionWithPullRequest();
       const second = await secondPullRequest(session.id);

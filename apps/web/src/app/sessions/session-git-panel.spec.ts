@@ -469,6 +469,36 @@ describe('SessionGitPanel', () => {
       element.querySelector('[data-testid="pull-request-branch"]')?.textContent,
     ).toContain('claude/reply-with-pong-abc123-2');
   });
+  it('lists pull requests of a repository whose clones were all removed in a group of their own', async () => {
+    const base = githubSession();
+    const [app, tool] = base.directories;
+    const { all } = await render(
+      sessionDto({
+        directories: [
+          {
+            ...app,
+            role: 'additional',
+            state: 'removed',
+            addition: {
+              addedAt: null,
+              by: 'user',
+              state: 'retired',
+              error: null,
+            },
+          },
+          { ...tool, role: 'main' },
+        ],
+        pullRequests: [pull({ state: 'merged' })],
+      }),
+    );
+    expect(all('retired-pull-requests')).toHaveLength(1);
+    expect(all('retired-pull-requests')[0]).toContain('acme/app');
+    expect(all('retired-pull-requests')[0]).toContain('#7 Fix login');
+    expect(all('retired-pull-requests')[0]).toContain(
+      'claude/reply-with-pong-abc123',
+    );
+  });
+
   it('pushes by button and shows the outcome', async () => {
     const { fixture, all, click } = await render(githubSession());
     await click('push');
