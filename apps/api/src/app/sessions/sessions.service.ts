@@ -4075,6 +4075,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * The directory the session's running Claude Code process works in:
+   * after `switch_directory` the old one until the process restarts.
+   * Without a process, the stored working directory.
+   */
+  processDirectory(sessionId: string): string {
+    return (
+      this.runningDirectories.get(sessionId) ??
+      workingDirectory(this.requireRecord(sessionId))
+    );
+  }
+
+  /**
    * Whether the session's process must stay: background tasks, Claude's own
    * wait or previews of its dev servers would end with it.
    */
