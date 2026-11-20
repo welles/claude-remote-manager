@@ -141,6 +141,13 @@
       "when": 1795205062072,
       "tag": "0019_working_directory",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1795206749354,
+      "tag": "0020_record_old_closes",
+      "breakpoints": true
     }
   ]
 }

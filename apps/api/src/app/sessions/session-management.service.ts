@@ -257,7 +257,11 @@ export class SessionManagementService {
       const cwd = transcriptDirectory(record);
       transcript =
         !!cwd &&
-        (await this.transcripts.exists(record.sdkSessionId ?? record.id, cwd));
+        (await this.transcripts.exists(
+          record.sdkSessionId ?? record.id,
+          cwd,
+          record.workingDirectory !== null,
+        ));
     } catch {
       transcript = false;
     }

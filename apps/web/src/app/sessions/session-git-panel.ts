@@ -130,6 +130,43 @@ export class SessionGitPanel {
   });
 
   /**
+   * Pull requests of repositories without a current clone (all of them were
+   * removed after their pull requests), by repository, with their branch.
+   */
+  protected readonly retiredPullRequests = computed(() => {
+    const session = this.session();
+    const current = new Set(
+      session.directories
+        .filter(
+          (directory) =>
+            directory.kind === 'clone' && directory.state !== 'removed',
+        )
+        .map((directory) => directory.repository?.id),
+    );
+    const groups = new Map<
+      string,
+      { key: string; name: string; pullRequests: PullRequestDto[] }
+    >();
+    for (const pull of session.pullRequests) {
+      if (current.has(pull.repositoryId)) {
+        continue;
+      }
+      const name =
+        session.directories.find(
+          (directory) => directory.repository?.id === pull.repositoryId,
+        )?.repository?.fullName ?? pull.repositoryId;
+      const group = groups.get(pull.repositoryId) ?? {
+        key: pull.repositoryId,
+        name,
+        pullRequests: [],
+      };
+      group.pullRequests.push(pull);
+      groups.set(pull.repositoryId, group);
+    }
+    return [...groups.values()];
+  });
+
+  /**
    * Clones autoclose kept because they hold work that is not on GitHub
    * (the session ended; the others were removed).
    */

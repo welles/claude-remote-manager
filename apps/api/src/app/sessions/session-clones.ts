@@ -23,8 +23,9 @@ export function clonesOf(
 
 /**
  * The clone of a repository on `branch`; without a branch the only clone
- * that is not retired (a further branch's clone removed after its pull
- * request). Several such clones and no branch: a 400 naming the branches.
+ * that is not retired (removed after its pull request; when all are, the
+ * only one at all). Several such clones and no branch: a 400 naming the
+ * branches.
  */
 export function cloneOf(
   directories: readonly SessionDirectoryRecord[],
@@ -62,6 +63,23 @@ export function cloneOfPull(
     clones.find((directory) => directory.branch === pull.headBranch) ??
     (current.length === 1 ? current[0] : undefined)
   );
+}
+
+/**
+ * Which clones the app removes (`retired`) once their pull request is
+ * merged or closed (the other conditions, e.g. another directory left:
+ * `extraCloneOf` in the PR automation). Owner's decision (2026-11-20):
+ * every clone, also a repository's only one (the session's first, or one
+ * added with `add_repository`), not only further clones from
+ * `add_branch`. The one place to change that rule.
+ */
+export function retiresAfterPullRequest(
+  directories: readonly SessionDirectoryRecord[],
+  directory: SessionDirectoryRecord,
+): boolean {
+  void directories;
+  void directory;
+  return true;
 }
 
 /**

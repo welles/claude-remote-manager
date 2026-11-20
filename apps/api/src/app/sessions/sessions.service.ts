@@ -402,9 +402,18 @@ interface LiveSession {
   /**
    * Set when an added repository could not be given to the running process
    * (a Claude Code that cannot add directories): the process is restarted
-   * when the turn ends, and continued with this app message if set.
+   * when the turn ends, and continued with this app message if set. Reset
+   * when a process starts (it has the current directories). Switches of
+   * the working directory use {@link LiveSession.restartPending} instead.
    */
   reopen: { continueWith: string | null } | null;
+  /**
+   * The process has to restart in other directories (`switch_directory`,
+   * a clone removed after its pull request): it is closed as soon as it is
+   * free, i.e. no turn runs and nothing keeps it (background tasks,
+   * Claude's own wait, previews); the next message starts a new one.
+   */
+  restartPending: boolean;
   /**
    * Set from sending a message with `autofixRun` until the end of the turn
    * it started (`delivered`: it reached Claude Code): the Autofix run.
@@ -1655,6 +1664,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       addition: null,
       additionGrants: new Map(),
       reopen: null,
+      restartPending: false,
       autofixTurn: null,
       backgroundTasks: new Set(),
       backgroundGrace: null,
@@ -1699,6 +1709,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             await this.transcripts.read(
               record.sdkSessionId,
               transcriptDirectory(record) ?? workingDirectory(record),
+              record.workingDirectory !== null,
             ),
           );
         } catch (error) {
@@ -1887,6 +1898,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.interruptRequested = null;
     live.sendNow = null;
     live.closing = null;
+    // A new process has the current directories: nothing to restart for.
+    live.reopen = null;
+    live.restartPending = false;
     live.contextResults = 0;
     live.reportedMode = null;
     // A changed secret is masked from this process on.
@@ -1972,6 +1986,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       exists = await this.transcripts.exists(
         record.id,
         transcriptDirectory(record) ?? workingDirectory(record),
+        record.workingDirectory !== null,
       );
     } catch (error) {
       this.logger.warn(`Transcript lookup failed: ${String(error)}`);
@@ -3906,8 +3921,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return {
       name: SWITCH_DIRECTORY_TOOL,
       description:
-        "Make another of this session's clones your working directory, from your next turn on: " +
-        'the app restarts Claude Code there when this turn ends (the conversation goes on), so that ' +
+        "Make another of this session's clones your working directory: the app restarts Claude " +
+        'Code there once it can (when this turn ends; while background tasks, your own wait or ' +
+        'previews of dev servers keep the process, after them), the conversation goes on, so that ' +
         "clone's CLAUDE.md, settings, hooks, skills and memory apply. Use it when the work goes on " +
         'mainly in another clone (e.g. one from add_branch). The other clones stay available as ' +
         'additional directories.',
@@ -3975,9 +3991,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           this.switchWorkingDirectory(live.id, target.position);
           return {
             text:
-              `From your next turn on, your working directory is ${target.path} (${describe(target)}): ` +
-              'the app restarts Claude Code there when this turn ends. Until then you keep working ' +
-              'where you are; the other clones stay additional directories.',
+              `Your working directory becomes ${target.path} (${describe(target)}): ` +
+              'the app restarts Claude Code there once it can (when this turn ends; while background ' +
+              'tasks, your own wait or previews keep the process, after them). Until then you keep ' +
+              'working where you are; the other clones stay additional directories.',
           };
         } catch (error) {
           return {
@@ -3992,9 +4009,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   /**
    * Makes the directory at `position` Claude Code's working directory:
    * stored at once (also across restarts of the server); the process
-   * restarts in it when the turn ends, or at once while it is idle (the
-   * next message then starts it there, resuming the conversation). `note`
-   * is told to Claude with the next message.
+   * restarts in it once it is free (see {@link restartWhenFree}; the next
+   * message then starts it there, resuming the conversation). `note` is
+   * told to Claude with the next message.
    */
   switchWorkingDirectory(
     sessionId: string,
@@ -4019,16 +4036,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (note) {
       this.directoryNotes.set(sessionId, note);
     }
-    const live = this.live.get(sessionId);
-    if (live) {
-      if (live.run) {
-        if (record.status === 'running' || live.starting) {
-          live.reopen ??= { continueWith: null };
-        } else if (!live.closing) {
-          this.closeForRestart(live);
-        }
-      }
-    }
+    this.restartWhenFree(sessionId);
     this.logger.log(
       `Working directory of ${sessionId} is now ${directory.path}`,
     );
@@ -4042,16 +4050,58 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * then; Claude is told with the next message either way).
    */
   directoryRetired(sessionId: string): void {
-    const live = this.live.get(sessionId);
-    if (
-      live?.run &&
-      !live.starting &&
-      !live.closing &&
-      this.requireRecord(sessionId).status !== 'running'
-    ) {
-      this.closeForRestart(live);
-    }
+    this.restartWhenFree(sessionId);
     this.publishUpdate(sessionId);
+  }
+
+  /** Tells Claude `note` with the next message (a switch of directory). */
+  noteForClaude(sessionId: string, note: string): void {
+    this.directoryNotes.set(sessionId, note);
+  }
+
+  /**
+   * Whether the session's process must stay: background tasks, Claude's own
+   * wait or previews of its dev servers would end with it.
+   */
+  processMustStay(sessionId: string): boolean {
+    const live = this.live.get(sessionId);
+    return (
+      !!live?.run &&
+      (this.keepsProcess(live) || this.keptForPreviews(sessionId))
+    );
+  }
+
+  /**
+   * The process has to restart in other directories: closed now if it is
+   * free, else once it is (the end of the turn, of the background tasks,
+   * of the previews; see {@link restartIfPending}). Without a process the
+   * next one starts with the current directories anyway.
+   */
+  private restartWhenFree(sessionId: string): void {
+    const live = this.live.get(sessionId);
+    if (!live?.run || live.closing) {
+      return;
+    }
+    live.restartPending = true;
+    this.restartIfPending(live);
+  }
+
+  /** Closes the process for a pending restart if it is free now. */
+  private restartIfPending(live: LiveSession): boolean {
+    if (
+      !live.restartPending ||
+      !live.run ||
+      live.closing ||
+      live.starting ||
+      this.requireRecord(live.id).status !== 'waiting' ||
+      this.keepsProcess(live) ||
+      this.keptForPreviews(live.id)
+    ) {
+      return false;
+    }
+    live.restartPending = false;
+    this.closeForRestart(live);
+    return true;
   }
 
   /**
@@ -4410,6 +4460,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   private startIdleTimer(live: LiveSession): void {
     this.clearIdleTimer(live);
+    if (live.restartPending) {
+      // Free again (the turn, background tasks or previews ended): a
+      // pending restart goes first, outside of the caller's update.
+      setImmediate(() => {
+        if (this.live.get(live.id) === live) {
+          this.restartIfPending(live);
+        }
+      });
+    }
     if (
       this.config.sessionIdleTimeoutMs <= 0 ||
       this.keptForPreviews(live.id) ||
