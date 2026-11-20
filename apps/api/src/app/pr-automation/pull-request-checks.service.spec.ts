@@ -421,8 +421,9 @@ describe('PullRequestChecksService', () => {
       await checks.read(pull.id);
       expect(harness.service.ciWaitPhase(sessionId, pull.id)).toBe('running');
 
-      // Without any checks the wait ends by itself.
-      timing.ciStartMs = 30;
+      // Without any checks the wait ends by itself (after a window long
+      // enough that reading the checks on a slow machine stays inside it).
+      timing.ciStartMs = 1_500;
       harness.github.checkRuns.set(head, []);
       harness.sessions.updatePullRequest(pull.id, { headSha: 'd'.repeat(40) });
       await checks.read(pull.id);
