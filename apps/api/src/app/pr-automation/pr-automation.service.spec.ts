@@ -2914,6 +2914,84 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       ).toBe('retired');
     }, 20_000);
 
+    /**
+     * A session whose process runs a background task in its first clone
+     * and was switched to the second one: the process keeps the first until
+     * the task ends.
+     */
+    const switchedWhileKept = async () => {
+      const { session, pull, clone } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      harness.service.backgroundReportGraceMs = 30;
+      const run = harness.runner.last;
+      const tasks = (...ids: string[]) =>
+        ({
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          tasks: ids.map((id) => ({
+            task_id: id,
+            task_type: 'local_bash',
+            description: id,
+          })),
+        }) as never;
+      await harness.service.send(session.id, { text: 'Start the server' });
+      run.emit(tasks('server'), resultMessage(20, 0.02));
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'background',
+      );
+      const switcher = run.options.tools?.find(
+        (entry) => entry.name === 'switch_directory',
+      );
+      if (!switcher) {
+        throw new Error('no switch_directory tool');
+      }
+      const switched = await switcher.handler(
+        { branch: second.branch },
+        { toolUseId: 't1' },
+      );
+      expect(switched.isError ? switched.text : null).toBeNull();
+      // Stored at once; the process stays in the first clone meanwhile.
+      expect(harness.service.get(session.id).cwd).toBe(second.path);
+      expect(run.closed).toBe(false);
+      return { session, pull, clone, second, run, tasks };
+    };
+
+    it('keeps the clone the process still runs in after a switch until the process is free', async () => {
+      const { pull, clone, run, tasks } = await switchedWhileKept();
+
+      merge(pull.number);
+      await automation.check(pull.id);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(existsSync(clone)).toBe(true);
+      expect(run.closed).toBe(false);
+
+      run.emit(tasks());
+      await waitFor(() => !existsSync(clone));
+    }, 20_000);
+
+    it('resolves cd of an autofix command against the directory the process runs in', async () => {
+      const { session, pull, clone, second, run } = await switchedWhileKept();
+      enableAutofix(session.id, pull);
+      await writeFile(join(clone, 'fix.txt'), 'fixed');
+      const before = await git(clone, 'rev-parse', 'HEAD');
+      const secondBefore = await git(second.path, 'rev-parse', 'HEAD');
+
+      const result = (await run.options.canUseTool(
+        'Bash',
+        { command: "cd . && git add -A && git commit -m 'Fix'" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'tool-git',
+          requestId: 'r1',
+        },
+      )) as PermissionResult;
+
+      expect(result.behavior).toBe('allow');
+      // Committed in the first clone, where the process runs.
+      expect(await git(clone, 'rev-parse', 'HEAD')).not.toBe(before);
+      expect(await git(second.path, 'rev-parse', 'HEAD')).toBe(secondBefore);
+    }, 20_000);
+
     it("retires a repository's only clone in a session with another repository, and add_branch brings it back", async () => {
       const lib = await harness.addRepository('alice', 'lib');
       const libRemote = harness.github.addRepository(

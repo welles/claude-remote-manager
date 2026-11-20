@@ -51,7 +51,6 @@ import {
 import {
   isActiveDirectory,
   SessionRepository,
-  workingDirectory,
   workingDirectoryOf,
   type PullRequestRecord,
   type SessionDirectoryRecord,
@@ -1700,7 +1699,9 @@ export class PrAutomationService
     }
     let targets = autofixClones;
     if (parsed.location) {
-      let location = workingDirectory(session);
+      // Relative to where the process runs (after switch_directory the old
+      // directory until it restarts).
+      let location = this.sessions.processDirectory(session.id);
       for (const path of parsed.location) {
         location = isAbsolute(path) ? resolve(path) : resolve(location, path);
       }
@@ -1900,10 +1901,12 @@ export class PrAutomationService
         !turnIsOver(this.sessions.get(owner.id))) ||
         // Claude Code works in the clone and its process must stay
         // (background tasks, its own wait, previews): moving it away
-        // would end them.
+        // would end them. Also when the working directory was switched
+        // already but the process still runs in the clone.
         (!autocloseDue &&
           ownClone !== null &&
-          workingDirectoryOf(owner).position === ownClone.position &&
+          (workingDirectoryOf(owner).position === ownClone.position ||
+            this.sessions.processDirectory(owner.id) === ownClone.path) &&
           this.sessions.processMustStay(owner.id)))
     ) {
       // Autoclose would end the turn that is going (e.g. the one that
