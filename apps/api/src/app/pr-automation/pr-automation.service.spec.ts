@@ -17,6 +17,7 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import { SessionEventRepository } from '../sessions/session-event.repository';
 import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import { ViewerPresence } from '../sessions/viewer-presence';
+import { WorkspaceEntries } from '../workspaces/workspace-entries';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import { PrAutomationService } from './pr-automation.service';
 import { PullRequestChecksService } from './pull-request-checks.service';
@@ -2623,6 +2624,82 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       await automation.check(pull.id);
       await waitFor(() => notifications.closed.length === 2);
       expect(existsSync(clone)).toBe(true);
+    });
+
+    it('holds a message sent while a clone is removed until it is gone', async () => {
+      const { session } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      // Removing the files takes a while.
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const remove = WorkspaceEntries.prototype.remove;
+      let removing = false;
+      const spy = jest
+        .spyOn(WorkspaceEntries.prototype, 'remove')
+        .mockImplementation(async function (
+          this: WorkspaceEntries,
+          ...args: Parameters<WorkspaceEntries['remove']>
+        ) {
+          removing = true;
+          await gate;
+          return remove.apply(this, args);
+        });
+      try {
+        merge(second.pull.number);
+        const check = automation.check(second.pull.id);
+        await waitFor(() => removing);
+        expect(existsSync(second.path)).toBe(true);
+
+        // A message now waits until the clone is gone; then it starts
+        // Claude Code without the clone, and says so.
+        const runs = harness.runner.runs.length;
+        const sent = harness.service.send(session.id, { text: 'Next' });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(harness.runner.runs).toHaveLength(runs);
+        expect(
+          harness.runner.last.sent.map((message) => message.text),
+        ).not.toContain('Next');
+        release();
+        await check;
+        await sent;
+        await waitFor(() => harness.runner.runs.length > runs);
+        expect(existsSync(second.path)).toBe(false);
+        const run = harness.runner.last;
+        expect(run.options.additionalDirectories ?? []).not.toContain(
+          second.path,
+        );
+        expect(run.sent.at(-1)?.note?.text ?? '').toContain(
+          `The clone ${second.path}`,
+        );
+      } finally {
+        release();
+        spy.mockRestore();
+      }
+    });
+
+    it('commits in the only clone left without a directory once a further clone is removed', async () => {
+      const { session, pull, clone } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      merge(second.pull.number);
+      await automation.check(second.pull.id);
+      await waitFor(() => !existsSync(second.path));
+
+      enableAutofix(session.id, pull);
+      await writeFile(join(clone, 'fix.txt'), 'fixed');
+      harness.approver.requests.length = 0;
+      const result = (await harness.runner.last.options.canUseTool(
+        'Bash',
+        { command: 'git add -A && git commit -m "Fix"', description: 'Commit' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'tool-git',
+          requestId: 'r1',
+        },
+      )) as PermissionResult;
+      // Done by the app, nobody asked.
+      expect(result.behavior).toBe('allow');
+      expect(harness.approver.requests).toHaveLength(0);
+      expect(await git(clone, 'log', '-1', '--format=%s')).toBe('Fix');
     });
 
     it('handles a close of a further branch deferred by a turn with the first poll after a restart', async () => {

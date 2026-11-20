@@ -1709,9 +1709,11 @@ export class PrAutomationService
       }
       targets = [target];
     } else if (local.length > 0) {
-      // The shell's directory is unknown: only a session with one clone.
+      // The shell's directory is unknown: only a session with one clone
+      // (clones removed after their pull request do not count).
       const clones = session.directories.filter(
-        (directory) => directory.kind === 'clone',
+        (directory) =>
+          directory.kind === 'clone' && directory.state === 'ready',
       );
       if (clones.length !== 1 || autofixClones.length !== 1) {
         return null;
@@ -2038,30 +2040,46 @@ export class PrAutomationService
       // again. The close is handled already, so the clone stays.
       detail = 'a turn started meanwhile';
     }
-    if (detail === null) {
+    const finish = () => {
+      this.sessions.recordEvent(session.id, {
+        type: 'notice',
+        level: detail === null ? 'info' : 'warning',
+        text:
+          detail === null
+            ? `${what}: removed ${name} (${directory.path}).`
+            : `${what}: kept ${name} (${directory.path}): ${detail}.`,
+      });
+      this.logger.log(
+        `${what}: ${detail === null ? 'removed' : 'kept'} ${directory.path}`,
+      );
+    };
+    if (detail !== null) {
+      finish();
+      return;
+    }
+    // Retired before the files go (that can take a while), and messages
+    // sent meanwhile wait until it is gone: no turn starts in a process
+    // that still has the directory, and Claude is told with the message.
+    this.records.updateDirectory(session.id, directory.position, {
+      additionState: 'retired',
+      announce: true,
+    });
+    await this.sessions.holdMessagesWhile(session.id, async () => {
       try {
         await this.removeClone(session, directory);
-        this.records.updateDirectory(session.id, directory.position, {
-          additionState: 'retired',
-          announce: true,
-        });
         await this.removeEmptyParents(session);
-        this.sessions.directoryRetired(session.id);
       } catch (error) {
         detail = `removing it failed (${errorText(error)})`;
+        // It stays, and Claude goes on working in it.
+        this.records.updateDirectory(session.id, directory.position, {
+          additionState: directory.addition?.state ?? 'ready',
+          announce: false,
+        });
       }
-    }
-    this.sessions.recordEvent(session.id, {
-      type: 'notice',
-      level: detail === null ? 'info' : 'warning',
-      text:
-        detail === null
-          ? `${what}: removed ${name} (${directory.path}).`
-          : `${what}: kept ${name} (${directory.path}): ${detail}.`,
+      finish();
+      // An idle process is restarted without the directory.
+      this.sessions.directoryRetired(session.id);
     });
-    this.logger.log(
-      `${what}: ${detail === null ? 'removed' : 'kept'} ${directory.path}`,
-    );
   }
 
   // --- Kept clones ---------------------------------------------------------

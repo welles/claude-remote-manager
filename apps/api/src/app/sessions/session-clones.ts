@@ -49,16 +49,18 @@ export function cloneOf(
 
 /**
  * The clone a pull request comes from: the clone on its head branch, else
- * (a pull request from elsewhere) the repository's only clone.
+ * (a pull request from elsewhere) the repository's only clone that is not
+ * retired.
  */
 export function cloneOfPull(
   directories: readonly SessionDirectoryRecord[],
   pull: { repositoryId: string; headBranch: string },
 ): SessionDirectoryRecord | undefined {
   const clones = clonesOf(directories, pull.repositoryId);
+  const current = clones.filter((directory) => !isRetiredClone(directory));
   return (
     clones.find((directory) => directory.branch === pull.headBranch) ??
-    (clones.length === 1 ? clones[0] : undefined)
+    (current.length === 1 ? current[0] : undefined)
   );
 }
 

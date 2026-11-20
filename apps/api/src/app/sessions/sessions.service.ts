@@ -530,6 +530,8 @@ interface CiWait {
 export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SessionsService.name);
   private readonly live = new Map<string, LiveSession>();
+  /** Sessions whose messages wait, see {@link holdMessagesWhile}. */
+  private readonly messageHolds = new Map<string, Promise<void>>();
   private readonly events = new Subject<SessionEventEnvelope>();
   private readonly updates = new Subject<SessionDto>();
   private readonly deletions = new Subject<string>();
@@ -938,6 +940,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         // Messages are queued or sent in the order they arrived, even when
         // an earlier one takes longer to prepare (its references).
         await previous;
+        // A clone of the session is being removed: no turn starts until
+        // it is gone (see holdMessagesWhile).
+        await this.messageHolds.get(sessionId);
         if (live.starting) {
           await live.starting;
         }
@@ -3840,6 +3845,26 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return live && this.waitsForBackground(live)
       ? null
       : this.ciWaitLabel(record);
+  }
+
+  /**
+   * Runs `work` (removing a clone of the session); messages sent meanwhile
+   * wait until it is done, then go to Claude as usual.
+   */
+  async holdMessagesWhile(
+    sessionId: string,
+    work: () => Promise<void>,
+  ): Promise<void> {
+    const running = work();
+    const hold = running.catch(() => undefined);
+    this.messageHolds.set(sessionId, hold);
+    try {
+      await running;
+    } finally {
+      if (this.messageHolds.get(sessionId) === hold) {
+        this.messageHolds.delete(sessionId);
+      }
+    }
   }
 
   /**

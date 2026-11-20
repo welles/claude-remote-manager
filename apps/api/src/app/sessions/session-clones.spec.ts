@@ -77,4 +77,17 @@ describe('session clones', () => {
       }),
     ).toBeUndefined();
   });
+
+  it('falls back to the only clone that is not retired for a pull request from elsewhere', () => {
+    const gone = clone(1, 'claude/s-2', {
+      state: 'removed',
+      addition: retired,
+    });
+    expect(
+      cloneOfPull([first, gone], {
+        repositoryId: 'r1',
+        headBranch: 'elsewhere',
+      }),
+    ).toBe(first);
+  });
 });
