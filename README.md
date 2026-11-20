@@ -367,11 +367,18 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   session title), and replies with `reply_to_review_thread`, which only touches the session's
   own pull requests (allowed in `canUseTool` during the run). Resolving a thread with it
   (`resolve: true`) goes through the gate like any action, and `canUseTool` lets it run
-  unasked only when GitHub's own data shows a push since the thread's last comment: the pull
-  request's current head (read from GitHub) is the `after` of the branch's latest push in the
-  repository activity (`GET /repos/{owner}/{repo}/activity`, GitHub's timestamp), and that
-  push is later than the thread's last comment not written by the app (GraphQL
-  `viewerDidAuthor`). Otherwise, and on any error, the user gets the approval dialog. In
+  unasked only when GitHub's own data shows a push in this run since the thread's last
+  comment (never the clone's recorded push): the pull request's current head (read from
+  GitHub) is the `after` of the branch's latest push or force push in the repository activity
+  (`GET /repos/{owner}/{repo}/activity`, `contents: read`, GitHub's timestamp), and that push
+  is later than the start of the run (when its message went to Claude Code) and than the
+  thread's last comment not written by the app (GraphQL `viewerDidAuthor`; per comment the
+  latest of `createdAt`, `publishedAt`, which for a review comment is when the review was
+  submitted, and `lastEditedAt`). Missing or malformed data counts as not met. Right before
+  resolving, the tool checks again (no newer comment, the same head); if that fails it only
+  replies and says the thread stays open. This is a push since the comment in this run, not
+  proof that the thread was fixed. Otherwise, and on any error, the user gets the approval
+  dialog. In
   `dontAsk` Claude Code never calls `canUseTool`, so the tool is refused there unless an
   allow rule covers a reply, like the Autofix `git` allowance.
   Not covered: a `PermissionRequest` hook in the user's or the project's Claude Code settings
@@ -1508,14 +1515,14 @@ once at startup and never given to child processes, and neither are app JWTs.
 
 Permissions the app needs (repository permissions):
 
-| Permission     | Access     | Used for                                                                |
-| -------------- | ---------- | ----------------------------------------------------------------------- |
-| Metadata       | read       | listing the installations' repositories                                 |
-| Contents       | read/write | cloning, fetching and pushing; reading refs when creating pull requests |
-| Pull requests  | read/write | creating pull requests and reading their state                          |
-| Workflows      | read/write | pushing commits that change `.github/workflows` (only then requested)   |
-| Administration | read/write | creating repositories for local projects (organizations)                |
-| Issues         | read       | `#` references: issues, comments, search                                |
+| Permission     | Access     | Used for                                                                                                                                          |
+| -------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Metadata       | read       | listing the installations' repositories                                                                                                           |
+| Contents       | read/write | cloning, fetching and pushing; reading refs when creating pull requests; the repository activity (pushes) before resolving review threads unasked |
+| Pull requests  | read/write | creating pull requests and reading their state; replying to and resolving review threads                                                          |
+| Workflows      | read/write | pushing commits that change `.github/workflows` (only then requested)                                                                             |
+| Administration | read/write | creating repositories for local projects (organizations)                                                                                          |
+| Issues         | read       | `#` references: issues, comments, search                                                                                                          |
 
 Checks, Commit statuses and Actions (read) are for the PR automation (check runs and
 statuses of a pull request's head commit, logs of failed GitHub Actions jobs) and the checks
@@ -1598,7 +1605,7 @@ Both work two ways:
    repository and `pull_requests: write`. Other pull requests are refused. It asks as the
    permission mode says (the dialog shows the pull request, the comment, the reply and
    whether it resolves), except during an Autofix run: replies run unasked, resolving only
-   after a push since the thread's last comment (see the Autofix hold above).
+   after a push in this run since the thread's last comment (see the Autofix hold above).
 
 **CI checks**: every open pull request of a session shows the checks of its head commit
 (check runs and commit statuses), with or without PR automation: one line with the overall
@@ -1816,7 +1823,7 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   resolve threads of their own pull requests, but only through `reply_to_review_thread`
   (the owner's decision), which outside Autofix runs asks as the session's permission mode
   says (`auto` may not ask, `bypassPermissions` never does), during them only after a push
-  since the thread's last comment, and shows in the history. The
+  in the run since the thread's last comment, and shows in the history. The
   `git` token's `contents: write` can merge a pull request or push to the default branch
   directly (e.g. with `curl` and the token from `git credential fill`). The gate therefore
   holds only together with branch protection on GitHub (required reviews and checks, no

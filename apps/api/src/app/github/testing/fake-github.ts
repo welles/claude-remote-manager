@@ -139,6 +139,14 @@ export interface FakeReviewThread {
   replyDates?: string[];
   /** Comments written by the app (GraphQL `viewerDidAuthor`). */
   appCommentIds?: number[];
+  /**
+   * When the first comment was published (its review submitted; default
+   * `createdAt`; `null`: GitHub gives none) and last edited.
+   */
+  publishedAt?: string | null;
+  lastEditedAt?: string;
+  /** `comments.totalCount` GitHub reports; default: all comments. */
+  totalCount?: number;
   resolved: boolean;
   outdated?: boolean;
   author: string;
@@ -855,7 +863,8 @@ export class FakeGitHub {
     if (!found) {
       return json(404, { message: 'Not Found' });
     }
-    if (!this.allows(auth, found.repository, 'metadata', 'read')) {
+    // GitHub lists the endpoint under Contents (read).
+    if (!this.allows(auth, found.repository, 'contents', 'read')) {
       return json(403, { message: 'Resource not accessible by integration' });
     }
     const ref = request.query.get('ref');
@@ -954,6 +963,11 @@ export class FakeGitHub {
           thread.replyDates?.[index] ??
           thread.createdAt ??
           '2026-01-01T00:00:00Z',
+        publishedAt:
+          thread.replyDates?.[index] ??
+          thread.createdAt ??
+          '2026-01-01T00:00:00Z',
+        lastEditedAt: null,
         viewerDidAuthor: thread.appCommentIds?.includes(databaseId) ?? false,
         author: { __typename: 'User', login: 'someone' },
       }));
@@ -974,11 +988,19 @@ export class FakeGitHub {
                 line: thread.line ?? 1,
                 originalLine: thread.line ?? 1,
                 comments: {
-                  totalCount: 1 + later(thread).length,
+                  totalCount: thread.totalCount ?? 1 + later(thread).length,
                   nodes: [
                     {
                       databaseId: thread.commentIds?.[0] ?? null,
-                      viewerDidAuthor: false,
+                      viewerDidAuthor:
+                        thread.appCommentIds?.includes(
+                          thread.commentIds?.[0] ?? -1,
+                        ) ?? false,
+                      publishedAt:
+                        thread.publishedAt === undefined
+                          ? (thread.createdAt ?? '2026-01-01T00:00:00Z')
+                          : thread.publishedAt,
+                      lastEditedAt: thread.lastEditedAt ?? null,
                       body: thread.body,
                       createdAt: thread.createdAt ?? '2026-01-01T00:00:00Z',
                       author: {

@@ -418,7 +418,12 @@ interface LiveSession {
    * turn it started (`delivered`: it reached Claude Code): a session in
    * `auto` or `bypassPermissions` runs in `default` meanwhile.
    */
-  autoHold: { messageId: string; delivered: boolean } | null;
+  autoHold: {
+    messageId: string;
+    delivered: boolean;
+    /** When the held message went to Claude Code: the run's start. */
+    deliveredAt?: Date;
+  } | null;
   /**
    * Tasks (subagents, background commands) started during an Autofix run
    * and not settled yet: stopped when the run ends, so nothing it started
@@ -2460,6 +2465,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private markDelivered(live: LiveSession, id: string): void {
     if (live.autoHold?.messageId === id) {
       live.autoHold.delivered = true;
+      live.autoHold.deliveredAt = new Date();
     }
   }
 
@@ -2688,11 +2694,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * `SessionAgentSupport.mayResolveUnasked`); fail-closed: any error asks.
    */
   private async mayResolveUnasked(
-    sessionId: string,
+    live: LiveSession,
     input: Record<string, unknown>,
+    toolUseId: string,
   ): Promise<boolean> {
+    const sessionId = live.id;
+    const runStartedAt = live.autoHold?.deliveredAt;
+    if (!runStartedAt) {
+      return false;
+    }
     try {
-      return await this.support.mayResolveUnasked(sessionId, input);
+      return await this.support.mayResolveUnasked(
+        sessionId,
+        input,
+        runStartedAt,
+        toolUseId,
+      );
     } catch (error) {
       this.logger.warn(
         `Could not check whether ${sessionId} may resolve a review thread unasked: ${errorMessage(error)}`,
@@ -2717,7 +2734,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         live.autoHold?.delivered &&
         autofixAppTool(toolName, options.mcpServer ?? null) &&
         (input['resolve'] !== true ||
-          (await this.mayResolveUnasked(live.id, input)))
+          (await this.mayResolveUnasked(live, input, options.toolUseID)))
       ) {
         // During an Autofix run: replies touch only the session's own pull
         // requests (the tool refuses others); resolving only after the
