@@ -33,11 +33,13 @@ import { WebhookSecret } from './webhook-signature';
   providers: [
     {
       provide: WebhookSecret,
-      inject: [APP_CONFIG],
-      useFactory: (config: AppConfig) => {
+      inject: [APP_CONFIG, GitHubService],
+      useFactory: (config: AppConfig, github: GitHubService) => {
         const secret = WebhookSecret.load(
           config.prAutomation.webhookSecretFile,
         );
+        // The startup check of the GitHub App then covers webhook events.
+        github.expectsWebhook = secret.configured;
         const logger = new Logger('GitHubWebhook');
         if (secret.configured) {
           logger.log('GitHub webhook deliveries are accepted (signed)');

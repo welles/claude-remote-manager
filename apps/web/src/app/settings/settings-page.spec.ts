@@ -39,6 +39,8 @@ const status = (overrides: Partial<GitHubStatusDto> = {}): GitHubStatusDto => ({
       repositoryCount: 12,
       settingsUrl: 'https://github.com/settings/installations/1',
       error: null,
+      missingPermissions: [],
+      missingEvents: [],
     },
     {
       id: 2,
@@ -48,8 +50,11 @@ const status = (overrides: Partial<GitHubStatusDto> = {}): GitHubStatusDto => ({
       repositoryCount: 3,
       settingsUrl: null,
       error: null,
+      missingPermissions: [],
+      missingEvents: [],
     },
   ],
+  setup: { permissions: [], events: [], webhook: true },
   error: null,
   ...overrides,
 });
@@ -137,6 +142,58 @@ describe('SettingsPage', () => {
         ) as HTMLAnchorElement
       ).href,
     ).toBe('https://github.com/apps/my-app/installations/new');
+  });
+
+  it("lists what the app's settings lack and what installations have not accepted", async () => {
+    const base = status();
+    const { all } = await render(
+      { gitAuthorName: null, gitAuthorEmail: null, timeZone: 'UTC' },
+      status({
+        setup: {
+          permissions: [
+            {
+              permission: 'actions',
+              needed: 'read',
+              granted: null,
+              usedFor: 'logs of failed GitHub Actions jobs (autofix)',
+            },
+          ],
+          events: ['pull_request_review_thread'],
+          webhook: true,
+        },
+        installations: [
+          {
+            ...base.installations[0],
+            missingPermissions: [
+              {
+                permission: 'checks',
+                needed: 'read',
+                granted: null,
+                usedFor: 'CI checks',
+              },
+            ],
+            missingEvents: ['status'],
+          },
+          base.installations[1],
+        ],
+      }),
+    );
+    // (The helper puts a space between the code element and the colon.)
+    expect(all('github-missing-permission')).toEqual([
+      'Permission actions : read needed, none granted (logs of failed GitHub Actions jobs (autofix))',
+    ]);
+    expect(all('github-missing-event')).toEqual([
+      'Webhook event pull_request_review_thread not subscribed (the PR automation follows it)',
+    ]);
+    expect(all('installation-not-accepted')).toEqual([
+      "Has not accepted the app's new permissions checks and webhook events status: review the request under Configure",
+    ]);
+  });
+
+  it('shows no setup warning when nothing is missing', async () => {
+    const { all } = await render();
+    expect(all('github-setup')).toEqual([]);
+    expect(all('installation-not-accepted')).toEqual([]);
   });
 
   it('says when GitHub is not configured', async () => {

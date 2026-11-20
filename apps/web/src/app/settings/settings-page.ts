@@ -11,6 +11,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import type {
   AppSettingsDto,
+  GitHubInstallationDto,
   GitHubStatusDto,
   HealthResponse,
 } from '@claude-remote-manager/shared-types';
@@ -94,6 +95,20 @@ export class SettingsPage implements OnInit {
       error: () => this.error.set(true),
     });
     this.loadGitHub();
+  }
+
+  /** What an installation has not accepted, e.g. "permissions checks, actions". */
+  protected acceptance(installation: GitHubInstallationDto): string {
+    const parts: string[] = [];
+    if (installation.missingPermissions.length > 0) {
+      parts.push(
+        `permissions ${installation.missingPermissions.map((gap) => gap.permission).join(', ')}`,
+      );
+    }
+    if (installation.missingEvents.length > 0) {
+      parts.push(`webhook events ${installation.missingEvents.join(', ')}`);
+    }
+    return parts.join(' and ');
   }
 
   protected loadGitHub(): void {

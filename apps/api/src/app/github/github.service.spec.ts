@@ -1,3 +1,4 @@
+import type { Logger } from '@nestjs/common';
 import { GitHubAppCredentials } from './github-app-credentials';
 import { GitHubRateLimitError } from './github-errors';
 import { GitHubHttp } from './github-http';
@@ -99,6 +100,107 @@ describe('GitHubService', () => {
         error: null,
       }),
     ]);
+  });
+
+  describe("the app's setup", () => {
+    it('reports nothing missing when the app has every permission', async () => {
+      github.addInstallation('alice');
+      github.service.expectsWebhook = true;
+      const status = await github.service.status();
+      expect(status.setup).toEqual({
+        permissions: [],
+        events: [],
+        webhook: true,
+      });
+      expect(status.installations[0]).toMatchObject({
+        missingPermissions: [],
+        missingEvents: [],
+      });
+    });
+
+    it('reports permissions and events the app lacks, and what installations have not accepted', async () => {
+      const alice = github.addInstallation('alice');
+      github.addInstallation('acme', 'Organization');
+      // No Actions permission, Contents only read.
+      const { actions: _actions, ...withoutActions } = github.appPermissions;
+      github.appPermissions = { ...withoutActions, contents: 'read' };
+      github.appEvents = github.appEvents.filter(
+        (event) => event !== 'pull_request_review_thread',
+      );
+      // alice has not accepted the new checks permission and an event yet.
+      alice.permissions = { ...github.appPermissions };
+      delete alice.permissions['checks'];
+      alice.events = github.appEvents.filter((event) => event !== 'status');
+      github.service.expectsWebhook = true;
+
+      const status = await github.service.status();
+      expect(status.setup).toEqual({
+        permissions: [
+          {
+            permission: 'contents',
+            needed: 'write',
+            granted: 'read',
+            usedFor: expect.any(String),
+          },
+          {
+            permission: 'actions',
+            needed: 'read',
+            granted: null,
+            usedFor: expect.any(String),
+          },
+        ],
+        events: ['pull_request_review_thread'],
+        webhook: true,
+      });
+      // The app's own gaps are not repeated per installation.
+      expect(status.installations).toEqual([
+        expect.objectContaining({
+          account: 'alice',
+          missingPermissions: [
+            expect.objectContaining({ permission: 'checks', granted: null }),
+          ],
+          missingEvents: ['status'],
+        }),
+        expect.objectContaining({
+          account: 'acme',
+          missingPermissions: [],
+          missingEvents: [],
+        }),
+      ]);
+    });
+
+    it('checks webhook events only with a webhook secret', async () => {
+      github.addInstallation('alice');
+      github.appEvents = [];
+      const status = await github.service.status();
+      expect(status.setup).toEqual({
+        permissions: [],
+        events: [],
+        webhook: false,
+      });
+      expect(status.installations[0].missingEvents).toEqual([]);
+    });
+
+    it('logs what is missing at startup', async () => {
+      const alice = github.addInstallation('alice');
+      github.appPermissions = { ...github.appPermissions, issues: 'none' };
+      alice.permissions = { ...github.appPermissions };
+      delete alice.permissions['workflows'];
+      const warnings: string[] = [];
+      const logger = (github.service as unknown as { logger: Logger }).logger;
+      jest.spyOn(logger, 'warn').mockImplementation((message: unknown) => {
+        warnings.push(String(message));
+      });
+      await github.service.checkSetup();
+      expect(warnings).toEqual([
+        expect.stringContaining(
+          'the app lacks the permission issues: read needed',
+        ),
+        expect.stringContaining(
+          'the installation on alice has not accepted workflows: write needed',
+        ),
+      ]);
+    });
   });
 
   it('shows rate limits in the status instead of failing', async () => {
