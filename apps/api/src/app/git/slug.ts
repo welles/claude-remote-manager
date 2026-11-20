@@ -1,37 +1,7 @@
 import { randomInt } from 'node:crypto';
 
-/** Length of the readable part of a slug. */
-const MAX_BASE_LENGTH = 40;
 const RANDOM_LENGTH = 6;
 const ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
-
-/**
- * Readable part of a session slug: lower-case ASCII letters, digits and
- * single dashes, at most 40 characters, cut at a word boundary when
- * possible; `session` if nothing is left.
- */
-export function slugBase(text: string): string {
-  const words = text
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/ß/g, 'ss')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  if (!words) {
-    return 'session';
-  }
-  if (words.length <= MAX_BASE_LENGTH) {
-    return words;
-  }
-  const cut = words.slice(0, MAX_BASE_LENGTH + 1);
-  const boundary = cut.lastIndexOf('-');
-  return (
-    boundary >= MAX_BASE_LENGTH / 2
-      ? cut.slice(0, boundary)
-      : words.slice(0, MAX_BASE_LENGTH)
-  ).replace(/-+$/, '');
-}
 
 /** Random suffix from a CSPRNG, uniform over base 36. */
 export function randomSuffix(length = RANDOM_LENGTH): string {
@@ -41,13 +11,21 @@ export function randomSuffix(length = RANDOM_LENGTH): string {
   ).join('');
 }
 
+/** The server's local date as `YYYY-MM-DD`. */
+export function slugDate(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 /**
- * Session slug such as `fix-the-login-bug-k3x9q2`: readable part plus a
- * random suffix. Safe as a directory name and in the branch name
- * `claude/<slug>` (only `[a-z0-9-]`, no leading dash, no `..`, no `.lock`).
+ * Session slug such as `2026-11-20-k3x9q2`: the day the session was
+ * created plus a random suffix. Nothing of the prompt goes into it, so the
+ * branch `claude/<slug>` (pushed to the remote) and the directory names
+ * reveal nothing of the task. Safe as a directory name and in the branch
+ * name (only `[a-z0-9-]`, no leading dash, no `..`, no `.lock`).
  */
-export function newSlug(text: string, suffix = randomSuffix()): string {
-  return `${slugBase(text)}-${suffix}`;
+export function newSlug(now = new Date(), suffix = randomSuffix()): string {
+  return `${slugDate(now)}-${suffix}`;
 }
 
 export const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

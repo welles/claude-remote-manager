@@ -211,7 +211,7 @@ describe('SessionsService', () => {
         title: 'Reply with pong',
         model: 'haiku',
         permissionMode: 'default',
-        slug: expect.stringMatching(/^reply-with-pong-[a-z0-9]{6}$/),
+        slug: expect.stringMatching(/^\d{4}-\d{2}-\d{2}-[a-z0-9]{6}$/),
         cwd: cloneOf(session),
         additionalDirectories: [],
         sdkSessionId: null,
@@ -251,7 +251,8 @@ describe('SessionsService', () => {
       expect(titleFromPrompt('x'.repeat(100))).toHaveLength(80);
       const session = await startSession({ prompt: 'p', title: ' Mine ' });
       expect(session.title).toBe('Mine');
-      expect(session.slug).toMatch(/^mine-/);
+      // Nothing of the title or prompt goes into the slug (and branch).
+      expect(session.slug).not.toContain('mine');
     });
 
     it('validates the request', async () => {

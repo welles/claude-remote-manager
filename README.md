@@ -780,6 +780,22 @@ session processes (see [Authentication](#authentication)).
   stops the session's previews and is recorded in the history. Afterwards the session reads
   as before but cannot be continued ("its directories were removed").
 
+  **Remote branches** (`SessionRemoteBranches`): the preview also lists the session branches
+  that are on the remotes of its repositories (`remoteBranches`), also of clones removed
+  before (e.g. by autoclose after the pull request was merged). For each, the mirror is
+  fetched and `GitService.commitsOnlyOn` counts the commits no other branch or tag of the
+  remote has; for GitHub repositories the branch's pull requests are read too. A merged pull
+  request whose head is the branch's commit (squash or rebase merges) counts as merged; an
+  open one blocks deleting (deleting the branch would close it). A branch that loses nothing
+  is offered checked; one with unmerged commits needs "I accept losing these commits"
+  (`remoteBranches: [{ position, acceptLoss }]` in the cleanup and archive requests). The
+  branches are deleted after the directories' choices, each checked again right before, with
+  `git push --force-with-lease=<ref>:<checked commit> origin :<ref>` from the mirror (a branch
+  that moved meanwhile stays). A branch cannot be pushed and deleted in the same cleanup.
+  When unmerged commits were deleted, a kept clone forgets `origin/<branch>` and its pushed
+  commit, so they count as lost again. The outcomes (`remoteBranches` in the result) go into
+  the toast and the history.
+
 - **Archive** (`POST /api/sessions/:id/archive` with the same choices,
   `POST /api/sessions/:id/unarchive`): ends the session (process and dev servers), cleans up
   as chosen (keep everything by default) and hides it from the list. Archived sessions take no
@@ -908,7 +924,7 @@ running app in the browser, with hot reload, as if it ran locally: every preview
 name of its own, so absolute asset paths and hot-reload WebSockets work unchanged.
 
 - **Addresses**: `<session slug>-<port>.<preview domain>`, from `PREVIEW_URL` (e.g.
-  `https://preview.example.com` gives `https://fix-login-k3x9q2-5173.preview.example.com`;
+  `https://preview.example.com` gives `https://2026-11-20-k3x9q2-5173.preview.example.com`;
   `npm start` uses `http://preview.localhost:3000`, which browsers resolve to loopback). Slugs
   are unique, lowercase `[a-z0-9-]` with a random part, and ports have no dash, so labels are
   valid DNS labels (at most 53 characters) and never collide between sessions. A port is
@@ -1313,8 +1329,9 @@ its branches and tags, and points the existing session clones' `origin` there (s
 1. `POST /api/sessions` with `repositories: [{ repositoryId, baseBranch? }, …]` (the first is
    the main repository), `newProject: { name }` (creates the local project and makes it the
    main repository), or `scratch: true`. The request is validated and a slug is chosen:
-   readable part from the title or prompt (`a-z0-9-`, at most 40 characters) plus 6 random
-   characters (`crypto.randomInt`), unique among sessions and directories.
+   the server's local date plus 6 random characters (`crypto.randomInt`), e.g. `2026-11-20-k3x9q2`,
+   unique among sessions and directories. Nothing of the title or prompt goes into it, so the
+   branch pushed to the remote and the directory names reveal nothing of the task.
 2. Per repository, in parallel: the mirror is created on first use, otherwise fetched. If the
    fetch fails but a mirror exists, the session starts from the last fetched state and a
    warning names its age. Then the session clone is created from the base branch (default

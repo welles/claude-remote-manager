@@ -11,6 +11,7 @@ import type {
   CleanupPreview,
   DeletionPreview,
   DirectoryLoss,
+  RemoteBranch,
 } from '@claude-remote-manager/shared-types';
 import { words } from '../testing/text';
 import { Toasts } from '../ui/toasts';
@@ -126,13 +127,14 @@ describe('session management', () => {
       blocked: 'End the session before cleaning up its clones',
       archiveBlocked: null,
       directories: [directory()],
+      remoteBranches: [],
       previews: 0,
     });
     expect(view.all('cleanup-dialog')[0]).toContain('Archive this session?');
     expect(view.all('no-resume-note')).toEqual([]);
     await view.click('[data-testid="cleanup-confirm"]');
     const request = http.expectOne('/api/sessions/s1/archive');
-    expect(request.request.body).toEqual({ cleanup: [] });
+    expect(request.request.body).toEqual({ cleanup: [], remoteBranches: [] });
     request.flush({ session: sessionDto(), outcomes: [] });
     view.fixture.detectChanges();
     // The result needs nothing from the user: a toast, the dialog closes.
@@ -152,6 +154,7 @@ describe('session management', () => {
       blocked: null,
       archiveBlocked: null,
       directories: [directory()],
+      remoteBranches: [],
       previews: 0,
     });
     await view.click('[data-testid="choice-push"] input');
@@ -168,6 +171,7 @@ describe('session management', () => {
     const request = http.expectOne('/api/sessions/s1/cleanup');
     expect(request.request.body).toEqual({
       directories: [{ position: 0, action: 'push', acceptLoss: true }],
+      remoteBranches: [],
     });
     request.flush({
       session: sessionDto(),
@@ -194,12 +198,99 @@ describe('session management', () => {
     ]);
   });
 
+  it('offers deleting the remote branches: checked when safe, never with an open pull request', async () => {
+    const branch = (overrides: Partial<RemoteBranch>): RemoteBranch => ({
+      position: 0,
+      name: 'acme/app',
+      branch: 'claude/x',
+      commit: 'a'.repeat(40),
+      unmergedCount: 0,
+      mergedBy: null,
+      safe: true,
+      blocked: null,
+      ...overrides,
+    });
+    const view = await openCleanup('archive', {
+      sessionId: 's1',
+      blocked: null,
+      archiveBlocked: null,
+      directories: [],
+      remoteBranches: [
+        branch({ mergedBy: 3 }),
+        branch({
+          position: 1,
+          name: 'acme/lib',
+          unmergedCount: 2,
+          safe: false,
+        }),
+        branch({
+          position: 2,
+          name: 'acme/web',
+          safe: false,
+          blocked:
+            'Pull request #4 is open; deleting the branch would close it',
+        }),
+      ],
+      previews: 0,
+    });
+    const branches = view.all('remote-branch');
+    expect(branches[0]).toContain('Merged by pull request #3');
+    expect(branches[1]).toContain('2 commits are on no other branch');
+    expect(branches[2]).toContain('#4 is open');
+    const boxes = [
+      ...view.element.querySelectorAll(
+        '[data-testid="delete-remote-branch"] input',
+      ),
+    ] as HTMLInputElement[];
+    expect(boxes.map((box) => [box.checked, box.disabled])).toEqual([
+      [true, false],
+      [false, false],
+      [false, true],
+    ]);
+    const confirm = view.find('cleanup-confirm') as HTMLButtonElement;
+    boxes[1].click();
+    view.fixture.detectChanges();
+    expect(confirm.disabled).toBe(true);
+    await view.click('[data-testid="accept-branch-loss"] input');
+    expect(confirm.disabled).toBe(false);
+    await view.click('[data-testid="cleanup-confirm"]');
+    const request = http.expectOne('/api/sessions/s1/archive');
+    expect(request.request.body).toEqual({
+      cleanup: [],
+      remoteBranches: [
+        { position: 0, acceptLoss: false },
+        { position: 1, acceptLoss: true },
+      ],
+    });
+    request.flush({
+      session: sessionDto(),
+      outcomes: [],
+      remoteBranches: [
+        {
+          position: 0,
+          name: 'acme/app',
+          branch: 'claude/x',
+          result: 'deleted',
+          message: 'deleted claude/x on the remote (merged by #3)',
+        },
+      ],
+    });
+    view.fixture.detectChanges();
+    expect(TestBed.inject(Toasts).all()).toMatchObject([
+      {
+        title: 'Session archived',
+        lines: ['acme/app: deleted claude/x on the remote (merged by #3)'],
+      },
+    ]);
+  });
+
   it('reports a partial failure as a toast that stays, and errors in the dialog', async () => {
     const preview: CleanupPreview = {
       sessionId: 's1',
       blocked: null,
       archiveBlocked: null,
       directories: [directory({ loss: clean, lossAfterIntegration: null })],
+      remoteBranches: [],
       previews: 0,
     };
     const view = await openCleanup('cleanup', preview);
@@ -246,6 +337,7 @@ describe('session management', () => {
       blocked: null,
       archiveBlocked: null,
       directories: [directory({ loss: clean, lossAfterIntegration: null })],
+      remoteBranches: [],
       previews: 0,
     });
     await view.click('[data-testid="cleanup-confirm"]');
@@ -266,6 +358,7 @@ describe('session management', () => {
       blocked: 'Claude is working on a turn; stop it first',
       archiveBlocked: 'Claude is working on a turn; stop it first',
       directories: [directory({ loss: clean, lossAfterIntegration: null })],
+      remoteBranches: [],
       previews: 0,
     });
     expect(view.all('cleanup-dialog')[0]).toContain('stop it first');

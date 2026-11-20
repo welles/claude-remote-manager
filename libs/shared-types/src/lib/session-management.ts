@@ -83,8 +83,42 @@ export interface CleanupPreview {
    */
   archiveBlocked: string | null;
   directories: CleanupDirectory[];
+  /**
+   * The session's branches on the remotes of its repositories (also of
+   * clones removed already), which the cleanup can delete.
+   */
+  remoteBranches: RemoteBranch[];
   /** Previews of dev servers that would be stopped. */
   previews: number;
+}
+
+/**
+ * The session branch of a clone on the repository's remote, read fresh
+ * (the mirror is fetched) for the preview.
+ */
+export interface RemoteBranch {
+  /** Position of the clone among the session's directories. */
+  position: number;
+  /** `owner/name` of the repository. */
+  name: string;
+  branch: string;
+  /** Commit the branch points to on the remote; `null` if unknown. */
+  commit: string | null;
+  /**
+   * Commits that only this branch has: no other branch or tag of the
+   * remote has them, and no merged pull request (squash, rebase) brought
+   * them in. Deleting the branch loses them.
+   */
+  unmergedCount: number;
+  /** Pull request (GitHub) that merged exactly this commit. */
+  mergedBy: number | null;
+  /** Deleting it loses nothing: offered checked. */
+  safe: boolean;
+  /**
+   * Why it cannot be deleted now: an open pull request from the branch
+   * (deleting would close it), or the check failed.
+   */
+  blocked: string | null;
 }
 
 /** One directory's choice in a cleanup. */
@@ -95,9 +129,35 @@ export interface CleanupChoice {
   acceptLoss?: boolean;
 }
 
-/** Body of `POST /api/sessions/:id/cleanup`; unnamed directories are kept. */
+/** Deleting a session branch on the remote. */
+export interface RemoteBranchChoice {
+  /** Position of the clone (see {@link RemoteBranch}). */
+  position: number;
+  /** The owner accepted losing the commits only this branch has. */
+  acceptLoss?: boolean;
+}
+
+/**
+ * Body of `POST /api/sessions/:id/cleanup`; unnamed directories are kept,
+ * unnamed remote branches too.
+ */
 export interface CleanupRequest {
   directories: CleanupChoice[];
+  /** Session branches to delete on the remote (after the directories). */
+  remoteBranches?: RemoteBranchChoice[];
+}
+
+/** What happened to a session branch on the remote. */
+export interface RemoteBranchOutcome {
+  position: number;
+  name: string;
+  branch: string;
+  /**
+   * `deleted`, `kept` (it would now lose commits not accepted, or close an
+   * open pull request), `failed`.
+   */
+  result: 'deleted' | 'kept' | 'failed';
+  message: string;
 }
 
 /** What happened to one directory. */
@@ -114,14 +174,16 @@ export interface CleanupOutcome {
 export interface CleanupResult {
   session: SessionDto;
   outcomes: CleanupOutcome[];
+  remoteBranches: RemoteBranchOutcome[];
 }
 
 /**
  * Body of `POST /api/sessions/:id/archive`: archiving ends the session and
- * may clean up its directories in the same step.
+ * may clean up its directories and remote branches in the same step.
  */
 export interface ArchiveRequest {
   cleanup?: CleanupChoice[];
+  remoteBranches?: RemoteBranchChoice[];
 }
 
 /** `GET /api/sessions/:id/deletion`: what deleting the session removes. */

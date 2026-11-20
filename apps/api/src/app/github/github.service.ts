@@ -451,6 +451,28 @@ export class GitHubService {
   }
 
   /**
+   * Pull requests (open, closed and merged) whose head is `branch` of the
+   * repository itself (not of a fork), newest first, at most 100.
+   */
+  async pullRequestsFrom(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    branch: string,
+  ): Promise<PullRequestInfo[]> {
+    const { token } = await this.repositoryToken(installationId, repositoryId, {
+      pull_requests: 'read',
+    });
+    const owner = fullName.split('/')[0];
+    const response = await this.http.request<RawPullRequest[]>({
+      path: `/repos/${repoPath(fullName)}/pulls`,
+      token,
+      query: { head: `${owner}:${branch}`, state: 'all', per_page: 100 },
+    });
+    return response.data.map(toPullRequest);
+  }
+
+  /**
    * Merges a pull request, exactly at `sha` (GitHub refuses when the head
    * moved), trying the methods in order: a method the repository does not
    * allow, or a rebase GitHub cannot do, goes on to the next one. Returns

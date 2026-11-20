@@ -222,10 +222,7 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
    * that no session or directory uses yet. Its only side effect: a
    * requested new project is registered.
    */
-  async plan(
-    request: CreateSessionRequest,
-    title: string,
-  ): Promise<WorkspacePlan> {
+  async plan(request: CreateSessionRequest): Promise<WorkspacePlan> {
     const body = requireObject(request);
     const selections = this.parseRepositories(body['repositories']);
     const projectName = this.parseProject(body['newProject']);
@@ -262,7 +259,7 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
       return { record, baseBranch };
     });
 
-    const slug = await this.uniqueSlug(title);
+    const slug = await this.uniqueSlug();
     if (scratch) {
       return {
         slug,
@@ -779,9 +776,9 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private async uniqueSlug(title: string): Promise<string> {
+  private async uniqueSlug(): Promise<string> {
     for (let attempt = 0; attempt < SLUG_ATTEMPTS; attempt++) {
-      const slug = newSlug(title);
+      const slug = newSlug();
       if (
         !this.sessions.slugExists(slug) &&
         !(await exists(join(this.config.sessionsDir, slug))) &&

@@ -58,7 +58,7 @@ describe('session preparation', () => {
       status: 'preparing',
       pendingMessage: 'Do the work',
     });
-    expect(session.slug).toMatch(/^add-the-export-[a-z0-9]{6}$/);
+    expect(session.slug).toMatch(/^\d{4}-\d{2}-\d{2}-[a-z0-9]{6}$/);
     expect(harness.runner.runs).toHaveLength(0);
     await harness.prepared(session.id);
 
