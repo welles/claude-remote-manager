@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import type { PullRequestDto } from '@claude-remote-manager/shared-types';
-import { commitFile } from '../git/testing/git-fixtures';
+import { commitFile, git } from '../git/testing/git-fixtures';
 import type { FakeRepository } from '../github/testing/fake-github';
 import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import { ViewerPresence } from '../sessions/viewer-presence';
@@ -105,6 +105,7 @@ describe('PullRequestChecksService', () => {
       maxWaitMs: 50,
       runningWindowMs: 60_000,
       emptyWindowMs: 0,
+      headRetryMs: 5,
       ciStartMs: 0,
       ciSettleMs: 60_000,
     };
@@ -485,8 +486,74 @@ describe('PullRequestChecksService', () => {
       await waitFor(
         () => harness.service.get(sessionId).waitingFor === 'background',
       );
-      harness.sessions.updatePullRequest(pull.id, { state: 'merged' });
+      const states: string[] = [];
+      const subscription = harness.service.updates$.subscribe((session) => {
+        if (session.id === sessionId) {
+          states.push(`${session.status}/${session.waitingFor ?? ''}`);
+        }
+      });
+      const fake = harness.github.pulls.find(
+        (entry) => entry.number === pull.number,
+      );
+      if (!fake) {
+        throw new Error('pull request missing');
+      }
+      fake.state = 'closed';
+      fake.merged = true;
+      await harness.sessionGit.refreshPullRequest(pull.id);
+      subscription.unsubscribe();
       expect(harness.service.get(sessionId).waitingFor).toBe('message');
+      expect(states.at(-1)).toBe('waiting/message');
+      expect(harness.service.ciWaitPhase(sessionId, pull.id)).toBeNull();
+      expect(harness.service.ciWaitingSessions()).toEqual([]);
+      // The status event is in the session's history too.
+      expect(
+        harness.eventsOfType(sessionId, 'session.status').at(-1),
+      ).toMatchObject({ waitingFor: 'message' });
+    });
+
+    it('waits right after a push to the branch of an open pull request, until its new checks are read', async () => {
+      timing.ciStartMs = 60_000;
+      const { sessionId, pull, head } = await sessionWithPullRequest();
+      await waitFor(() => checksOf(pull) !== null);
+      harness.github.checkRuns.set(head, [
+        { ...running, status: 'completed', conclusion: 'success' } as never,
+      ]);
+      await checks.read(pull.id);
+      expect(harness.service.get(sessionId).waitingFor).toBe('message');
+
+      const clone = harness.service.get(sessionId).cwd;
+      await commitFile(clone, 'more.txt', 'm');
+      await git(clone, 'push', 'origin', 'HEAD');
+      const fake = harness.github.pulls.find(
+        (entry) => entry.number === pull.number,
+      );
+      if (!fake) {
+        throw new Error('pull request missing');
+      }
+      // GitHub shows the new head only on the second read.
+      const pushed = (await git(clone, 'rev-parse', 'HEAD')).trim();
+      harness.github.checkRuns.set(pushed, [running]);
+      let reads = 0;
+      harness.github.intercept = (request) => {
+        if (request.method === 'GET' && /\/pulls\/\d+$/.test(request.path)) {
+          reads += 1;
+          fake.headSha = reads >= 2 ? pushed : head;
+        }
+        return undefined;
+      };
+      expect(
+        await harness.sessionGit.notePushedCommit(sessionId, repositoryId),
+      ).toBe(true);
+      expect(harness.service.get(sessionId)).toMatchObject({
+        waitingFor: 'background',
+        waitingReason: `CI of #${pull.number}`,
+      });
+      await waitFor(() => checksOf(pull)?.headSha === pushed);
+      harness.github.intercept = null;
+      expect(reads).toBeGreaterThanOrEqual(2);
+      expect(harness.service.get(sessionId).waitingFor).toBe('background');
+      expect(harness.service.ciWaitPhase(sessionId, pull.id)).toBe('running');
     });
 
     it('reads checks that ran before a restart again', async () => {

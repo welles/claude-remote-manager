@@ -16,7 +16,10 @@ import { GitHubRateLimitError } from '../github/github-errors';
 import { GitHubService } from '../github/github.service';
 import { isGitHubRepository } from '../repositories/repository-credentials';
 import { RepositoryRepository } from '../repositories/repository.repository';
-import { SessionGitService } from '../sessions/session-git.service';
+import {
+  SessionGitService,
+  type SessionPush,
+} from '../sessions/session-git.service';
 import {
   SessionRepository,
   type PullRequestRecord,
@@ -47,6 +50,11 @@ export interface PullRequestChecksTiming {
   /** The same for a head commit without any checks (yet). */
   emptyWindowMs: number;
   /**
+   * After a push, a pull request whose head GitHub does not show yet is
+   * read again after this time (a few times).
+   */
+  headRetryMs: number;
+  /**
    * A session waits this long for the checks of a new head commit to show
    * up (`CI of #12`) before a pull request without CI no longer holds it.
    */
@@ -67,9 +75,13 @@ export const DEFAULT_CHECKS_TIMING: PullRequestChecksTiming = {
   maxWaitMs: 10_000,
   runningWindowMs: 60 * 60_000,
   emptyWindowMs: 5 * 60_000,
+  headRetryMs: 10_000,
   ciStartMs: 60_000,
   ciSettleMs: 2 * 60_000,
 };
+
+/** Reads of a pull request after a push until it shows the pushed head. */
+const HEAD_RETRIES = 4;
 
 /** Checks kept per pull request (the most important first). */
 export const MAX_CHECKS = 200;
@@ -200,7 +212,9 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     number,
     { headSha: string; at: number }
   >();
-  private subscription: Subscription | null = null;
+  private readonly subscriptions: Subscription[] = [];
+  /** Re-reads of pull requests whose pushed head GitHub did not show yet. */
+  private readonly headRetries = new Set<ReturnType<typeof setTimeout>>();
   private readonly settled = new Subject<number>();
   /**
    * Pull requests with autofix whose checks settled while the session
@@ -228,11 +242,18 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit(): void {
-    this.subscription = this.sessionGit.refreshed$.subscribe((pull) => {
-      if (this.outdated(pull)) {
-        this.schedule(pull.id);
-      }
-    });
+    this.subscriptions.push(
+      this.sessionGit.refreshed$.subscribe((pull) => {
+        if (this.outdated(pull)) {
+          this.schedule(pull.id);
+        }
+      }),
+      this.sessionGit.pushed$.subscribe((push) => this.onPush(push)),
+      // Merged or closed: nothing to wait for any more.
+      this.sessionGit.closed$.subscribe((pull) =>
+        this.sessions.setCiWait(pull.sessionId, pull.id, null),
+      ),
+    );
     if (this.timing.pollMs > 0) {
       this.pollTimer = setInterval(() => void this.poll(), this.timing.pollMs);
       this.pollTimer.unref?.();
@@ -254,7 +275,13 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     this.stopped = true;
-    this.subscription?.unsubscribe();
+    for (const subscription of this.subscriptions) {
+      subscription.unsubscribe();
+    }
+    for (const timer of this.headRetries) {
+      clearTimeout(timer);
+    }
+    this.headRetries.clear();
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
     }
@@ -280,8 +307,68 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * A session branch was pushed: the session waits for the CI of its open
+   * pull requests from that branch right away (the turn usually ends
+   * before GitHub reports the new head commit and its checks), and they
+   * are re-read.
+   */
+  private onPush(push: SessionPush): void {
+    const session = this.records.get(push.sessionId);
+    for (const pull of session?.pullRequests ?? []) {
+      if (
+        pull.state === 'open' &&
+        pull.repositoryId === push.repositoryId &&
+        pull.headBranch === push.branch &&
+        pull.headSha !== push.commit
+      ) {
+        if (this.sessions.ciWaitPhase(push.sessionId, pull.id) === null) {
+          this.sessions.setCiWait(push.sessionId, pull.id, {
+            phase: 'running',
+            untilMs: Date.now() + this.timing.ciStartMs,
+          });
+        }
+        void this.refreshHead(pull.id, push.commit, HEAD_RETRIES);
+      }
+    }
+  }
+
+  /**
+   * Re-reads a pull request until GitHub shows the pushed commit as its
+   * head (`refreshed$` then schedules the read of its checks), a few times.
+   */
+  private async refreshHead(
+    pullRequestId: number,
+    commit: string,
+    attempts: number,
+  ): Promise<void> {
+    if (this.stopped || !this.github.configured) {
+      return;
+    }
+    try {
+      const pull = await this.sessionGit.refreshPullRequest(pullRequestId);
+      if (!pull || pull.state !== 'open' || pull.headSha === commit) {
+        return;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Reading pull request ${pullRequestId} after a push failed: ${errorText(error)}`,
+      );
+    }
+    if (attempts > 1 && !this.stopped) {
+      const timer = setTimeout(() => {
+        this.headRetries.delete(timer);
+        void this.refreshHead(pullRequestId, commit, attempts - 1);
+      }, this.timing.headRetryMs);
+      timer.unref?.();
+      this.headRetries.add(timer);
+    }
+  }
+
+  /**
    * Checks the PR automation read (starting at `readAt`) for a pull
-   * request's head commit anyway: stored without another request.
+   * request's head commit anyway: stored without another request (and
+   * without announcing settled ones on `settled$`: the automation acts on
+   * them already).
    */
   store(
     pullRequestId: number,
@@ -293,7 +380,7 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     if (!pull || pull.state !== 'open' || pull.headSha !== headSha) {
       return;
     }
-    this.save(pull, checksDto(headSha, checks, readAt));
+    this.save(pull, checksDto(headSha, checks, readAt), false);
   }
 
   /**
@@ -384,8 +471,9 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     if (!this.github.configured || this.stopped) {
       return;
     }
+    const viewed = new Set(this.presence.viewedSessions());
     const sessionIds = new Set([
-      ...this.presence.viewedSessions(),
+      ...viewed,
       ...this.sessions.ciWaitingSessions(),
     ]);
     for (const sessionId of sessionIds) {
@@ -414,7 +502,13 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
         if (this.stopped) {
           return;
         }
-        if (pull.state === 'open' && this.due(pull)) {
+        if (
+          pull.state === 'open' &&
+          // Not viewed: only the pull requests the session waits for.
+          (viewed.has(sessionId) ||
+            this.sessions.ciWaitPhase(sessionId, pull.id) !== null) &&
+          this.due(pull)
+        ) {
           await this.read(pull.id);
         }
       }
@@ -473,7 +567,11 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
    * overlapping read finished first); a change is published as a session
    * update.
    */
-  private save(pull: PullRequestRecord, checks: PullRequestChecksDto): void {
+  private save(
+    pull: PullRequestRecord,
+    checks: PullRequestChecksDto,
+    announce = true,
+  ): void {
     const stored = pull.checks ?? null;
     if (
       stored?.headSha === checks.headSha &&
@@ -492,7 +590,12 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     if (!sameChecks(stored, checks)) {
       this.sessions.publishUpdate(pull.sessionId);
     }
-    this.updateCiWait(pull, checks, stored?.headSha !== checks.headSha);
+    this.updateCiWait(
+      pull,
+      checks,
+      stored?.headSha !== checks.headSha,
+      announce,
+    );
   }
 
   /**
@@ -503,6 +606,7 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     pull: PullRequestRecord,
     checks: PullRequestChecksDto,
     newHead: boolean,
+    announce: boolean,
   ): void {
     const now = Date.now();
     const firstAt = this.firstRead.get(pull.id)?.at ?? now;
@@ -526,7 +630,9 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
         phase: 'settling',
         untilMs: now + this.timing.ciSettleMs,
       });
-      this.settled.next(pull.id);
+      if (announce) {
+        this.settled.next(pull.id);
+      }
     } else if (phase !== 'settling') {
       // A wait for the PR automation ends when it looked (or timed out).
       this.sessions.setCiWait(pull.sessionId, pull.id, null);

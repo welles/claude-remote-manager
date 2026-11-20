@@ -35,6 +35,12 @@ interface Watched {
   stalled: boolean;
   /** The last turn ended because it was stopped (or denied). */
   interrupted: boolean;
+  /**
+   * A turn ran since "finished" was last decided: waiting for background
+   * work or CI that began without a turn (CI of a pull request the owner
+   * pushed to, checks read again after a restart) reports nothing.
+   */
+  turnOpen: boolean;
   /** Last assistant text of the main conversation (for "turn finished"). */
   lastText: string | null;
 }
@@ -60,8 +66,9 @@ const BODY_LENGTH = 200;
  *   answered or cancelled, anywhere;
  * - a turn that ended normally with the session waiting for the next
  *   message (`turn_finished`; not after Stop or a denial), only once the
- *   background tasks Claude started ended too; withdrawn when the next
- *   turn starts or the session ends;
+ *   background tasks Claude started and the CI of its pull requests ended
+ *   too (and once per turn: not when waiting for CI began without one);
+ *   withdrawn when the next turn starts or the session ends;
  * - a running turn without any event for `SESSION_STALL_MINUTES`
  *   (`stalled`), once per stall; withdrawn when activity resumes or the
  *   turn ends; reported again only after activity resumed and stalled anew;
@@ -195,6 +202,7 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
     if (state === 'running/') {
       // A turn starts or goes on after an approval: the clock starts now.
       watched.lastActivity = this.now();
+      watched.turnOpen = true;
       if (previous !== 'waiting/permission') {
         watched.interrupted = false;
       }
@@ -208,9 +216,10 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
         previous === 'waiting/permission' ||
         previous === 'waiting/background')
     ) {
-      if (!watched.interrupted) {
+      if (!watched.interrupted && watched.turnOpen) {
         this.notifyTurnFinished(session, watched);
       }
+      watched.turnOpen = false;
     } else if (previous === '') {
       // First seen (e.g. an update of an old session): no transition.
     } else if (state === 'failed/') {
@@ -295,6 +304,7 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
         lastActivity: this.now(),
         stalled: false,
         interrupted: false,
+        turnOpen: false,
         lastText: null,
       };
       this.watched.set(sessionId, watched);

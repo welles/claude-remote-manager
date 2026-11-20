@@ -104,6 +104,14 @@ function errorText(error: unknown): string {
  * repositories registered by clone URL push with the server's own git
  * credentials; local projects have no remote to push to.
  */
+/** A push of a session branch (see `SessionGitService.pushed$`). */
+export interface SessionPush {
+  sessionId: string;
+  repositoryId: string;
+  branch: string;
+  commit: string;
+}
+
 @Injectable()
 export class SessionGitService {
   private readonly logger = new Logger(SessionGitService.name);
@@ -111,6 +119,7 @@ export class SessionGitService {
   private readonly changes = new Subject<string>();
   private readonly closed = new Subject<PullRequestRecord>();
   private readonly refreshed = new Subject<PullRequestRecord>();
+  private readonly pushed = new Subject<SessionPush>();
   /** IDs of sessions whose clones or pull requests changed. */
   readonly changes$ = this.changes.asObservable();
   /**
@@ -118,6 +127,11 @@ export class SessionGitService {
    * are read so; the PR automation handles each once).
    */
   readonly closed$ = this.closed.asObservable();
+  /**
+   * A session branch reached its remote with this commit (a push of the
+   * app, or Claude's own noted afterwards).
+   */
+  readonly pushed$ = this.pushed.asObservable();
   /** Open pull requests just created or read from GitHub. */
   readonly refreshed$ = this.refreshed.asObservable();
 
@@ -689,6 +703,17 @@ export class SessionGitService {
       pushedAt: new Date(),
     });
     this.changes.next(sessionId);
+    const directory = this.sessions
+      .get(sessionId)
+      ?.directories.find((entry) => entry.position === position);
+    if (directory?.repositoryId && directory.branch) {
+      this.pushed.next({
+        sessionId,
+        repositoryId: directory.repositoryId,
+        branch: directory.branch,
+        commit,
+      });
+    }
   }
 
   /** A failed push as a clear HTTP error. */
