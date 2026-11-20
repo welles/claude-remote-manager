@@ -1633,6 +1633,101 @@ describe('PrAutomationService', () => {
       expect(notifications.automerge).toHaveLength(0);
     });
 
+    it('lets Claude switch the automation with set_pr_automation', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      const tool = harness.support.setPrAutomationTool(session.id);
+
+      const on = await tool.handler(
+        { pull_request: pull.number, automerge: true, autoclose: true },
+        { toolUseId: null },
+      );
+      expect(on.isError).toBeFalsy();
+      expect(on.text).toContain('autofix on, automerge on, autoclose on');
+      expect(record(pull)).toMatchObject({
+        autofix: true,
+        automerge: true,
+        autoclose: true,
+      });
+
+      const off = await tool.handler(
+        { pull_request: pull.number, autofix: false },
+        { toolUseId: null },
+      );
+      expect(off.text).toContain('autofix off, automerge off, autoclose on');
+      expect(record(pull)).toMatchObject({ autofix: false, automerge: false });
+    });
+
+    it('refuses set_pr_automation for other pull requests and without a switch', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      const tool = harness.support.setPrAutomationTool(session.id);
+
+      const other = await tool.handler(
+        { pull_request: pull.number + 100, automerge: true },
+        { toolUseId: null },
+      );
+      expect(other.isError).toBe(true);
+      expect(other.text).toContain('is not a pull request of this session');
+
+      const nothing = await tool.handler(
+        { pull_request: pull.number },
+        { toolUseId: null },
+      );
+      expect(nothing.isError).toBe(true);
+      expect(nothing.text).toContain('Name at least one');
+      expect(record(pull)).toMatchObject({ autofix: false, automerge: false });
+    });
+
+    it('shows the switches of set_pr_automation in the approval', async () => {
+      const { pull } = await sessionWithPullRequest();
+      const run = harness.runner.last;
+      harness.approver.autoAnswer = { decision: 'allow' };
+      await expect(
+        run.options.canUseTool(
+          'mcp__crm__set_pr_automation',
+          { pull_request: pull.number, automerge: true },
+          {
+            signal: new AbortController().signal,
+            toolUseID: 'tu-1',
+            requestId: 'r1',
+            mcpServer: { name: 'crm', source: 'sdk' },
+          } as never,
+        ),
+      ).resolves.toMatchObject({ behavior: 'allow' });
+      expect(harness.approver.requests.at(-1)?.pullRequestAutomation).toEqual({
+        repository: 'alice/app',
+        pullRequest: pull.number,
+        title: 'Work',
+        autofix: null,
+        automerge: true,
+        autoclose: null,
+      });
+    });
+
+    it('only turns switches off with set_pr_automation during an Autofix run', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutomerge(session.id, pull);
+      harness.sessions.updatePullRequest(pull.id, {
+        automerge: false,
+        autofixRunning: true,
+      });
+      const tool = harness.support.setPrAutomationTool(session.id);
+
+      const on = await tool.handler(
+        { pull_request: pull.number, automerge: true },
+        { toolUseId: null },
+      );
+      expect(on.isError).toBe(true);
+      expect(on.text).toContain('can only be turned off');
+      expect(record(pull).automerge).toBe(false);
+
+      const off = await tool.handler(
+        { pull_request: pull.number, autofix: false },
+        { toolUseId: null },
+      );
+      expect(off.isError).toBeFalsy();
+      expect(record(pull).autofix).toBe(false);
+    });
+
     it('does not merge a draft, nor while feedback waits to be handled', async () => {
       const { session, pull } = await sessionWithPullRequest();
       enableAutomerge(session.id, pull);

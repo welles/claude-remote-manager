@@ -114,6 +114,22 @@ export interface PullRequestMergeCall {
   method: 'rebase' | 'squash' | 'merge' | null;
 }
 
+/**
+ * A `set_pr_automation` call as the approval shows it: each switch as
+ * Claude asks to set it, `null` where it stays as it is.
+ */
+export interface PullRequestAutomationCall {
+  /** `owner/name`; filled in when Claude omitted it and it is unambiguous. */
+  repository: string | null;
+  /** Number of the pull request. */
+  pullRequest: number | null;
+  /** Title of the pull request, if it is one of the session's. */
+  title: string | null;
+  autofix: boolean | null;
+  automerge: boolean | null;
+  autoclose: boolean | null;
+}
+
 /** Longest reply `reply_to_review_thread` takes. */
 export const MAX_REVIEW_REPLY_LENGTH = 65_536;
 

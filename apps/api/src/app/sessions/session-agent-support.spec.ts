@@ -103,6 +103,7 @@ describe('session integrations (tools, memory, pushes)', () => {
       'create_pull_request',
       'reply_to_review_thread',
       'merge_pull_request',
+      'set_pr_automation',
       'request_owner_decision',
       'set_session_title',
       'set_waiting_state',

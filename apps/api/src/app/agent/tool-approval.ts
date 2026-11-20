@@ -9,6 +9,7 @@ import type {
   PermissionResolutionCause,
   PermissionResolvedEvent,
   PullRequestCall,
+  PullRequestAutomationCall,
   PullRequestMergeCall,
   RepositoryAdditionCall,
   ReviewThreadReplyCall,
@@ -50,6 +51,8 @@ export interface ToolApprovalRequest {
   reviewThreadReply?: ReviewThreadReplyCall | null;
   /** For the app's `merge_pull_request` tool: what it would merge. */
   pullRequestMerge?: PullRequestMergeCall | null;
+  /** For the app's `set_pr_automation` tool: the switches it sets. */
+  pullRequestAutomation?: PullRequestAutomationCall | null;
   /** For the app's `add_repository` tool: what it would add (checked). */
   repositoryAddition?: RepositoryAdditionCall | null;
   /** For file changes: the change it would make. */

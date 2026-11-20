@@ -21,6 +21,14 @@ export const REPLY_TO_REVIEW_THREAD_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${REPLY
 export const MERGE_PULL_REQUEST_TOOL = 'merge_pull_request';
 export const MERGE_PULL_REQUEST_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${MERGE_PULL_REQUEST_TOOL}`;
 /**
+ * The app's tool that switches autofix, automerge or autoclose of one of
+ * the session's open pull requests, like the switches of the session view.
+ * Asks as the permission mode says; during an Autofix run it can only turn
+ * switches off (GitHub's content must not turn on merging).
+ */
+export const SET_PR_AUTOMATION_TOOL = 'set_pr_automation';
+export const SET_PR_AUTOMATION_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SET_PR_AUTOMATION_TOOL}`;
+/**
  * The app's tool that adds a repository to the running session, see
  * `RepositoryAdditions`.
  */

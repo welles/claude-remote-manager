@@ -38,6 +38,7 @@ import { pullRequestDto } from '../sessions/pull-request-dto';
 import {
   SessionAutomationHooks,
   type AutofixCommandOutcome,
+  type PullRequestAutomationSwitches,
 } from '../sessions/session-automation-hooks';
 import { parseAutofixGitCommand } from './autofix-git';
 import { PullRequestChecksService } from './pull-request-checks.service';
@@ -269,6 +270,8 @@ export class PrAutomationService
     this.hooks.holdAutomerge = (sessionId, question) =>
       this.holdAutomerge(sessionId, question);
     this.hooks.ownerMessage = (sessionId) => this.ownerMessage(sessionId);
+    this.hooks.setAutomation = (sessionId, repositoryId, number, switches) =>
+      this.setAutomationByClaude(sessionId, repositoryId, number, switches);
     this.hooks.mayMergeUnasked = (sessionId, repositoryId, number) =>
       this.mayMergeUnasked(sessionId, repositoryId, number);
     this.subscriptions.push(
@@ -321,6 +324,7 @@ export class PrAutomationService
     this.hooks.autofixCommand = null;
     this.hooks.holdAutomerge = null;
     this.hooks.ownerMessage = null;
+    this.hooks.setAutomation = null;
     this.hooks.mayMergeUnasked = null;
   }
 
@@ -472,6 +476,57 @@ export class PrAutomationService
     this.sessions.publishUpdate(sessionId);
     this.logger.log(`Automerge of ${names} waits for the owner's decision`);
     return `Automerge of ${names} is paused until the user's next message, and the user was notified. Ask your question in your reply now and end your turn.`;
+  }
+
+  /**
+   * Claude switches the automation of one of the session's pull requests
+   * (tool `set_pr_automation`, after the approval the permission mode asks
+   * for), as the switches of the session view do. During an Autofix run it
+   * may only turn switches off: the run acts on GitHub's untrusted content,
+   * which must not turn on fixing or merging. Returns what Claude is told.
+   */
+  setAutomationByClaude(
+    sessionId: string,
+    repositoryId: string,
+    number: number,
+    switches: PullRequestAutomationSwitches,
+  ): string {
+    const session = this.requireSession(sessionId);
+    const pull = session.pullRequests.find(
+      (entry) => entry.repositoryId === repositoryId && entry.number === number,
+    );
+    if (!pull) {
+      throw new NotFoundException(
+        `#${number} is not a pull request of this session; create it with create_pull_request first`,
+      );
+    }
+    const name = `${pull.repositoryName}#${pull.number}`;
+    const { autofix, automerge, autoclose } = switches;
+    if (
+      autofix === undefined &&
+      automerge === undefined &&
+      autoclose === undefined
+    ) {
+      throw new BadRequestException(
+        'Name at least one of autofix, automerge, autoclose',
+      );
+    }
+    const turnsOn =
+      autofix === true || automerge === true || autoclose === true;
+    if (turnsOn && session.pullRequests.some((entry) => entry.autofixRunning)) {
+      throw new ConflictException(
+        'During an Autofix run switches can only be turned off; ask the user to turn them on',
+      );
+    }
+    this.update(sessionId, pull.id, {
+      ...(autofix !== undefined ? { autofix } : {}),
+      ...(automerge !== undefined ? { automerge } : {}),
+      ...(autoclose !== undefined ? { autoclose } : {}),
+    });
+    const updated = this.records.pullRequest(pull.id) ?? pull;
+    const state = (on: boolean) => (on ? 'on' : 'off');
+    this.logger.log(`Claude switched the automation of ${name}`);
+    return `${name}: autofix ${state(updated.autofix)}, automerge ${state(updated.automerge)}, autoclose ${state(updated.autoclose)}.`;
   }
 
   /** The owner sent a message: automerge waits no longer for them. */

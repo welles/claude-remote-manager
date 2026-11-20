@@ -27,6 +27,7 @@ import {
   REPLY_TO_REVIEW_THREAD_TOOL,
   REQUEST_OWNER_DECISION_TOOL,
   REQUEST_OWNER_DECISION_TOOL_NAME,
+  SET_PR_AUTOMATION_TOOL,
   SHOW_FILE_TOOL,
   SHOW_FILE_TOOL_NAME,
   STOP_PREVIEW_TOOL,
@@ -358,6 +359,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
               this.createPullRequestTool(record.id),
               this.replyToReviewThreadTool(record.id),
               this.mergePullRequestTool(record.id),
+              this.setPrAutomationTool(record.id),
               this.requestOwnerDecisionTool(record.id),
             ]
           : []),
@@ -897,6 +899,79 @@ export class SessionAgentSupportService extends SessionAgentSupport {
           return {
             isError: true,
             text: `merge_pull_request failed: ${errorText(error)}`,
+          };
+        }
+      },
+    };
+  }
+
+  /**
+   * The tool `set_pr_automation`: switches autofix, automerge or autoclose
+   * of one of the session's open pull requests, like the switches of the
+   * session view. Asks as the permission mode says; during an Autofix run
+   * it can only turn switches off (see `PrAutomationService`).
+   */
+  setPrAutomationTool(sessionId: string): AgentTool {
+    return {
+      name: SET_PR_AUTOMATION_TOOL,
+      description:
+        "Turn autofix, automerge or autoclose of one of this session's open pull requests on " +
+        'or off, like the switches the user has in the session view. Turn them on only when ' +
+        'the user asked you to. Autofix continues the session when CI fails or reviewers ' +
+        'comment; automerge (needs autofix, turns it on) merges the pull request once all ' +
+        'checks passed, nobody requests changes and no review thread is open; autoclose ends ' +
+        'the session when its last open pull request is merged or closed. Omitted switches ' +
+        'stay as they are. During an Autofix run switches can only be turned off.',
+      inputSchema: (z) => ({
+        repository: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            'owner/name of the repository; may be omitted if the session has only one GitHub repository',
+          ),
+        pull_request: z
+          .number()
+          .int()
+          .positive()
+          .describe('Number of the pull request'),
+        autofix: z.boolean().optional().describe('Turn autofix on or off'),
+        automerge: z
+          .boolean()
+          .optional()
+          .describe('Turn automerge on (turns autofix on too) or off'),
+        autoclose: z.boolean().optional().describe('Turn autoclose on or off'),
+      }),
+      handler: async (input) => {
+        const set = this.automation?.setAutomation;
+        if (!set) {
+          return {
+            isError: true,
+            text: 'The PR automation is not available on this server. Ask the user to switch it in the session view.',
+          };
+        }
+        try {
+          const repositoryId = this.repositoryOf(
+            sessionId,
+            typeof input['repository'] === 'string'
+              ? input['repository']
+              : null,
+          );
+          const flag = (name: string) =>
+            typeof input[name] === 'boolean'
+              ? (input[name] as boolean)
+              : undefined;
+          return {
+            text: set(sessionId, repositoryId, Number(input['pull_request']), {
+              autofix: flag('autofix'),
+              automerge: flag('automerge'),
+              autoclose: flag('autoclose'),
+            }),
+          };
+        } catch (error) {
+          return {
+            isError: true,
+            text: `set_pr_automation failed: ${errorText(error)}`,
           };
         }
       },

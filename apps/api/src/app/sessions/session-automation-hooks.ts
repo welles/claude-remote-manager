@@ -1,5 +1,12 @@
 import type { GitPushAnalysis } from '@claude-remote-manager/shared-types';
 
+/** Switches of a pull request's automation; `undefined` keeps one. */
+export interface PullRequestAutomationSwitches {
+  autofix?: boolean;
+  automerge?: boolean;
+  autoclose?: boolean;
+}
+
 /** What the PR automation did with a Bash command instead of a shell. */
 export interface AutofixCommandOutcome {
   /** Whether every step succeeded. */
@@ -53,4 +60,18 @@ export class SessionAutomationHooks {
 
   /** The owner sent the session a message (not the app). */
   ownerMessage: ((sessionId: string) => void) | null = null;
+
+  /**
+   * The tool `set_pr_automation`: switches autofix, automerge or autoclose
+   * of the session's open pull request `number` of `repositoryId`. Returns
+   * what Claude is told; throws when it is refused.
+   */
+  setAutomation:
+    | ((
+        sessionId: string,
+        repositoryId: string,
+        number: number,
+        switches: PullRequestAutomationSwitches,
+      ) => string)
+    | null = null;
 }

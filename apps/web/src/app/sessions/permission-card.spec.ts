@@ -239,6 +239,45 @@ describe('PermissionCard', () => {
     expect(element.textContent).not.toContain('"comment_id"');
   });
 
+  it('shows which automation switches Claude asks to set', async () => {
+    const element = await render(
+      permissionRequest({
+        toolName: 'mcp__crm__set_pr_automation',
+        title: null,
+        displayName: null,
+        input: { pull_request: 4, automerge: true },
+        pullRequestAutomation: {
+          repository: 'acme/app',
+          pullRequest: 4,
+          title: 'Add export',
+          autofix: null,
+          automerge: true,
+          autoclose: false,
+        },
+      }),
+    );
+    expect(element.textContent).toContain(
+      'Switch the automation of a pull request',
+    );
+    const automation = element.querySelector(
+      '[data-testid="pull-request-automation"]',
+    );
+    expect(automation?.textContent).toContain('acme/app#4');
+    expect(automation?.textContent).toContain('Add export');
+    expect(
+      automation?.querySelector('[data-testid="automation-automerge"]')
+        ?.textContent,
+    ).toContain('turn on');
+    expect(
+      automation?.querySelector('[data-testid="automation-autoclose"]')
+        ?.textContent,
+    ).toContain('turn off');
+    expect(
+      automation?.querySelector('[data-testid="automation-autofix"]'),
+    ).toBeNull();
+    expect(element.textContent).not.toContain('"pull_request"');
+  });
+
   it('collects answers to Claude’s questions', async () => {
     const element = await render(
       permissionRequest({
