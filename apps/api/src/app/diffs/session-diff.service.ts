@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { cloneOf, clonesOf } from '../sessions/session-clones';
 import { join } from 'node:path';
 import {
   BadRequestException,
@@ -96,7 +97,15 @@ export class SessionDiffService {
     );
     const repositories: RepositoryDiff[] = [];
     for (const directory of record.directories) {
-      if (directory.kind === 'clone' && directory.repositoryId) {
+      if (
+        directory.kind === 'clone' &&
+        directory.repositoryId &&
+        // A further branch's clone removed after its pull request is done.
+        !(
+          directory.state === 'removed' &&
+          clonesOf(record.directories, directory.repositoryId)[0] !== directory
+        )
+      ) {
         repositories.push(await this.repositoryDiff(directory, budget));
       }
     }
@@ -109,11 +118,12 @@ export class SessionDiffService {
     repositoryId: string,
     path: string,
     oldPath: string | null,
+    branch: string | null = null,
   ): Promise<SessionDiffFile> {
     const record = this.sessions.get(sessionId);
-    const directory = record?.directories.find(
-      (entry) => entry.kind === 'clone' && entry.repositoryId === repositoryId,
-    );
+    const directory = record
+      ? cloneOf(record.directories, repositoryId, branch)
+      : undefined;
     if (!record || !directory) {
       throw new NotFoundException(
         `Repository ${repositoryId} is not part of session ${sessionId}`,

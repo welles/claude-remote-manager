@@ -67,5 +67,13 @@
   body, base branch), after pushing the branch: the session manager then shows the pull request
   in the session and follows its checks and reviews. Use `gh` or the GitHub API for anything
   else.
+- One pull request per session branch. For a further pull request in parallel, or for the
+  next one after a pull request of the session was merged, call the tool `add_branch`
+  (repository `owner/name`, optional base branch, a short reason) instead of rewriting the
+  session branch: it adds another clone of the repository on a new branch
+  `claude/<session>-2` (`-3`, …) from the latest base; its result says where. Work, commit
+  and push there, and name that branch in `create_pull_request`. Such a clone is removed when
+  its pull request is merged or closed (after your turn), unless it has work that is not on
+  GitHub.
 - If a push fails for lack of credentials (e.g. a repository not on GitHub), tell the user: they
   can push from the session view (Push button).

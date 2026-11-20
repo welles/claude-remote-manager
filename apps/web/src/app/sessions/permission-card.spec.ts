@@ -197,11 +197,15 @@ describe('PermissionCard', () => {
           title: 'Add export',
           body: 'Adds **CSV** export',
           base: 'main',
+          head: 'claude/x-2',
           draft: true,
         },
       }),
     );
     const pull = element.querySelector('[data-testid="pull-request"]');
+    expect(
+      pull?.querySelector('[data-testid="pull-request-head"]')?.textContent,
+    ).toBe('claude/x-2');
     expect(pull?.textContent).toContain('acme/app');
     expect(pull?.textContent).toContain('Add export');
     expect(pull?.textContent).toContain('main');

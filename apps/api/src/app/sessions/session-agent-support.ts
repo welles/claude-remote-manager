@@ -652,7 +652,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         'Create a GitHub pull request from the session branch of one of this ' +
         "session's repositories. Push the branch first (git push). Returns the " +
         'URL of the pull request (or of the open one that exists for the ' +
-        'branch already).',
+        'branch already). When the session has several clones of the ' +
+        'repository (add_branch), name the branch of the clone.',
       inputSchema: (z) => ({
         repository: z
           .string()
@@ -675,6 +676,13 @@ export class SessionAgentSupportService extends SessionAgentSupport {
             'Branch to merge into; default: the branch the session started from',
           ),
         draft: z.boolean().optional().describe('Open as draft'),
+        branch: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            'The session branch (head) of the pull request, e.g. claude/<session>-2; needed only when the session has several clones of the repository',
+          ),
       }),
       handler: async (input) => {
         const repositoryId = this.repositoryOf(
@@ -691,6 +699,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
             draft: input['draft'] as boolean | undefined,
           },
           'claude',
+          typeof input['branch'] === 'string' ? input['branch'] : null,
         );
         return {
           text: `Pull request #${pull.number} (${pull.state}) of ${pull.repository}: ${pull.url}`,
@@ -1177,14 +1186,20 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         directory.repositoryGitHub &&
         directory.repositoryId,
     );
+    // Several clones of one repository (add_branch) are one repository.
+    const repositories = [
+      ...new Map(
+        candidates.map((directory) => [directory.repositoryId, directory]),
+      ).values(),
+    ];
     const matches = name
-      ? candidates.filter(
+      ? repositories.filter(
           (directory) =>
             directory.repositoryName?.toLowerCase() === name.toLowerCase(),
         )
-      : candidates;
+      : repositories;
     if (matches.length !== 1) {
-      const names = candidates
+      const names = repositories
         .map((directory) => directory.repositoryName)
         .join(', ');
       throw new Error(
@@ -1224,6 +1239,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
           await this.sessionGit.notePushedCommit(
             sessionId,
             directory.repositoryId,
+            directory.branch,
           );
         }
       }

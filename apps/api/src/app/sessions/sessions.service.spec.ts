@@ -933,6 +933,8 @@ describe('SessionsService', () => {
         'Bash(npm test:*)',
         'mcp__crm__set_session_title',
         'mcp__crm__set_waiting_state',
+        // The session has a repository with a remote.
+        'mcp__crm__add_branch',
       ]);
       // The task list tools are on, for the to-do list in the session view.
       expect(runner.last.options.env).toMatchObject({

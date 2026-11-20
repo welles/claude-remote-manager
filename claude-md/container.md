@@ -7,15 +7,16 @@ sessions.
 
 ## Directory layout
 
-| Path                                                | Contents                                                                 |
-| --------------------------------------------------- | ------------------------------------------------------------------------ |
-| `/data/workspace/repos/<owner>/<repo>`              | Mirror of a repository, managed by the session manager. Never work here. |
-| `/data/workspace/repos/local/<name>`                | Mirror of a local project (no remote). Never work here.                  |
-| `/data/workspace/sessions/<session>/<owner>/<repo>` | The session's own clone of a repository, on branch `claude/<session>`    |
-| `/data/workspace/scratch/<session>`                 | Scratch directory of a session without repository (no git)               |
-| `/data/claude`                                      | Claude Code configuration, login and transcripts. Do not edit.           |
-| `/data/git`, `/data/db`                             | The session manager's own; not accessible to sessions.                   |
-| `/nix`                                              | Nix store, shared cache for all sessions                                 |
+| Path                                                  | Contents                                                                  |
+| ----------------------------------------------------- | ------------------------------------------------------------------------- |
+| `/data/workspace/repos/<owner>/<repo>`                | Mirror of a repository, managed by the session manager. Never work here.  |
+| `/data/workspace/repos/local/<name>`                  | Mirror of a local project (no remote). Never work here.                   |
+| `/data/workspace/sessions/<session>/<owner>/<repo>`   | The session's own clone of a repository, on branch `claude/<session>`     |
+| `/data/workspace/sessions/<session>/<owner>/<repo>-2` | A further clone (`add_branch`), on branch `claude/<session>-2`, and so on |
+| `/data/workspace/scratch/<session>`                   | Scratch directory of a session without repository (no git)                |
+| `/data/claude`                                        | Claude Code configuration, login and transcripts. Do not edit.            |
+| `/data/git`, `/data/db`                               | The session manager's own; not accessible to sessions.                    |
+| `/nix`                                                | Nix store, shared cache for all sessions                                  |
 
 ## Tools
 

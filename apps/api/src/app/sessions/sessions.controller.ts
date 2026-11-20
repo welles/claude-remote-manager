@@ -23,6 +23,7 @@ import type {
   UpdateSessionRequest,
 } from '@claude-remote-manager/shared-types';
 import { SessionGitService } from './session-git.service';
+import { branchParam } from './session-clones';
 import { SessionsService } from './sessions.service';
 
 /**
@@ -161,8 +162,9 @@ export class SessionsController {
   retryAddition(
     @Param('id') id: string,
     @Param('repositoryId') repositoryId: string,
+    @Query('branch') branch?: string,
   ): Promise<SessionDto> {
-    return this.sessions.retryAddition(id, repositoryId);
+    return this.sessions.retryAddition(id, repositoryId, branchParam(branch));
   }
 
   /** Gives Claude an added repository whose setup script failed. */
@@ -171,8 +173,9 @@ export class SessionsController {
   acceptAddition(
     @Param('id') id: string,
     @Param('repositoryId') repositoryId: string,
+    @Query('branch') branch?: string,
   ): Promise<SessionDto> {
-    return this.sessions.acceptAddition(id, repositoryId);
+    return this.sessions.acceptAddition(id, repositoryId, branchParam(branch));
   }
 
   /** Removes an addition that failed or is held (and its clone). */
@@ -181,8 +184,9 @@ export class SessionsController {
   removeAddition(
     @Param('id') id: string,
     @Param('repositoryId') repositoryId: string,
+    @Query('branch') branch?: string,
   ): Promise<SessionDto> {
-    return this.sessions.removeAddition(id, repositoryId);
+    return this.sessions.removeAddition(id, repositoryId, branchParam(branch));
   }
 
   /** Stops the running turn and sends all queued messages right away. */

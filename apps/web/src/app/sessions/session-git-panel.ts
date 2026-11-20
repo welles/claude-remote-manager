@@ -20,7 +20,14 @@ import { SessionsApi } from './sessions-api';
 
 /** A clone of the session that can be pushed. */
 interface PushableClone {
+  /** Repository and branch: the session may have several clones of one. */
+  key: string;
   repositoryId: string;
+  /**
+   * The session branch when the repository has several clones (shown, and
+   * naming the clone to the API); `null` for a repository's only clone.
+   */
+  branch: string | null;
   name: string;
   github: boolean;
   directory: SessionDirectoryDto;
@@ -67,24 +74,45 @@ export class SessionGitPanel {
   protected readonly stateLabels = PULL_REQUEST_STATE_LABELS;
   protected readonly clones = computed<PushableClone[]>(() => {
     const session = this.session();
-    return session.directories.flatMap((directory) =>
-      directory.kind === 'clone' &&
-      directory.repository &&
-      !directory.repository.local &&
-      isActiveDirectory(directory)
-        ? [
-            {
-              repositoryId: directory.repository.id,
-              name: directory.repository.fullName,
-              github: directory.repository.github,
-              directory,
-              pullRequests: session.pullRequests.filter(
-                (pull) => pull.repositoryId === directory.repository?.id,
-              ),
-            },
-          ]
-        : [],
-    );
+    const clonesOf = (repositoryId: string) =>
+      session.directories.filter(
+        (directory) =>
+          directory.kind === 'clone' &&
+          directory.repository?.id === repositoryId &&
+          directory.state !== 'removed',
+      );
+    return session.directories.flatMap((directory) => {
+      if (
+        directory.kind !== 'clone' ||
+        !directory.repository ||
+        directory.repository.local ||
+        directory.state === 'removed' ||
+        !isActiveDirectory(directory)
+      ) {
+        return [];
+      }
+      const repositoryId = directory.repository.id;
+      const siblings = clonesOf(repositoryId);
+      return [
+        {
+          key: cloneKey(repositoryId, directory.branch),
+          repositoryId,
+          branch: siblings.length > 1 ? directory.branch : null,
+          name: directory.repository.fullName,
+          github: directory.repository.github,
+          directory,
+          // A pull request belongs to the clone on its head branch (one
+          // from elsewhere to the repository's only clone).
+          pullRequests: session.pullRequests.filter(
+            (pull) =>
+              pull.repositoryId === repositoryId &&
+              (pull.headBranch === directory.branch ||
+                (siblings.length === 1 &&
+                  !siblings.some((other) => other.branch === pull.headBranch))),
+          ),
+        },
+      ];
+    });
   });
 
   /**
@@ -96,13 +124,25 @@ export class SessionGitPanel {
     if (!session.autoclosedAt || session.status !== 'finished') {
       return [];
     }
-    return session.directories.flatMap((directory) =>
-      directory.kind === 'clone' &&
-      directory.state === 'ready' &&
+    const kept = session.directories.filter(
+      (directory) =>
+        directory.kind === 'clone' &&
+        directory.state === 'ready' &&
+        directory.repository,
+    );
+    return kept.flatMap((directory) =>
       directory.repository
         ? [
             {
+              key: cloneKey(directory.repository.id, directory.branch),
               repositoryId: directory.repository.id,
+              branch: kept.some(
+                (other) =>
+                  other !== directory &&
+                  other.repository?.id === directory.repository?.id,
+              )
+                ? directory.branch
+                : null,
               name: directory.repository.fullName,
               path: directory.path,
             },
@@ -125,11 +165,13 @@ export class SessionGitPanel {
 
   protected push(clone: PushableClone): void {
     this.run(clone, 'Pushing…', (done, fail) =>
-      this.api.push(this.session().id, clone.repositoryId).subscribe({
-        next: () => done(`Pushed ${clone.directory.branch}`),
-        error: (error: unknown) =>
-          fail(errorMessage(error, 'The push failed.')),
-      }),
+      this.api
+        .push(this.session().id, clone.repositoryId, clone.branch)
+        .subscribe({
+          next: () => done(`Pushed ${clone.directory.branch}`),
+          error: (error: unknown) =>
+            fail(errorMessage(error, 'The push failed.')),
+        }),
     );
   }
 
@@ -138,7 +180,7 @@ export class SessionGitPanel {
     this.body = '';
     this.base = clone.directory.baseBranch ?? '';
     this.draft = false;
-    this.composing.set(clone.repositoryId);
+    this.composing.set(clone.key);
   }
 
   protected createPullRequest(clone: PushableClone): void {
@@ -150,7 +192,12 @@ export class SessionGitPanel {
     };
     this.run(clone, 'Creating the pull request…', (done, fail) =>
       this.api
-        .createPullRequest(this.session().id, clone.repositoryId, request)
+        .createPullRequest(
+          this.session().id,
+          clone.repositoryId,
+          request,
+          clone.branch,
+        )
         .subscribe({
           next: (pull) => {
             this.composing.set(null);
@@ -178,9 +225,9 @@ export class SessionGitPanel {
     const set = (text: string, error = false) =>
       this.messages.update((messages) => ({
         ...messages,
-        [clone.repositoryId]: { text, error },
+        [clone.key]: { text, error },
       }));
-    this.busy.set(clone.repositoryId);
+    this.busy.set(clone.key);
     set(progress);
     start(
       (text) => {
@@ -193,4 +240,9 @@ export class SessionGitPanel {
       },
     );
   }
+}
+
+/** Key of a clone: its repository and branch. */
+function cloneKey(repositoryId: string, branch: string | null): string {
+  return `${repositoryId}\u0000${branch ?? ''}`;
 }

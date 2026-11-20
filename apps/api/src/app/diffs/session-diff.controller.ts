@@ -9,6 +9,7 @@ import type {
   SessionDiffFile,
   SessionDiffResponse,
 } from '@claude-remote-manager/shared-types';
+import { branchParam } from '../sessions/session-clones';
 import { SessionDiffService } from './session-diff.service';
 
 /**
@@ -31,6 +32,7 @@ export class SessionDiffController {
     @Query('repositoryId') repositoryId: unknown,
     @Query('path') path: unknown,
     @Query('oldPath') oldPath: unknown,
+    @Query('branch') branch: unknown,
   ): Promise<SessionDiffFile> {
     if (typeof repositoryId !== 'string' || typeof path !== 'string') {
       throw new BadRequestException('repositoryId and path are required');
@@ -38,6 +40,12 @@ export class SessionDiffController {
     if (oldPath !== undefined && typeof oldPath !== 'string') {
       throw new BadRequestException('oldPath must be a string');
     }
-    return this.diffs.fileDiff(id, repositoryId, path, oldPath || null);
+    return this.diffs.fileDiff(
+      id,
+      repositoryId,
+      path,
+      oldPath || null,
+      branchParam(branch),
+    );
   }
 }

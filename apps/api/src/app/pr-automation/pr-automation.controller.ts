@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import type {
   CloneLossReport,
@@ -14,6 +15,7 @@ import type {
   SessionDto,
   UpdatePullRequestAutomationRequest,
 } from '@claude-remote-manager/shared-types';
+import { branchParam } from '../sessions/session-clones';
 import { PrAutomationService } from './pr-automation.service';
 
 /**
@@ -47,8 +49,9 @@ export class PrAutomationController {
   cloneLoss(
     @Param('id') id: string,
     @Param('repositoryId') repositoryId: string,
+    @Query('branch') branch?: string,
   ): Promise<CloneLossReport> {
-    return this.automation.cloneLoss(id, repositoryId);
+    return this.automation.cloneLoss(id, repositoryId, branchParam(branch));
   }
 
   /** Deletes a clone of an ended session (after the user confirmed). */
@@ -58,7 +61,13 @@ export class PrAutomationController {
     @Param('id') id: string,
     @Param('repositoryId') repositoryId: string,
     @Body() body: DiscardCloneRequest,
+    @Query('branch') branch?: string,
   ): Promise<SessionDto> {
-    return this.automation.discardClone(id, repositoryId, body ?? {});
+    return this.automation.discardClone(
+      id,
+      repositoryId,
+      body ?? {},
+      branchParam(branch),
+    );
   }
 }

@@ -131,11 +131,13 @@ export class SessionGitHubTokensService {
         'Credentials are only provided for https://github.com',
       );
     }
-    const found = this.clones(session).find(
+    // Several clones of one repository (`add_branch`): one token for all.
+    const matching = this.clones(session).filter(
       ({ repository }) =>
         githubFullName(repository.cloneUrl)?.toLowerCase() ===
         path.toLowerCase(),
     );
+    const found = matching[0];
     if (!found) {
       this.logger.warn(
         `Session ${session.id} asked for a token for ${JSON.stringify(path)}, which is not one of its repositories`,
@@ -144,17 +146,24 @@ export class SessionGitHubTokensService {
         `${path} is not a GitHub repository of this session`,
       );
     }
-    const { directory, repository } = found;
-    const head = directory.branch
-      ? await this.git
-          .localBranchCommit(directory.path, directory.branch)
-          .catch(() => null)
-      : null;
-    const workflows = head
-      ? await this.git
+    const { repository } = found;
+    let workflows = false;
+    for (const { directory } of matching) {
+      const head = directory.branch
+        ? await this.git
+            .localBranchCommit(directory.path, directory.branch)
+            .catch(() => null)
+        : null;
+      if (
+        head &&
+        (await this.git
           .changesWorkflows(directory.path, head, directory.baseCommit)
-          .catch(() => false)
-      : false;
+          .catch(() => false))
+      ) {
+        workflows = true;
+        break;
+      }
+    }
     const permissions: GitHubPermissionSet = {
       ...GIT_PERMISSIONS,
       ...(workflows ? { workflows: 'write' as const } : {}),

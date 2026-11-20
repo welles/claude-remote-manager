@@ -43,6 +43,7 @@ import {
 import { parseAutofixGitCommand } from './autofix-git';
 import { PullRequestChecksService } from './pull-request-checks.service';
 import { SessionGitService } from '../sessions/session-git.service';
+import { cloneOf, cloneOfPull, clonesOf } from '../sessions/session-clones';
 import {
   isActiveDirectory,
   SessionRepository,
@@ -1165,7 +1166,8 @@ export class PrAutomationService
     if (
       !session ||
       session.autoclosedAt ||
-      !session.pullRequests.some((pull) => pull.autoclose)
+      (!session.pullRequests.some((pull) => pull.autoclose) &&
+        !session.pullRequests.some((pull) => extraCloneOf(session, pull)))
     ) {
       return;
     }
@@ -1473,10 +1475,7 @@ export class PrAutomationService
                 }
             : { state: 'on' };
     const attempt = current.autofixAttempts + (counted ? 1 : 0);
-    const directory = session.directories.find(
-      (entry) =>
-        entry.kind === 'clone' && entry.repositoryId === pull.repositoryId,
-    );
+    const directory = cloneOfPull(session.directories, pull);
     const branch = directory?.branch ?? pull.headBranch;
     const feedback = [...triggers.feedback, ...triggers.approvals].sort(
       (a, b) => a.createdAt.localeCompare(b.createdAt),
@@ -1845,6 +1844,7 @@ export class PrAutomationService
         const commit = await this.sessionGit.push(
           sessionId,
           directory.repositoryId,
+          directory.branch,
         );
         output.push(
           `Pushed ${directory.branch} of ${directory.repositoryName} to GitHub at ${commit.slice(0, 7)} (no force).`,
@@ -1882,16 +1882,18 @@ export class PrAutomationService
     if (
       owner &&
       !owner.autoclosedAt &&
-      owner.pullRequests.some((entry) => entry.autoclose) &&
-      owner.pullRequests.every(
-        (entry) => entry.id === pull.id || entry.state !== 'open',
-      ) &&
+      ((owner.pullRequests.some((entry) => entry.autoclose) &&
+        owner.pullRequests.every(
+          (entry) => entry.id === pull.id || entry.state !== 'open',
+        )) ||
+        extraCloneOf(owner, pull)) &&
       !turnIsOver(this.sessions.get(owner.id))
     ) {
       // Autoclose would end the turn that is going (e.g. the one that
-      // merged it with Claude's tool, or one waiting for an approval): the
-      // close stays unhandled until the turn is over (`sessionChanged`, or
-      // the first poll after a restart).
+      // merged it with Claude's tool, or one waiting for an approval), or
+      // the clone of the pull request's own branch would go while Claude
+      // may still work in it: the close stays unhandled until the turn is
+      // over (`sessionChanged`, or the first poll after a restart).
       return;
     }
     this.forgetWaiting(pull.id);
@@ -1915,12 +1917,18 @@ export class PrAutomationService
         kept.length > 0
           ? `Session ended; kept the clone of ${kept.join(', ')}: it has work that is not on GitHub`
           : 'Session ended and its clones removed';
-    } else if (pull.autoclose && open.length > 0) {
-      this.sessions.recordEvent(session.id, {
-        type: 'notice',
-        level: 'info',
-        text: `${pull.repositoryName}#${pull.number} was ${pull.state}. Autoclose waits until ${open.map((entry) => `${entry.repositoryName}#${entry.number}`).join(', ')} ${open.length === 1 ? 'is' : 'are'} merged or closed too.`,
-      });
+    } else {
+      if (pull.autoclose && open.length > 0) {
+        this.sessions.recordEvent(session.id, {
+          type: 'notice',
+          level: 'info',
+          text: `${pull.repositoryName}#${pull.number} was ${pull.state}. Autoclose waits until ${open.map((entry) => `${entry.repositoryName}#${entry.number}`).join(', ')} ${open.length === 1 ? 'is' : 'are'} merged or closed too.`,
+        });
+      }
+      const extra = extraCloneOf(session, pull);
+      if (extra) {
+        await this.removeExtraClone(session, pull, extra);
+      }
     }
     this.notifications.notifyPullRequestClosed(
       session.id,
@@ -2000,15 +2008,60 @@ export class PrAutomationService
     return kept;
   }
 
+  /**
+   * The pull request of a further branch's clone (`add_branch`) was merged
+   * or closed: its clone goes, unless it has work that is not on GitHub.
+   * The session goes on in its other directories.
+   */
+  private async removeExtraClone(
+    session: SessionRecord,
+    pull: PullRequestRecord,
+    directory: SessionDirectoryRecord,
+  ): Promise<void> {
+    const what = `${pull.repositoryName}#${pull.number} was ${pull.state}`;
+    const name = `the clone of ${directory.repositoryName} on ${directory.branch}`;
+    let detail: string | null = null;
+    try {
+      const loss = await this.git.cloneLoss(directory.path, {
+        knownRemoteCommits: this.remoteHeads(session, directory),
+      });
+      if (!lossIsEmpty(loss)) {
+        detail = describeLoss(loss);
+      }
+    } catch (error) {
+      detail = `it could not be checked (${errorText(error)})`;
+    }
+    if (detail === null) {
+      try {
+        await this.removeClone(session, directory);
+        await this.removeEmptyParents(session);
+      } catch (error) {
+        detail = `removing it failed (${errorText(error)})`;
+      }
+    }
+    this.sessions.recordEvent(session.id, {
+      type: 'notice',
+      level: detail === null ? 'info' : 'warning',
+      text:
+        detail === null
+          ? `${what}: removed ${name} (${directory.path}).`
+          : `${what}: kept ${name} (${directory.path}): ${detail}.`,
+    });
+    this.logger.log(
+      `${what}: ${detail === null ? 'removed' : 'kept'} ${directory.path}`,
+    );
+  }
+
   // --- Kept clones ---------------------------------------------------------
 
   /** What deleting a session clone would lose. */
   async cloneLoss(
     sessionId: string,
     repositoryId: string,
+    branch: string | null = null,
   ): Promise<CloneLossReport> {
     const session = this.requireSession(sessionId);
-    const directory = this.requireClone(session, repositoryId);
+    const directory = this.requireClone(session, repositoryId, branch);
     const loss = await this.git.cloneLoss(directory.path, {
       knownRemoteCommits: this.remoteHeads(session, directory),
     });
@@ -2029,6 +2082,7 @@ export class PrAutomationService
     sessionId: string,
     repositoryId: string,
     request: { confirm?: unknown },
+    branch: string | null = null,
   ): Promise<SessionDto> {
     const body = requireObject(request);
     if (body['confirm'] !== true) {
@@ -2040,13 +2094,13 @@ export class PrAutomationService
     if (session.status !== 'finished') {
       throw new ConflictException('End the session before deleting its clones');
     }
-    const directory = this.requireClone(session, repositoryId);
+    const directory = this.requireClone(session, repositoryId, branch);
     await this.removeClone(session, directory);
     await this.removeEmptyParents(session);
     this.sessions.recordEvent(sessionId, {
       type: 'notice',
       level: 'info',
-      text: `The clone of ${directory.repositoryName} was deleted.`,
+      text: `The clone of ${directory.repositoryName} on ${directory.branch} was deleted.`,
     });
     this.sessions.publishUpdate(sessionId);
     return this.sessions.get(sessionId);
@@ -2105,7 +2159,12 @@ export class PrAutomationService
     directory: SessionDirectoryRecord,
   ): string[] {
     return session.pullRequests
-      .filter((pull) => pull.repositoryId === directory.repositoryId)
+      .filter(
+        (pull) =>
+          pull.repositoryId === directory.repositoryId &&
+          cloneOfPull(session.directories, pull)?.position ===
+            directory.position,
+      )
       .flatMap((pull) => (pull.headSha ? [pull.headSha] : []));
   }
 
@@ -2149,10 +2208,9 @@ export class PrAutomationService
   private requireClone(
     session: SessionRecord,
     repositoryId: string,
+    branch: string | null,
   ): SessionDirectoryRecord {
-    const directory = session.directories.find(
-      (entry) => entry.kind === 'clone' && entry.repositoryId === repositoryId,
-    );
+    const directory = cloneOf(session.directories, repositoryId, branch);
     if (!directory) {
       throw new NotFoundException(
         `The session has no clone of repository ${repositoryId}`,
@@ -2195,4 +2253,40 @@ function describeLoss(loss: {
   ]
     .filter(Boolean)
     .join(', ');
+}
+
+/**
+ * The clone of a further branch (`add_branch`) a closed pull request came
+ * from, if its close removes it: never the repository's first clone, only
+ * a ready one, and not while another open pull request comes from it.
+ */
+function extraCloneOf(
+  session: SessionRecord,
+  pull: PullRequestRecord,
+): SessionDirectoryRecord | null {
+  if (pull.state === 'open' || pull.closeHandledAt) {
+    return null;
+  }
+  const directory = session.directories.find(
+    (entry) =>
+      entry.kind === 'clone' &&
+      entry.repositoryId === pull.repositoryId &&
+      entry.branch === pull.headBranch,
+  );
+  if (
+    !directory ||
+    directory.state !== 'ready' ||
+    clonesOf(session.directories, pull.repositoryId)[0]?.position ===
+      directory.position ||
+    session.pullRequests.some(
+      (entry) =>
+        entry.id !== pull.id &&
+        entry.state === 'open' &&
+        entry.repositoryId === pull.repositoryId &&
+        entry.headBranch === directory.branch,
+    )
+  ) {
+    return null;
+  }
+  return directory;
 }

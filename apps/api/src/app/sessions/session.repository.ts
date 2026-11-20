@@ -241,12 +241,16 @@ export function workingDirectory(record: SessionRecord): string {
 
 /**
  * Paths of the directories after the first that Claude works in (added
- * repositories only once they are ready, see {@link isActiveDirectory}).
+ * repositories only once they are ready, see {@link isActiveDirectory};
+ * not the clone of a further branch removed after its pull request).
  */
 export function additionalDirectories(record: SessionRecord): string[] {
   return record.directories
     .slice(1)
-    .filter(isActiveDirectory)
+    .filter(
+      (directory) =>
+        isActiveDirectory(directory) && directory.state !== 'removed',
+    )
     .map((directory) => directory.path);
 }
 

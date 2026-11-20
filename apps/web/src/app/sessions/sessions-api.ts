@@ -119,11 +119,19 @@ export class SessionsApi {
     return this.http.post<SessionDto>('/api/sessions', request);
   }
 
-  /** Pushes the session branch of one repository's clone. */
-  push(sessionId: string, repositoryId: string): Observable<SessionDto> {
+  /**
+   * Pushes the session branch of one clone: of a repository, on `branch`
+   * (the session may have several clones of one repository).
+   */
+  push(
+    sessionId: string,
+    repositoryId: string,
+    branch: string | null = null,
+  ): Observable<SessionDto> {
     return this.http.post<SessionDto>(
       `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/push`,
       {},
+      branchParams(branch),
     );
   }
 
@@ -131,10 +139,12 @@ export class SessionsApi {
     sessionId: string,
     repositoryId: string,
     request: CreatePullRequestRequest,
+    branch: string | null = null,
   ): Observable<PullRequestDto> {
     return this.http.post<PullRequestDto>(
       `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/pull-requests`,
       request,
+      branchParams(branch),
     );
   }
 
@@ -183,11 +193,17 @@ export class SessionsApi {
     repositoryId: string,
     path: string,
     oldPath: string | null,
+    branch: string | null = null,
   ): Observable<SessionDiffFile> {
     return this.http.get<SessionDiffFile>(
       `${sessionPath(sessionId)}/diff/file`,
       {
-        params: { repositoryId, path, ...(oldPath ? { oldPath } : {}) },
+        params: {
+          repositoryId,
+          path,
+          ...(oldPath ? { oldPath } : {}),
+          ...(branch ? { branch } : {}),
+        },
       },
     );
   }
@@ -223,9 +239,11 @@ export class SessionsApi {
   cloneLoss(
     sessionId: string,
     repositoryId: string,
+    branch: string | null = null,
   ): Observable<CloneLossReport> {
     return this.http.get<CloneLossReport>(
       `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/clone-loss`,
+      branchParams(branch),
     );
   }
 
@@ -249,10 +267,12 @@ export class SessionsApi {
     sessionId: string,
     repositoryId: string,
     action: 'retry' | 'accept' | 'remove',
+    branch: string | null = null,
   ): Observable<SessionDto> {
     return this.http.post<SessionDto>(
       `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/addition/${action}`,
       {},
+      branchParams(branch),
     );
   }
 
@@ -260,10 +280,12 @@ export class SessionsApi {
   discardClone(
     sessionId: string,
     repositoryId: string,
+    branch: string | null = null,
   ): Observable<SessionDto> {
     return this.http.post<SessionDto>(
       `${sessionPath(sessionId)}/repositories/${encodeURIComponent(repositoryId)}/discard-clone`,
       { confirm: true },
+      branchParams(branch),
     );
   }
 }
@@ -280,4 +302,14 @@ export function newId(): string {
   return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex
     .slice(6, 8)
     .join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+}
+
+/**
+ * The `branch` query parameter of the routes per clone (which clone of a
+ * repository the session has several of); none without a branch.
+ */
+function branchParams(branch: string | null): {
+  params?: { branch: string };
+} {
+  return branch ? { params: { branch } } : {};
 }

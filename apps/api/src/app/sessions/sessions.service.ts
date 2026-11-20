@@ -77,6 +77,8 @@ import {
 import {
   ADD_REPOSITORY_TOOL,
   ADD_REPOSITORY_TOOL_NAME,
+  ADD_BRANCH_TOOL,
+  ADD_BRANCH_TOOL_NAME,
   APP_MCP_SERVER,
   APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
@@ -1405,11 +1407,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   async retryAddition(
     sessionId: string,
     repositoryId: string,
+    branch: string | null = null,
   ): Promise<SessionDto> {
     const live = await this.addableSession(sessionId, repositoryId);
     const directory = this.workspaces.beginRetry(
       sessionId,
-      this.addedDirectory(sessionId, repositoryId).position,
+      this.addedDirectory(sessionId, repositoryId, branch).position,
     );
     void this.runAddition(
       live,
@@ -1430,11 +1433,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   async acceptAddition(
     sessionId: string,
     repositoryId: string,
+    branch: string | null = null,
   ): Promise<SessionDto> {
     const live = await this.addableSession(sessionId, repositoryId);
     const directory = this.workspaces.acceptHeldAddition(
       sessionId,
-      this.addedDirectory(sessionId, repositoryId).position,
+      this.addedDirectory(sessionId, repositoryId, branch).position,
     );
     await this.activateAddition(live, directory, 'user');
     this.append(live, {
@@ -1456,9 +1460,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   async removeAddition(
     sessionId: string,
     repositoryId: string,
+    branch: string | null = null,
   ): Promise<SessionDto> {
     const live = await this.addableSession(sessionId, repositoryId);
-    const directory = this.addedDirectory(sessionId, repositoryId);
+    const directory = this.addedDirectory(sessionId, repositoryId, branch);
     await this.workspaces.removeAddition(sessionId, directory.position);
     this.append(live, {
       type: 'notice',
@@ -1868,6 +1873,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // What the user allowed for the session applies to every process.
       const allowed = sessionAllows(this.storedEvents.list(record.id));
       const directories = additionalDirectories(record);
+      // Further branches only of repositories with a remote (pull requests).
+      const offersBranches = record.directories.some(
+        (directory) => directory.kind === 'clone' && !directory.repositoryLocal,
+      );
       const first = this.withNote(
         live,
         await this.agentMessage(live.id, firstMessage),
@@ -1895,6 +1904,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             SET_SESSION_TITLE_TOOL_NAME,
             // Changes only what the session list shows.
             SET_WAITING_STATE_TOOL_NAME,
+            // Clones only a repository of the session (owner's decision).
+            ...(offersBranches ? [ADD_BRANCH_TOOL_NAME] : []),
           ],
           env: { ...SESSION_ENV, ...extras.env },
           tools: [
@@ -1903,6 +1914,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             ...(record.titleSource === 'user' ? [] : [this.setTitleTool(live)]),
             this.setWaitingStateTool(live),
             ...(this.additions ? [this.addRepositoryTool(live)] : []),
+            ...(offersBranches ? [this.addBranchTool(live)] : []),
           ],
           settings: extras.settings,
           ...(extras.instructions ? { instructions: extras.instructions } : {}),
@@ -2866,6 +2878,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       title: text('title') ?? '',
       body: text('body'),
       base: text('base') ?? clone?.baseBranch ?? null,
+      head: text('branch') ?? clone?.branch ?? null,
       draft: input['draft'] === true,
     };
   }
@@ -2989,14 +3002,21 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     );
     const named =
       typeof input['repository'] === 'string' ? input['repository'] : null;
-    const clone = named
-      ? clones.find(
+    const branch = typeof input['branch'] === 'string' ? input['branch'] : null;
+    // Several clones of one repository (add_branch) are one repository; the
+    // branch picks the clone, else its first.
+    const candidates = named
+      ? clones.filter(
           (directory) =>
             directory.repositoryName?.toLowerCase() === named.toLowerCase(),
         )
-      : clones.length === 1
-        ? clones[0]
-        : undefined;
+      : new Set(clones.map((directory) => directory.repositoryId)).size === 1
+        ? clones
+        : [];
+    const clone =
+      (branch
+        ? candidates.find((directory) => directory.branch === branch)
+        : undefined) ?? candidates[0];
     return { named, clone };
   }
 
@@ -3030,13 +3050,20 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return live;
   }
 
-  /** The added directory of a repository of the session (404 otherwise). */
+  /**
+   * The added directory of a repository of the session, the one on
+   * `branch` when it has several (404 otherwise).
+   */
   private addedDirectory(
     sessionId: string,
     repositoryId: string,
+    branch: string | null,
   ): SessionDirectoryRecord {
     const directory = this.requireRecord(sessionId).directories.find(
-      (entry) => entry.repositoryId === repositoryId && entry.addition,
+      (entry) =>
+        entry.repositoryId === repositoryId &&
+        entry.addition &&
+        (!branch || entry.branch === branch),
     );
     if (!directory) {
       throw new NotFoundException(
@@ -3063,6 +3090,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live: LiveSession,
     directory: SessionDirectoryRecord,
     by: RepositoryAddedBy,
+    reason?: string,
   ): Promise<AdditionOutcome> {
     const controller = new AbortController();
     live.addition = controller;
@@ -3081,7 +3109,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         state: 'started',
         target: directory.repositoryName,
         path: directory.path,
-        message: by === 'claude' ? 'Requested by Claude' : 'Added by you',
+        message:
+          by === 'claude'
+            ? reason
+              ? `Branch ${directory.branch} requested by Claude: ${reason}`
+              : 'Requested by Claude'
+            : 'Added by you',
       });
       let outcome: AdditionOutcome;
       try {
@@ -3529,6 +3562,138 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         }
         return {
           text: additionResult(outcome, name, reopening),
+          isError: outcome.state !== 'ready',
+        };
+      },
+    };
+  }
+
+  /**
+   * The tool `add_branch`: another clone of one of the session's
+   * repositories on a branch of its own (`claude/<slug>-2`, …), for a
+   * further pull request in parallel, prepared like an added repository.
+   * No approval (the owner's decision): it clones only a repository the
+   * session has already; pushes and pull requests ask as before.
+   */
+  private addBranchTool(live: LiveSession): AgentTool {
+    return {
+      name: ADD_BRANCH_TOOL,
+      description:
+        'Start a further pull request in parallel: adds another clone of one of the repositories ' +
+        'of this session, on a new branch of its own (claude/<session>-2, -3, …) created from ' +
+        "the latest base branch on the remote (default: the base of the repository's first " +
+        'clone), and runs its setup script. Work, commit and push there for the new pull request; ' +
+        'create it with create_pull_request naming that branch. Use it also for the next pull ' +
+        'request after one was merged, instead of rewriting a session branch. A clone whose pull ' +
+        'request is merged or closed is removed when your turn ends, unless it has work that is ' +
+        'not on GitHub. The result says where the clone is.',
+      inputSchema: (z) => ({
+        repository: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            'owner/name of a repository of this session; may be omitted if the session has only one',
+          ),
+        base_branch: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            "Branch to start from; default: the base branch of the repository's first clone",
+          ),
+        reason: z
+          .string()
+          .min(1)
+          .max(1000)
+          .describe('What the new branch is for; shown in the session history'),
+      }),
+      handler: async (input) => {
+        const record = this.requireRecord(live.id);
+        const named =
+          typeof input['repository'] === 'string'
+            ? input['repository'].trim()
+            : null;
+        const reason =
+          typeof input['reason'] === 'string'
+            ? input['reason'].replace(/\s+/g, ' ').trim()
+            : '';
+        const baseBranch =
+          typeof input['base_branch'] === 'string' &&
+          input['base_branch'].trim()
+            ? input['base_branch'].trim()
+            : null;
+        const repositories = [
+          ...new Map(
+            record.directories
+              .filter(
+                (directory) =>
+                  directory.kind === 'clone' &&
+                  directory.repositoryId &&
+                  directory.state !== 'removed',
+              )
+              .map((directory) => [directory.repositoryId, directory]),
+          ).values(),
+        ];
+        const matches = named
+          ? repositories.filter(
+              (directory) =>
+                directory.repositoryName?.toLowerCase() === named.toLowerCase(),
+            )
+          : repositories;
+        if (matches.length !== 1) {
+          const names = repositories
+            .map((directory) => directory.repositoryName)
+            .join(', ');
+          return {
+            isError: true,
+            text: named
+              ? `${named} is not a repository of this session (${names || 'none'}); add it with add_repository first.`
+              : `Name the repository: this session has ${names || 'no repositories'}.`,
+          };
+        }
+        const repositoryId = matches[0].repositoryId as string;
+        const name = matches[0].repositoryName ?? 'the repository';
+        let directory: SessionDirectoryRecord;
+        try {
+          if (!reason) {
+            throw new BadRequestException(
+              'say what the new branch is for (reason)',
+            );
+          }
+          if (live.addition) {
+            throw new ConflictException(
+              'a repository or branch is being added to this session right now; try again when it is ready',
+            );
+          }
+          directory = this.workspaces.planBranchAddition(
+            live.id,
+            repositoryId,
+            baseBranch,
+            'claude',
+          );
+        } catch (error) {
+          return {
+            isError: true,
+            text: `No branch was added: ${httpErrorText(error)}.`,
+          };
+        }
+        const outcome = await this.runAddition(
+          live,
+          directory,
+          'claude',
+          reason,
+        );
+        const reopening = outcome.state === 'ready' && live.reopen !== null;
+        if (reopening && live.reopen) {
+          live.reopen.continueWith = continuationText(outcome.directory);
+        }
+        return {
+          text: additionResult(
+            outcome,
+            `A further clone of ${name}`,
+            reopening,
+          ),
           isError: outcome.state !== 'ready',
         };
       },

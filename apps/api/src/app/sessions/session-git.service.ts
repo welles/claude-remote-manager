@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Subject } from 'rxjs';
+import { cloneOf, cloneOfPull } from './session-clones';
 import type {
   CreatePullRequestRequest,
   PullRequestCreator,
@@ -152,18 +153,25 @@ export class SessionGitService {
     return session;
   }
 
-  /** A ready session clone of a repository; 404/409 otherwise. */
-  clone(sessionId: string, repositoryId: string): SessionClone {
+  /**
+   * A ready session clone of a repository, the one on `branch` (needed
+   * when the session has several clones of it); 404/409 otherwise.
+   */
+  clone(
+    sessionId: string,
+    repositoryId: string,
+    branch?: string | null,
+  ): SessionClone {
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new NotFoundException(`Session ${sessionId} not found`);
     }
-    const directory = session.directories.find(
-      (entry) => entry.kind === 'clone' && entry.repositoryId === repositoryId,
-    );
+    const directory = cloneOf(session.directories, repositoryId, branch);
     if (!directory || !directory.branch) {
       throw new NotFoundException(
-        `The session has no clone of repository ${repositoryId}`,
+        branch
+          ? `The session has no clone of repository ${repositoryId} on ${branch}`
+          : `The session has no clone of repository ${repositoryId}`,
       );
     }
     if (directory.state !== 'ready') {
@@ -186,8 +194,12 @@ export class SessionGitService {
    * Pushes the session branch of one clone (no force) and records the
    * pushed commit. Returns it.
    */
-  async push(sessionId: string, repositoryId: string): Promise<string> {
-    const clone = this.clone(sessionId, repositoryId);
+  async push(
+    sessionId: string,
+    repositoryId: string,
+    branch?: string | null,
+  ): Promise<string> {
+    const clone = this.clone(sessionId, repositoryId, branch);
     const { directory, repository } = clone;
     if (repository.cloneUrl === null) {
       throw new ConflictException(
@@ -229,10 +241,11 @@ export class SessionGitService {
   async notePushedCommit(
     sessionId: string,
     repositoryId: string,
+    branch?: string | null,
   ): Promise<boolean> {
     let clone: SessionClone;
     try {
-      clone = this.clone(sessionId, repositoryId);
+      clone = this.clone(sessionId, repositoryId, branch);
     } catch {
       return false;
     }
@@ -261,6 +274,7 @@ export class SessionGitService {
     repositoryId: string,
     request: CreatePullRequestRequest,
     createdBy: PullRequestCreator,
+    branch?: string | null,
   ): Promise<PullRequestDto> {
     const body = requireObject(request);
     const title = optionalString(body, 'title', {
@@ -274,7 +288,7 @@ export class SessionGitService {
     if (draft !== undefined && draft !== null && typeof draft !== 'boolean') {
       throw new BadRequestException('draft must be a boolean');
     }
-    const clone = this.clone(sessionId, repositoryId);
+    const clone = this.clone(sessionId, repositoryId, branch);
     const { session, directory, repository } = clone;
     if (!isGitHubRepository(repository)) {
       throw new ConflictException(
@@ -301,7 +315,7 @@ export class SessionGitService {
         directory.branch,
       );
       if (head && head !== remote) {
-        await this.push(sessionId, repositoryId);
+        await this.push(sessionId, repositoryId, directory.branch);
       }
     }
     const info = await this.github.createPullRequest(
@@ -641,9 +655,7 @@ export class SessionGitService {
     const pull = session.pullRequests.find(
       (entry) => entry.repositoryId === repositoryId && entry.number === number,
     );
-    const directory = session.directories.find(
-      (entry) => entry.kind === 'clone' && entry.repositoryId === repositoryId,
-    );
+    const directory = pull ? cloneOfPull(session.directories, pull) : undefined;
     const repository = this.repositories.get(repositoryId);
     if (
       !pull ||

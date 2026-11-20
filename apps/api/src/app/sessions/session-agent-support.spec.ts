@@ -108,6 +108,7 @@ describe('session integrations (tools, memory, pushes)', () => {
       'set_session_title',
       'set_waiting_state',
       'add_repository',
+      'add_branch',
     ]);
     // Showing a file, setting the title and the waiting state, and asking
     // for the owner's decision (it only pauses automerge) never ask.
@@ -117,6 +118,8 @@ describe('session integrations (tools, memory, pushes)', () => {
     expect(options().allowedTools).toContain(
       'mcp__crm__request_owner_decision',
     );
+    // Adding a further branch only clones a repository of the session.
+    expect(options().allowedTools).toContain('mcp__crm__add_branch');
     await expect(
       git(session.cwd, 'config', '--local', '--get-all', 'credential.helper'),
     ).rejects.toThrow();

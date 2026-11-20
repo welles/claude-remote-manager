@@ -1,14 +1,16 @@
-import { Body, Controller, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, Param, Post, Query } from '@nestjs/common';
 import type {
   CreatePullRequestRequest,
   PullRequestDto,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
+import { branchParam } from './session-clones';
 import { SessionGitService } from './session-git.service';
 import { SessionsService } from './sessions.service';
 
 /**
- * Push and pull requests per repository of a session, by button. The
+ * Push and pull requests per clone of a session, by button (the clone of
+ * a repository on `?branch=`, required when the session has several). The
  * user's click is the approval; Claude's own pushes and pull requests go
  * through the approval of the tool call instead.
  */
@@ -25,8 +27,9 @@ export class SessionGitController {
   async push(
     @Param('id') id: string,
     @Param('repositoryId') repositoryId: string,
+    @Query('branch') branch?: string,
   ): Promise<SessionDto> {
-    await this.git.push(id, repositoryId);
+    await this.git.push(id, repositoryId, branchParam(branch));
     return this.sessions.get(id);
   }
 
@@ -36,8 +39,15 @@ export class SessionGitController {
     @Param('id') id: string,
     @Param('repositoryId') repositoryId: string,
     @Body() request: CreatePullRequestRequest,
+    @Query('branch') branch?: string,
   ): Promise<PullRequestDto> {
-    return this.git.createPullRequest(id, repositoryId, request ?? {}, 'user');
+    return this.git.createPullRequest(
+      id,
+      repositoryId,
+      request ?? {},
+      'user',
+      branchParam(branch),
+    );
   }
 
   /** Reads the state of the session's open pull requests from GitHub. */

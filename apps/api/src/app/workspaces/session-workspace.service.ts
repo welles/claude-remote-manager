@@ -477,6 +477,99 @@ export class SessionWorkspaceService {
   }
 
   /**
+   * Adds a further clone of a repository the session has already, on a
+   * branch of its own for a further pull request in parallel (tool
+   * `add_branch`): `claude/<slug>-2`, `-3`, … (numbered, no content in
+   * the name) at `sessions/<slug>/<owner>/<name>-2`, from the base branch of
+   * the repository's first clone unless another is named. Recorded as an
+   * addition like {@link planAddition}; {@link prepareAddition} makes the
+   * clone from the freshly fetched mirror. Local projects without remote
+   * are refused (their branches never reach a pull request).
+   */
+  planBranchAddition(
+    sessionId: string,
+    repositoryId: string,
+    baseBranch: string | null,
+    by: RepositoryAddedBy,
+  ): SessionDirectoryRecord {
+    const session = this.sessions.require(sessionId);
+    if (!session.slug) {
+      throw new ConflictException(
+        'This session was created before session clones; start a new session to add branches',
+      );
+    }
+    if (baseBranch !== null && !isValidBranchName(baseBranch)) {
+      throw new BadRequestException('baseBranch is not a valid branch name');
+    }
+    this.settings.requireGitIdentity();
+    let repository: RepositoryRecord;
+    try {
+      repository = this.repositories.require(repositoryId);
+    } catch {
+      throw new BadRequestException(`Repository ${repositoryId} not found`);
+    }
+    const name = `${repository.owner}/${repository.name}`;
+    const first = session.directories.find(
+      (directory) =>
+        directory.kind === 'clone' && directory.repositoryId === repositoryId,
+    );
+    if (!first) {
+      throw new ConflictException(
+        `${name} is not part of this session; add the repository first`,
+      );
+    }
+    if (repository.cloneUrl === null) {
+      throw new ConflictException(
+        `${name} is a local project without remote: a further branch could not become a pull request`,
+      );
+    }
+    if (
+      session.directories.some(
+        (directory) =>
+          directory.addition &&
+          directory.addition.state !== 'ready' &&
+          directory.state !== 'removed',
+      )
+    ) {
+      throw new ConflictException(
+        'A repository or branch is being added to this session, or its addition failed; retry or remove it in the session details first',
+      );
+    }
+    const clones = session.directories.filter(
+      (directory) => isClone(directory) && directory.state !== 'removed',
+    );
+    if (clones.length >= MAX_SESSION_REPOSITORIES) {
+      throw new BadRequestException(
+        `A session can have at most ${MAX_SESSION_REPOSITORIES} clones`,
+      );
+    }
+    // Numbers are never reused: a removed clone's branch may still be on
+    // GitHub (its pull request's head).
+    const branches = new Set(
+      session.directories.map((directory) => directory.branch),
+    );
+    const paths = new Set(
+      session.directories.map((directory) => directory.path),
+    );
+    const base = this.clonePath(repository, session.slug);
+    let number = 2;
+    while (
+      branches.has(`claude/${session.slug}-${number}`) ||
+      paths.has(`${base}-${number}`)
+    ) {
+      number++;
+    }
+    return this.sessions.addDirectory(sessionId, {
+      path: `${base}-${number}`,
+      repositoryId,
+      branch: `claude/${session.slug}-${number}`,
+      baseBranch: baseBranch ?? first.baseBranch,
+      setupStatus: repository.setupScript ? 'pending' : 'none',
+      addedBy: by,
+    });
+  }
+
+  /**
    * Prepares a repository added to a running session like the session's
    * own: fetches the mirror, makes the clone on the session branch and
    * runs the repository's setup script. A clone that cannot be made is

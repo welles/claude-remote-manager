@@ -1,9 +1,10 @@
 @if (keptClones().length > 0) {
 <section class="kept" data-testid="kept-clones">
-  @for (clone of keptClones(); track clone.repositoryId) {
+  @for (clone of keptClones(); track clone.key) {
   <p>
-    Autoclose kept the clone of <strong>{{ clone.name }}</strong>: it has work
-    that is not on GitHub.
+    Autoclose kept the clone of <strong>{{ clone.name }}</strong>@if
+    (clone.branch) { on <code>{{ clone.branch }}</code>}: it has work that is
+    not on GitHub.
     <button
       matButton="outlined"
       type="button"
@@ -18,11 +19,13 @@
 </section>
 } @if (clones().length > 0) {
 <section class="git" data-testid="git-panel">
-  @for (clone of clones(); track clone.repositoryId) {
+  @for (clone of clones(); track clone.key) {
   <div class="clone" data-testid="git-clone">
     <div class="clone-head">
       <strong>{{ clone.name }}</strong>
-      @if (clone.directory.pushedCommit; as pushed) {
+      @if (clone.branch) {
+      <code class="branch" data-testid="clone-branch">{{ clone.branch }}</code>
+      } @if (clone.directory.pushedCommit; as pushed) {
       <span class="pushed" data-testid="pushed"
         >pushed <code>{{ pushed.slice(0, 7) }}</code> @if
         (clone.directory.pushedAt) { {{ clone.directory.pushedAt | appDate }}
@@ -51,7 +54,7 @@
       </button>
       }
     </div>
-    @if (composing() === clone.repositoryId) {
+    @if (composing() === clone.key) {
     <form
       class="pr-form"
       (ngSubmit)="createPullRequest(clone)"
@@ -104,7 +107,7 @@
         </button>
       </div>
     </form>
-    } @if (messages()[clone.repositoryId]; as message) {
+    } @if (messages()[clone.key]; as message) {
     <p class="message" [class.error]="message.error" data-testid="git-message">
       {{ message.text }}
     </p>
