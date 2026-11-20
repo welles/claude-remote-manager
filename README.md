@@ -419,7 +419,8 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   `set_session_title` (unless the user chose the title, see
   [Managing sessions](#managing-sessions)), `add_repository` (always, see
   [Adding repositories to a running session](#adding-repositories-to-a-running-session)) and
-  `create_pull_request`, `reply_to_review_thread` and `request_owner_decision` (when the
+  `create_pull_request`, `reply_to_review_thread`, `merge_pull_request`, `set_pr_automation`
+  and `request_owner_decision` (when the
   session has a GitHub repository; all in the in-process MCP
   server `crm`), and the auto-memory directory of its main repository. No credentials: git uses
   the user's own (see [Push and pull requests](#push-and-pull-requests)).
@@ -1687,10 +1688,14 @@ off by default, with the attempt count and limit, "Reset count", what started th
 
 Claude switches them too, with the tool `set_pr_automation` (repository, pull request,
 `autofix`, `automerge`, `autoclose`; omitted switches stay): for the session's own open pull
-requests, as the switches do (`PrAutomationService.setAutomationByClaude`). It asks as the
-permission mode says (the dialog shows the pull request and each switch it sets). During an
-Autofix run it only turns switches off: the run acts on GitHub's untrusted content, which must
-not turn on fixing or merging.
+requests, as the switches do (`PrAutomationService.setAutomationByClaude`); switches already
+as asked are left alone. It asks as the permission mode says (the dialog shows the pull
+request and each switch it sets), and the session's history notes each change. It only turns
+switches off during an Autofix run (from its message to the end of the turn it started,
+also after a reopen), and never turns automerge on while it waits for the owner's decision
+(`request_owner_decision`; turning automerge off keeps that wait). Only the Autofix turn is
+guarded this way: GitHub's text stays in the conversation, and in later turns (or what Claude
+reads with `gh`) the permission mode is the only guard, as for `merge_pull_request`.
 
 ### Where events come from
 

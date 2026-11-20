@@ -243,7 +243,8 @@ function errorText(error: unknown): string {
 
 /**
  * The session's integrations with git and GitHub:
- * - the tools `create_pull_request` and `reply_to_review_thread`;
+ * - the tools `create_pull_request`, `reply_to_review_thread`,
+ *   `merge_pull_request`, `set_pr_automation` and `request_owner_decision`;
  * - auto-memory per repository: Claude Code keeps its memory per working
  *   directory, i.e. per session clone; all sessions of a repository share
  *   `<memoryDir>/<repository id>` instead (scratch sessions keep Claude
