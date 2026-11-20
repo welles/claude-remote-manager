@@ -408,6 +408,12 @@ describe('PullRequestChecksService', () => {
     it('waits a short time for the checks of a new head commit to show up', async () => {
       timing.ciStartMs = 60_000;
       const { sessionId, pull, head } = await sessionWithPullRequest();
+      // Right away, before the checks are read.
+      expect(checksOf(pull)).toBeNull();
+      expect(harness.service.get(sessionId)).toMatchObject({
+        waitingFor: 'background',
+        waitingReason: `CI of #${pull.number}`,
+      });
       await waitFor(() => checksOf(pull) !== null);
       expect(harness.service.get(sessionId).waitingFor).toBe('background');
       // Checks show up: the wait goes on while they run.

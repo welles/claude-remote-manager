@@ -245,6 +245,10 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     this.subscriptions.push(
       this.sessionGit.refreshed$.subscribe((pull) => {
         if (this.outdated(pull)) {
+          // A new pull request or head commit: the session waits for its
+          // CI right away, not only once the checks were read (the turn
+          // creating the pull request usually ends before that).
+          this.startCiWait(pull);
           this.schedule(pull.id);
         }
       }),
@@ -321,14 +325,26 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
         pull.headBranch === push.branch &&
         pull.headSha !== push.commit
       ) {
-        if (this.sessions.ciWaitPhase(push.sessionId, pull.id) === null) {
-          this.sessions.setCiWait(push.sessionId, pull.id, {
-            phase: 'running',
-            untilMs: Date.now() + this.timing.ciStartMs,
-          });
-        }
+        this.startCiWait(pull);
         void this.refreshHead(pull.id, push.commit, HEAD_RETRIES);
       }
+    }
+  }
+
+  /**
+   * The session waits for the CI of a pull request whose checks are not
+   * read yet, for at most {@link PullRequestChecksTiming.ciStartMs} (unless
+   * it waits for it already).
+   */
+  private startCiWait(pull: PullRequestRecord): void {
+    if (
+      pull.state === 'open' &&
+      this.sessions.ciWaitPhase(pull.sessionId, pull.id) === null
+    ) {
+      this.sessions.setCiWait(pull.sessionId, pull.id, {
+        phase: 'running',
+        untilMs: Date.now() + this.timing.ciStartMs,
+      });
     }
   }
 
