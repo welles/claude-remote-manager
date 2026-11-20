@@ -14,7 +14,7 @@
     <span class="icon">
       <app-icon [name]="item.icon" />
       @if (item.link === '/' && needsYou() > 0) {
-      <span class="badge" data-testid="nav-needs-you"
+      <span class="nav-badge" data-testid="nav-needs-you"
         >{{ needsYou() }}<span class="visually-hidden"> need you</span></span
       >
       }
