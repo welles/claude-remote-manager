@@ -334,19 +334,23 @@ describe('SessionGitPanel', () => {
         }),
       );
       await click('discard-clone');
-      http.expectOne('/api/sessions/s1/repositories/r1/clone-loss').flush({
-        repositoryId: 'r1',
-        repository: 'acme/app',
-        path: '/workspace/sessions/x/acme/app',
-        uncommittedFiles: ['notes.txt'],
-        uncommittedCount: 1,
-        unpushedCommits: [
-          { branch: 'claude/x', sha: 'abcdef1234567', subject: 'Local work' },
-        ],
-        unpushedCount: 1,
-        stashes: 2,
-        clean: false,
-      });
+      http
+        .expectOne(
+          '/api/sessions/s1/repositories/r1/clone-loss?branch=claude/reply-with-pong-abc123',
+        )
+        .flush({
+          repositoryId: 'r1',
+          repository: 'acme/app',
+          path: '/workspace/sessions/x/acme/app',
+          uncommittedFiles: ['notes.txt'],
+          uncommittedCount: 1,
+          unpushedCommits: [
+            { branch: 'claude/x', sha: 'abcdef1234567', subject: 'Local work' },
+          ],
+          unpushedCount: 1,
+          stashes: 2,
+          clean: false,
+        });
       fixture.detectChanges();
       const dialog = all('discard-clone-dialog')[0];
       expect(dialog).toContain('Delete the clone of acme/app?');
@@ -357,7 +361,7 @@ describe('SessionGitPanel', () => {
       await click('discard-clone-confirm');
       const discard = http.expectOne({
         method: 'POST',
-        url: '/api/sessions/s1/repositories/r1/discard-clone',
+        url: '/api/sessions/s1/repositories/r1/discard-clone?branch=claude/reply-with-pong-abc123',
       });
       expect(discard.request.body).toEqual({ confirm: true });
       discard.flush(githubSession());
@@ -419,12 +423,50 @@ describe('SessionGitPanel', () => {
       'Pushed claude/reply-with-pong-abc123-2',
     ]);
   });
+
+  it('lists the pull request of a removed further branch under the first clone, with its branch', async () => {
+    const first = githubSession().directories[0];
+    const { element, all } = await render(
+      sessionDto({
+        directories: [
+          first,
+          {
+            ...first,
+            role: 'additional',
+            path: `${first.path}-2`,
+            branch: 'claude/reply-with-pong-abc123-2',
+            state: 'removed',
+            addition: {
+              addedAt: '2026-01-01T10:00:00.000Z',
+              by: 'claude',
+              state: 'retired',
+              error: null,
+            },
+          },
+        ],
+        pullRequests: [
+          pull({
+            id: 2,
+            number: 8,
+            title: 'Second fix',
+            state: 'merged',
+            headBranch: 'claude/reply-with-pong-abc123-2',
+          }),
+        ],
+      }),
+    );
+    expect(all('git-clone')).toHaveLength(1);
+    expect(all('pull-request')[0]).toContain('#8 Second fix');
+    expect(
+      element.querySelector('[data-testid="pull-request-branch"]')?.textContent,
+    ).toContain('claude/reply-with-pong-abc123-2');
+  });
   it('pushes by button and shows the outcome', async () => {
     const { fixture, all, click } = await render(githubSession());
     await click('push');
     const request = http.expectOne({
       method: 'POST',
-      url: '/api/sessions/s1/repositories/r1/push',
+      url: '/api/sessions/s1/repositories/r1/push?branch=claude/reply-with-pong-abc123',
     });
     request.flush(githubSession());
     fixture.detectChanges();
@@ -446,7 +488,7 @@ describe('SessionGitPanel', () => {
     await click('pr-submit');
     const request = http.expectOne({
       method: 'POST',
-      url: '/api/sessions/s1/repositories/r1/pull-requests',
+      url: '/api/sessions/s1/repositories/r1/pull-requests?branch=claude/reply-with-pong-abc123',
     });
     expect(request.request.body).toEqual({
       title: 'Reply with pong',
@@ -467,7 +509,7 @@ describe('SessionGitPanel', () => {
     http
       .expectOne({
         method: 'POST',
-        url: '/api/sessions/s1/repositories/r1/pull-requests',
+        url: '/api/sessions/s1/repositories/r1/pull-requests?branch=claude/reply-with-pong-abc123',
       })
       .flush(pull({ draft: true }));
     fixture.detectChanges();
@@ -477,13 +519,17 @@ describe('SessionGitPanel', () => {
   it('shows errors of the API', async () => {
     const { fixture, all, click } = await render(githubSession());
     await click('push');
-    http.expectOne('/api/sessions/s1/repositories/r1/push').flush(
-      {
-        message:
-          'The remote branch has commits the session clone does not have',
-      },
-      { status: 409, statusText: 'Conflict' },
-    );
+    http
+      .expectOne(
+        '/api/sessions/s1/repositories/r1/push?branch=claude/reply-with-pong-abc123',
+      )
+      .flush(
+        {
+          message:
+            'The remote branch has commits the session clone does not have',
+        },
+        { status: 409, statusText: 'Conflict' },
+      );
     fixture.detectChanges();
     expect(all('git-message')[0]).toContain('remote branch has commits');
   });

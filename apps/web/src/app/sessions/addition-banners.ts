@@ -118,18 +118,7 @@ export class AdditionBanners {
     this.busy.set(true);
     this.error.set(null);
     this.api
-      .additionAction(
-        this.session().id,
-        repositoryId,
-        action,
-        // Names the clone when the session has several of the repository.
-        this.session().directories.some(
-          (other) =>
-            other !== directory && other.repository?.id === repositoryId,
-        )
-          ? directory.branch
-          : null,
-      )
+      .additionAction(this.session().id, repositoryId, action, directory.branch)
       .subscribe({
         next: (session) => {
           this.busy.set(false);

@@ -696,6 +696,52 @@ describe('adding repositories to a running session', () => {
       ).rejects.toThrow();
     });
 
+    it('forgets a branch whose clone failed, so that the next one works', async () => {
+      const main = await harness.addRepository('acme', 'app');
+      const session = await harness.service.create({
+        prompt: 'Do the work',
+        repositories: [{ repositoryId: main.id }],
+      });
+      await harness.prepared(session.id);
+      const run = harness.runner.last;
+      const failed = await tool(run).handler(
+        { base_branch: 'missing', reason: 'From nowhere' },
+        { toolUseId: 't1' },
+      );
+      expect(failed.isError).toBe(true);
+      expect(failed.text).toContain('No branch was added');
+      expect(failed.text).toContain('Nothing was left behind');
+      expect(harness.service.get(session.id).directories).toHaveLength(1);
+
+      const next = await tool(run).handler(
+        { reason: 'Second fix' },
+        { toolUseId: 't2' },
+      );
+      expect(next.isError).toBe(false);
+      expect(next.text).toContain(`claude/${session.slug}-2`);
+    });
+
+    it('resumes a restarted session with both clones', async () => {
+      const main = await harness.addRepository('acme', 'app');
+      const session = await harness.service.create({
+        prompt: 'Do the work',
+        repositories: [{ repositoryId: main.id }],
+      });
+      await harness.prepared(session.id);
+      const run = harness.runner.last;
+      await tool(run).handler({ reason: 'Second fix' }, { toolUseId: 't1' });
+      run.emit(resultMessage(10, 0.01));
+      await waitFor(() => harness.service.get(session.id).status === 'waiting');
+      run.close();
+      await flush();
+      const runs = harness.runner.runs.length;
+      await harness.service.send(session.id, { text: 'Go on' });
+      await waitFor(() => harness.runner.runs.length > runs);
+      expect(harness.runner.last.options.additionalDirectories).toContain(
+        `${clonePath(session, 'acme', 'app')}-2`,
+      );
+    });
+
     it('refuses unknown repositories and a missing reason', async () => {
       const main = await harness.addRepository('acme', 'app');
       const session = await harness.service.create({

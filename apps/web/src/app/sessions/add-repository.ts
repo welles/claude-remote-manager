@@ -17,6 +17,7 @@ import type {
   RepositoryDto,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
+import { isRetiredClone } from '@claude-remote-manager/shared-types';
 import { GitHubRepositoryPicker } from '../github/github-repository-picker';
 import {
   RepositoriesApi,
@@ -105,7 +106,10 @@ export class AddRepository {
       !session.archivedAt &&
       session.status !== 'preparing' &&
       session.pendingMessage === null &&
-      !session.directories.some((directory) => directory.state === 'removed')
+      !session.directories.some(
+        (directory) =>
+          directory.state === 'removed' && !isRetiredClone(directory),
+      )
     );
   });
   protected readonly projectValid = () =>

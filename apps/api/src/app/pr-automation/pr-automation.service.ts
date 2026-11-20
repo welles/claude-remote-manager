@@ -2010,8 +2010,10 @@ export class PrAutomationService
 
   /**
    * The pull request of a further branch's clone (`add_branch`) was merged
-   * or closed: its clone goes, unless it has work that is not on GitHub.
-   * The session goes on in its other directories.
+   * or closed: its clone goes (`retired`), unless it has work that is not
+   * on GitHub. The session goes on in its other directories; Claude is told
+   * with its next message, and an idle Claude Code process is restarted
+   * without the directory.
    */
   private async removeExtraClone(
     session: SessionRecord,
@@ -2031,10 +2033,20 @@ export class PrAutomationService
     } catch (error) {
       detail = `it could not be checked (${errorText(error)})`;
     }
+    if (detail === null && !turnIsOver(this.sessions.get(session.id))) {
+      // A turn started while the clone was checked: Claude may work in it
+      // again. The close is handled already, so the clone stays.
+      detail = 'a turn started meanwhile';
+    }
     if (detail === null) {
       try {
         await this.removeClone(session, directory);
+        this.records.updateDirectory(session.id, directory.position, {
+          additionState: 'retired',
+          announce: true,
+        });
         await this.removeEmptyParents(session);
+        this.sessions.directoryRetired(session.id);
       } catch (error) {
         detail = `removing it failed (${errorText(error)})`;
       }

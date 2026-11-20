@@ -45,6 +45,7 @@ import {
   WorkspaceEntries,
   type WorkspaceRule,
 } from '../workspaces/workspace-entries';
+import { cloneOfPull } from './session-clones';
 import { SessionGitService } from './session-git.service';
 import {
   parseRemoteBranchChoices,
@@ -453,7 +454,11 @@ export class SessionManagementService {
     ];
     const known = [
       ...record.pullRequests
-        .filter((pull) => pull.repositoryId === directory.repositoryId)
+        .filter(
+          (pull) =>
+            cloneOfPull(record.directories, pull)?.position ===
+            directory.position,
+        )
         .flatMap((pull) => (pull.headSha ? [pull.headSha] : [])),
       ...(directory.pushedCommit ? [directory.pushedCommit] : []),
     ];

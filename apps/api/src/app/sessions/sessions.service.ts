@@ -18,6 +18,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import {
   CLAUDE_WAIT_LIMIT_MINUTES,
+  isRetiredClone,
   MAX_ATTACHMENTS_PER_MESSAGE,
   SESSION_PERMISSION_MODES,
   summarizePendingRequests,
@@ -1873,10 +1874,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // What the user allowed for the session applies to every process.
       const allowed = sessionAllows(this.storedEvents.list(record.id));
       const directories = additionalDirectories(record);
-      // Further branches only of repositories with a remote (pull requests).
-      const offersBranches = record.directories.some(
-        (directory) => directory.kind === 'clone' && !directory.repositoryLocal,
-      );
+      // Further branches, like further repositories, can come up any time
+      // (a repository added later); the tool refuses what it cannot do.
+      const offersBranches = this.additions !== undefined;
       const first = this.withNote(
         live,
         await this.agentMessage(live.id, firstMessage),
@@ -2872,13 +2872,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): PullRequestCall {
     const text = (name: string) =>
       typeof input[name] === 'string' ? (input[name] as string) : null;
-    const { named, clone } = this.namedGitHubClone(sessionId, input);
+    const { named, clone, exact } = this.namedGitHubClone(sessionId, input);
     return {
       repository: named ?? clone?.repositoryName ?? null,
       title: text('title') ?? '',
       body: text('body'),
-      base: text('base') ?? clone?.baseBranch ?? null,
-      head: text('branch') ?? clone?.branch ?? null,
+      base: text('base') ?? exact?.baseBranch ?? clone?.baseBranch ?? null,
+      // Several clones and no branch: the call fails, nothing to show.
+      head: exact?.branch ?? null,
       draft: input['draft'] === true,
     };
   }
@@ -2995,7 +2996,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private namedGitHubClone(
     sessionId: string,
     input: Record<string, unknown>,
-  ): { named: string | null; clone: SessionDirectoryRecord | undefined } {
+  ): {
+    named: string | null;
+    clone: SessionDirectoryRecord | undefined;
+    exact: SessionDirectoryRecord | undefined;
+  } {
     const record = this.requireRecord(sessionId);
     const clones = record.directories.filter(
       (directory) => directory.kind === 'clone' && directory.repositoryGitHub,
@@ -3013,11 +3018,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       : new Set(clones.map((directory) => directory.repositoryId)).size === 1
         ? clones
         : [];
+    const current = candidates.filter(
+      (directory) => !isRetiredClone(directory),
+    );
     const clone =
       (branch
         ? candidates.find((directory) => directory.branch === branch)
-        : undefined) ?? candidates[0];
-    return { named, clone };
+        : undefined) ??
+      current[0] ??
+      candidates[0];
+    // The clone a call without a branch means: none when there are several.
+    const exact = branch
+      ? candidates.find((directory) => directory.branch === branch)
+      : current.length === 1
+        ? current[0]
+        : undefined;
+    return { named, clone, exact };
   }
 
   // --- Adding repositories ------------------------------------------------
@@ -3281,10 +3297,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       (directory) =>
         directory.addition?.announce && isActiveDirectory(directory),
     );
-    if (added.length === 0) {
+    const retired = record.directories.filter(
+      (directory) => directory.addition?.announce && isRetiredClone(directory),
+    );
+    if (added.length === 0 && retired.length === 0) {
       return undefined;
     }
-    for (const directory of added) {
+    for (const directory of [...added, ...retired]) {
       this.sessions.updateDirectory(sessionId, directory.position, {
         announce: false,
       });
@@ -3300,6 +3319,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             `${directory.baseBranch ? `, created from ${directory.baseBranch}` : ''}` +
             `${directory.baseCommit ? ` at ${directory.baseCommit.slice(0, 12)}` : ''}. ` +
             'It is one of your working directories now; work in it like in your other clones.',
+        ),
+        ...retired.map(
+          (directory) =>
+            `- The clone ${directory.path} of ${directory.repositoryName} (branch ${directory.branch}) ` +
+            'was removed: its pull request was merged or closed. Do not use that directory any more ' +
+            '(stop a dev server you started there); for a further pull request, use add_branch.',
         ),
       ].join('\n'),
     };
@@ -3684,6 +3709,30 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           'claude',
           reason,
         );
+        if (outcome.state === 'failed') {
+          // Nothing is on disk: forget it, so that it neither blocks nor
+          // waits in a banner; Claude may simply try again.
+          try {
+            await this.workspaces.removeAddition(live.id, directory.position);
+            this.append(live, {
+              type: 'notice',
+              level: 'info',
+              text: `${directory.branch} was not added; nothing was left behind.`,
+            });
+            this.publish(live.id);
+          } catch (error) {
+            this.logger.warn(
+              `Could not forget the failed branch ${directory.branch} of ${live.id}: ${errorMessage(error)}`,
+            );
+          }
+          return {
+            isError: true,
+            text:
+              `No branch was added: the clone of ${name} on ${directory.branch} could not be made ` +
+              `(${outcome.error.replace(/[.\s]+$/, '')}). Nothing was left behind; ` +
+              'you may try again, or tell the user.',
+          };
+        }
         const reopening = outcome.state === 'ready' && live.reopen !== null;
         if (reopening && live.reopen) {
           live.reopen.continueWith = continuationText(outcome.directory);
@@ -3791,6 +3840,24 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return live && this.waitsForBackground(live)
       ? null
       : this.ciWaitLabel(record);
+  }
+
+  /**
+   * A further branch's clone of the session was removed after its pull
+   * request (`retired`): an idle Claude Code process is closed, so that the
+   * next one starts without the directory (one in a turn keeps it until
+   * then; Claude is told with the next message either way).
+   */
+  directoryRetired(sessionId: string): void {
+    const live = this.live.get(sessionId);
+    if (
+      live?.run &&
+      !live.starting &&
+      this.requireRecord(sessionId).status !== 'running'
+    ) {
+      this.closeForRestart(live);
+    }
+    this.publishUpdate(sessionId);
   }
 
   /**

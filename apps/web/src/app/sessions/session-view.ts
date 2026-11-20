@@ -33,6 +33,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
   canResume,
+  isRetiredClone,
   PERMISSION_MODE_INFO,
   PERMISSION_MODE_OVERRIDE_INFO,
   DANGEROUS_PERMISSION_MODES,
@@ -293,7 +294,8 @@ export class SessionView implements OnInit {
   protected readonly removedDirectories = computed(() => {
     const removed =
       this.session()?.directories.filter(
-        (directory) => directory.state === 'removed',
+        (directory) =>
+          directory.state === 'removed' && !isRetiredClone(directory),
       ) ?? [];
     if (removed.length === 0) {
       return null;
