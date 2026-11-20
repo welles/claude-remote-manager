@@ -32,7 +32,10 @@ import { SessionAutomationHooks } from './session-automation-hooks';
 import { SessionGitService } from './session-git.service';
 import { SessionGitHubTokensService } from './session-github-tokens.service';
 import type { SessionRecord } from './session.repository';
-import { EnvironmentFiles } from '../environments/environment-files';
+import {
+  EnvironmentFiles,
+  type WrittenFiles,
+} from '../environments/environment-files';
 import {
   EnvironmentsService,
   type LaunchEnvironment,
@@ -195,7 +198,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   /** Running `git push` commands of Claude's, by session. */
   private readonly pushes = new Map<string, Set<string>>();
   /** Directory of the environment files of the running process, by session. */
-  private readonly filesByProcess = new Map<string, string>();
+  private readonly filesByProcess = new Map<string, WrittenFiles>();
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -364,7 +367,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       environment.files,
     );
     if (written) {
-      this.filesByProcess.set(record.id, written.dir);
+      this.filesByProcess.set(record.id, written);
     }
     return {
       env: { ...environment.variables, ...(written?.env ?? {}) },
@@ -373,12 +376,12 @@ export class SessionAgentSupportService extends SessionAgentSupport {
   }
 
   private releaseEnvironmentFiles(sessionId: string): void {
-    const dir = this.filesByProcess.get(sessionId);
-    if (dir) {
+    const written = this.filesByProcess.get(sessionId);
+    if (written) {
       this.filesByProcess.delete(sessionId);
-      this.environmentFiles?.remove(dir).catch((error: unknown) => {
+      this.environmentFiles?.remove(written).catch((error: unknown) => {
         this.logger.warn(
-          `Could not remove the environment files ${dir}: ${errorText(error)}`,
+          `Could not remove the environment files ${written.dir}: ${errorText(error)}`,
         );
       });
     }

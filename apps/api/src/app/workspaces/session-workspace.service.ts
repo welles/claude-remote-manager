@@ -1101,7 +1101,7 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
     } finally {
       if (written) {
         await this.environmentFiles
-          ?.remove(written.dir)
+          ?.remove(written)
           .catch((error: unknown) =>
             this.logger.warn(
               `Could not remove the environment files ${written.dir}: ${errorText(error)}`,
