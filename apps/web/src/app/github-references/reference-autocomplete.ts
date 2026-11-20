@@ -8,6 +8,7 @@ import {
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { ReferencesApi } from './references-api';
+import type { TextField } from '../markdown/text-field';
 
 /** A `#` reference being typed before the caret. */
 export interface ReferenceQuery {
@@ -101,7 +102,7 @@ export class ReferenceAutocomplete {
    * Looks for a `#` reference before the caret; returns whether one is
    * being typed (then other autocompletes should stay closed).
    */
-  update(field: HTMLTextAreaElement): boolean {
+  update(field: TextField): boolean {
     if (field.selectionStart !== field.selectionEnd) {
       this.close();
       return false;
@@ -129,7 +130,7 @@ export class ReferenceAutocomplete {
   }
 
   /** Arrow keys, Enter/Tab to choose, Escape; returns whether it handled it. */
-  keydown(event: KeyboardEvent, field: HTMLTextAreaElement): boolean {
+  keydown(event: KeyboardEvent, field: TextField): boolean {
     const count = this.suggestions().length;
     if (!this.open()) {
       return false;
@@ -167,7 +168,7 @@ export class ReferenceAutocomplete {
    * Replaces the reference being typed with the chosen one and places the
    * caret after it.
    */
-  choose(item: GitHubReferenceSummary, field: HTMLTextAreaElement): void {
+  choose(item: GitHubReferenceSummary, field: TextField): void {
     const query = this.query();
     const value = field.value;
     if (!query) {

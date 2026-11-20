@@ -60,7 +60,7 @@
   <app-reference-suggestions
     [autocomplete]="references"
     [showRepository]="githubRepositories().length > 1"
-    (chosen)="references.choose($event, textarea)"
+    (chosen)="references.choose($event, editor)"
   />
   <app-reference-chips
     [references]="draftReferences"
@@ -69,104 +69,101 @@
     (repositoryChosen)="chooseReferenceRepository($event)"
   />
   <app-draft-images [drafts]="images" />
-  <!-- One row: attach, the text (growing up to 8 lines), stop, send. -->
+  <!-- The formatting toolbar (when shown) above one row: attach,
+       formatting, the text (growing up to 8 lines), stop, send. -->
   <div
-    class="flex items-end gap-0.5 rounded-md border border-outline-variant bg-surface-container p-[3px] focus-within:border-outline"
+    class="rounded-md border border-outline-variant bg-surface-container focus-within:border-outline"
   >
-    <button
-      type="button"
-      class="icon-btn"
-      (click)="picker.click()"
-      title="Attach images (or paste or drop them)"
-      data-testid="attach-image"
-    >
-      <app-icon name="attach" /><span class="sr-only">Attach images</span>
-    </button>
-    <input
-      #picker
-      type="file"
-      [accept]="accept"
-      multiple
-      hidden
-      (change)="onPick($event)"
-      data-testid="image-picker"
+    @if (toolbar.shown()) {
+    <app-markdown-toolbar
+      class="border-b border-outline-variant px-[3px] pt-[3px]"
+      (format)="editor.format($event)"
     />
-    <!-- Claude Code's suggested next message is the placeholder, in italics
-         as in the terminal. -->
-    <textarea
-      class="box-border min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-[9px] [font-family:inherit] type-body-large text-on-surface outline-none placeholder:text-on-surface-variant data-suggestion:placeholder:italic"
-      [value]="draft()"
-      [placeholder]="offering() ? suggestion() : label()"
-      [attr.aria-label]="label()"
-      (input)="onInput($event)"
-      (keydown)="onKeydown($event)"
-      (paste)="onPaste($event)"
-      (click)="onCaret($event)"
-      (keyup)="onCaret($event)"
-      (blur)="closeSuggestions()"
-      #textarea
-      rows="1"
-      role="combobox"
-      aria-autocomplete="list"
-      [attr.aria-controls]="
-        suggestingCommands()
-          ? 'command-list'
-          : suggesting()
-            ? 'mention-list'
-            : null
-      "
-      [attr.aria-expanded]="suggesting() || suggestingCommands()"
-      [attr.aria-activedescendant]="activeCommandId()"
-      [attr.aria-describedby]="offering() ? 'prompt-suggestion' : null"
-      [attr.data-suggestion]="offering() ? '' : null"
-      enterkeyhint="send"
-      data-testid="message-input"
-    ></textarea>
-    @if (offering()) {
-    <!-- Measures the suggestion as the placeholder shows it. -->
-    <textarea
-      #mirror
-      class="pointer-events-none invisible absolute box-border min-h-10 min-w-0 flex-none resize-none overflow-hidden border-0 bg-transparent px-1.5 py-[9px] [font-family:inherit] type-body-large italic outline-none"
-      aria-hidden="true"
-      tabindex="-1"
-      rows="1"
-      readonly
-    ></textarea>
-    <span id="prompt-suggestion" class="sr-only"
-      >Suggested: {{ suggestion() }}. Tab puts it into the input{{
-      suggestionFits() ? ', Send sends it' : '' }}.</span
-    >
-    <button
-      type="button"
-      class="icon-btn"
-      (mousedown)="$event.preventDefault()"
-      (click)="takeSuggestion()"
-      title="Edit the suggestion (Tab)"
-      data-testid="take-suggestion"
-    >
-      <app-icon name="edit" /><span class="sr-only">Edit the suggestion</span>
-    </button>
-    } @if (running()) {
-    <button
-      type="button"
-      class="icon-btn text-error"
-      (click)="interrupt.emit()"
-      title="Stop Claude"
-      data-testid="interrupt"
-    >
-      <app-icon name="stop" /><span class="sr-only">Stop</span>
-    </button>
     }
-    <button
-      type="button"
-      class="icon-btn"
-      [class]="canSend() ? 'bg-primary! text-on-primary!' : ''"
-      (click)="submit()"
-      [disabled]="!canSend()"
-      title="Send (Ctrl+Enter)"
-      data-testid="send"
-    >
-      <app-icon name="send" /><span class="sr-only">Send</span>
-    </button>
+    <div class="flex items-end gap-0.5 p-[3px]">
+      <button
+        type="button"
+        class="icon-btn"
+        (click)="picker.click()"
+        title="Attach images (or paste or drop them)"
+        data-testid="attach-image"
+      >
+        <app-icon name="attach" /><span class="sr-only">Attach images</span>
+      </button>
+      <button
+        type="button"
+        class="icon-btn"
+        [class]="toolbar.shown() ? 'bg-secondary-container! text-on-secondary-container!' : ''"
+        (mousedown)="$event.preventDefault()"
+        (click)="toolbar.toggle()"
+        [attr.aria-pressed]="toolbar.shown()"
+        title="Formatting"
+        data-testid="toggle-formatting"
+      >
+        <app-icon name="text-format" /><span class="sr-only">Formatting</span>
+      </button>
+      <input
+        #picker
+        type="file"
+        [accept]="accept"
+        multiple
+        hidden
+        (change)="onPick($event)"
+        data-testid="image-picker"
+      />
+      <!-- Markdown, styled as typed; Claude Code's suggested next message is
+         the placeholder, in italics as in the terminal. Eight lines of text
+         plus the padding, then it scrolls. -->
+      <app-markdown-editor
+        #editor
+        class="min-h-10 min-w-0 flex-1 self-center type-body-large [--app-editor-max-height:208px] [--app-editor-padding:8px_6px]"
+        [(text)]="draft"
+        [hint]="offering() ? (suggestion() ?? '') : label()"
+        [suggestion]="offering()"
+        [attributes]="editorAttributes()"
+        (edited)="onInput()"
+        (beforeKey)="onKeydown($event)"
+        (beforePaste)="onPaste($event)"
+        (caret)="onCaret()"
+        (blurred)="closeSuggestions()"
+      />
+      @if (offering()) {
+      <span id="prompt-suggestion" class="sr-only"
+        >Suggested: {{ suggestion() }}. Tab puts it into the input{{
+        suggestionFits() ? ', Send sends it' : '' }}.</span
+      >
+      <button
+        type="button"
+        class="icon-btn"
+        (mousedown)="$event.preventDefault()"
+        (click)="takeSuggestion()"
+        title="Edit the suggestion (Tab)"
+        data-testid="take-suggestion"
+      >
+        <app-icon name="edit" /><span class="sr-only">Edit the suggestion</span>
+      </button>
+      } @if (running()) {
+      <button
+        type="button"
+        class="icon-btn text-error"
+        (click)="interrupt.emit()"
+        title="Stop Claude"
+        data-testid="interrupt"
+      >
+        <app-icon name="stop" /><span class="sr-only">Stop</span>
+      </button>
+      }
+      <button
+        type="button"
+        class="icon-btn"
+        [class]="canSend() ? 'bg-primary! text-on-primary!' : ''"
+        (click)="submit()"
+        [disabled]="!canSend()"
+        title="Send (Ctrl+Enter)"
+        data-testid="send"
+      >
+        <app-icon name="send" /><span class="sr-only">Send</span>
+      </button>
+    </div>
   </div>
 </div>
