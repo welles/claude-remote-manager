@@ -1512,18 +1512,20 @@ once at startup and never given to child processes, and neither are app JWTs.
 
 Permissions the app needs (repository permissions):
 
-| Permission     | Access     | Used for                                                                                                                                          |
-| -------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Metadata       | read       | listing the installations' repositories                                                                                                           |
-| Contents       | read/write | cloning, fetching and pushing; reading refs when creating pull requests; the repository activity (pushes) before resolving review threads unasked |
-| Pull requests  | read/write | creating pull requests and reading their state; replying to and resolving review threads                                                          |
-| Workflows      | read/write | pushing commits that change `.github/workflows` (only then requested)                                                                             |
-| Administration | read/write | creating repositories for local projects (organizations)                                                                                          |
-| Issues         | read       | `#` references: issues, comments, search                                                                                                          |
+| Permission      | Access     | Used for                                                                                                                                                                 |
+| --------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Metadata        | read       | listing the installations' repositories                                                                                                                                  |
+| Contents        | read/write | cloning, fetching and pushing; merging pull requests; reading refs when creating pull requests; the repository activity (pushes) before resolving review threads unasked |
+| Pull requests   | read/write | creating, reading and merging pull requests; replying to and resolving review threads; PR automation (reviews, review comments)                                          |
+| Workflows       | read/write | pushing commits that change `.github/workflows` (only then requested)                                                                                                    |
+| Administration  | read/write | creating repositories for local projects (organizations)                                                                                                                 |
+| Issues          | read       | `#` references: issues, comments, search; PR automation (conversation comments of pull requests)                                                                         |
+| Checks          | read       | PR automation and the checks shown with each open pull request (check runs of the head commit)                                                                           |
+| Commit statuses | read       | PR automation and the checks shown with each open pull request (statuses of the head commit)                                                                             |
+| Actions         | read       | PR automation: logs of failed GitHub Actions jobs                                                                                                                        |
 
-Checks, Commit statuses and Actions (read) are for the PR automation (check runs and
-statuses of a pull request's head commit, logs of failed GitHub Actions jobs) and the checks
-shown with each open pull request. Install the app
+Session processes get narrower tokens of their own (see
+[GitHub tokens in the container](#github-tokens-in-the-container)). Install the app
 on your account and
 on organizations and choose the repositories there; the Settings page lists the
 installations with their repository counts and links to install the app on further accounts.
