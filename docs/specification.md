@@ -71,6 +71,7 @@ Zu jeder Sitzung mit offenem Pull Request lassen sich Automatiken ein- und aussc
 
 - **Autofix:** Schlägt ein CI-Check fehl oder kommt ein neuer Review-Kommentar, setzt das Backend die Sitzung automatisch mit diesem Kontext fort; Claude behebt das Problem und pusht auf den Sitzungs-Branch.
 - **Autoclose:** Wird der PR gemerged oder geschlossen, wird die Sitzung beendet, ihre Dev-Server gestoppt und die Sitzungsklone aufgeräumt.
+- **Umsetzung (entschieden, Weckruf nach Merge):** Ohne Autoclose weckt ein Merge oder Schließen eines PRs der Sitzung Claude mit einer Nachricht der App (was passiert ist, beim Merge in welchen Basis-Branch), aber nur, wenn Claudes Turn vorbei ist und es mit `set_waiting_state` „work“ angekündigt hat, selbst weiterzumachen (Entscheidung 2026-11-20). Wartet die Sitzung auf den Nutzer, bleibt es bei der Benachrichtigung; läuft gerade ein Turn (etwa weil Claude selbst gemerged hat), gibt es keinen Weckruf.
 - **Automerge:** Ist die CI komplett grün und haben die Code-Reviews keine Befunde mehr, merged die App den PR selbst (oder Claude mit `merge_pull_request`, siehe unten). Befunde arbeitet die Sitzung vorher per Autofix ab, bis keine mehr offen sind; braucht ein Befund eine Entscheidung des Nutzers, wartet Automerge darauf.
 - **Ereignisquelle:** GitHub-Webhooks der GitHub App. Der Webhook-Endpunkt muss am SSO vorbei erreichbar sein und prüft die Webhook-Signatur; alternativ regelmäßiges Abfragen per Polling.
 - **Grenzen:** Maximale Anzahl automatischer Fix-Versuche pro PR, danach Benachrichtigung statt weiterer Versuche.

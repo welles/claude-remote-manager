@@ -3462,7 +3462,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         'the turn; after that an idle process may be closed, so a later wakeup may not fire. ' +
         'Without it, the session manager decides from the background tasks still running. ' +
         'It shows by itself while CI of your pull requests runs, so "work" is not needed just ' +
-        'for that.',
+        'for that. While it holds, a merge or close of one of your pull requests wakes you ' +
+        'with a message.',
       inputSchema: (z) => ({
         waiting_on: z
           .enum(['user', 'work'])
@@ -4148,6 +4149,21 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * or only for the CI of its pull requests. Claude may well be waiting for
    * exactly what the app brings.
    */
+  /**
+   * Claude's turn is over and it said it goes on by itself
+   * (`set_waiting_state` "work", not expired yet): the app may wake it,
+   * e.g. when one of its pull requests was merged or closed.
+   */
+  claudeGoesOn(sessionId: string): boolean {
+    const live = this.live.get(sessionId);
+    return (
+      !!live &&
+      !live.closing &&
+      live.claudeWait?.on === 'work' &&
+      this.sessions.get(sessionId)?.status === 'waiting'
+    );
+  }
+
   acceptsAppMessage(sessionId: string): boolean {
     const record = this.sessions.get(sessionId);
     if (!record) {
