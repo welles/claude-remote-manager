@@ -42,6 +42,13 @@ export const ADD_REPOSITORY_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${ADD_REPOSITOR
  */
 export const ADD_BRANCH_TOOL = 'add_branch';
 export const ADD_BRANCH_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${ADD_BRANCH_TOOL}`;
+/**
+ * The app's tool that makes another of the session's clones Claude Code's
+ * working directory from the next turn (no approval needed: it only
+ * restarts Claude Code in a directory of the session).
+ */
+export const SWITCH_DIRECTORY_TOOL = 'switch_directory';
+export const SWITCH_DIRECTORY_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SWITCH_DIRECTORY_TOOL}`;
 /** The app's tool that shows a file to the user (no approval needed). */
 export const SHOW_FILE_TOOL = 'show_file';
 export const SHOW_FILE_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SHOW_FILE_TOOL}`;
@@ -71,9 +78,10 @@ export const REQUEST_OWNER_DECISION_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${REQUE
  * own dev server (the owner decided so; the user sees each preview and can
  * stop it), setting the session's title (never one the user chose),
  * saying what the session waits for, asking for the owner's decision
- * (it only pauses automerge), and adding a further branch of a repository
+ * (it only pauses automerge), adding a further branch of a repository
  * of the session (the owner decided so; it only clones a repository the
- * session has already).
+ * session has already), and switching the working directory to another
+ * of the session's clones.
  */
 export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
   SHOW_FILE_TOOL_NAME,
@@ -83,6 +91,7 @@ export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
   SET_WAITING_STATE_TOOL_NAME,
   REQUEST_OWNER_DECISION_TOOL_NAME,
   ADD_BRANCH_TOOL_NAME,
+  SWITCH_DIRECTORY_TOOL_NAME,
 ]);
 
 /** Commands that run the command after them. */

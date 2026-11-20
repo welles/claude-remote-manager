@@ -43,11 +43,12 @@ import {
 import { parseAutofixGitCommand } from './autofix-git';
 import { PullRequestChecksService } from './pull-request-checks.service';
 import { SessionGitService } from '../sessions/session-git.service';
-import { cloneOf, cloneOfPull, clonesOf } from '../sessions/session-clones';
+import { cloneOf, cloneOfPull } from '../sessions/session-clones';
 import {
   isActiveDirectory,
   SessionRepository,
   workingDirectory,
+  workingDirectoryOf,
   type PullRequestRecord,
   type SessionDirectoryRecord,
   type SessionRecord,
@@ -2011,11 +2012,13 @@ export class PrAutomationService
   }
 
   /**
-   * The pull request of a further branch's clone (`add_branch`) was merged
-   * or closed: its clone goes (`retired`), unless it has work that is not
-   * on GitHub. The session goes on in its other directories; Claude is told
-   * with its next message, and an idle Claude Code process is restarted
-   * without the directory.
+   * The pull request of a clone was merged or closed while the session has
+   * other directories: the clone goes (`retired`), unless it has work that
+   * is not on GitHub. When it is Claude Code's working directory, the app
+   * switches to another first (another clone of the repository, else the
+   * first directory left). The session goes on in its other directories;
+   * Claude is told with its next message, and an idle Claude Code process
+   * is restarted without the directory.
    */
   private async removeExtraClone(
     session: SessionRecord,
@@ -2053,6 +2056,14 @@ export class PrAutomationService
         `${what}: ${detail === null ? 'removed' : 'kept'} ${directory.path}`,
       );
     };
+    if (detail === null) {
+      try {
+        // Claude Code must not keep working in it.
+        this.switchAwayFrom(session, directory);
+      } catch (error) {
+        detail = `no other directory to work in (${errorText(error)})`;
+      }
+    }
     if (detail !== null) {
       finish();
       return;
@@ -2072,7 +2083,8 @@ export class PrAutomationService
         detail = `removing it failed (${errorText(error)})`;
         // It stays, and Claude goes on working in it.
         this.records.updateDirectory(session.id, directory.position, {
-          additionState: directory.addition?.state ?? 'ready',
+          // A directory the session started with is no addition again.
+          additionState: directory.addition ? directory.addition.state : null,
           announce: false,
         });
       }
@@ -2080,6 +2092,42 @@ export class PrAutomationService
       // An idle process is restarted without the directory.
       this.sessions.directoryRetired(session.id);
     });
+  }
+
+  /**
+   * Makes another directory the working directory when `directory`, about
+   * to be removed, is it: another clone of its repository, else the first
+   * directory Claude works in.
+   */
+  private switchAwayFrom(
+    session: SessionRecord,
+    directory: SessionDirectoryRecord,
+  ): void {
+    const current = this.records.get(session.id) ?? session;
+    if (workingDirectoryOf(current).position !== directory.position) {
+      return;
+    }
+    const usable = current.directories.filter(
+      (entry) =>
+        entry.position !== directory.position &&
+        entry.state === 'ready' &&
+        isActiveDirectory(entry),
+    );
+    const next =
+      usable.find(
+        (entry) =>
+          entry.kind === 'clone' &&
+          entry.repositoryId === directory.repositoryId,
+      ) ?? usable[0];
+    if (!next) {
+      throw new Error('no other directory to work in');
+    }
+    this.sessions.switchWorkingDirectory(
+      session.id,
+      next.position,
+      `Your working directory is now ${next.path}${next.branch ? ` (branch ${next.branch})` : ''}: ` +
+        `the session manager switched to it because ${directory.path} was removed after its pull request.`,
+    );
   }
 
   // --- Kept clones ---------------------------------------------------------
@@ -2286,9 +2334,11 @@ function describeLoss(loss: {
 }
 
 /**
- * The clone of a further branch (`add_branch`) a closed pull request came
- * from, if its close removes it: never the repository's first clone, only
- * a ready one, and not while another open pull request comes from it.
+ * The clone a closed pull request came from, if its close removes it: a
+ * ready one Claude works in, not while another open pull request comes
+ * from it, and never the session's last such directory (a working
+ * directory goes after the app switched away from it, see
+ * `removeExtraClone`).
  */
 function extraCloneOf(
   session: SessionRecord,
@@ -2306,8 +2356,13 @@ function extraCloneOf(
   if (
     !directory ||
     directory.state !== 'ready' ||
-    clonesOf(session.directories, pull.repositoryId)[0]?.position ===
-      directory.position ||
+    !isActiveDirectory(directory) ||
+    !session.directories.some(
+      (entry) =>
+        entry.position !== directory.position &&
+        entry.state === 'ready' &&
+        isActiveDirectory(entry),
+    ) ||
     session.pullRequests.some(
       (entry) =>
         entry.id !== pull.id &&

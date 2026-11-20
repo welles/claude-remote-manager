@@ -965,6 +965,7 @@ describe('SessionsService', () => {
         'Bash(npm test:*)',
         'mcp__crm__set_session_title',
         'mcp__crm__set_waiting_state',
+        'mcp__crm__switch_directory',
       ]);
       // The task list tools are on, for the to-do list in the session view.
       expect(runner.last.options.env).toMatchObject({

@@ -80,6 +80,8 @@ import {
   ADD_REPOSITORY_TOOL_NAME,
   ADD_BRANCH_TOOL,
   ADD_BRANCH_TOOL_NAME,
+  SWITCH_DIRECTORY_TOOL,
+  SWITCH_DIRECTORY_TOOL_NAME,
   APP_MCP_SERVER,
   APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
@@ -148,6 +150,8 @@ import {
   isActiveDirectory,
   SessionRepository,
   workingDirectory,
+  workingDirectoryOf,
+  transcriptDirectory,
   type SessionDirectoryRecord,
   type SessionRecord,
 } from './session.repository';
@@ -532,6 +536,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly live = new Map<string, LiveSession>();
   /** Sessions whose messages wait, see {@link holdMessagesWhile}. */
   private readonly messageHolds = new Map<string, Promise<void>>();
+  /**
+   * Told to Claude with the next message: the app switched the working
+   * directory (its clone was removed after its pull request). In memory
+   * only: after a restart Claude Code still shows its working directory.
+   */
+  private readonly directoryNotes = new Map<string, string>();
   private readonly events = new Subject<SessionEventEnvelope>();
   private readonly updates = new Subject<SessionDto>();
   private readonly deletions = new Subject<string>();
@@ -1688,7 +1698,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           entries = transcriptEntries(
             await this.transcripts.read(
               record.sdkSessionId,
-              workingDirectory(record),
+              transcriptDirectory(record) ?? workingDirectory(record),
             ),
           );
         } catch (error) {
@@ -1918,6 +1928,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             SET_WAITING_STATE_TOOL_NAME,
             // Clones only a repository of the session (owner's decision).
             ...(offersBranches ? [ADD_BRANCH_TOOL_NAME] : []),
+            // Restarts Claude Code in another directory of the session.
+            SWITCH_DIRECTORY_TOOL_NAME,
           ],
           env: { ...SESSION_ENV, ...extras.env },
           tools: [
@@ -1927,6 +1939,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             this.setWaitingStateTool(live),
             ...(this.additions ? [this.addRepositoryTool(live)] : []),
             ...(offersBranches ? [this.addBranchTool(live)] : []),
+            this.switchDirectoryTool(live),
           ],
           settings: extras.settings,
           ...(extras.instructions ? { instructions: extras.instructions } : {}),
@@ -1958,7 +1971,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     try {
       exists = await this.transcripts.exists(
         record.id,
-        workingDirectory(record),
+        transcriptDirectory(record) ?? workingDirectory(record),
       );
     } catch (error) {
       this.logger.warn(`Transcript lookup failed: ${String(error)}`);
@@ -3312,7 +3325,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const retired = record.directories.filter(
       (directory) => directory.addition?.announce && isRetiredClone(directory),
     );
-    if (added.length === 0 && retired.length === 0) {
+    const switched = this.directoryNotes.get(sessionId) ?? null;
+    this.directoryNotes.delete(sessionId);
+    if (added.length === 0 && retired.length === 0 && !switched) {
       return undefined;
     }
     for (const directory of [...added, ...retired]) {
@@ -3338,6 +3353,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             'was removed: its pull request was merged or closed. Do not use that directory any more ' +
             '(stop a dev server you started there); for a further pull request, use add_branch.',
         ),
+        ...(switched ? [`- ${switched}`] : []),
       ].join('\n'),
     };
   }
@@ -3667,7 +3683,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
                 (directory) =>
                   directory.kind === 'clone' &&
                   directory.repositoryId &&
-                  directory.state !== 'removed',
+                  // Also a repository whose clones were all removed after
+                  // their pull requests.
+                  (directory.state !== 'removed' || isRetiredClone(directory)),
               )
               .map((directory) => [directory.repositoryId, directory]),
           ).values(),
@@ -3879,6 +3897,145 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * The tool `switch_directory`: makes another of the session's clones
+   * Claude Code's working directory from the next turn (its CLAUDE.md,
+   * settings, hooks, skills and memory apply then). No approval: it only
+   * restarts Claude Code in a directory of the session.
+   */
+  private switchDirectoryTool(live: LiveSession): AgentTool {
+    return {
+      name: SWITCH_DIRECTORY_TOOL,
+      description:
+        "Make another of this session's clones your working directory, from your next turn on: " +
+        'the app restarts Claude Code there when this turn ends (the conversation goes on), so that ' +
+        "clone's CLAUDE.md, settings, hooks, skills and memory apply. Use it when the work goes on " +
+        'mainly in another clone (e.g. one from add_branch). The other clones stay available as ' +
+        'additional directories.',
+      inputSchema: (z) => ({
+        repository: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            'owner/name of the repository; may be omitted if the session has only one',
+          ),
+        branch: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            'Branch of the clone; needed when the session has several clones of the repository',
+          ),
+      }),
+      handler: async (input) => {
+        const text = (name: string) =>
+          typeof input[name] === 'string' && input[name].trim()
+            ? input[name].trim()
+            : null;
+        try {
+          const record = this.requireRecord(live.id);
+          const named = text('repository');
+          const branch = text('branch');
+          const clones = record.directories.filter(
+            (directory) =>
+              directory.kind === 'clone' &&
+              directory.repositoryId !== null &&
+              directory.state === 'ready' &&
+              isActiveDirectory(directory) &&
+              (!named ||
+                directory.repositoryName?.toLowerCase() ===
+                  named.toLowerCase()) &&
+              (!branch || directory.branch === branch),
+          );
+          const describe = (directory: SessionDirectoryRecord) =>
+            `${directory.repositoryName} on ${directory.branch}`;
+          if (clones.length !== 1) {
+            const all = record.directories
+              .filter(
+                (directory) =>
+                  directory.kind === 'clone' &&
+                  directory.state === 'ready' &&
+                  isActiveDirectory(directory),
+              )
+              .map(describe);
+            return {
+              isError: true,
+              text:
+                clones.length === 0
+                  ? `No clone of this session matches; its clones: ${all.join(', ') || 'none'}.`
+                  : `Several clones match (${clones.map(describe).join(', ')}); name the repository and branch.`,
+            };
+          }
+          const target = clones[0];
+          if (workingDirectoryOf(record).position === target.position) {
+            return {
+              text: `${target.path} (${describe(target)}) is your working directory already.`,
+            };
+          }
+          this.switchWorkingDirectory(live.id, target.position);
+          return {
+            text:
+              `From your next turn on, your working directory is ${target.path} (${describe(target)}): ` +
+              'the app restarts Claude Code there when this turn ends. Until then you keep working ' +
+              'where you are; the other clones stay additional directories.',
+          };
+        } catch (error) {
+          return {
+            isError: true,
+            text: `switch_directory failed: ${errorMessage(error)}`,
+          };
+        }
+      },
+    };
+  }
+
+  /**
+   * Makes the directory at `position` Claude Code's working directory:
+   * stored at once (also across restarts of the server); the process
+   * restarts in it when the turn ends, or at once while it is idle (the
+   * next message then starts it there, resuming the conversation). `note`
+   * is told to Claude with the next message.
+   */
+  switchWorkingDirectory(
+    sessionId: string,
+    position: number,
+    note: string | null = null,
+  ): void {
+    const record = this.requireRecord(sessionId);
+    const directory = record.directories.find(
+      (entry) => entry.position === position,
+    );
+    if (
+      !directory ||
+      directory.state !== 'ready' ||
+      !isActiveDirectory(directory)
+    ) {
+      throw new Error(`No usable directory at position ${position}`);
+    }
+    if (workingDirectoryOf(record).position === position) {
+      return;
+    }
+    this.sessions.update(sessionId, { workingDirectory: position });
+    if (note) {
+      this.directoryNotes.set(sessionId, note);
+    }
+    const live = this.live.get(sessionId);
+    if (live) {
+      if (live.run) {
+        if (record.status === 'running' || live.starting) {
+          live.reopen ??= { continueWith: null };
+        } else if (!live.closing) {
+          this.closeForRestart(live);
+        }
+      }
+    }
+    this.logger.log(
+      `Working directory of ${sessionId} is now ${directory.path}`,
+    );
+    this.publishUpdate(sessionId);
+  }
+
+  /**
    * A further branch's clone of the session was removed after its pull
    * request (`retired`): an idle Claude Code process is closed, so that the
    * next one starts without the directory (one in a turn keeps it until
@@ -3889,6 +4046,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       live?.run &&
       !live.starting &&
+      !live.closing &&
       this.requireRecord(sessionId).status !== 'running'
     ) {
       this.closeForRestart(live);
@@ -4590,7 +4748,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       pendingMessage: record.pendingMessage?.text ?? null,
       directories: record.directories.map(
         (directory): SessionDirectoryDto => ({
-          role: directory.position === 0 ? 'main' : 'additional',
+          role:
+            directory.position === workingDirectoryOf(record).position
+              ? 'main'
+              : 'additional',
           kind: directory.kind,
           path: directory.path,
           state: directory.state,
@@ -4611,7 +4772,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           pushedAt: directory.pushedAt?.toISOString() ?? null,
           addition: directory.addition
             ? {
-                addedAt: directory.addition.addedAt.toISOString(),
+                addedAt: directory.addition.addedAt?.toISOString() ?? null,
                 by: directory.addition.by,
                 state: directory.addition.state,
                 error: directory.addition.error,

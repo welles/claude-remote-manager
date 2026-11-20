@@ -19,6 +19,7 @@ import { searchDocuments, searchSessions } from '../db/schema';
 import {
   SessionRepository,
   type SessionRecord,
+  transcriptDirectory,
 } from '../sessions/session.repository';
 import { SessionsService } from '../sessions/sessions.service';
 import {
@@ -324,7 +325,7 @@ export class SearchService implements OnModuleInit, OnModuleDestroy {
 
   /** What the index of a session is built from (see `search_sessions`). */
   private async source(record: SessionRecord): Promise<string> {
-    const cwd = record.directories[0]?.path;
+    const cwd = transcriptDirectory(record);
     const id = record.sdkSessionId ?? record.id;
     const stamp = cwd ? await this.transcripts.stamp(id, cwd) : null;
     return stamp ?? 'missing';

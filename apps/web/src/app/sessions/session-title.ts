@@ -13,6 +13,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import {
   isActiveDirectory,
+  workingDirectoryOf,
   type SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
@@ -30,7 +31,8 @@ export function sessionSubtitle(session: SessionDto): string {
         : (directory.repository?.fullName ?? null),
     )
     .filter((name): name is string => name !== null);
-  const branch = session.directories[0]?.branch;
+  // The branch of the clone Claude Code works in.
+  const branch = workingDirectoryOf(session)?.branch;
   return [names.join(' + '), branch].filter(Boolean).join(' · ');
 }
 
@@ -89,11 +91,7 @@ export function sessionSubtitle(session: SessionDto): string {
           </mat-form-field>
           <p class="hint">
             Only the title changes:
-            {{
-              s.directories[0]?.branch
-                ? 'the branch ' + s.directories[0].branch + ' and'
-                : ''
-            }}
+            {{ branchNote(s) }}
             the directory names stay as they are. After saving, Claude no longer
             changes the title, also when you keep it as it is.
           </p>
@@ -172,6 +170,12 @@ export class SessionTitle {
   readonly renamed = output<SessionDto>();
 
   protected readonly subtitle = computed(() => sessionSubtitle(this.session()));
+
+  /** "the branch … and" for the rename hint: the working directory's. */
+  protected branchNote(session: SessionDto): string {
+    const branch = workingDirectoryOf(session)?.branch;
+    return branch ? `the branch ${branch} and` : '';
+  }
   protected readonly renaming = signal(false);
   protected readonly draft = signal('');
   protected readonly busy = signal(false);

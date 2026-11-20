@@ -82,8 +82,8 @@ export class SessionGitPanel {
       );
     /**
      * The clone a pull request is listed under: the one on its head
-     * branch; else (a retired further branch's, or one from elsewhere) the
-     * repository's first clone, where it shows its branch.
+     * branch; else (a retired clone's, or one from elsewhere) the
+     * repository's first clone left, where it shows its branch.
      */
     const ownerOf = (pull: PullRequestDto) => {
       const siblings = clonesOf(pull.repositoryId);

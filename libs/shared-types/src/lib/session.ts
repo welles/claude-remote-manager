@@ -199,8 +199,9 @@ export type SetupStatus =
 export type SessionDirectoryKind = 'clone' | 'scratch' | 'directory';
 
 /**
- * A directory of a session. The first (`role: 'main'`) is the working
- * directory; the others are additional directories Claude may access.
+ * A directory of a session. The working directory (`role: 'main'`, by
+ * default the first; `switch_directory` changes it) is where Claude Code
+ * runs; the others are additional directories Claude may access.
  */
 export interface SessionDirectoryDto {
   role: 'main' | 'additional';
@@ -368,9 +369,9 @@ export interface SessionDto {
    * preparation, and afterwards if a setup script failed.
    */
   pendingMessage: string | null;
-  /** Directories of the session; the first is the working directory. */
+  /** Directories of the session in order; `role` marks the working one. */
   directories: SessionDirectoryDto[];
-  /** Working directory: path of the first directory. */
+  /** Working directory: path of the directory with `role: 'main'`. */
   cwd: string;
   /** Paths of the other directories, in order. */
   additionalDirectories: string[];
@@ -464,6 +465,19 @@ export interface SessionListResponse {
 
 /** Which sessions `GET /api/sessions` lists. */
 export type SessionListFilter = 'exclude' | 'only' | 'include';
+
+/**
+ * The session's working directory (`role: 'main'`; it can change with
+ * `switch_directory`), else the first directory.
+ */
+export function workingDirectoryOf(session: {
+  directories: SessionDirectoryDto[];
+}): SessionDirectoryDto | undefined {
+  return (
+    session.directories.find((directory) => directory.role === 'main') ??
+    session.directories[0]
+  );
+}
 
 /**
  * Whether Claude works in a directory: those the session started with, and

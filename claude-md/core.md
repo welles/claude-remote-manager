@@ -75,5 +75,9 @@
   and push there, and name that branch in `create_pull_request`. Such a clone is removed when
   its pull request is merged or closed (after your turn), unless it has work that is not on
   GitHub.
+- When the work goes on mainly in another clone of the session (e.g. one from `add_branch`),
+  make it your working directory with the tool `switch_directory` (repository `owner/name`,
+  branch when there are several clones): from your next turn on, Claude Code runs there, so
+  that clone's `CLAUDE.md`, settings, hooks and skills apply; the conversation goes on.
 - If a push fails for lack of credentials (e.g. a repository not on GitHub), tell the user: they
   can push from the session view (Push button).

@@ -3,6 +3,7 @@ import { RepositoryRepository } from '../repositories/repository.repository';
 import {
   additionalDirectories,
   SessionRepository,
+  transcriptDirectory,
   workingDirectory,
 } from './session.repository';
 import { newSessionRecord, plainDirectory } from './testing/records';
@@ -59,6 +60,24 @@ describe('SessionRepository', () => {
       '/work/third',
     ]);
     expect(repository.get('session-1')).toEqual(created);
+  });
+
+  it('keeps the chosen working directory, falling back to the first usable one', () => {
+    const created = repository.create(newSession());
+    expect(created.workingDirectory).toBeNull();
+    const switched = repository.update('session-1', { workingDirectory: 2 });
+    expect(workingDirectory(switched)).toBe('/work/third');
+    expect(additionalDirectories(switched)).toEqual([
+      '/work/main',
+      '/work/second',
+    ]);
+    // The transcript stays where Claude Code started the session.
+    expect(transcriptDirectory(switched)).toBe('/work/main');
+    // A removed working directory falls back to the first usable one.
+    const removed = repository.updateDirectory('session-1', 2, {
+      state: 'removed',
+    });
+    expect(workingDirectory(removed)).toBe('/work/main');
   });
 
   it('creates clone and scratch directories with their repository', () => {

@@ -21,6 +21,7 @@ import { runGit } from '../git/git-runner';
 import {
   isActiveDirectory,
   SessionRepository,
+  workingDirectoryOf,
   type SessionDirectoryRecord,
 } from '../sessions/session.repository';
 import { classifyFile } from '../shown-files/file-kind';
@@ -131,7 +132,7 @@ export class FileMentionsService {
               repository: directory.repositoryName,
               path,
               mention: mentionText(
-                directory.position === 0
+                directory.position === workingDirectoryOf(record).position
                   ? path
                   : `${directory.path.replace(/\/+$/, '')}/${path}`,
               ),
@@ -202,7 +203,9 @@ export class FileMentionsService {
       ...classifyFile(name, file.data, !file.truncated),
       size: file.size,
       mention: mentionText(
-        position === 0 ? path : `${directory.path.replace(/\/+$/, '')}/${path}`,
+        this.isWorkingDirectory(sessionId, position)
+          ? path
+          : `${directory.path.replace(/\/+$/, '')}/${path}`,
       ),
     };
   }
@@ -245,6 +248,12 @@ export class FileMentionsService {
       throw new NotFoundException('No such directory in the session');
     }
     return directory;
+  }
+
+  /** Whether Claude Code works in the directory (mentions are relative). */
+  private isWorkingDirectory(sessionId: string, position: number): boolean {
+    const record = this.sessions.get(sessionId);
+    return !!record && workingDirectoryOf(record).position === position;
   }
 
   private readyDirectories(sessionId: string): SessionDirectoryRecord[] {

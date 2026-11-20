@@ -41,7 +41,8 @@ export function isRetiredClone(directory: {
 
 /** A repository added while the session ran (`SessionDirectoryDto.addition`). */
 export interface RepositoryAdditionDto {
-  addedAt: string;
+  /** `null`: a directory the session started with (then `retired`). */
+  addedAt: string | null;
   by: RepositoryAddedBy;
   state: RepositoryAdditionState;
   /** Why it failed or is held; `null` otherwise. */

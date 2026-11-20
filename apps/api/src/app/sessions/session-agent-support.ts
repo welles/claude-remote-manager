@@ -37,7 +37,7 @@ import {
 import { SessionAutomationHooks } from './session-automation-hooks';
 import { SessionGitService } from './session-git.service';
 import { SessionGitHubTokensService } from './session-github-tokens.service';
-import type { SessionRecord } from './session.repository';
+import { workingDirectoryOf, type SessionRecord } from './session.repository';
 import {
   EnvironmentFiles,
   type WrittenFiles,
@@ -333,7 +333,8 @@ export class SessionAgentSupportService extends SessionAgentSupport {
       (directory) => directory.repositoryGitHub,
     );
     const settings: Record<string, unknown> = { ...SESSION_SETTINGS };
-    const main = record.directories[0];
+    // The memory of the working directory's repository.
+    const main = workingDirectoryOf(record);
     if (main?.kind === 'clone' && main.repositoryId) {
       const memory = join(this.config.memoryDir, main.repositoryId);
       await mkdir(memory, { recursive: true });

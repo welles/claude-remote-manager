@@ -186,6 +186,12 @@ export const sessions = sqliteTable('sessions', {
     .$type<SetupStatus>()
     .notNull()
     .default('none'),
+  /**
+   * Position of the directory that is Claude Code's working directory
+   * (`switch_directory`, or the app when that clone is removed after its
+   * pull request); `null`: the first directory.
+   */
+  workingDirectory: integer('working_directory'),
 });
 
 /**

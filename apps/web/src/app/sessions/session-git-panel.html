@@ -25,6 +25,10 @@
       <strong>{{ clone.name }}</strong>
       @if (clone.showBranch) {
       <code class="branch" data-testid="clone-branch">{{ clone.branch }}</code>
+      } @if (clones().length > 1 && clone.directory.role === 'main') {
+      <span class="working" data-testid="clone-working-directory"
+        >working directory</span
+      >
       } @if (clone.directory.pushedCommit; as pushed) {
       <span class="pushed" data-testid="pushed"
         >pushed <code>{{ pushed.slice(0, 7) }}</code> @if

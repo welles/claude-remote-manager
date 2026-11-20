@@ -6,6 +6,7 @@ import { commitFile, git } from '../git/testing/git-fixtures';
 import {
   ADD_BRANCH_TOOL_NAME,
   ADD_REPOSITORY_TOOL_NAME,
+  SWITCH_DIRECTORY_TOOL_NAME,
 } from '../sessions/app-tools';
 import { SessionEventRepository } from '../sessions/session-event.repository';
 import { additionResult } from '../sessions/sessions.service';
@@ -783,6 +784,118 @@ describe('adding repositories to a running session', () => {
       error: 'The setup script was stopped because the session was ended',
     });
     expect(harness.service.busyReason(session.id)).toBeNull();
+  });
+
+  describe('the tool switch_directory', () => {
+    const named = (run: FakeRun, name: string) => {
+      const found = run.options.tools?.find((entry) => entry.name === name);
+      if (!found) {
+        throw new Error(`no ${name} tool`);
+      }
+      return found;
+    };
+
+    it('restarts Claude Code in another clone when the turn ends, resuming the conversation, also after a server restart', async () => {
+      const main = await harness.addRepository('acme', 'app');
+      const session = await harness.service.create({
+        prompt: 'Do the work',
+        repositories: [{ repositoryId: main.id }],
+      });
+      await harness.prepared(session.id);
+      const run = harness.runner.last;
+      run.emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
+      await named(run, 'add_branch').handler(
+        { reason: 'Second fix' },
+        { toolUseId: 't1' },
+      );
+      const first = clonePath(session, 'acme', 'app');
+      const second = `${first}-2`;
+      const branch = `claude/${session.slug}-2`;
+      const tool = named(run, 'switch_directory');
+
+      // Never asks.
+      await expect(
+        run.options.canUseTool(SWITCH_DIRECTORY_TOOL_NAME, { branch }, {
+          signal: new AbortController().signal,
+          toolUseID: 't2',
+          requestId: 'r1',
+          mcpServer: { name: 'crm', source: 'sdk' },
+        } as never),
+      ).resolves.toMatchObject({ behavior: 'allow' });
+      expect(run.options.allowedTools).toContain(SWITCH_DIRECTORY_TOOL_NAME);
+
+      const switched = await tool.handler({ branch }, { toolUseId: 't2' });
+      expect(switched.isError).toBeFalsy();
+      expect(switched.text).toContain(
+        `From your next turn on, your working directory is ${second}`,
+      );
+      const dto = harness.service.get(session.id);
+      expect(dto.cwd).toBe(second);
+      expect(dto.additionalDirectories).toEqual([first]);
+      expect(dto.directories.map((directory) => directory.role)).toEqual([
+        'additional',
+        'main',
+      ]);
+      // Already there: nothing to do.
+      expect(
+        (await tool.handler({ branch }, { toolUseId: 't3' })).text,
+      ).toContain('is your working directory already');
+      // Unknown clones are refused.
+      const unknown = await tool.handler(
+        { repository: 'acme/other' },
+        { toolUseId: 't4' },
+      );
+      expect(unknown.isError).toBe(true);
+      expect(unknown.text).toContain('No clone of this session matches');
+
+      // The turn ends: the process goes; the next message starts it there.
+      const runs = harness.runner.runs.length;
+      run.emit(resultMessage(10, 0.01));
+      await waitFor(() => harness.service.get(session.id).status === 'waiting');
+      await flush();
+      expect(harness.runner.runs).toHaveLength(runs);
+      await harness.service.send(session.id, { text: 'Go on' });
+      await waitFor(() => harness.runner.runs.length > runs);
+      const next = harness.runner.last;
+      expect(next.options.cwd).toBe(second);
+      expect(next.options.resume).toBe('sdk-1');
+      expect(next.options.additionalDirectories).toContain(first);
+      expect(next.options.additionalDirectories).not.toContain(second);
+
+      // The choice survives a restart of the server.
+      next.emit(resultMessage(10, 0.01));
+      await waitFor(() => harness.service.get(session.id).status === 'waiting');
+      await harness.start();
+      expect(harness.service.get(session.id).cwd).toBe(second);
+      const before = harness.runner.runs.length;
+      await harness.service.send(session.id, { text: 'Once more' });
+      await waitFor(() => harness.runner.runs.length > before);
+      expect(harness.runner.last.options.cwd).toBe(second);
+      expect(harness.runner.last.options.resume).toBe('sdk-1');
+    });
+
+    it('needs the branch when a repository has several clones', async () => {
+      const main = await harness.addRepository('acme', 'app');
+      const session = await harness.service.create({
+        prompt: 'Do the work',
+        repositories: [{ repositoryId: main.id }],
+      });
+      await harness.prepared(session.id);
+      const run = harness.runner.last;
+      await named(run, 'add_branch').handler(
+        { reason: 'Second fix' },
+        { toolUseId: 't1' },
+      );
+      const result = await named(run, 'switch_directory').handler(
+        { repository: 'acme/app' },
+        { toolUseId: 't2' },
+      );
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain('Several clones match');
+      expect(harness.service.get(session.id).cwd).toBe(
+        clonePath(session, 'acme', 'app'),
+      );
+    });
   });
 
   it('rolls back an addition that a server stop cut off', async () => {
