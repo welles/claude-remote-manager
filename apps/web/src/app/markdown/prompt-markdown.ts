@@ -18,7 +18,11 @@ const prompts = new Marked({
   gfm: true,
   breaks: true,
   renderer: {
-    html: ({ text }) => escapeHtml(text),
+    // A block keeps its lines, as typed.
+    html: ({ text, block }) =>
+      block
+        ? `<p>${escapeHtml(text.trimEnd()).replaceAll('\n', '<br>')}</p>`
+        : escapeHtml(text),
     checkbox: ({ checked }) => (checked ? '☑ ' : '☐ '),
   },
 });
