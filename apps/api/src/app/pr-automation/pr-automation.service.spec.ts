@@ -1249,6 +1249,107 @@ describe('PrAutomationService', () => {
       });
     });
 
+    it('allows a merge unasked only when the pull request is ready', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      const head = fakePull(pull.number).headSha;
+      const ready = () =>
+        automation.mayMergeUnasked(session.id, repositoryId, pull.number);
+      // Automerge off.
+      green(pull);
+      await expect(ready()).resolves.toBeNull();
+      enableAutomerge(session.id, pull);
+      await expect(ready()).resolves.toBe(head);
+      // Not another pull request number of the repository.
+      await expect(
+        automation.mayMergeUnasked(session.id, repositoryId, 999),
+      ).resolves.toBeNull();
+      // Checks still running, failed, or none reported.
+      const runs = (status: string, conclusion: string | null) =>
+        harness.github.checkRuns.set(head, [
+          { id: 93, name: 'test', status, conclusion, app: 'github-actions' },
+        ] as never);
+      runs('in_progress', null);
+      await expect(ready()).resolves.toBeNull();
+      runs('completed', 'failure');
+      await expect(ready()).resolves.toBeNull();
+      harness.github.checkRuns.set(head, []);
+      await expect(ready()).resolves.toBeNull();
+      green(pull);
+      // A draft, or paused for the owner's decision.
+      fakePull(pull.number).draft = true;
+      await expect(ready()).resolves.toBeNull();
+      fakePull(pull.number).draft = false;
+      harness.sessions.updatePullRequest(pull.id, {
+        automergeHeldAt: new Date(),
+      });
+      await expect(ready()).resolves.toBeNull();
+      harness.sessions.updatePullRequest(pull.id, { automergeHeldAt: null });
+      await expect(ready()).resolves.toBe(head);
+      // Changes requested by someone who counts.
+      addReview(pull, {
+        kind: 'review',
+        author: REVIEWER,
+        authorType: 'Bot',
+        state: 'CHANGES_REQUESTED',
+        body: '',
+        commitId: head,
+      });
+      await expect(ready()).resolves.toBeNull();
+    });
+
+    it('checks again right before merging, and never unasked in plan mode', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutomerge(session.id, pull);
+      const head = green(pull);
+      const run = harness.runner.last;
+      const gate = run.options.gate;
+      const tool = run.options.tools?.find(
+        (entry) => entry.name === 'merge_pull_request',
+      );
+      if (!gate || !tool) {
+        throw new Error('no gate or tool');
+      }
+      const call = (toolUseId: string) =>
+        gate({
+          toolName: 'mcp__crm__merge_pull_request',
+          input: { pull_request: pull.number },
+          toolUseId,
+          agentId: null,
+          mcpServer: { name: 'crm', source: 'sdk' },
+        });
+      await expect(call('tu-1')).resolves.toMatchObject({ decision: 'allow' });
+      // A change request between the check and the merge.
+      addReview(pull, {
+        kind: 'review',
+        author: REVIEWER,
+        authorType: 'Bot',
+        state: 'CHANGES_REQUESTED',
+        body: '',
+        commitId: head,
+      });
+      await expect(
+        tool.handler({ pull_request: pull.number }, { toolUseId: 'tu-1' }),
+      ).resolves.toMatchObject({
+        isError: true,
+        text: expect.stringContaining('no longer ready'),
+      });
+      expect(harness.github.merges).toHaveLength(0);
+
+      await harness.service.update(session.id, { permissionMode: 'plan' });
+      addReview(pull, {
+        kind: 'review',
+        author: REVIEWER,
+        authorType: 'Bot',
+        state: 'DISMISSED',
+        body: '',
+        commitId: head,
+      });
+      await expect(
+        automation.mayMergeUnasked(session.id, repositoryId, pull.number),
+      ).resolves.toBe(head);
+      await expect(call('tu-2')).resolves.toBeNull();
+    });
+
     it('merges for Claude after the approval dialog, also without automerge', async () => {
       const { session, pull } = await sessionWithPullRequest();
       const run = harness.runner.last;
@@ -1869,6 +1970,52 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       expect(devServers.stopped).toEqual([session.id]);
       expect(notifications.closed[0].pull.state).toBe('merged');
       expect(notifications.closed[0].note).toContain('removed');
+    });
+
+    it('waits with autoclose while an approval of the turn is open', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      automation.update(session.id, pull.id, { autoclose: true });
+      await harness.service.send(session.id, { text: 'Go on' });
+      await waitFor(() => harness.service.get(session.id).status === 'running');
+      const run = harness.runner.last;
+      const decision = run.options.canUseTool('Bash', { command: 'npm test' }, {
+        signal: new AbortController().signal,
+        toolUseID: 'tu-p',
+        requestId: 'r-p',
+        suggestions: [],
+      } as never);
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'permission',
+      );
+      merge(pull.number);
+      await automation.check(pull.id);
+      expect(harness.sessions.pullRequest(pull.id)?.state).toBe('merged');
+      expect(harness.service.get(session.id).status).not.toBe('finished');
+      expect(notifications.closed).toHaveLength(0);
+
+      const request = harness.service.pendingPermissions(session.id)[0];
+      await harness.service.respondToPermission(session.id, request.requestId, {
+        decision: 'allow',
+      });
+      await decision;
+      expect(harness.service.get(session.id).status).not.toBe('finished');
+      run.emit(resultMessage(20, 0.02));
+      await waitFor(() => notifications.closed.length === 1);
+      expect(harness.service.get(session.id).status).toBe('finished');
+    });
+
+    it('handles a close left unhandled by a restart with the first poll', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      automation.update(session.id, pull.id, { autoclose: true });
+      harness.sessions.updatePullRequest(pull.id, {
+        state: 'merged',
+        mergedAt: new Date(),
+      });
+      automation.onModuleDestroy();
+      createAutomation();
+      await automation.poll();
+      await waitFor(() => notifications.closed.length === 1);
+      expect(harness.service.get(session.id).status).toBe('finished');
     });
 
     it('keeps a clone with work that is not on GitHub and deletes it after confirmation', async () => {

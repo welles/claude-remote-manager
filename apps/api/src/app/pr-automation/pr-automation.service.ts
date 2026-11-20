@@ -175,6 +175,18 @@ interface Triggers {
 /** Conclusions (and status states) of checks that passed. */
 const PASSED_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
 
+/**
+ * Whether the session's turn is over: finished, failed, or waiting for
+ * anything but an approval.
+ */
+function turnIsOver(session: SessionDto): boolean {
+  return (
+    session.status === 'finished' ||
+    session.status === 'failed' ||
+    (session.status === 'waiting' && session.waitingFor !== 'permission')
+  );
+}
+
 /** Whether every check is completed and passed (none: `true`). */
 function allPassed(checks: CheckResult[]): boolean {
   return checks.every(
@@ -211,11 +223,8 @@ export class PrAutomationService
   private readonly again = new Set<number>();
   /** Pull requests whose check found the session busy. */
   private readonly deferred = new Set<number>();
-  /**
-   * Merged or closed pull requests whose autoclose waits for the end of
-   * the session's turn (Claude merged it with `merge_pull_request`).
-   */
-  private readonly closeDeferred = new Set<number>();
+  /** Whether the first poll looked for closes left unhandled. */
+  private closesSwept = false;
   /**
    * Since when failed checks or new feedback per `pullRequestId:sha` wait
    * for the commit's other checks to finish.
@@ -614,6 +623,14 @@ export class PrAutomationService
     }
     if (Date.now() < this.pausedUntil) {
       return;
+    }
+    if (!this.closesSwept) {
+      this.closesSwept = true;
+      for (const session of this.records.list()) {
+        if (session.status !== 'running' && session.status !== 'preparing') {
+          this.handleUnhandledCloses(session.id);
+        }
+      }
     }
     for (const pull of this.records.automatedOpenPullRequests()) {
       if (this.stopped || Date.now() < this.pausedUntil) {
@@ -1023,6 +1040,24 @@ export class PrAutomationService
       : null;
   }
 
+  /**
+   * Handles merged or closed pull requests with autoclose of a session
+   * whose close was not handled yet (it waited for the end of a turn).
+   * Only pull requests with autoclose: earlier versions left the close of
+   * others unrecorded.
+   */
+  private handleUnhandledCloses(sessionId: string): void {
+    for (const pull of this.records.get(sessionId)?.pullRequests ?? []) {
+      if (pull.state !== 'open' && pull.autoclose && !pull.closeHandledAt) {
+        void this.handleClosed(pull.id).catch((error: unknown) =>
+          this.logger.error(
+            `Handling the close of ${pull.repositoryName}#${pull.number} failed: ${errorText(error)}`,
+          ),
+        );
+      }
+    }
+  }
+
   /** Stores what keeps automerge waiting (published only on a change). */
   private setWaiting(pullRequestId: number, waiting: string | null): void {
     const pull = this.records.pullRequest(pullRequestId);
@@ -1420,24 +1455,11 @@ export class PrAutomationService
    * that found the session busy are repeated once it waits for a message.
    */
   private sessionChanged(session: SessionDto): void {
-    if (session.status !== 'running') {
-      for (const pull of session.pullRequests) {
-        if (this.closeDeferred.delete(pull.id)) {
-          void this.handleClosed(pull.id).catch((error: unknown) =>
-            this.logger.error(
-              `Handling the close of ${pull.repository}#${pull.number} failed: ${errorText(error)}`,
-            ),
-          );
-        }
-      }
-    }
-    const turnOver =
-      session.status === 'finished' ||
-      session.status === 'failed' ||
-      (session.status === 'waiting' && session.waitingFor !== 'permission');
-    if (!turnOver) {
+    if (!turnIsOver(session)) {
       return;
     }
+    // Closes whose autoclose waited for the end of the turn.
+    this.handleUnhandledCloses(session.id);
     // Free for a run (see `idle`): waits for a message, or only for what
     // Claude said it goes on with by itself.
     const free =
@@ -1734,21 +1756,22 @@ export class PrAutomationService
     if (!pull || pull.state === 'open' || pull.closeHandledAt) {
       return;
     }
-    const running = this.records.get(pull.sessionId);
+    const owner = this.records.get(pull.sessionId);
     if (
-      running?.status === 'running' &&
-      !running.autoclosedAt &&
-      running.pullRequests.some((entry) => entry.autoclose) &&
-      running.pullRequests.every(
+      owner &&
+      !owner.autoclosedAt &&
+      owner.pullRequests.some((entry) => entry.autoclose) &&
+      owner.pullRequests.every(
         (entry) => entry.id === pull.id || entry.state !== 'open',
-      )
+      ) &&
+      !turnIsOver(this.sessions.get(owner.id))
     ) {
-      // Autoclose would end the turn that merged it (Claude's tool): it
-      // waits until the turn is over (`sessionChanged`).
-      this.closeDeferred.add(pull.id);
+      // Autoclose would end the turn that is going (e.g. the one that
+      // merged it with Claude's tool, or one waiting for an approval): the
+      // close stays unhandled until the turn is over (`sessionChanged`, or
+      // the first poll after a restart).
       return;
     }
-    this.closeDeferred.delete(pull.id);
     this.forgetWaiting(pull.id);
     this.records.updatePullRequest(pull.id, {
       closeHandledAt: new Date(),

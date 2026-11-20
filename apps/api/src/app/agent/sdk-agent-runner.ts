@@ -270,6 +270,8 @@ export function gateHooks(
     PreToolUse: [
       {
         onFailure: 'block',
+        // The gate may read GitHub (merge_pull_request with automerge).
+        timeout: 120,
         hooks: [
           async (input) => {
             if (input.hook_event_name !== 'PreToolUse') {

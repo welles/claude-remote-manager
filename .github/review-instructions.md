@@ -8,7 +8,7 @@ Claude Remote Manager: eine Weboberfläche, mit der sich Claude-Code-Sitzungen a
 
 ## Besonders prüfen
 
-- Freigaben: Kein Weg, auf dem ein Tool-Aufruf ohne die Freigabe läuft, die der gewählte Berechtigungsmodus verlangt. Sitzungen laufen bewusst ohne Sandbox mit den Rechten und Zugangsdaten des Nutzers (`bypassPermissions` ist wählbar); ein Autofix-Lauf hält `auto` und `bypassPermissions` bis zum Ende seines Turns als `default`, und die Ausnahmen für Autofix bleiben so eng wie dokumentiert.
+- Freigaben: Kein Weg, auf dem ein Tool-Aufruf ohne die Freigabe läuft, die der gewählte Berechtigungsmodus verlangt. Sitzungen laufen bewusst ohne Sandbox mit den Rechten und Zugangsdaten des Nutzers (`bypassPermissions` ist wählbar); ein Autofix-Lauf läuft im gewählten Modus wie jeder Turn (entschieden 2026-11-20), und die Ausnahmen ohne Rückfrage (Autofix: `git add`/`commit`/`push` des Sitzungs-Branches, Antworten und Auflösen von Review-Threads; `merge_pull_request` nur bei Automerge und bereitem PR) bleiben so eng wie dokumentiert.
 - Nicht vertrauenswürdige Inhalte (GitHub-Issues, Kommentare, CI-Logs, Webhooks) gehen nur als markierter Kontext an Claude, nie als Anweisung des Nutzers, ohne `@`-Expansion und Slash-Commands.
 - Zugriffsschutz der API: Prüfung von Origin, Host und `Sec-Fetch-Site`, Cloudflare-Access-Token mit Audience, Abweisung von Anfragen aus Sitzungsprozessen, HMAC-Prüfung des Webhooks; Vorschau-Hosts liefern nichts von der App.
 - Isolation der Sitzungen: Parallele Sitzungen im selben Repository stören sich nicht (eigene Klone), Pfade aus Eingaben bleiben in ihren Verzeichnissen. Dass Sitzungen auf dem NixOS-Dienst die Secrets der App lesen können, ist entschieden; Installation-Tokens der App gehen trotzdem nie an Sitzungen.

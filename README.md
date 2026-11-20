@@ -1316,7 +1316,7 @@ its branches and tags, and points the existing session clones' `origin` there (s
   time after which reviews are new, the last run and what triggered it, whether a run is
   going on, when the merge or close was handled; for automerge: `automerge`, the hold
   (`automerge_held_at`, `automerge_hold_reason`: Claude's question), the head commit GitHub
-  refused to merge and why, what a green, approved head commit waits for
+  refused to merge and why, what a ready head commit waits for
   (`automerge_waiting`), and the head commit the owner was told about stuck threads for;
   `checks`: the CI checks of the head commit as last read, for the view (JSON).
 - `sessions.autoclosed_at`: when autoclose ended the session; clones still `ready`
@@ -1600,8 +1600,14 @@ Both work two ways:
    it, read fresh from GitHub: open, no draft, automerge not paused, all checks of the head
    commit passed (at least one reported), nobody who counts requests changes, no new reviews
    or comments since the last autofix run, no unresolved review thread; it then merges
-   exactly the head commit it checked. Autoclose after a merge waits until the session's
-   turn is over, so Claude's own merge does not end the turn it runs in.
+   exactly the head commit it checked, after checking once more right before merging (no
+   change request, thread or pause since, the same head). Not in `plan` mode; a check that
+   takes longer than a minute leaves the call to the mode. Feedback already handed to a running
+   Autofix run no longer blocks it, as for the app's own automerge after the run. Autoclose
+   after a merge (also one on GitHub) waits until the session's turn is over (not while an
+   approval waits), so Claude's own merge does not end the turn it runs in; the close stays
+   unhandled until then (`close_handled_at`), and the first poll after a restart picks up
+   such closes.
 
 **CI checks**: every open pull request of a session shows the checks of its head commit
 (check runs and commit statuses), with or without PR automation: one line with the overall
@@ -1813,8 +1819,8 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
 - **Known limit (decided)**: green checks, no change requests and the resolved threads are
   the gate (approval is not needed), and the owner's own approval counts where reviews are
   required. Sessions run as the owner's user, with the owner's GitHub
-  credentials (`gh`) where the machine has them, so in a turn outside an Autofix run (e.g. in
-  `auto` mode) Claude could approve as the owner. That Claude must
+  credentials (`gh`) where the machine has them, so in any turn (e.g. in `auto` mode, also
+  during an Autofix run) Claude could approve or resolve threads as the owner. That Claude must
   not do so is only an instruction in the app's messages, not enforced. Where that matters,
   keep the session user without GitHub credentials or leave automerge off. In the container
   sessions cannot approve (`gh`'s token is read only, approvals by bots

@@ -274,6 +274,12 @@ function isAppServer(
   );
 }
 
+/**
+ * How long the automerge check of `merge_pull_request` may take before the
+ * call is left to the mode (well within the hook's own timeout).
+ */
+const MERGE_GATE_TIMEOUT_MS = 60_000;
+
 /** Shown when `merge_pull_request` runs unasked. */
 export const AUTOMERGE_ALLOW_REASON =
   'Automerge is on for this pull request and it is ready: all checks passed, nobody requests changes, no review thread is unresolved';
@@ -2537,14 +2543,34 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<AgentGateDecision | null> {
     if (
       call.toolName !== MERGE_PULL_REQUEST_TOOL_NAME ||
-      !isAppServer(call.mcpServer)
+      !isAppServer(call.mcpServer) ||
+      // Plan mode stays read-only.
+      this.requireRecord(live.id).permissionMode === 'plan'
     ) {
       return null;
     }
     try {
-      if (
-        await this.support.mayMergeUnasked(live.id, call.input, call.toolUseId)
-      ) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), MERGE_GATE_TIMEOUT_MS);
+      });
+      const check = this.support.mayMergeUnasked(
+        live.id,
+        call.input,
+        call.toolUseId,
+      );
+      const allowed = await Promise.race([check, deadline]).finally(() =>
+        clearTimeout(timer),
+      );
+      if (!allowed) {
+        // A check that allows it after the deadline grants nothing.
+        void check.then(
+          (late) =>
+            late && this.support.dropMergeGrant(live.id, call.toolUseId),
+          () => undefined,
+        );
+      }
+      if (allowed) {
         return { decision: 'allow', reason: AUTOMERGE_ALLOW_REASON };
       }
     } catch (error) {
