@@ -617,6 +617,7 @@ export class SessionManagementService {
           const commit = await this.sessionGit.push(
             record.id,
             directory.repositoryId,
+            directory.branch,
           );
           known.push(commit);
           steps.push(`pushed ${directory.branch} (${commit.slice(0, 7)})`);

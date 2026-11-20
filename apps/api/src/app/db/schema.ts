@@ -273,9 +273,11 @@ export const sessionDirectories = sqliteTable(
       table.sessionId,
       table.position,
     ),
-    uniqueIndex('session_directories_session_repository').on(
+    // Several clones of one repository (`add_branch`), each on its branch.
+    uniqueIndex('session_directories_session_repository_branch').on(
       table.sessionId,
       table.repositoryId,
+      table.branch,
     ),
   ],
 );

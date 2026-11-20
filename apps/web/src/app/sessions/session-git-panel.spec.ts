@@ -369,6 +369,56 @@ describe('SessionGitPanel', () => {
     });
   });
 
+  it('shows each clone of a repository with its branch and its own pull requests', async () => {
+    const base = githubSession();
+    const first = base.directories[0];
+    const session = sessionDto({
+      directories: [
+        first,
+        {
+          ...first,
+          role: 'additional',
+          path: `${first.path}-2`,
+          branch: 'claude/reply-with-pong-abc123-2',
+        },
+      ],
+      pullRequests: [
+        pull(),
+        pull({
+          id: 2,
+          number: 8,
+          title: 'Second fix',
+          headBranch: 'claude/reply-with-pong-abc123-2',
+        }),
+      ],
+    });
+    const { element, fixture, all } = await render(session);
+    expect(all('git-clone')).toHaveLength(2);
+    expect(all('clone-branch')).toEqual([
+      'claude/reply-with-pong-abc123',
+      'claude/reply-with-pong-abc123-2',
+    ]);
+    const clones = [...element.querySelectorAll('[data-testid="git-clone"]')];
+    expect(words(clones[0])).toContain('#7 Fix login');
+    expect(words(clones[0])).not.toContain('#8');
+    expect(words(clones[1])).toContain('#8 Second fix');
+
+    // Push names the clone by its branch.
+    (
+      clones[1].querySelector('[data-testid="push"]') as HTMLButtonElement
+    ).click();
+    fixture.detectChanges();
+    const request = http.expectOne(
+      (req) =>
+        req.url === '/api/sessions/s1/repositories/r1/push' &&
+        req.params.get('branch') === 'claude/reply-with-pong-abc123-2',
+    );
+    request.flush(session);
+    fixture.detectChanges();
+    expect(all('git-message')).toEqual([
+      'Pushed claude/reply-with-pong-abc123-2',
+    ]);
+  });
   it('pushes by button and shows the outcome', async () => {
     const { fixture, all, click } = await render(githubSession());
     await click('push');

@@ -145,6 +145,12 @@
         <dt>Title</dt>
         <dd>{{ pull.title }}</dd>
       </div>
+      @if (pull.head) {
+      <div class="field">
+        <dt>From</dt>
+        <dd><code data-testid="pull-request-head">{{ pull.head }}</code></dd>
+      </div>
+      }
       <div class="field">
         <dt>Into</dt>
         <dd>

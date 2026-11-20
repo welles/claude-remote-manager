@@ -2492,6 +2492,135 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
     });
   });
 
+  describe('further branches (add_branch)', () => {
+    const merge = (number: number) => {
+      const fake = fakePull(number);
+      fake.state = 'closed';
+      fake.merged = true;
+    };
+
+    /** A second clone of the repository with a pull request of its own. */
+    const secondPullRequest = async (sessionId: string) => {
+      const tool = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'add_branch',
+      );
+      if (!tool) {
+        throw new Error('no add_branch tool');
+      }
+      const result = await tool.handler(
+        { reason: 'Second fix' },
+        { toolUseId: 'tool-branch' },
+      );
+      expect(result.isError).toBe(false);
+      const directory = harness.service
+        .get(sessionId)
+        .directories.at(-1) as SessionDto['directories'][number];
+      const branch = directory.branch as string;
+      await commitFile(directory.path, 'second.txt', 'two');
+      await harness.sessionGit.push(sessionId, repositoryId, branch);
+      const pull = await harness.sessionGit.createPullRequest(
+        sessionId,
+        repositoryId,
+        { title: 'Second' },
+        'claude',
+        branch,
+      );
+      return { path: directory.path, branch, pull };
+    };
+
+    it('works on two pull requests of one repository in their own clones', async () => {
+      const { session, pull, clone } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      expect(second.pull.headBranch).toBe(`claude/${session.slug}-2`);
+      expect(pull.headBranch).toBe(`claude/${session.slug}`);
+
+      // Autofix of the second pushes its own branch, without asking.
+      automation.update(session.id, second.pull.id, { autofix: true });
+      const commit = await commitFile(second.path, 'fix.txt', 'fixed');
+      const result = (await harness.runner.last.options.canUseTool(
+        'Bash',
+        { command: 'git push', description: 'Push' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'tool-git',
+          requestId: 'r1',
+        },
+      )) as PermissionResult;
+      expect(result.behavior).toBe('allow');
+      expect(
+        await git(origin, 'rev-parse', `refs/heads/${second.branch}`),
+      ).toBe(commit);
+      // The first clone's branch did not move.
+      expect(await git(clone, 'rev-parse', 'HEAD')).toBe(
+        await git(origin, 'rev-parse', `refs/heads/claude/${session.slug}`),
+      );
+
+      // Claude's tools find the pull request's clone by its number.
+      const own = harness.service
+        .get(session.id)
+        .pullRequests.map((entry) => entry.headBranch)
+        .sort();
+      expect(own).toEqual([pull.headBranch, second.branch].sort());
+    });
+
+    it('removes the clone of a further branch once its pull request is merged, after the turn', async () => {
+      const { session, pull, clone } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      await harness.service.send(session.id, { text: 'Go on' });
+      await waitFor(() => harness.service.get(session.id).status === 'running');
+
+      merge(second.pull.number);
+      await automation.check(second.pull.id);
+      // The turn goes on: the clone stays until it is over.
+      expect(existsSync(second.path)).toBe(true);
+
+      harness.runner.last.emit(resultMessage(20, 0.02));
+      await waitFor(() =>
+        harness
+          .eventsOfType(session.id, 'notice')
+          .some((event) => event.text.includes('removed the clone of')),
+      );
+      expect(existsSync(second.path)).toBe(false);
+      const after = harness.service.get(session.id);
+      expect(after.status).not.toBe('finished');
+      expect(after.directories.at(-1)?.state).toBe('removed');
+      expect(after.additionalDirectories).not.toContain(second.path);
+      expect(existsSync(clone)).toBe(true);
+      expect(
+        harness
+          .eventsOfType(session.id, 'notice')
+          .some((event) =>
+            event.text.includes(
+              `removed the clone of alice/app on ${second.branch}`,
+            ),
+          ),
+      ).toBe(true);
+
+      // The first clone stays when its pull request is merged (no autoclose).
+      merge(pull.number);
+      await automation.check(pull.id);
+      await waitFor(() => notifications.closed.length === 2);
+      expect(existsSync(clone)).toBe(true);
+    });
+
+    it('keeps the clone of a further branch with work that is not on GitHub', async () => {
+      const { session } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      await commitFile(second.path, 'local.txt', 'only here');
+
+      merge(second.pull.number);
+      await automation.check(second.pull.id);
+      await waitFor(() =>
+        harness
+          .eventsOfType(session.id, 'notice')
+          .some((event) => event.text.includes('kept the clone')),
+      );
+      expect(existsSync(second.path)).toBe(true);
+      expect(harness.service.get(session.id).directories.at(-1)?.state).toBe(
+        'ready',
+      );
+    });
+  });
   describe('polling', () => {
     it('checks open pull requests with automation, also after an empty poll', async () => {
       // Nothing to check yet: must not keep later polls from running.

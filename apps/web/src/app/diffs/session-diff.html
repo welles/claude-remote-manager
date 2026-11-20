@@ -37,7 +37,7 @@
 } @if (error(); as message) {
 <p class="error" data-testid="diff-error">{{ message }}</p>
 } @if (diff(); as d) { @for (repository of d.repositories; track
-repository.repositoryId; let r = $index) {
+repository.path; let r = $index) {
 <section class="repository" data-testid="repository-diff">
   <header>
     <h2>{{ repository.repository }}</h2>

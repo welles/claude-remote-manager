@@ -17,6 +17,8 @@ import { Toasts } from '../ui/toasts';
 /** A clone the user may delete. */
 export interface DiscardCloneTarget {
   repositoryId: string;
+  /** The clone's session branch (the session may have several clones). */
+  branch: string | null;
   name: string;
 }
 
@@ -161,17 +163,19 @@ export class DiscardCloneDialog {
     this.error.set(null);
     this.busy.set(false);
     this.dialog().open();
-    this.api.cloneLoss(this.sessionId(), target.repositoryId).subscribe({
-      next: (loss) => {
-        if (this.target() === target) {
-          this.loss.set(loss);
-        }
-      },
-      error: (error: unknown) =>
-        this.error.set(
-          errorMessage(error, 'What the clone holds could not be read.'),
-        ),
-    });
+    this.api
+      .cloneLoss(this.sessionId(), target.repositoryId, target.branch)
+      .subscribe({
+        next: (loss) => {
+          if (this.target() === target) {
+            this.loss.set(loss);
+          }
+        },
+        error: (error: unknown) =>
+          this.error.set(
+            errorMessage(error, 'What the clone holds could not be read.'),
+          ),
+      });
   }
 
   protected cancel(): void {
@@ -185,23 +189,25 @@ export class DiscardCloneDialog {
   protected discard(target: DiscardCloneTarget): void {
     this.busy.set(true);
     this.error.set(null);
-    this.api.discardClone(this.sessionId(), target.repositoryId).subscribe({
-      next: () => {
-        this.close();
-        this.toasts.show({ title: `Clone of ${target.name} deleted` });
-        this.discarded.emit(target.repositoryId);
-      },
-      error: (error: unknown) => {
-        const message = errorMessage(error, 'The clone was not deleted.');
-        if (this.target() === target) {
-          this.busy.set(false);
-          this.error.set(message);
-        } else {
-          // Closed (Esc) or opened for another clone meanwhile.
-          this.toasts.show({ title: message, kind: 'error' });
-        }
-      },
-    });
+    this.api
+      .discardClone(this.sessionId(), target.repositoryId, target.branch)
+      .subscribe({
+        next: () => {
+          this.close();
+          this.toasts.show({ title: `Clone of ${target.name} deleted` });
+          this.discarded.emit(target.repositoryId);
+        },
+        error: (error: unknown) => {
+          const message = errorMessage(error, 'The clone was not deleted.');
+          if (this.target() === target) {
+            this.busy.set(false);
+            this.error.set(message);
+          } else {
+            // Closed (Esc) or opened for another clone meanwhile.
+            this.toasts.show({ title: message, kind: 'error' });
+          }
+        },
+      });
   }
 
   private close(): void {

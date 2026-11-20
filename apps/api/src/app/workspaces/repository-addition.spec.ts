@@ -2,8 +2,11 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionDto } from '@claude-remote-manager/shared-types';
-import { git } from '../git/testing/git-fixtures';
-import { ADD_REPOSITORY_TOOL_NAME } from '../sessions/app-tools';
+import { commitFile, git } from '../git/testing/git-fixtures';
+import {
+  ADD_BRANCH_TOOL_NAME,
+  ADD_REPOSITORY_TOOL_NAME,
+} from '../sessions/app-tools';
 import { SessionEventRepository } from '../sessions/session-event.repository';
 import { additionResult } from '../sessions/sessions.service';
 import {
@@ -610,6 +613,112 @@ describe('adding repositories to a running session', () => {
     });
   });
 
+  describe('the tool add_branch', () => {
+    const tool = (run: FakeRun) => {
+      const found = run.options.tools?.find(
+        (entry) => entry.name === 'add_branch',
+      );
+      if (!found) {
+        throw new Error('no add_branch tool');
+      }
+      return found;
+    };
+
+    it('adds a further clone on a numbered branch without asking; push and pull requests name the branch', async () => {
+      const main = await harness.addRepository('acme', 'app');
+      const session = await harness.service.create({
+        prompt: 'Do the work',
+        repositories: [{ repositoryId: main.id }],
+      });
+      await harness.prepared(session.id);
+      const run = harness.runner.last;
+
+      // Never asks (the owner's decision).
+      await expect(
+        run.options.canUseTool(ADD_BRANCH_TOOL_NAME, { reason: 'Second fix' }, {
+          signal: new AbortController().signal,
+          toolUseID: 'tool-branch',
+          requestId: 'r1',
+          mcpServer: { name: 'crm', source: 'sdk' },
+        } as never),
+      ).resolves.toMatchObject({ behavior: 'allow' });
+      expect(run.options.allowedTools).toContain(ADD_BRANCH_TOOL_NAME);
+
+      const result = await tool(run).handler(
+        { reason: 'Second fix' },
+        { toolUseId: 'tool-branch' },
+      );
+      const path = `${clonePath(session, 'acme', 'app')}-2`;
+      const branch = `claude/${session.slug}-2`;
+      expect(result.isError).toBe(false);
+      expect(result.text).toContain(
+        `Its clone is ${path}, on the session branch ${branch}`,
+      );
+      expect(harness.approver.requests).toHaveLength(0);
+      expect(run.addedDirectories).toEqual([path]);
+      expect(await git(path, 'symbolic-ref', '--short', 'HEAD')).toBe(branch);
+      expect(harness.service.get(session.id).directories.at(-1)).toMatchObject({
+        path,
+        branch,
+        baseBranch: 'main',
+        state: 'ready',
+        addition: { by: 'claude', state: 'ready' },
+      });
+      expect(
+        harness
+          .eventsOfType(session.id, 'prepare.progress')
+          .some((event) =>
+            event.message?.includes(
+              `Branch ${branch} requested by Claude: Second fix`,
+            ),
+          ),
+      ).toBe(true);
+
+      // The next one is -3.
+      const third = await tool(run).handler(
+        { repository: 'acme/app', reason: 'Third fix' },
+        { toolUseId: 'tool-branch-3' },
+      );
+      expect(third.text).toContain(`claude/${session.slug}-3`);
+
+      // Push by button: the clone is named by its branch.
+      await commitFile(path, 'second.txt', 'two');
+      await expect(
+        harness.sessionGit.push(session.id, main.id),
+      ).rejects.toThrow('name the branch');
+      const pushed = await harness.sessionGit.push(session.id, main.id, branch);
+      expect(await git(main.origin, 'rev-parse', `refs/heads/${branch}`)).toBe(
+        pushed,
+      );
+      // The first clone's branch is untouched.
+      await expect(
+        git(main.origin, 'rev-parse', `refs/heads/claude/${session.slug}`),
+      ).rejects.toThrow();
+    });
+
+    it('refuses unknown repositories and a missing reason', async () => {
+      const main = await harness.addRepository('acme', 'app');
+      const session = await harness.service.create({
+        prompt: 'Do the work',
+        repositories: [{ repositoryId: main.id }],
+      });
+      await harness.prepared(session.id);
+      const run = harness.runner.last;
+      const unknown = await tool(run).handler(
+        { repository: 'acme/other', reason: 'r' },
+        { toolUseId: 't1' },
+      );
+      expect(unknown).toMatchObject({ isError: true });
+      expect(unknown.text).toContain('is not a repository of this session');
+      const blank = await tool(run).handler(
+        { reason: ' ' },
+        { toolUseId: 't2' },
+      );
+      expect(blank).toMatchObject({ isError: true });
+      expect(blank.text).toContain('reason');
+      expect(harness.service.get(session.id).directories).toHaveLength(1);
+    });
+  });
   it('keeps cleanup away while adding; ending the session stops the setup script', async () => {
     const { session } = await idleSession();
     const lib = await harness.addRepository('acme', 'lib', 'sleep 30');

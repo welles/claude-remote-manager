@@ -79,6 +79,11 @@ export interface PullRequestCall {
   body: string | null;
   /** Base branch; filled in with the session clone's base when omitted. */
   base: string | null;
+  /**
+   * The session branch it comes from (the clone's); several clones of the
+   * repository (`add_branch`) differ in it. Absent from older servers.
+   */
+  head?: string | null;
   draft: boolean;
 }
 

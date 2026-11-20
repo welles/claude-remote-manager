@@ -127,6 +127,13 @@
       "when": 1795122397015,
       "tag": "0017_environments",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1795203412547,
+      "tag": "0018_session_branches",
+      "breakpoints": true
     }
   ]
 }

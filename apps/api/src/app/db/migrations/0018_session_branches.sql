@@ -1,0 +1,2 @@
+DROP INDEX `session_directories_session_repository`;--> statement-breakpoint
+CREATE UNIQUE INDEX `session_directories_session_repository_branch` ON `session_directories` (`session_id`,`repository_id`,`branch`);

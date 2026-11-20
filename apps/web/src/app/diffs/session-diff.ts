@@ -24,7 +24,7 @@ const STATUS_LETTERS: Record<SessionDiffFile['status'], string> = {
 
 /** Key of a file within the session diff. */
 const fileKey = (repository: RepositoryDiff, file: SessionDiffFile) =>
-  `${repository.repositoryId}\u0000${file.oldPath ?? ''}\u0000${file.path}`;
+  `${repository.repositoryId}\u0000${repository.branch ?? ''}\u0000${file.oldPath ?? ''}\u0000${file.path}`;
 
 /**
  * Everything a session changed against the commit each of its clones
@@ -98,6 +98,14 @@ export class SessionDiff implements OnInit {
         repository.repositoryId,
         file.path,
         file.oldPath,
+        // Names the clone when the session has several of the repository.
+        (this.diff()?.repositories ?? []).some(
+          (other) =>
+            other !== repository &&
+            other.repositoryId === repository.repositoryId,
+        )
+          ? repository.branch
+          : null,
       )
       .subscribe({
         next: (loaded) => {
