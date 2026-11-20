@@ -238,8 +238,9 @@ describe('adding repositories in the session details', () => {
       ).toBeNull();
       await click(fixture, 'addition-remove');
       expect(
-        http.expectOne('/api/sessions/s1/repositories/r2/addition/remove')
-          .request.method,
+        http.expectOne(
+          '/api/sessions/s1/repositories/r2/addition/remove?branch=claude/reply-with-pong-abc123',
+        ).request.method,
       ).toBe('POST');
     });
 
@@ -252,11 +253,15 @@ describe('adding repositories in the session details', () => {
       );
       await click(fixture, 'addition-accept');
       http
-        .expectOne('/api/sessions/s1/repositories/r2/addition/accept')
+        .expectOne(
+          '/api/sessions/s1/repositories/r2/addition/accept?branch=claude/reply-with-pong-abc123',
+        )
         .flush(sessionDto());
       await fixture.whenStable();
       await click(fixture, 'addition-retry');
-      http.expectOne('/api/sessions/s1/repositories/r2/addition/retry');
+      http.expectOne(
+        '/api/sessions/s1/repositories/r2/addition/retry?branch=claude/reply-with-pong-abc123',
+      );
     });
   });
 });

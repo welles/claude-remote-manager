@@ -3,8 +3,8 @@
   @for (clone of keptClones(); track clone.key) {
   <p>
     Autoclose kept the clone of <strong>{{ clone.name }}</strong>@if
-    (clone.branch) { on <code>{{ clone.branch }}</code>}: it has work that is
-    not on GitHub.
+    (clone.showBranch) { on <code>{{ clone.branch }}</code>}: it has work that
+    is not on GitHub.
     <button
       matButton="outlined"
       type="button"
@@ -23,7 +23,7 @@
   <div class="clone" data-testid="git-clone">
     <div class="clone-head">
       <strong>{{ clone.name }}</strong>
-      @if (clone.branch) {
+      @if (clone.showBranch) {
       <code class="branch" data-testid="clone-branch">{{ clone.branch }}</code>
       } @if (clone.directory.pushedCommit; as pushed) {
       <span class="pushed" data-testid="pushed"
@@ -124,6 +124,11 @@
         <a [href]="pull.url" target="_blank" rel="noopener"
           >#{{ pull.number }} {{ pull.title }}</a
         >
+        @if (pull.headBranch !== clone.directory.branch && clone.showBranch) {
+        <code class="pull-branch" data-testid="pull-request-branch"
+          >{{ pull.headBranch }}</code
+        >
+        }
         <span class="by"
           >{{ pull.createdBy === 'claude' ? 'by Claude' : '' }}</span
         >

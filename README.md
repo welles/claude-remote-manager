@@ -419,7 +419,7 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   `set_session_title` (unless the user chose the title, see
   [Managing sessions](#managing-sessions)), `add_repository` (always, see
   [Adding repositories to a running session](#adding-repositories-to-a-running-session)),
-  `add_branch` (when the session has a repository with a remote, see
+  `add_branch` (always, see
   [Several pull requests at once](#several-pull-requests-at-once)) and
   `create_pull_request`, `reply_to_review_thread`, `merge_pull_request`, `set_pr_automation`
   and `request_owner_decision` (when the
@@ -1478,21 +1478,26 @@ its own: Claude calls the tool `add_branch` (`repository` as `owner/name`, optio
 session has one repository; optional `base_branch`, default the base of the repository's first
 clone; `reason`, shown in the history). It never asks (the owner's decision: it only clones a
 repository the session has already; pushes and pull requests ask as before) and is offered
-when the session has a repository with a remote (local projects without remote are refused:
-their branches never become pull requests). The new clone is an addition like the ones above
-(fetch, clone from the freshly fetched mirror, setup script, given to the running process,
-failures as above), on a numbered branch `claude/<slug>-2`, `-3`, … (no content in branch
-names; numbers are never reused within a session) at `sessions/<slug>/<owner>/<name>-2`.
-Claude also uses it for the next pull request after one was merged, instead of rewriting the
-session branch.
+to every process like `add_repository` (a repository may come later); it refuses repositories
+the session does not have and local projects without remote (their branches never become pull
+requests). The new clone is an addition like the ones above (fetch, clone from the freshly
+fetched mirror, setup script, given to the running process), on a numbered branch
+`claude/<slug>-2`, `-3`, … (no content in branch names) at
+`sessions/<slug>/<owner>/<name>-2`. The number is the lowest one no clone of the session has
+or had (removed ones included, as their branch may still be a pull request's head); a clone
+that could not be made is forgotten at once (nothing is on disk, Claude is told and may try
+again), so its number is free again. Only an addition still being prepared stands in the way
+of another. Claude also uses it for the next pull request after one was merged, instead of
+rewriting the session branch.
 
 Each clone is a directory with its own branch, so the per-directory logic is unchanged (push,
 session diff, PR automation, CI waiting, cleanup). Where a clone is found by repository, the
 branch decides (`apps/api/src/app/sessions/session-clones.ts`): a pull request belongs to the
 clone on its head branch; the routes per clone (push, create PR, clone loss, discard, addition
-actions, file diff) take `?branch=`, required when the session has several clones of the
-repository (400 naming the branches otherwise); `create_pull_request` takes `branch` likewise
-(its approval shows the head branch). Tools that name a pull request by number find the clone
+actions, file diff) take `?branch=` (the web app always sends it), required when the session
+has several current clones of the repository (400 naming the branches otherwise; removed
+further branches do not count); `create_pull_request` takes `branch` likewise (its approval
+shows the head branch, nothing when the call names none and there are several). Tools that name a pull request by number find the clone
 through it. The git panel shows each clone with its branch and its own pull requests. A
 session has at most 10 clones in all.
 
@@ -1500,8 +1505,13 @@ When the pull request of a further branch's clone (never the repository's first 
 merged or closed and no other open pull request comes from it, the clone is removed once the
 session's turn is over (as autoclose waits), unless it has work that is not on GitHub (the same
 check as autoclose's): the history notes "removed the clone of … on …" or, with a warning,
-that it was kept and why. The session goes on in its other directories; the removed clone is
-no longer given to Claude Code and no longer listed in the session diff. Database:
+that it was kept and why (also when a turn started while it was checked). The removed clone
+is `retired` (`addition_state`): it does not keep the session from being continued, is not
+given to Claude Code any more (an idle process is closed so that the next one starts without
+it), and is not listed in the session diff; Claude is told with its next message. Its pull
+requests stay listed under the repository's first clone, with their branch. Dev servers and
+previews are not tracked per directory, so ones started in the clone keep running (the note
+asks Claude to stop them). Database:
 `session_directories` is unique per session, repository and branch (migration
 `0018_session_branches`).
 

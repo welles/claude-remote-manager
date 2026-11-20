@@ -98,14 +98,7 @@ export class SessionDiff implements OnInit {
         repository.repositoryId,
         file.path,
         file.oldPath,
-        // Names the clone when the session has several of the repository.
-        (this.diff()?.repositories ?? []).some(
-          (other) =>
-            other !== repository &&
-            other.repositoryId === repository.repositoryId,
-        )
-          ? repository.branch
-          : null,
+        repository.branch,
       )
       .subscribe({
         next: (loaded) => {

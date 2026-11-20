@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { isRetiredClone } from '@claude-remote-manager/shared-types';
 import type { SessionDirectoryRecord } from './session.repository';
 
 /**
@@ -21,18 +22,21 @@ export function clonesOf(
 }
 
 /**
- * The clone of a repository on `branch`; without a branch the only clone.
- * Several clones and no branch: a 400 naming the branches.
+ * The clone of a repository on `branch`; without a branch the only clone
+ * that is not retired (a further branch's clone removed after its pull
+ * request). Several such clones and no branch: a 400 naming the branches.
  */
 export function cloneOf(
   directories: readonly SessionDirectoryRecord[],
   repositoryId: string,
   branch?: string | null,
 ): SessionDirectoryRecord | undefined {
-  const clones = clonesOf(directories, repositoryId);
+  const all = clonesOf(directories, repositoryId);
   if (branch) {
-    return clones.find((directory) => directory.branch === branch);
+    return all.find((directory) => directory.branch === branch);
   }
+  const current = all.filter((directory) => !isRetiredClone(directory));
+  const clones = current.length > 0 ? current : all;
   if (clones.length > 1) {
     throw new BadRequestException(
       `The session has several clones of ${clones[0].repositoryName ?? 'the repository'} (branches ${clones

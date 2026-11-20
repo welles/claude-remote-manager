@@ -2596,11 +2596,69 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
           ),
       ).toBe(true);
 
+      // The session goes on: retired, not a removed directory in the way.
+      expect(after.directories.at(-1)?.addition?.state).toBe('retired');
+      const runs = harness.runner.runs.length;
+      await harness.service.send(session.id, { text: 'Next' });
+      await waitFor(() => harness.runner.runs.length > runs);
+      // The idle process was closed: the next one starts without the clone,
+      // and Claude is told once.
+      const run = harness.runner.last;
+      expect(run.options.additionalDirectories ?? []).not.toContain(
+        second.path,
+      );
+      const note = run.sent.at(-1)?.note?.text ?? '';
+      expect(note).toContain(`The clone ${second.path}`);
+      expect(note).toContain('was removed');
+      run.emit(resultMessage(20, 0.02));
+      await waitFor(() => harness.service.get(session.id).status === 'waiting');
+      // The first clone is the repository's clone again, without a branch.
+      const commit = await commitFile(clone, 'more.txt', 'more');
+      await expect(
+        harness.sessionGit.push(session.id, repositoryId),
+      ).resolves.toBe(commit);
+
       // The first clone stays when its pull request is merged (no autoclose).
       merge(pull.number);
       await automation.check(pull.id);
       await waitFor(() => notifications.closed.length === 2);
       expect(existsSync(clone)).toBe(true);
+    });
+
+    it('handles a close of a further branch deferred by a turn with the first poll after a restart', async () => {
+      const { session } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      await harness.service.send(session.id, { text: 'Go on' });
+      await waitFor(() => harness.service.get(session.id).status === 'running');
+      merge(second.pull.number);
+      await automation.check(second.pull.id);
+      expect(existsSync(second.path)).toBe(true);
+
+      // The server stops before the turn ends, and starts again.
+      automation.onModuleDestroy();
+      harness.runner.last.emit(resultMessage(20, 0.02));
+      await waitFor(() => harness.service.get(session.id).status === 'waiting');
+      expect(existsSync(second.path)).toBe(true);
+      createAutomation();
+      await automation.poll();
+      await waitFor(() => !existsSync(second.path));
+      expect(
+        harness.service.get(session.id).directories.at(-1)?.addition?.state,
+      ).toBe('retired');
+    });
+
+    it('needs the branch for create_pull_request with two clones of the repository', async () => {
+      const { session } = await sessionWithPullRequest();
+      await secondPullRequest(session.id);
+      const tool = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'create_pull_request',
+      );
+      if (!tool) {
+        throw new Error('no create_pull_request tool');
+      }
+      await expect(
+        tool.handler({ title: 'Third' }, { toolUseId: 'tool-pr' }),
+      ).rejects.toThrow('name the branch');
     });
 
     it('keeps the clone of a further branch with work that is not on GitHub', async () => {

@@ -140,7 +140,7 @@ describe('session integrations (tools, memory, pushes)', () => {
     expect(options().instructions).toBeUndefined();
   });
 
-  it('keeps Claude Code’s default memory and gives scratch sessions show_file and add_repository', async () => {
+  it('keeps Claude Code’s default memory and gives scratch sessions show_file, add_repository and add_branch', async () => {
     await start(null);
     expect(options().settings).toEqual(SESSION_SETTINGS);
     expect(options().tools?.map((entry) => entry.name)).toEqual([
@@ -148,6 +148,7 @@ describe('session integrations (tools, memory, pushes)', () => {
       'set_session_title',
       'set_waiting_state',
       'add_repository',
+      'add_branch',
     ]);
   });
 

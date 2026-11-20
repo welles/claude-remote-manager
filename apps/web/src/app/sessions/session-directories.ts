@@ -10,6 +10,7 @@ export const ADDITION_LABELS: Record<RepositoryAdditionState, string> = {
   failed: 'not added',
   held: 'held: setup failed',
   ready: 'added',
+  retired: 'removed after its pull request',
 };
 
 /** Name of a session directory: repository, scratch or the directory. */

@@ -23,11 +23,10 @@ interface PushableClone {
   /** Repository and branch: the session may have several clones of one. */
   key: string;
   repositoryId: string;
-  /**
-   * The session branch when the repository has several clones (shown, and
-   * naming the clone to the API); `null` for a repository's only clone.
-   */
+  /** The clone's session branch, naming it to the API. */
   branch: string | null;
+  /** Whether the repository has several clones: the branch is shown. */
+  showBranch: boolean;
   name: string;
   github: boolean;
   directory: SessionDirectoryDto;
@@ -81,6 +80,18 @@ export class SessionGitPanel {
           directory.repository?.id === repositoryId &&
           directory.state !== 'removed',
       );
+    /**
+     * The clone a pull request is listed under: the one on its head
+     * branch; else (a retired further branch's, or one from elsewhere) the
+     * repository's first clone, where it shows its branch.
+     */
+    const ownerOf = (pull: PullRequestDto) => {
+      const siblings = clonesOf(pull.repositoryId);
+      return (
+        siblings.find((directory) => directory.branch === pull.headBranch) ??
+        siblings[0]
+      );
+    };
     return session.directories.flatMap((directory) => {
       if (
         directory.kind !== 'clone' ||
@@ -97,18 +108,21 @@ export class SessionGitPanel {
         {
           key: cloneKey(repositoryId, directory.branch),
           repositoryId,
-          branch: siblings.length > 1 ? directory.branch : null,
+          branch: directory.branch,
+          showBranch:
+            siblings.length > 1 ||
+            session.directories.some(
+              (other) =>
+                other !== directory &&
+                other.kind === 'clone' &&
+                other.repository?.id === repositoryId,
+            ),
           name: directory.repository.fullName,
           github: directory.repository.github,
           directory,
-          // A pull request belongs to the clone on its head branch (one
-          // from elsewhere to the repository's only clone).
           pullRequests: session.pullRequests.filter(
             (pull) =>
-              pull.repositoryId === repositoryId &&
-              (pull.headBranch === directory.branch ||
-                (siblings.length === 1 &&
-                  !siblings.some((other) => other.branch === pull.headBranch))),
+              pull.repositoryId === repositoryId && ownerOf(pull) === directory,
           ),
         },
       ];
@@ -136,13 +150,12 @@ export class SessionGitPanel {
             {
               key: cloneKey(directory.repository.id, directory.branch),
               repositoryId: directory.repository.id,
-              branch: kept.some(
+              branch: directory.branch,
+              showBranch: kept.some(
                 (other) =>
                   other !== directory &&
                   other.repository?.id === directory.repository?.id,
-              )
-                ? directory.branch
-                : null,
+              ),
               name: directory.repository.fullName,
               path: directory.path,
             },

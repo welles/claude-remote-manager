@@ -17,9 +17,27 @@ export type RepositoryAddedBy = 'user' | 'claude';
  * - `held`: the clone exists, but its setup script failed or timed out, so
  *   Claude does not get it until the user runs the setup again or uses it
  *   anyway;
- * - `ready`: Claude works in it like in the session's other clones.
+ * - `ready`: Claude works in it like in the session's other clones;
+ * - `retired`: a further branch's clone (`add_branch`) removed after its
+ *   pull request was merged or closed; the session goes on without it.
  */
-export type RepositoryAdditionState = 'preparing' | 'failed' | 'held' | 'ready';
+export type RepositoryAdditionState =
+  | 'preparing'
+  | 'failed'
+  | 'held'
+  | 'ready'
+  | 'retired';
+
+/**
+ * Whether a directory is the clone of a further branch that was removed
+ * after its pull request (`retired`): not a removed directory that stands
+ * in the way of continuing the session.
+ */
+export function isRetiredClone(directory: {
+  addition?: { state: RepositoryAdditionState } | null;
+}): boolean {
+  return directory.addition?.state === 'retired';
+}
 
 /** A repository added while the session ran (`SessionDirectoryDto.addition`). */
 export interface RepositoryAdditionDto {

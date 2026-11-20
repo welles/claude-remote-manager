@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { cloneOf, clonesOf } from '../sessions/session-clones';
+import { cloneOf } from '../sessions/session-clones';
 import { join } from 'node:path';
 import {
   BadRequestException,
@@ -16,6 +16,7 @@ import type {
   SessionDiffLimits,
   SessionDiffResponse,
 } from '@claude-remote-manager/shared-types';
+import { isRetiredClone } from '@claude-remote-manager/shared-types';
 import {
   PROCESS_LAUNCHER,
   SINGLE_USER,
@@ -101,10 +102,7 @@ export class SessionDiffService {
         directory.kind === 'clone' &&
         directory.repositoryId &&
         // A further branch's clone removed after its pull request is done.
-        !(
-          directory.state === 'removed' &&
-          clonesOf(record.directories, directory.repositoryId)[0] !== directory
-        )
+        !isRetiredClone(directory)
       ) {
         repositories.push(await this.repositoryDiff(directory, budget));
       }

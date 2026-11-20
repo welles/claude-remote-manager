@@ -525,14 +525,11 @@ export class SessionWorkspaceService {
     }
     if (
       session.directories.some(
-        (directory) =>
-          directory.addition &&
-          directory.addition.state !== 'ready' &&
-          directory.state !== 'removed',
+        (directory) => directory.addition?.state === 'preparing',
       )
     ) {
       throw new ConflictException(
-        'A repository or branch is being added to this session, or its addition failed; retry or remove it in the session details first',
+        'A repository or branch is being added to this session; try again when it is ready',
       );
     }
     const clones = session.directories.filter(
@@ -543,8 +540,9 @@ export class SessionWorkspaceService {
         `A session can have at most ${MAX_SESSION_REPOSITORIES} clones`,
       );
     }
-    // Numbers are never reused: a removed clone's branch may still be on
-    // GitHub (its pull request's head).
+    // Numbers of clones the session has (also removed ones, whose branch may
+    // still be on GitHub as a pull request's head) are not used again; a
+    // failed addition leaves no row, so its number is free.
     const branches = new Set(
       session.directories.map((directory) => directory.branch),
     );
