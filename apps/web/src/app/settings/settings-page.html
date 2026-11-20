@@ -60,7 +60,29 @@
       </dl>
       @if (status.error) {
       <p class="error" data-testid="github-error">{{ status.error }}</p>
-      }
+      } @if (status.setup; as setup) { @if (setup.permissions.length > 0 ||
+      setup.events.length > 0) {
+      <div class="warning" data-testid="github-setup">
+        <p>
+          The app's settings on GitHub lack what the app needs. Add it under
+          “Permissions &amp; events” of the app; each installation then has to
+          accept the change.
+        </p>
+        <ul>
+          @for (gap of setup.permissions; track gap.permission) {
+          <li data-testid="github-missing-permission">
+            Permission <code>{{ gap.permission }}</code>: {{ gap.needed }}
+            needed, {{ gap.granted ?? 'none' }} granted ({{ gap.usedFor }})
+          </li>
+          } @for (event of setup.events; track event) {
+          <li data-testid="github-missing-event">
+            Webhook event <code>{{ event }}</code> not subscribed (the PR
+            automation follows it)
+          </li>
+          }
+        </ul>
+      </div>
+      } }
       <h3 class="subheading">Installations</h3>
       @if (status.installations.length === 0 && !status.error) {
       <p>The app is not installed on any account yet.</p>
@@ -82,6 +104,12 @@
           >
           } @if (installation.error) {
           <span class="error">{{ installation.error }}</span>
+          } @if (installation.missingPermissions.length > 0 ||
+          installation.missingEvents.length > 0) {
+          <span class="warning" data-testid="installation-not-accepted"
+            >Has not accepted the app's new {{ acceptance(installation) }}:
+            review the request under Configure</span
+          >
           }
         </li>
         }

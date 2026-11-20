@@ -4,6 +4,32 @@
  * which repositories the app can access.
  */
 
+/**
+ * A permission the app needs but does not have (in the app's settings), or
+ * that an installation has not accepted yet.
+ */
+export interface GitHubPermissionGap {
+  /** GitHub's name, e.g. `pull_requests`. */
+  permission: string;
+  needed: 'read' | 'write';
+  /** What it has; `null`: none. */
+  granted: string | null;
+  /** What the app uses it for. */
+  usedFor: string;
+}
+
+/**
+ * What the app's settings on GitHub lack: permissions, and webhook events
+ * the PR automation follows (only checked when a webhook secret is set).
+ */
+export interface GitHubSetupDto {
+  permissions: GitHubPermissionGap[];
+  /** Webhook events the app does not subscribe to. */
+  events: string[];
+  /** Whether events were checked (a webhook secret is configured). */
+  webhook: boolean;
+}
+
 /** An installation of the GitHub App on an account or organization. */
 export interface GitHubInstallationDto {
   id: number;
@@ -18,6 +44,13 @@ export interface GitHubInstallationDto {
   settingsUrl: string | null;
   /** Why the installation's repositories could not be listed. */
   error: string | null;
+  /**
+   * Permissions the app has but the installation has not accepted yet
+   * (GitHub asks the account's owner after the app's settings changed).
+   */
+  missingPermissions: GitHubPermissionGap[];
+  /** Webhook events the installation has not accepted yet. */
+  missingEvents: string[];
 }
 
 /** Response of `GET /api/github/status`. */
@@ -34,6 +67,8 @@ export interface GitHubStatusDto {
   /** Page to install the app on further accounts or organizations. */
   installUrl: string | null;
   installations: GitHubInstallationDto[];
+  /** What the app's settings lack; `null` when GitHub was not asked. */
+  setup: GitHubSetupDto | null;
   /** GitHub could not be asked (unreachable, rate limit, ...). */
   error: string | null;
 }

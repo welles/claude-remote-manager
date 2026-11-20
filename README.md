@@ -1616,7 +1616,13 @@ Permissions the app needs (repository permissions):
 | Actions         | read       | PR automation: logs of failed GitHub Actions jobs                                                                                                                        |
 
 Session processes get narrower tokens of their own (see
-[GitHub tokens in the container](#github-tokens-in-the-container)). Install the app
+[GitHub tokens in the container](#github-tokens-in-the-container)). The app checks its own settings against
+this list (`apps/api/src/app/github/required-setup.ts`): once at startup, logging a warning per
+missing permission, and with every `GET /api/github/status`, shown on the Settings page.
+`GET /app` gives the app's permissions and webhook events, `GET /app/installations` what each
+installation accepted; an installation that has not accepted new permissions yet (GitHub asks
+the account's owner after the app's settings changed) is named with what it lacks. With a
+webhook secret the webhook events of [PR automation](#pr-automation) are checked as well. Install the app
 on your account and
 on organizations and choose the repositories there; the Settings page lists the
 installations with their repository counts and links to install the app on further accounts.

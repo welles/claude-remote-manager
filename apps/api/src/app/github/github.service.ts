@@ -1,6 +1,12 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  type OnApplicationBootstrap,
+} from '@nestjs/common';
 import type {
   GitHubInstallationDto,
+  GitHubSetupDto,
   GitHubRepositoryDto,
   GitHubStatusDto,
 } from '@claude-remote-manager/shared-types';
@@ -12,6 +18,7 @@ import {
   type GitHubPermissionSet,
   type InstallationToken,
 } from './installation-tokens';
+import { describeGap, missingEvents, permissionGaps } from './required-setup';
 
 /** Why the app cannot create repositories in personal accounts. */
 export const PERSONAL_ACCOUNT_CREATION =
@@ -49,6 +56,18 @@ export interface GitHubInstallation {
   accountType: string;
   repositorySelection: string;
   settingsUrl: string | null;
+  /** What the installation accepted (GitHub's maps). */
+  permissions: Record<string, string>;
+  events: string[];
+}
+
+/** The app as GitHub reports it, with its permissions and events. */
+interface AppInfo {
+  name: string;
+  slug: string;
+  url: string;
+  permissions: Record<string, string>;
+  events: string[];
 }
 
 /** A repository as listed by an installation. */
@@ -140,6 +159,8 @@ interface RawInstallation {
   account: { login: string; type: string } | null;
   repository_selection: string;
   html_url?: string;
+  permissions?: Record<string, string>;
+  events?: string[];
 }
 
 /** A review thread of a pull request (GraphQL). */
@@ -349,12 +370,17 @@ function toRepository(
  * narrowed to the repository and permissions of the call.
  */
 @Injectable()
-export class GitHubService {
+export class GitHubService implements OnApplicationBootstrap {
   private readonly logger = new Logger(GitHubService.name);
   private app: {
     at: number;
-    value: Promise<{ name: string; slug: string; url: string }>;
+    value: Promise<AppInfo>;
   } | null = null;
+  /**
+   * Whether GitHub delivers webhooks to the app (a webhook secret is
+   * configured): then its events are checked too. Set by the PR automation.
+   */
+  expectsWebhook = false;
   private installationCache: {
     at: number;
     value: Promise<GitHubInstallation[]>;
@@ -392,6 +418,7 @@ export class GitHubService {
       appUrl: null,
       installUrl: null,
       installations: [],
+      setup: null,
       error: null,
     };
     if (!this.configured) {
@@ -401,6 +428,7 @@ export class GitHubService {
       const app = await this.appInfo();
       const installations = await this.installations();
       const listing = await this.listing();
+      const setup = this.setupOf(app);
       return {
         ...base,
         appName: app.name,
@@ -408,12 +436,18 @@ export class GitHubService {
         appUrl: app.url,
         installUrl: `https://${GITHUB_HOST}/apps/${app.slug}/installations/new`,
         installations: installations.map(
-          (installation): GitHubInstallationDto => ({
+          ({
+            permissions,
+            events,
+            ...installation
+          }): GitHubInstallationDto => ({
             ...installation,
             repositoryCount: listing.counts.get(installation.id) ?? null,
             error: listing.errors.get(installation.id) ?? null,
+            ...this.installationGaps(setup, { permissions, events }),
           }),
         ),
+        setup,
       };
     } catch (error) {
       return { ...base, error: errorText(error) };
@@ -442,6 +476,8 @@ export class GitHubService {
               accountType: installation.account?.type ?? 'User',
               repositorySelection: installation.repository_selection,
               settingsUrl: installation.html_url ?? null,
+              permissions: installation.permissions ?? {},
+              events: installation.events ?? [],
             })),
         );
       this.installationCache = { at: this.now(), value };
@@ -899,10 +935,95 @@ export class GitHubService {
     ).token;
   }
 
-  private appInfo(): Promise<{ name: string; slug: string; url: string }> {
-    if (!this.app || this.now() - this.app.at > APP_CACHE_MS) {
+  /**
+   * Checks the app's settings on GitHub once at startup and logs what is
+   * missing (also shown on the Settings page). Never fails the start.
+   */
+  onApplicationBootstrap(): void {
+    if (!this.configured) {
+      return;
+    }
+    void this.checkSetup().catch((error: unknown) =>
+      this.logger.warn(
+        `Could not check the GitHub App's permissions: ${errorText(error)}`,
+      ),
+    );
+  }
+
+  /** Logs missing permissions and events of the app and its installations. */
+  async checkSetup(): Promise<void> {
+    const app = await this.appInfo(true);
+    const setup = this.setupOf(app);
+    const problems = [
+      ...setup.permissions.map(
+        (gap) => `the app lacks the permission ${describeGap(gap)}`,
+      ),
+      ...setup.events.map(
+        (event) => `the app does not subscribe to the webhook event ${event}`,
+      ),
+    ];
+    for (const installation of await this.installations(true)) {
+      const gaps = this.installationGaps(setup, installation);
+      problems.push(
+        ...gaps.missingPermissions.map(
+          (gap) =>
+            `the installation on ${installation.account} has not accepted ${describeGap(gap)}`,
+        ),
+        ...gaps.missingEvents.map(
+          (event) =>
+            `the installation on ${installation.account} has not accepted the webhook event ${event}`,
+        ),
+      );
+    }
+    if (problems.length === 0) {
+      this.logger.log('The GitHub App has every permission and event it needs');
+      return;
+    }
+    for (const problem of problems) {
+      this.logger.warn(`GitHub App setup: ${problem}`);
+    }
+  }
+
+  /** What the app's settings lack. */
+  private setupOf(app: AppInfo): GitHubSetupDto {
+    return {
+      permissions: permissionGaps(app.permissions),
+      events: this.expectsWebhook ? missingEvents(app.events) : [],
+      webhook: this.expectsWebhook,
+    };
+  }
+
+  /**
+   * What an installation has not accepted yet, of what the app has (gaps
+   * of the app itself are reported once, for the app).
+   */
+  private installationGaps(
+    setup: GitHubSetupDto,
+    installation: { permissions: Record<string, string>; events: string[] },
+  ): Pick<GitHubInstallationDto, 'missingPermissions' | 'missingEvents'> {
+    const appGaps = new Set(setup.permissions.map((gap) => gap.permission));
+    return {
+      missingPermissions: permissionGaps(installation.permissions).filter(
+        (gap) => !appGaps.has(gap.permission),
+      ),
+      missingEvents: setup.webhook
+        ? missingEvents(installation.events).filter(
+            (event) => !setup.events.includes(event),
+          )
+        : [],
+    };
+  }
+
+  private appInfo(refresh = false): Promise<AppInfo> {
+    if (refresh || !this.app || this.now() - this.app.at > APP_CACHE_MS) {
       const value = this.http
-        .request<{ name: string; slug: string; html_url: string }>({
+        .request<{
+          name: string;
+          slug: string;
+          html_url: string;
+          permissions?: Record<string, string>;
+          events?: string[];
+        }>({
           path: '/app',
           token: this.credentials.jwt(),
         })
@@ -910,6 +1031,8 @@ export class GitHubService {
           name: data.name,
           slug: data.slug,
           url: data.html_url,
+          permissions: data.permissions ?? {},
+          events: data.events ?? [],
         }));
       this.app = { at: this.now(), value };
       value.catch(() => {

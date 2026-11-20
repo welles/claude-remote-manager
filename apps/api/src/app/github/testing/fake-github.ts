@@ -6,6 +6,7 @@ import {
   InstallationTokens,
   type GitHubPermissionSet,
 } from '../installation-tokens';
+import { REQUIRED_EVENTS, REQUIRED_PERMISSIONS } from '../required-setup';
 
 /** One RSA key for all tests of a process (generating one takes a while). */
 let sharedKey: { privateKey: KeyObject; publicKey: KeyObject } | undefined;
@@ -29,6 +30,9 @@ export interface FakeInstallation {
   account: string;
   type: 'User' | 'Organization';
   repositories: FakeRepository[];
+  /** What the installation accepted; `null`: what the app has. */
+  permissions: Record<string, string> | null;
+  events: string[] | null;
 }
 
 export interface MintedToken {
@@ -183,6 +187,11 @@ const json = (status: number, body: unknown, headers: HeadersInit = {}) =>
 export class FakeGitHub {
   readonly keys = testKeyPair();
   readonly installations: FakeInstallation[] = [];
+  /** The app's permissions and webhook events (`GET /app`). */
+  appPermissions: Record<string, string> = Object.fromEntries(
+    REQUIRED_PERMISSIONS.map(({ permission, access }) => [permission, access]),
+  );
+  appEvents: string[] = [...REQUIRED_EVENTS];
   readonly tokens: MintedToken[] = [];
   readonly pulls: FakePullRequest[] = [];
   readonly issues: FakeIssue[] = [];
@@ -255,11 +264,13 @@ export class FakeGitHub {
     account: string,
     type: 'User' | 'Organization' = 'User',
   ): FakeInstallation {
-    const installation = {
+    const installation: FakeInstallation = {
       id: this.nextId++,
       account,
       type,
       repositories: [],
+      permissions: null,
+      events: null,
     };
     this.installations.push(installation);
     return installation;
@@ -1121,6 +1132,8 @@ export class FakeGitHub {
             name: 'Test App',
             slug: 'test-app',
             html_url: 'https://github.com/apps/test-app',
+            permissions: this.appPermissions,
+            events: this.appEvents,
           })
         : json(401, { message: 'Bad credentials' });
     }
@@ -1135,6 +1148,8 @@ export class FakeGitHub {
           account: { login: installation.account, type: installation.type },
           repository_selection: 'selected',
           html_url: `https://github.com/settings/installations/${installation.id}`,
+          permissions: installation.permissions ?? this.appPermissions,
+          events: installation.events ?? this.appEvents,
         })),
       );
     }
