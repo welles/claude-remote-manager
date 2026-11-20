@@ -9,56 +9,57 @@ interface RequiredPermission {
 }
 
 /**
- * The repository permissions the app needs (README "GitHub"). Keep in line
- * with the tokens the app mints: a token cannot get more than this.
+ * The repository permissions the app needs (README "GitHub"), one per
+ * permission a token can ask for (a new one fails to compile until it is
+ * listed here). A token cannot get more than this.
  */
-export const REQUIRED_PERMISSIONS: readonly RequiredPermission[] = [
-  {
-    permission: 'metadata',
+const REQUIRED: Record<
+  GitHubPermission,
+  Omit<RequiredPermission, 'permission'>
+> = {
+  metadata: {
     access: 'read',
     usedFor: "listing the installations' repositories",
   },
-  {
-    permission: 'contents',
+  contents: {
     access: 'write',
     usedFor: 'cloning, fetching, pushing and merging',
   },
-  {
-    permission: 'pull_requests',
+  pull_requests: {
     access: 'write',
     usedFor: 'creating, reading and merging pull requests, review threads',
   },
-  {
-    permission: 'workflows',
+  workflows: {
     access: 'write',
     usedFor: 'pushing changes to .github/workflows',
   },
-  {
-    permission: 'administration',
+  administration: {
     access: 'write',
     usedFor: 'creating repositories for local projects in organizations',
   },
-  {
-    permission: 'issues',
+  issues: {
     access: 'read',
     usedFor: '# references and comments on pull requests',
   },
-  {
-    permission: 'checks',
+  checks: {
     access: 'read',
     usedFor: 'CI checks of pull requests (PR automation)',
   },
-  {
-    permission: 'statuses',
+  statuses: {
     access: 'read',
     usedFor: 'commit statuses of pull requests (PR automation)',
   },
-  {
-    permission: 'actions',
+  actions: {
     access: 'read',
     usedFor: 'logs of failed GitHub Actions jobs (autofix)',
   },
-];
+};
+
+export const REQUIRED_PERMISSIONS: readonly RequiredPermission[] =
+  Object.entries(REQUIRED).map(([permission, rest]) => ({
+    permission: permission as GitHubPermission,
+    ...rest,
+  }));
 
 /**
  * Webhook events the PR automation follows (README "PR automation"); only

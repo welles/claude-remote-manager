@@ -108,7 +108,8 @@
           installation.missingEvents.length > 0) {
           <span class="warning" data-testid="installation-not-accepted"
             >Has not accepted the app's new {{ acceptance(installation) }}:
-            review the request under Configure</span
+            review the request in {{ installation.settingsUrl ? 'Configure' :
+            "the installation's settings on GitHub" }}</span
           >
           }
         </li>
@@ -128,7 +129,9 @@
       }
     </mat-card-content>
     <mat-card-actions>
-      <button matButton type="button" (click)="loadGitHub()">Refresh</button>
+      <button matButton type="button" (click)="loadGitHub(true)">
+        Refresh
+      </button>
     </mat-card-actions>
   </mat-card>
   <mat-card appearance="outlined">
