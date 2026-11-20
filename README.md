@@ -288,7 +288,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   (or scratch directory) are created and the setup scripts run (see
   [Repositories and session clones](#repositories-and-session-clones)); then a Claude Code
   process starts through the Agent SDK in streaming-input mode with the prompt. The main
-  repository's clone is the working directory, the other clones are additional directories.
+  repository's clone is the working directory (until Claude switches, see
+  [Switching the working directory](#switching-the-working-directory)), the other clones are
+  additional directories.
   The process stays alive
   for follow-up messages; several sessions run side by side. The process is an internal
   detail: it is closed after `SESSION_IDLE_TIMEOUT_MINUTES` without activity (not while the
@@ -420,7 +422,8 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   [Managing sessions](#managing-sessions)), `add_repository` (always, see
   [Adding repositories to a running session](#adding-repositories-to-a-running-session)),
   `add_branch` (always, see
-  [Several pull requests at once](#several-pull-requests-at-once)) and
+  [Several pull requests at once](#several-pull-requests-at-once)), `switch_directory` (always,
+  see [Switching the working directory](#switching-the-working-directory)) and
   `create_pull_request`, `reply_to_review_thread`, `merge_pull_request`, `set_pr_automation`
   and `request_owner_decision` (when the
   session has a GitHub repository; all in the in-process MCP
@@ -1501,19 +1504,44 @@ shows the head branch, nothing when the call names none and there are several). 
 through it. The git panel shows each clone with its branch and its own pull requests. A
 session has at most 10 clones in all.
 
-When the pull request of a further branch's clone (never the repository's first clone) is
-merged or closed and no other open pull request comes from it, the clone is removed once the
+When the pull request of a clone is merged or closed, no other open pull request comes from
+it and the session has another directory Claude works in (the session's last one always
+stays), the clone is removed once the
 session's turn is over (as autoclose waits), unless it has work that is not on GitHub (the same
 check as autoclose's): the history notes "removed the clone of … on …" or, with a warning,
 that it was kept and why (also when a turn started while it was checked). The removed clone
 is `retired` (`addition_state`): it does not keep the session from being continued, is not
 given to Claude Code any more (an idle process is closed so that the next one starts without
-it), and is not listed in the session diff; Claude is told with its next message. Its pull
-requests stay listed under the repository's first clone, with their branch. Dev servers and
+it), and is not listed in the session diff; Claude is told with its next message. When it is
+Claude Code's working directory, the app first switches to another (another clone of the
+repository, else the first directory left) and tells Claude so. Its pull requests stay listed
+under the repository's first clone left, with their branch. Dev servers and
 previews are not tracked per directory, so ones started in the clone keep running (the note
 asks Claude to stop them). Database:
 `session_directories` is unique per session, repository and branch (migration
 `0018_session_branches`).
+
+### Switching the working directory
+
+Claude Code reads `CLAUDE.md`, settings, hooks, skills and slash commands of its working
+directory; the other clones are additional directories. Claude makes another clone the working
+directory with the tool `switch_directory` (`repository`, optional with one repository;
+`branch`, needed when the repository has several clones), e.g. when the work goes on mainly in
+a clone from `add_branch`. It never asks (it only restarts Claude Code in a directory of the
+session). The choice is stored at once (`sessions.working_directory`, the directory's
+position, migration `0019_working_directory`; `null`: the first directory) and applies from
+the next turn: when the turn ends the process is closed (as after an addition that needs a new
+process), and the next message starts Claude Code in the new directory, resuming the same
+conversation (`resume` with the session's ID); an idle process is closed at once. The
+auto-memory follows the working directory's repository, `@` mentions are relative to it, and
+the session details and git panel mark it ("working directory").
+
+Claude Code keeps the transcript in the project folder of the directory it started the session
+in and finds it by ID from any working directory (tested with Claude Code 2.1.322, also the
+Agent SDK's bundled one): it goes on writing there and records the current `cwd` per entry, so
+nothing is copied. The app reads it from the first directory's project folder
+(`transcriptDirectory`), else from any project folder; deleting a session removes Claude Code's
+files by ID across all of them.
 
 ### Isolation and concurrency
 
@@ -1536,7 +1564,8 @@ Several sessions may work in the same repository at the same time without seeing
   serialization is per API process; two API instances on the same workspace are not
   supported. Joining a running fetch can miss a commit pushed after that fetch started.
 - **Auto-memory is per repository**, not per session clone: Claude Code would keep it per
-  working directory; the app sets `autoMemoryDirectory` to `MEMORY_DIR/<repository id>`
+  working directory; the app sets `autoMemoryDirectory` to `MEMORY_DIR/<repository id>` of the
+  working directory's repository
   (outside the clones), so all sessions of a repository share one memory, also after a local
   project was put on GitHub. Scratch sessions keep Claude Code's default.
 

@@ -2619,7 +2619,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
         harness.sessionGit.push(session.id, repositoryId),
       ).resolves.toBe(commit);
 
-      // The first clone stays when its pull request is merged (no autoclose).
+      // The session's last clone stays when its pull request is merged (no
+      // autoclose).
       merge(pull.number);
       await automation.check(pull.id);
       await waitFor(() => notifications.closed.length === 2);
@@ -2736,6 +2737,73 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       await expect(
         tool.handler({ title: 'Third' }, { toolUseId: 'tool-pr' }),
       ).rejects.toThrow('name the branch');
+    });
+
+    it('switches away from the working directory before removing its clone after its pull request', async () => {
+      const { session, clone } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      const switcher = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'switch_directory',
+      );
+      if (!switcher) {
+        throw new Error('no switch_directory tool');
+      }
+      await switcher.handler({ branch: second.branch }, { toolUseId: 't1' });
+      expect(harness.service.get(session.id).cwd).toBe(second.path);
+
+      merge(second.pull.number);
+      await automation.check(second.pull.id);
+      await waitFor(() => !existsSync(second.path));
+      const after = harness.service.get(session.id);
+      expect(after.cwd).toBe(clone);
+      expect(after.directories.at(-1)?.addition?.state).toBe('retired');
+
+      const runs = harness.runner.runs.length;
+      await harness.service.send(session.id, { text: 'Next' });
+      await waitFor(() => harness.runner.runs.length > runs);
+      const run = harness.runner.last;
+      expect(run.options.cwd).toBe(clone);
+      expect(run.options.additionalDirectories ?? []).not.toContain(
+        second.path,
+      );
+      const note = run.sent.at(-1)?.note?.text ?? '';
+      expect(note).toContain(`Your working directory is now ${clone}`);
+      expect(note).toContain('was removed');
+    });
+
+    it('removes the first clone after its pull request when another clone stays, and never the last one', async () => {
+      const { session, pull, clone } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+
+      merge(pull.number);
+      await automation.check(pull.id);
+      await waitFor(() => !existsSync(clone));
+      let after = harness.service.get(session.id);
+      expect(after.directories[0]).toMatchObject({
+        state: 'removed',
+        addition: { state: 'retired', addedAt: null },
+      });
+      // The working directory moved to the remaining clone; the session goes
+      // on there, resuming the conversation where it started.
+      expect(after.cwd).toBe(second.path);
+      expect(after.status).not.toBe('finished');
+      const runs = harness.runner.runs.length;
+      await harness.service.send(session.id, { text: 'Next' });
+      await waitFor(() => harness.runner.runs.length > runs);
+      expect(harness.runner.last.options.cwd).toBe(second.path);
+      expect(harness.runner.last.options.additionalDirectories ?? []).toEqual(
+        [],
+      );
+      harness.runner.last.emit(resultMessage(20, 0.02));
+      await waitFor(() => harness.service.get(session.id).status === 'waiting');
+
+      // The last clone stays.
+      merge(second.pull.number);
+      await automation.check(second.pull.id);
+      await waitFor(() => notifications.closed.length === 2);
+      expect(existsSync(second.path)).toBe(true);
+      after = harness.service.get(session.id);
+      expect(after.cwd).toBe(second.path);
     });
 
     it('keeps the clone of a further branch with work that is not on GitHub', async () => {

@@ -403,6 +403,14 @@ describe('SessionGitPanel', () => {
       'claude/reply-with-pong-abc123-2',
     ]);
     const clones = [...element.querySelectorAll('[data-testid="git-clone"]')];
+    // The working directory is marked among the clones.
+    expect(
+      clones.map(
+        (clone) =>
+          clone.querySelector('[data-testid="clone-working-directory"]') !==
+          null,
+      ),
+    ).toEqual([true, false]);
     expect(words(clones[0])).toContain('#7 Fix login');
     expect(words(clones[0])).not.toContain('#8');
     expect(words(clones[1])).toContain('#8 Second fix');

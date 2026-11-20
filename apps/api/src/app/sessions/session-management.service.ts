@@ -55,6 +55,7 @@ import {
   SessionRepository,
   type SessionDirectoryRecord,
   type SessionRecord,
+  transcriptDirectory,
 } from './session.repository';
 import { SessionsService } from './sessions.service';
 import { UsageRepository } from './usage.repository';
@@ -253,7 +254,7 @@ export class SessionManagementService {
         .get()?.n ?? 0;
     let transcript = false;
     try {
-      const cwd = record.directories[0]?.path;
+      const cwd = transcriptDirectory(record);
       transcript =
         !!cwd &&
         (await this.transcripts.exists(record.sdkSessionId ?? record.id, cwd));

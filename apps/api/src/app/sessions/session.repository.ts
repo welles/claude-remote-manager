@@ -60,7 +60,8 @@ export interface SessionDirectoryRecord {
 
 /** How a repository was added to a running session (see the schema). */
 export interface DirectoryAddition {
-  addedAt: Date;
+  /** `null`: a directory the session started with (then `retired`). */
+  addedAt: Date | null;
   by: RepositoryAddedBy;
   state: RepositoryAdditionState;
   error: string | null;
@@ -140,7 +141,10 @@ export interface SessionRecord {
   status: SessionStatus;
   slug: string | null;
   pendingMessage: { id: string; text: string } | null;
-  /** In order; the first is the working directory. */
+  /**
+   * In order; the working directory is the one at `workingDirectory`
+   * (see {@link workingDirectoryOf}), by default the first.
+   */
   directories: SessionDirectoryRecord[];
   /** Pull requests of the session's clones, oldest first. */
   pullRequests: PullRequestRecord[];
@@ -155,6 +159,11 @@ export interface SessionRecord {
   environmentId: string | null;
   /** The environment's setup script for this session. */
   environmentSetupStatus: SetupStatus;
+  /**
+   * Position of Claude Code's working directory (see
+   * `sessions.working_directory`); `null`: the first directory.
+   */
+  workingDirectory: number | null;
 }
 
 export type NewSessionDirectory = Pick<
@@ -196,6 +205,7 @@ export type SessionPatch = Partial<
     | 'autoclosedAt'
     | 'archivedAt'
     | 'environmentSetupStatus'
+    | 'workingDirectory'
   >
 >;
 
@@ -209,7 +219,8 @@ export type SessionDirectoryPatch = Partial<
     | 'pushedCommit'
     | 'pushedAt'
   > & {
-    additionState: RepositoryAdditionState;
+    /** `null`: a directory the session started with (no addition). */
+    additionState: RepositoryAdditionState | null;
     additionError: string | null;
     announce: boolean;
   }
@@ -230,25 +241,64 @@ export function isActiveDirectory(directory: SessionDirectoryRecord): boolean {
   return !directory.addition || directory.addition.state === 'ready';
 }
 
-/** The working directory: path of the first directory. */
-export function workingDirectory(record: SessionRecord): string {
-  const first = record.directories[0];
-  if (!first) {
+/**
+ * Claude Code's working directory: the one at `workingDirectory` while
+ * Claude works in it (see {@link isActiveDirectory}), else the first such
+ * directory, else the first directory.
+ */
+export function workingDirectoryOf(
+  record: SessionRecord,
+): SessionDirectoryRecord {
+  const usable = (directory: SessionDirectoryRecord | undefined) =>
+    directory && isActiveDirectory(directory) && directory.state !== 'removed'
+      ? directory
+      : undefined;
+  const chosen =
+    record.workingDirectory === null
+      ? undefined
+      : usable(
+          record.directories.find(
+            (directory) => directory.position === record.workingDirectory,
+          ),
+        );
+  const directory =
+    chosen ??
+    record.directories.find((entry) => usable(entry)) ??
+    record.directories[0];
+  if (!directory) {
     throw new Error(`Session ${record.id} has no directories`);
   }
-  return first.path;
+  return directory;
+}
+
+/** Path of Claude Code's working directory, see {@link workingDirectoryOf}. */
+export function workingDirectory(record: SessionRecord): string {
+  return workingDirectoryOf(record).path;
 }
 
 /**
- * Paths of the directories after the first that Claude works in (added
- * repositories only once they are ready, see {@link isActiveDirectory};
- * not the clone of a further branch removed after its pull request,
+ * The directory whose Claude Code project folder holds the session's
+ * transcript: the first, where Claude Code started it. After a switch of
+ * the working directory Claude Code finds the transcript by its ID and
+ * keeps writing it there (tested with Claude Code 2.1.322).
+ */
+export function transcriptDirectory(record: SessionRecord): string | null {
+  return record.directories[0]?.path ?? null;
+}
+
+/**
+ * Paths of the directories besides the working directory that Claude works
+ * in (added repositories only once they are ready, see
+ * {@link isActiveDirectory}; not a clone removed after its pull request,
  * `retired`).
  */
 export function additionalDirectories(record: SessionRecord): string[] {
+  const working = workingDirectoryOf(record);
   return record.directories
-    .slice(1)
-    .filter(isActiveDirectory)
+    .filter(
+      (directory) =>
+        directory.position !== working.position && isActiveDirectory(directory),
+    )
     .map((directory) => directory.path);
 }
 
@@ -716,15 +766,18 @@ export class SessionRepository {
               repositoryName: known ? `${owner}/${name}` : null,
               repositoryLocal: known && cloneUrl === null,
               repositoryGitHub: known && githubRepositoryId !== null,
-              addition: addedAt
-                ? {
-                    addedAt,
-                    by: addedBy ?? 'user',
-                    state: additionState ?? 'ready',
-                    error: additionError,
-                    announce,
-                  }
-                : null,
+              // A directory the session started with has no addition, unless
+              // it was removed after its pull request (`retired`).
+              addition:
+                addedAt || additionState
+                  ? {
+                      addedAt,
+                      by: addedBy ?? 'user',
+                      state: additionState ?? 'ready',
+                      error: additionError,
+                      announce,
+                    }
+                  : null,
             };
           },
         ),

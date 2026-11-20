@@ -109,6 +109,7 @@ describe('session integrations (tools, memory, pushes)', () => {
       'set_waiting_state',
       'add_repository',
       'add_branch',
+      'switch_directory',
     ]);
     // Showing a file, setting the title and the waiting state, and asking
     // for the owner's decision (it only pauses automerge) never ask.
@@ -120,6 +121,8 @@ describe('session integrations (tools, memory, pushes)', () => {
     );
     // Adding a further branch only clones a repository of the session.
     expect(options().allowedTools).toContain('mcp__crm__add_branch');
+    // Switching the working directory only restarts Claude Code there.
+    expect(options().allowedTools).toContain('mcp__crm__switch_directory');
     await expect(
       git(session.cwd, 'config', '--local', '--get-all', 'credential.helper'),
     ).rejects.toThrow();
@@ -149,6 +152,7 @@ describe('session integrations (tools, memory, pushes)', () => {
       'set_waiting_state',
       'add_repository',
       'add_branch',
+      'switch_directory',
     ]);
   });
 
