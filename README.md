@@ -364,10 +364,16 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   subagents, backgrounded commands, monitors, schedules, workflows and teammates; a task the
   run started anyway (a command moved to the background at its timeout) is stopped when the
   run ends. Still unasked: the app's own tools that never ask (showing a file, previews, the
-  session title), and `reply_to_review_thread`, which can only answer and resolve review
-  threads of the session's own pull requests (allowed in `canUseTool` during the run; in
-  `dontAsk` Claude Code never calls `canUseTool`, so it is refused there unless an allow rule
-  covers it, like the Autofix `git` allowance).
+  session title), and replies with `reply_to_review_thread`, which only touches the session's
+  own pull requests (allowed in `canUseTool` during the run). Resolving a thread with it
+  (`resolve: true`) goes through the gate like any action, and `canUseTool` lets it run
+  unasked only when GitHub's own data shows a push since the thread's last comment: the pull
+  request's current head (read from GitHub) is the `after` of the branch's latest push in the
+  repository activity (`GET /repos/{owner}/{repo}/activity`, GitHub's timestamp), and that
+  push is later than the thread's last comment not written by the app (GraphQL
+  `viewerDidAuthor`). Otherwise, and on any error, the user gets the approval dialog. In
+  `dontAsk` Claude Code never calls `canUseTool`, so the tool is refused there unless an
+  allow rule covers a reply, like the Autofix `git` allowance.
   Not covered: a `PermissionRequest` hook in the user's or the project's Claude Code settings
   that approves requests itself. Injected text in a CI
   log or comment cannot push elsewhere with the user's credentials. The app's narrow
@@ -1591,7 +1597,8 @@ Both work two ways:
    `reviewThreads` by the comment's `databaseId`) with an installation token for exactly that
    repository and `pull_requests: write`. Other pull requests are refused. It asks as the
    permission mode says (the dialog shows the pull request, the comment, the reply and
-   whether it resolves), except during an Autofix run.
+   whether it resolves), except during an Autofix run: replies run unasked, resolving only
+   after a push since the thread's last comment (see the Autofix hold above).
 
 **CI checks**: every open pull request of a session shows the checks of its head commit
 (check runs and commit statuses), with or without PR automation: one line with the overall
@@ -1808,7 +1815,8 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   count only when listed in `PR_TRUSTED_BOTS`; never list the app's own bot there); they can
   resolve threads of their own pull requests, but only through `reply_to_review_thread`
   (the owner's decision), which outside Autofix runs asks as the session's permission mode
-  says (`auto` may not ask, `bypassPermissions` never does) and shows in the history. The
+  says (`auto` may not ask, `bypassPermissions` never does), during them only after a push
+  since the thread's last comment, and shows in the history. The
   `git` token's `contents: write` can merge a pull request or push to the default branch
   directly (e.g. with `curl` and the token from `git credential fill`). The gate therefore
   holds only together with branch protection on GitHub (required reviews and checks, no
@@ -2006,7 +2014,8 @@ Claude's own `git` and `gh` get short-lived installation tokens of the app from 
   `origin` (or of the session's first GitHub repository), read only: metadata, contents, pull
   requests, issues, checks, statuses, Actions. It cannot comment, approve, merge, resolve
   review threads or change settings; replies on and resolving review threads of the session's
-  own pull requests go through the app's tool `reply_to_review_thread` instead. Outside a session it runs `gh` without a token. A `gh`
+  own pull requests go through the app's tool `reply_to_review_thread` instead. Outside a
+  session it runs `gh` without a token. A `gh`
   from a Nix shell comes first on the PATH and gets no token; commands that need a user
   (`gh pr status`, `gh auth status`) do not work with installation tokens.
 - Tokens are minted for the session alone (never the API's cached ones), reused for at most

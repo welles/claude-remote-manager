@@ -319,7 +319,12 @@ describe('SessionsService', () => {
     it("offers the user's commands first, then what the session reported", async () => {
       runner.probeCommands = () => [
         { name: 'review', description: 'Review', argumentHint: '' },
-        { name: 'doctor', description: 'Doctor', argumentHint: '', builtin: true },
+        {
+          name: 'doctor',
+          description: 'Doctor',
+          argumentHint: '',
+          builtin: true,
+        },
       ];
       const session = await startSession();
       await expect(slashCommands.forSession(session.id)).resolves.toEqual({
@@ -338,7 +343,13 @@ describe('SessionsService', () => {
       runner.last.commands = [
         { name: 'deploy', description: 'Project skill', argumentHint: '<env>' },
         { name: 'statusline', description: 'Terminal', argumentHint: '' },
-        { name: 'compact', description: 'Compact', argumentHint: '', builtin: true, aliases: ['c'] },
+        {
+          name: 'compact',
+          description: 'Compact',
+          argumentHint: '',
+          builtin: true,
+          aliases: ['c'],
+        },
       ];
       runner.last.emit({
         type: 'system',
@@ -353,7 +364,10 @@ describe('SessionsService', () => {
         'deploy',
         'compact',
       ]);
-      expect(reported.commands[1]).toMatchObject({ builtin: true, aliases: ['c'] });
+      expect(reported.commands[1]).toMatchObject({
+        builtin: true,
+        aliases: ['c'],
+      });
 
       // A change replaces the list.
       runner.last.emit({
@@ -363,7 +377,9 @@ describe('SessionsService', () => {
       } as never);
       await flush();
       expect(
-        (await slashCommands.forSession(session.id)).commands.map((c) => c.name),
+        (await slashCommands.forSession(session.id)).commands.map(
+          (c) => c.name,
+        ),
       ).toEqual(['fresh']);
     });
   });

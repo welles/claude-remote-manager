@@ -64,8 +64,7 @@ export class SlashCommandsService {
   private readonly logger = new Logger(SlashCommandsService.name);
   private readonly sessions = new Map<string, SlashCommandOption[]>();
   private readonly terminal = new Set(TERMINAL_COMMANDS);
-  private user: { commands: SlashCommandOption[]; until: number } | null =
-    null;
+  private user: { commands: SlashCommandOption[]; until: number } | null = null;
   private loading: Promise<SlashCommandOption[]> | null = null;
 
   /** Clock; replaced in tests. */
@@ -78,7 +77,10 @@ export class SlashCommandsService {
     if (reported) {
       return { commands: this.visible(reported), source: 'session' };
     }
-    return { commands: this.visible(await this.userCommands()), source: 'user' };
+    return {
+      commands: this.visible(await this.userCommands()),
+      source: 'user',
+    };
   }
 
   /** What a session's Claude Code reported (a full list). */

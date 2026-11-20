@@ -152,6 +152,20 @@ export interface ReviewThreadInfo {
    * that one ("Replies to replies are not supported").
    */
   rootCommentId: number;
+  /**
+   * When the last comment not written by the app itself (GraphQL
+   * `viewerDidAuthor`, the viewer being the app's installation) was made;
+   * `null` when there is none or GitHub did not list every comment.
+   */
+  lastOtherCommentAt: Date | null;
+}
+
+/** The latest push to a branch, as GitHub's repository activity lists it. */
+export interface BranchPush {
+  /** Commit the branch points to after the push. */
+  after: string;
+  /** When GitHub received it. */
+  at: Date;
 }
 
 /** Pages of 100 review threads searched at most for a comment. */
@@ -165,7 +179,10 @@ const REVIEW_THREAD_LOOKUP_QUERY = `query($owner: String!, $name: String!, $numb
         nodes {
           id
           isResolved
-          comments(first: 100) { nodes { databaseId } }
+          comments(first: 100) {
+            totalCount
+            nodes { databaseId createdAt viewerDidAuthor }
+          }
         }
       }
     }
@@ -191,12 +208,26 @@ type RawThreadLookup = GraphQLResponse<{
         nodes?: ({
           id?: string;
           isResolved?: boolean;
-          comments?: { nodes?: ({ databaseId?: number | null } | null)[] };
+          comments?: {
+            totalCount?: number;
+            nodes?: ({
+              databaseId?: number | null;
+              createdAt?: string | null;
+              viewerDidAuthor?: boolean;
+            } | null)[];
+          };
         } | null)[];
       };
     } | null;
   } | null;
 }>;
+
+interface RawActivity {
+  activity_type?: string;
+  after?: string;
+  ref?: string;
+  timestamp?: string;
+}
 
 type RawResolveThread = GraphQLResponse<{
   resolveReviewThread?: {
@@ -616,10 +647,21 @@ export class GitHubService {
               `GitHub did not name the first comment of the review thread of ${commentId}`,
             );
           }
+          const comments = node.comments.nodes;
+          const complete = node.comments.totalCount === comments.length;
+          const times = comments
+            .filter((comment) => comment?.viewerDidAuthor === false)
+            .map((comment) => Date.parse(comment?.createdAt ?? ''));
           return {
             id: node.id,
             resolved: node.isResolved === true,
             rootCommentId: root,
+            lastOtherCommentAt:
+              complete &&
+              times.length > 0 &&
+              times.every((time) => Number.isFinite(time))
+                ? new Date(Math.max(...times))
+                : null,
           };
         }
       }
@@ -631,6 +673,39 @@ export class GitHubService {
     throw new Error(
       `${fullName}#${number} has more than ${MAX_REVIEW_THREAD_PAGES * 100} review threads`,
     );
+  }
+
+  /**
+   * The latest push to a branch, from GitHub's repository activity (its
+   * own record of when it received pushes, which nobody can backdate);
+   * `null` when the latest activity of the branch is no push (or none).
+   */
+  async latestBranchPush(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    branch: string,
+  ): Promise<BranchPush | null> {
+    const { token } = await this.repositoryToken(installationId, repositoryId, {
+      metadata: 'read',
+    });
+    const response = await this.http.request<RawActivity[]>({
+      path: `/repos/${repoPath(fullName)}/activity`,
+      token,
+      query: { ref: `refs/heads/${branch}`, direction: 'desc', per_page: 1 },
+    });
+    const latest = response.data[0];
+    const at = Date.parse(latest?.timestamp ?? '');
+    if (
+      !latest ||
+      (latest.activity_type !== 'push' &&
+        latest.activity_type !== 'force_push') ||
+      typeof latest.after !== 'string' ||
+      !Number.isFinite(at)
+    ) {
+      return null;
+    }
+    return { after: latest.after, at: new Date(at) };
   }
 
   /** Resolves a review thread (its GraphQL node ID). */

@@ -496,6 +496,79 @@ export class SessionGitService {
     };
   }
 
+  /**
+   * Whether resolving the review thread of `commentId` may run unasked
+   * during an Autofix run (the owner's decision): only when the session
+   * changed something since the feedback, i.e. the pull request's current
+   * head (read from GitHub) on the session branch was pushed after the
+   * thread's last comment not written by the app. Everything comes from
+   * GitHub, nothing from the clone or the tool call: the head commit from
+   * the pull request, the push and its time from the repository activity
+   * (GitHub's own record), the comment times from GraphQL. `false` when
+   * anything is missing; errors are thrown (the caller asks then).
+   */
+  async mayResolveUnasked(
+    sessionId: string,
+    repositoryId: string,
+    number: number,
+    commentId: number,
+  ): Promise<boolean> {
+    const session = this.sessionRecord(sessionId);
+    const pull = session.pullRequests.find(
+      (entry) => entry.repositoryId === repositoryId && entry.number === number,
+    );
+    const directory = session.directories.find(
+      (entry) => entry.kind === 'clone' && entry.repositoryId === repositoryId,
+    );
+    const repository = this.repositories.get(repositoryId);
+    if (
+      !pull ||
+      !directory?.branch ||
+      pull.headBranch !== directory.branch ||
+      !repository ||
+      !isGitHubRepository(repository)
+    ) {
+      return false;
+    }
+    const fullName = `${repository.owner}/${repository.name}`;
+    const installation = repository.githubInstallationId;
+    const githubId = repository.githubRepositoryId;
+    const thread = await this.github.findReviewThread(
+      installation,
+      githubId,
+      fullName,
+      number,
+      commentId,
+    );
+    if (!thread?.lastOtherCommentAt) {
+      return false;
+    }
+    const info = await this.github.getPullRequest(
+      installation,
+      githubId,
+      fullName,
+      number,
+    );
+    if (
+      info.state !== 'open' ||
+      info.headBranch !== directory.branch ||
+      !info.headSha
+    ) {
+      return false;
+    }
+    const push = await this.github.latestBranchPush(
+      installation,
+      githubId,
+      fullName,
+      info.headBranch,
+    );
+    return (
+      push !== null &&
+      push.after === info.headSha &&
+      push.at.getTime() > thread.lastOtherCommentAt.getTime()
+    );
+  }
+
   // -------------------------------------------------------------------------
 
   private recordPush(sessionId: string, position: number, commit: string) {
