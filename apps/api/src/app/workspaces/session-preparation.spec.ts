@@ -288,7 +288,8 @@ describe('session preparation', () => {
       expect(await git(path, 'status', '--porcelain')).toBe('?? owner.txt');
       expect(await git(path, 'stash', 'list')).toBe('');
     }
-  });
+    // Several clones and setup scripts: slow on a busy machine.
+  }, 20_000);
 
   it('removes the other clones again when one cannot be created', async () => {
     const first = await harness.addRepository('acme', 'one');

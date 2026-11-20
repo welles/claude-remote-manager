@@ -10,6 +10,7 @@ import {
   mentionText,
 } from './file-mentions.service';
 import { SessionFileAccess } from './session-file-access';
+import { RunningDirectories } from '../sessions/running-directories';
 
 describe('FileMentionsService', () => {
   let sandbox: ReturnType<typeof gitSandbox>;
@@ -18,6 +19,7 @@ describe('FileMentionsService', () => {
   let app: string;
   let lib: string;
   let scratch: string;
+  let sessions: SessionRepository;
 
   beforeEach(async () => {
     sandbox = gitSandbox('crm-mentions-');
@@ -55,7 +57,7 @@ describe('FileMentionsService', () => {
         setupScript: null,
       });
     }
-    const sessions = new SessionRepository(db);
+    sessions = new SessionRepository(db);
     const base = {
       title: null,
       model: null,
@@ -127,6 +129,41 @@ describe('FileMentionsService', () => {
     expect(await service.search('s1', '', 2)).toMatchObject({
       truncated: true,
     });
+  });
+
+  it('mentions relative to the directory the running process works in', async () => {
+    const running = new RunningDirectories();
+    service = new FileMentionsService(
+      sessions,
+      new SessionFileAccess(),
+      undefined,
+      running,
+    );
+    const mentions = async () =>
+      (await service.search('s1', 'login.service')).files.map(
+        (file) => file.mention,
+      );
+    // switch_directory to the lib: the running process still works in the
+    // app until it restarts, so both are absolute meanwhile.
+    sessions.update('s1', { workingDirectory: 1 });
+    running.set('s1', app);
+    expect(await mentions()).toEqual([
+      `@${app}/src/login/login.service.ts`,
+      `@${lib}/src/login/login.service.ts`,
+    ]);
+    await expect(
+      service.browsedFile('s1', 1, 'src/login/login.service.ts'),
+    ).resolves.toMatchObject({
+      mention: `@${lib}/src/login/login.service.ts`,
+    });
+    // Restarted in the lib, or no process: relative to the lib.
+    running.set('s1', lib);
+    expect(await mentions()).toEqual([
+      `@${app}/src/login/login.service.ts`,
+      '@src/login/login.service.ts',
+    ]);
+    running.clear('s1');
+    expect((await mentions())[1]).toBe('@src/login/login.service.ts');
   });
 
   it('walks scratch directories without node_modules', async () => {

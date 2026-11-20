@@ -124,6 +124,7 @@ import {
   type SetupOutcome,
 } from '../workspaces/session-workspace.service';
 import { pullRequestDto } from './pull-request-dto';
+import { RunningDirectories } from './running-directories';
 import {
   NoSessionAgentSupport,
   SessionAgentSupport,
@@ -622,6 +623,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly slashCommands?: SlashCommandsService,
     @Optional()
     private readonly environments?: EnvironmentsService,
+    @Optional()
+    private readonly runningDirectories: RunningDirectories = new RunningDirectories(),
   ) {}
 
   private environmentOf(record: SessionRecord): SessionEnvironmentDto | null {
@@ -714,6 +717,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   async onModuleDestroy(): Promise<void> {
     this.shuttingDown = true;
+    // CI waits end with the app; their timers must not fire afterwards
+    // (they read the database, which is closed by then).
+    for (const waits of this.ciWaits.values()) {
+      for (const wait of waits.values()) {
+        clearTimeout(wait.timer);
+      }
+    }
+    this.ciWaits.clear();
     const exits: Promise<void>[] = [];
     for (const live of this.live.values()) {
       this.clearIdleTimer(live);
@@ -1583,6 +1594,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Detached first: the message loop then ends without looking for
       // the session's record.
       live.run = null;
+      this.runningDirectories.clear(live.id);
       live.closing = 'end';
       if (run) {
         this.approver.cancelSession(sessionId, 'ended');
@@ -1961,6 +1973,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         first,
       );
       live.run = run;
+      this.runningDirectories.set(live.id, workingDirectory(record));
       this.countContext(live, first);
       live.consuming = this.consume(live, run);
     } catch (error) {
@@ -2022,6 +2035,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // Nobody can answer into the ended process any more.
     this.approver.cancelSession(live.id, 'process_exit');
     live.run = null;
+    this.runningDirectories.clear(live.id);
     live.consuming = null;
     // An Autofix turn is over with its process.
     live.autofixTurn = null;
@@ -3796,6 +3810,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   private failRun(live: LiveSession, error: unknown, run?: AgentRun): void {
     live.run = null;
+    this.runningDirectories.clear(live.id);
     live.autofixTurn = null;
     live.backgroundTasks.clear();
     this.clearBackgroundGrace(live);

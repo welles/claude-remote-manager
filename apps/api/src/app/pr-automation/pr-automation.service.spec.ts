@@ -2748,7 +2748,12 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       if (!switcher) {
         throw new Error('no switch_directory tool');
       }
-      await switcher.handler({ branch: second.branch }, { toolUseId: 't1' });
+      const switched = await switcher.handler(
+        { branch: second.branch },
+        { toolUseId: 't1' },
+      );
+      // On failure, the tool's answer says why.
+      expect(switched.isError ? switched.text : null).toBeNull();
       expect(harness.service.get(session.id).cwd).toBe(second.path);
 
       merge(second.pull.number);
@@ -2777,7 +2782,11 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
 
       merge(pull.number);
       await automation.check(pull.id);
-      await waitFor(() => !existsSync(clone));
+      await waitFor(
+        () =>
+          !existsSync(clone) &&
+          harness.service.get(session.id).directories[0].state === 'removed',
+      );
       let after = harness.service.get(session.id);
       expect(after.directories[0]).toMatchObject({
         state: 'removed',
@@ -2815,7 +2824,12 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       if (!switcher) {
         throw new Error('no switch_directory tool');
       }
-      await switcher.handler({ branch: second.branch }, { toolUseId: 't1' });
+      const switched = await switcher.handler(
+        { branch: second.branch },
+        { toolUseId: 't1' },
+      );
+      // On failure, the tool's answer says why.
+      expect(switched.isError ? switched.text : null).toBeNull();
       const spy = jest
         .spyOn(WorkspaceEntries.prototype, 'remove')
         .mockRejectedValue(new Error('disk on fire'));
@@ -2857,7 +2871,12 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       if (!switcher) {
         throw new Error('no switch_directory tool');
       }
-      await switcher.handler({ branch: second.branch }, { toolUseId: 't1' });
+      const switched = await switcher.handler(
+        { branch: second.branch },
+        { toolUseId: 't1' },
+      );
+      // On failure, the tool's answer says why.
+      expect(switched.isError ? switched.text : null).toBeNull();
       harness.service.backgroundReportGraceMs = 30;
       // The switch closed the idle process; a new one runs a dev server.
       await waitFor(() => harness.runner.last.closed);
@@ -2932,7 +2951,12 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
 
       merge(pull.number);
       await automation.check(pull.id);
-      await waitFor(() => !existsSync(app.path));
+      // The files go first, the clone's state follows.
+      await waitFor(
+        () =>
+          !existsSync(app.path) &&
+          harness.service.get(created.id).directories[0].state === 'removed',
+      );
       const after = harness.service.get(created.id);
       // Claude works in the other repository now; the pull request stays.
       expect(after.cwd).toBe(other.path);
