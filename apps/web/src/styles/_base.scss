@@ -88,6 +88,14 @@
     padding: 0 var(--app-gutter) var(--app-space-6);
   }
 
+  // Icons in Material buttons: marked `matButtonIcon`, so the button puts
+  // them in its flex row (centred) instead of on the label's baseline.
+  .mat-mdc-button-base > app-icon {
+    --app-icon-size: 18px;
+
+    margin-right: 6px;
+  }
+
   // Icon-only buttons and links (plain elements, no Material module):
   // 40 px, 44 px on touch screens. They carry an aria-label.
   .app-icon-btn {
