@@ -15,9 +15,11 @@ import {
   RouterLink,
   RouterOutlet,
 } from '@angular/router';
+import { MatButtonModule } from '@angular/material/button';
 import { AccessSession } from './pwa/access-session';
 import { NeedsYouCount } from './pwa/needs-you';
 import { SessionSocket } from './sessions/session-socket';
+import { AppBanner } from './ui/banner';
 import { AppIcon, type IconName } from './ui/icon';
 import { AppToasts } from './ui/toasts';
 
@@ -81,7 +83,14 @@ function isTopLevel(url: string): boolean {
  * each page renders its own app bar (`app-page-bar`).
  */
 @Component({
-  imports: [AppIcon, AppToasts, RouterLink, RouterOutlet],
+  imports: [
+    AppBanner,
+    AppIcon,
+    AppToasts,
+    MatButtonModule,
+    RouterLink,
+    RouterOutlet,
+  ],
   selector: 'app-root',
   templateUrl: './app.html',
   styleUrl: './app.scss',

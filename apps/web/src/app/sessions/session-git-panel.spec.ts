@@ -100,7 +100,7 @@ describe('SessionGitPanel', () => {
     expect(pulls[1]).toBe('Merged #3 Old');
     expect(
       element.querySelector('[data-testid="pull-request-state"]')?.className,
-    ).toContain('state-open');
+    ).toContain('tone-open');
     // The automation is offered for open pull requests only.
     expect(all('pr-automation')).toHaveLength(1);
   });
@@ -111,8 +111,8 @@ describe('SessionGitPanel', () => {
     );
     expect(all('pull-request-state')).toEqual(['Draft']);
     const state = element.querySelector('[data-testid="pull-request-state"]');
-    expect(state?.classList).toContain('state-draft');
-    expect(state?.classList).not.toContain('state-open');
+    expect(state?.classList).toContain('tone-draft');
+    expect(state?.classList).not.toContain('tone-open');
   });
 
   it('shows the checks of an open pull request, folded into one line', async () => {

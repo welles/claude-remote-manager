@@ -1022,7 +1022,7 @@ describe('SessionView', () => {
     await harness.fixture.whenStable();
     const state = element.querySelector('[data-testid="strip-pr-state"]');
     expect(state?.textContent?.trim()).toBe('draft');
-    expect(state?.classList).toContain('pr-draft');
+    expect(state?.classList).toContain('tone-draft');
   });
 
   it('shows the environment of the session in its details', async () => {
@@ -1434,7 +1434,7 @@ describe('SessionView', () => {
     const chip = () =>
       element.querySelector('[data-testid="strip-settings"]') as HTMLElement;
     expect(text('strip-settings')).toContain('Bypass (dangerous)');
-    expect(chip().classList).toContain('danger');
+    expect(chip().classList).toContain('tone-attention');
     const hint = element.querySelector('[data-testid="mode-hint"]');
     expect(hint?.classList).toContain('mode-danger');
     expect(hint?.textContent).toContain('without asking');
@@ -1453,7 +1453,7 @@ describe('SessionView', () => {
     });
     await harness.fixture.whenStable();
     expect(text('strip-settings')).toContain('Ask (bypass unavailable)');
-    expect(chip().classList).not.toContain('danger');
+    expect(chip().classList).not.toContain('tone-attention');
   });
 });
 

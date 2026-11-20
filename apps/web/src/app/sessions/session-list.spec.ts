@@ -245,11 +245,11 @@ describe('SessionList', () => {
       };
     };
     expect(state('Idle')).toEqual({
-      classes: ['status', 'status-waiting'],
+      classes: ['badge', 'tone-ready'],
       text: 'Ready',
       dot: ['dot-idle'],
     });
-    expect(state('Ask').classes).toEqual(['status', 'status-permission']);
+    expect(state('Ask').classes).toEqual(['badge', 'tone-attention']);
     expect(state('Ask').dot).toEqual(['dot-attention']);
     expect(state('Busy')).toEqual({
       classes: ['state'],

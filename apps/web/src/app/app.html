@@ -25,22 +25,21 @@
 </nav>
 <div class="top" #top>
   @if (access.state() === 'expired') {
-  <div class="banner expired" role="alert" data-testid="access-expired">
-    <span>Your sign-in has expired. Nothing you send reaches the server.</span>
-    <button type="button" class="banner-button" (click)="access.signIn()">
-      Sign in again
-    </button>
-  </div>
+  <app-banner strip kind="error" role="alert" data-testid="access-expired">
+    Your sign-in has expired. Nothing you send reaches the server.
+    <div banner-actions class="ml-auto flex flex-wrap gap-2">
+      <button matButton type="button" (click)="access.signIn()">
+        Sign in again
+      </button>
+    </div>
+  </app-banner>
   } @else if (access.state() === 'offline') {
-  <div class="banner offline" role="status" data-testid="offline">
-    <span
-      >Offline: the server cannot be reached. What you see may be out of
-      date.</span
-    >
-    <button type="button" class="banner-button" (click)="access.check()">
-      Retry
-    </button>
-  </div>
+  <app-banner strip role="status" data-testid="offline">
+    Offline: the server cannot be reached. What you see may be out of date.
+    <div banner-actions class="ml-auto flex flex-wrap gap-2">
+      <button matButton type="button" (click)="access.check()">Retry</button>
+    </div>
+  </app-banner>
   }
 </div>
 <main id="main" class="main" #main tabindex="-1">

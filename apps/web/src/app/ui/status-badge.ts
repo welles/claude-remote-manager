@@ -50,13 +50,17 @@ export function statusKind(
   }
 }
 
-/** CSS class of the global `.status` badge for a kind. */
+/**
+ * Classes of the badge for a kind (see `badge` in tailwind.css): what
+ * waits for the user is toned, a running session neutral, a finished one
+ * only outlined.
+ */
 export const STATUS_KIND_CLASS: Record<StatusKind, string> = {
-  attention: 'status-permission',
-  running: 'status-running',
-  failed: 'status-failed',
-  idle: 'status-waiting',
-  done: 'status-finished',
+  attention: 'badge tone-attention',
+  running: 'badge',
+  failed: 'badge tone-error',
+  idle: 'badge tone-ready',
+  done: 'badge badge-outline',
 };
 
 /**
@@ -66,7 +70,7 @@ export const STATUS_KIND_CLASS: Record<StatusKind, string> = {
 @Component({
   selector: 'app-status-badge',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<span class="status {{ kindClass() }}">{{ label() }}</span>`,
+  template: `<span [class]="kindClass()">{{ label() }}</span>`,
   styles: `
     :host {
       display: inline-flex;

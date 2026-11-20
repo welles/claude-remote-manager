@@ -5,7 +5,7 @@
     Autoclose kept the clone of <strong>{{ clone.name }}</strong>: it has work
     that is not on GitHub.
     <button
-      matButton="outlined"
+      matButton
       type="button"
       (click)="discardDialog.open(clone)"
       data-testid="discard-clone"
@@ -31,7 +31,7 @@
       }
       <span class="spacer"></span>
       <button
-        matButton="outlined"
+        matButton
         type="button"
         (click)="push(clone)"
         [disabled]="busy() !== null || clone.directory.state !== 'ready'"
@@ -41,7 +41,7 @@
       </button>
       @if (clone.github) {
       <button
-        matButton="outlined"
+        matButton
         type="button"
         (click)="compose(clone)"
         [disabled]="busy() !== null || clone.directory.state !== 'ready'"
@@ -114,7 +114,7 @@
       <li data-testid="pull-request">
         @let isDraft = pull.draft && pull.state === 'open';
         <span
-          class="state state-{{ isDraft ? 'draft' : pull.state }}"
+          class="badge tone-{{ isDraft ? 'draft' : pull.state }}"
           data-testid="pull-request-state"
           >{{ isDraft ? 'Draft' : stateLabels[pull.state] }}</span
         >

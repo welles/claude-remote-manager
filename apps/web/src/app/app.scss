@@ -34,42 +34,6 @@
   z-index: 4;
 }
 
-.banner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--app-space-1) var(--app-space-3);
-  padding: var(--app-space-2) var(--app-gutter);
-  font: var(--mat-sys-body-medium);
-  border-bottom: 1px solid var(--mat-sys-outline-variant);
-}
-
-.banner > span {
-  flex: 1 1 14em;
-}
-
-.expired {
-  background: var(--mat-sys-error-container);
-  color: var(--mat-sys-on-error-container);
-}
-
-.offline {
-  background: var(--mat-sys-surface-container-high);
-  color: var(--mat-sys-on-surface);
-}
-
-.banner-button {
-  min-height: 36px;
-  padding: 0 var(--app-space-3);
-  border: 1px solid currentColor;
-  border-radius: var(--mat-sys-corner-small);
-  background: none;
-  color: inherit;
-  font: var(--mat-sys-label-large);
-  cursor: pointer;
-}
-
 // Navigation: one list of destinations, styled as a bottom bar or a rail.
 .nav {
   position: fixed;

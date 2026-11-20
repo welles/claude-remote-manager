@@ -42,7 +42,9 @@
     >
       <span class="name">
         {{ environment.name }} @if (environment.isDefault) {
-        <span class="badge" data-testid="environment-default-badge"
+        <span
+          class="badge tone-ready ml-1.5"
+          data-testid="environment-default-badge"
           >Default</span
         >
         }
@@ -61,7 +63,7 @@
     </button>
     <button
       type="button"
-      class="app-icon-btn"
+      class="icon-btn"
       (click)="askDelete(environment)"
       [attr.aria-label]="'Delete ' + environment.name"
       title="Delete"

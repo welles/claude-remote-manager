@@ -24,11 +24,11 @@
     <mat-option [value]="repository" data-testid="github-option">
       <span class="name">{{ repository.fullName }}</span>
       @if (repository.private) {
-      <span class="tag">private</span>
+      <span class="badge ml-2">private</span>
       } @if (repository.archived) {
-      <span class="tag">archived</span>
+      <span class="badge ml-2">archived</span>
       } @if (repository.registeredRepositoryId) {
-      <span class="tag">added</span>
+      <span class="badge ml-2">added</span>
       }
     </mat-option>
     } @if (total() > results().length) {

@@ -15,7 +15,7 @@ import { AppIcon } from './icon';
   template: `
     @if (back(); as link) {
       <a
-        class="app-icon-btn back"
+        class="icon-btn back"
         [routerLink]="link"
         [attr.aria-label]="backLabel()"
         data-testid="back"

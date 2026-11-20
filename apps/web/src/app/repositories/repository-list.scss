@@ -163,16 +163,6 @@ pre.script {
   overflow-wrap: anywhere;
 }
 
-.tag-warning {
-  background: var(--mat-sys-error-container);
-  color: var(--mat-sys-on-error-container);
-}
-
-.tag-error {
-  background: var(--mat-sys-error-container);
-  color: var(--mat-sys-on-error-container);
-}
-
 .muted,
 .empty {
   color: var(--mat-sys-on-surface-variant);
@@ -181,10 +171,6 @@ pre.script {
 .error {
   color: var(--mat-sys-error);
   overflow-wrap: anywhere;
-}
-
-.tag-github {
-  text-decoration: none;
 }
 
 .publish {

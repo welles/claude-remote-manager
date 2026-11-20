@@ -4,11 +4,10 @@
 </p>
 
 <div class="controls">
-  <div class="app-chip-group" role="group" aria-label="Period">
+  <div class="inline-flex flex-wrap gap-1" role="group" aria-label="Period">
     <button
       type="button"
-      class="app-chip"
-      [class.on]="granularity() === 'day'"
+      class="chip"
       [attr.aria-pressed]="granularity() === 'day'"
       (click)="setGranularity('day')"
       data-testid="by-day"
@@ -17,8 +16,7 @@
     </button>
     <button
       type="button"
-      class="app-chip"
-      [class.on]="granularity() === 'week'"
+      class="chip"
       [attr.aria-pressed]="granularity() === 'week'"
       (click)="setGranularity('week')"
       data-testid="by-week"
@@ -27,8 +25,7 @@
     </button>
     <button
       type="button"
-      class="app-chip"
-      [class.on]="granularity() === 'month'"
+      class="chip"
       [attr.aria-pressed]="granularity() === 'month'"
       (click)="setGranularity('month')"
       data-testid="by-month"
@@ -36,11 +33,10 @@
       Months
     </button>
   </div>
-  <div class="app-chip-group" role="group" aria-label="Split by">
+  <div class="inline-flex flex-wrap gap-1" role="group" aria-label="Split by">
     <button
       type="button"
-      class="app-chip"
-      [class.on]="groupBy() === 'session'"
+      class="chip"
       [attr.aria-pressed]="groupBy() === 'session'"
       (click)="setGroupBy('session')"
       data-testid="group-session"
@@ -49,8 +45,7 @@
     </button>
     <button
       type="button"
-      class="app-chip"
-      [class.on]="groupBy() === 'repository'"
+      class="chip"
       [attr.aria-pressed]="groupBy() === 'repository'"
       (click)="setGroupBy('repository')"
       data-testid="group-repository"
@@ -59,8 +54,7 @@
     </button>
     <button
       type="button"
-      class="app-chip"
-      [class.on]="groupBy() === 'model'"
+      class="chip"
       [attr.aria-pressed]="groupBy() === 'model'"
       (click)="setGroupBy('model')"
       data-testid="group-model"
@@ -68,11 +62,10 @@
       Model
     </button>
   </div>
-  <div class="app-chip-group" role="group" aria-label="Measure">
+  <div class="inline-flex flex-wrap gap-1" role="group" aria-label="Measure">
     <button
       type="button"
-      class="app-chip"
-      [class.on]="measure() === 'cost'"
+      class="chip"
       [attr.aria-pressed]="measure() === 'cost'"
       (click)="measure.set('cost')"
       data-testid="measure-cost"
@@ -81,8 +74,7 @@
     </button>
     <button
       type="button"
-      class="app-chip"
-      [class.on]="measure() === 'tokens'"
+      class="chip"
       [attr.aria-pressed]="measure() === 'tokens'"
       (click)="measure.set('tokens')"
       data-testid="measure-tokens"
@@ -241,7 +233,7 @@
         @if (row.sessionId) {
         <a [routerLink]="['/sessions', row.sessionId]">{{ row.label }}</a>
         } @else { {{ row.label }} } @if (row.state) {
-        <span class="tag">{{ row.state }}</span>
+        <span class="badge ml-1.5">{{ row.state }}</span>
         }
       </th>
       <td class="number">{{ formatTokens(row.totals.inputTokens) }}</td>

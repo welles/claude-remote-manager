@@ -44,7 +44,7 @@
             "output": "/"
           }
         ],
-        "styles": ["apps/web/src/styles.scss"]
+        "styles": ["apps/web/src/styles.scss", "apps/web/src/tailwind.css"]
       },
       "configurations": {
         "production": {

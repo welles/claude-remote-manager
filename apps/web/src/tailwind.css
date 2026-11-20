@@ -1,0 +1,313 @@
+/*
+ * Tailwind utilities for layout, spacing and simple styling in templates.
+ * No preflight (Material and styles/_base.scss set the element defaults) and
+ * no default theme: every value below comes from Material's system tokens
+ * (`--mat-sys-*`) or the app's tokens (`--app-*`, styles/_tokens.scss), so
+ * utilities follow light and dark like everything else. Utilities are not
+ * in a cascade layer: like any class they beat element defaults, and
+ * Material's own component styles keep winning on Material components.
+ */
+@import 'tailwindcss/utilities.css' source('./app');
+
+@theme inline {
+  --*: initial;
+
+  /* A 4 px grid: `p-2` = 8 px, `gap-3` = 12 px. */
+  --spacing: 4px;
+
+  /* Material's window size classes: compact < 600, medium < 840, … */
+  --breakpoint-sm: 600px;
+  --breakpoint-md: 840px;
+  --breakpoint-lg: 1100px;
+  --breakpoint-xl: 1360px;
+
+  --color-primary: var(--mat-sys-primary);
+  --color-on-primary: var(--mat-sys-on-primary);
+  --color-primary-container: var(--mat-sys-primary-container);
+  --color-on-primary-container: var(--mat-sys-on-primary-container);
+  --color-tertiary: var(--mat-sys-tertiary);
+  --color-tertiary-container: var(--mat-sys-tertiary-container);
+  --color-on-tertiary-container: var(--mat-sys-on-tertiary-container);
+  --color-error: var(--mat-sys-error);
+  --color-error-container: var(--mat-sys-error-container);
+  --color-on-error-container: var(--mat-sys-on-error-container);
+  --color-success: var(--app-success);
+  --color-surface: var(--mat-sys-surface);
+  --color-surface-container-lowest: var(--mat-sys-surface-container-lowest);
+  --color-surface-container-low: var(--mat-sys-surface-container-low);
+  --color-surface-container: var(--mat-sys-surface-container);
+  --color-surface-container-high: var(--mat-sys-surface-container-high);
+  --color-surface-container-highest: var(--mat-sys-surface-container-highest);
+  --color-on-surface: var(--mat-sys-on-surface);
+  --color-on-surface-variant: var(--mat-sys-on-surface-variant);
+  --color-outline: var(--mat-sys-outline);
+  --color-outline-variant: var(--mat-sys-outline-variant);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --radius-xs: var(--mat-sys-corner-extra-small);
+  --radius-sm: var(--mat-sys-corner-small);
+  --radius-md: var(--mat-sys-corner-medium);
+  --radius-lg: var(--mat-sys-corner-large);
+  --radius-xl: var(--mat-sys-corner-extra-large);
+  --radius-full: 9999px;
+
+  --shadow-1: var(--mat-sys-level1);
+  --shadow-2: var(--mat-sys-level2);
+  --shadow-3: var(--mat-sys-level3);
+
+  --font-mono: var(--app-font-mono);
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --ease-standard: var(--app-ease);
+  --default-transition-duration: var(--app-motion-fast);
+  --default-transition-timing-function: var(--app-ease);
+}
+
+/*
+ * Material's type roles as one utility each (`type-body-medium`). Single
+ * properties, not the `font` shorthand, so that `font-bold` and the like
+ * still apply.
+ */
+@utility type-headline-small {
+  font-family: var(--mat-sys-headline-small-font);
+  font-size: var(--mat-sys-headline-small-size);
+  line-height: var(--mat-sys-headline-small-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-headline-small-weight));
+  letter-spacing: var(--mat-sys-headline-small-tracking);
+}
+
+@utility type-title-large {
+  font-family: var(--mat-sys-title-large-font);
+  font-size: var(--mat-sys-title-large-size);
+  line-height: var(--mat-sys-title-large-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-title-large-weight));
+  letter-spacing: var(--mat-sys-title-large-tracking);
+}
+
+@utility type-title-medium {
+  font-family: var(--mat-sys-title-medium-font);
+  font-size: var(--mat-sys-title-medium-size);
+  line-height: var(--mat-sys-title-medium-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-title-medium-weight));
+  letter-spacing: var(--mat-sys-title-medium-tracking);
+}
+
+@utility type-title-small {
+  font-family: var(--mat-sys-title-small-font);
+  font-size: var(--mat-sys-title-small-size);
+  line-height: var(--mat-sys-title-small-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-title-small-weight));
+  letter-spacing: var(--mat-sys-title-small-tracking);
+}
+
+@utility type-body-large {
+  font-family: var(--mat-sys-body-large-font);
+  font-size: var(--mat-sys-body-large-size);
+  line-height: var(--mat-sys-body-large-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-body-large-weight));
+  letter-spacing: var(--mat-sys-body-large-tracking);
+}
+
+@utility type-body-medium {
+  font-family: var(--mat-sys-body-medium-font);
+  font-size: var(--mat-sys-body-medium-size);
+  line-height: var(--mat-sys-body-medium-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-body-medium-weight));
+  letter-spacing: var(--mat-sys-body-medium-tracking);
+}
+
+@utility type-body-small {
+  font-family: var(--mat-sys-body-small-font);
+  font-size: var(--mat-sys-body-small-size);
+  line-height: var(--mat-sys-body-small-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-body-small-weight));
+  letter-spacing: var(--mat-sys-body-small-tracking);
+}
+
+@utility type-label-large {
+  font-family: var(--mat-sys-label-large-font);
+  font-size: var(--mat-sys-label-large-size);
+  line-height: var(--mat-sys-label-large-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-label-large-weight));
+  letter-spacing: var(--mat-sys-label-large-tracking);
+}
+
+@utility type-label-medium {
+  font-family: var(--mat-sys-label-medium-font);
+  font-size: var(--mat-sys-label-medium-size);
+  line-height: var(--mat-sys-label-medium-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-label-medium-weight));
+  letter-spacing: var(--mat-sys-label-medium-tracking);
+}
+
+@utility type-label-small {
+  font-family: var(--mat-sys-label-small-font);
+  font-size: var(--mat-sys-label-small-size);
+  line-height: var(--mat-sys-label-small-line-height);
+  font-weight: var(--tw-font-weight, var(--mat-sys-label-small-weight));
+  letter-spacing: var(--mat-sys-label-small-tracking);
+}
+
+/*
+ * The app's base components. Each exists once; tones colour them by
+ * meaning (set `--tone-*`), they are not style variants.
+ */
+
+/* Tones: session states, errors and GitHub states. */
+@utility tone-ready {
+  --tone-bg: var(--app-status-ready-container);
+  --tone-fg: var(--app-status-on-ready-container);
+  --tone-line: transparent;
+}
+
+@utility tone-attention {
+  --tone-bg: var(--app-status-attention-container);
+  --tone-fg: var(--app-status-on-attention-container);
+  --tone-line: transparent;
+}
+
+@utility tone-error {
+  --tone-bg: var(--app-status-failed-container);
+  --tone-fg: var(--app-status-on-failed-container);
+  --tone-line: transparent;
+}
+
+/* Outlined in the error colour: close to a limit, not there yet. */
+@utility tone-error-line {
+  --tone-fg: var(--mat-sys-error);
+  --tone-line: var(--mat-sys-error);
+}
+
+@utility tone-open {
+  --tone-bg: var(--app-gh-open);
+  --tone-fg: var(--app-gh-on-state);
+  --tone-line: transparent;
+}
+
+@utility tone-merged {
+  --tone-bg: var(--app-gh-merged);
+  --tone-fg: var(--app-gh-on-state);
+  --tone-line: transparent;
+}
+
+@utility tone-closed {
+  --tone-bg: var(--app-gh-closed);
+  --tone-fg: var(--app-gh-on-state);
+  --tone-line: transparent;
+}
+
+@utility tone-draft {
+  --tone-bg: var(--app-gh-draft);
+  --tone-fg: var(--app-gh-on-state);
+  --tone-line: transparent;
+}
+
+/*
+ * Badge: a small label that cannot be clicked (state, "Archived",
+ * "GitHub"). Filled (neutral or toned) or, quieter, `badge-outline`.
+ */
+@utility badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--mat-sys-corner-extra-small);
+  background: var(--tone-bg, var(--mat-sys-surface-container-highest));
+  color: var(--tone-fg, var(--mat-sys-on-surface-variant));
+  font: var(--mat-sys-label-medium);
+  letter-spacing: var(--mat-sys-label-medium-tracking);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  vertical-align: middle;
+  --app-icon-size: 14px;
+}
+
+@utility badge-outline {
+  background: transparent;
+  color: var(--mat-sys-on-surface-variant);
+  box-shadow: inset 0 0 0 1px var(--mat-sys-outline-variant);
+}
+
+/*
+ * Chip: a small button that filters, toggles or opens something (filters
+ * of the session list, the session strip, the limits). Outlined; chosen
+ * with `aria-pressed="true"` or `chip-on`; toned chips are filled.
+ */
+@utility chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--tone-line, var(--mat-sys-outline-variant));
+  border-radius: var(--mat-sys-corner-small);
+  background: var(--tone-bg, transparent);
+  color: var(--tone-fg, var(--mat-sys-on-surface-variant));
+  font: var(--mat-sys-label-large);
+  letter-spacing: var(--mat-sys-label-large-tracking);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  --app-icon-size: 16px;
+
+  &:hover {
+    background-image: linear-gradient(
+      color-mix(in srgb, currentColor 8%, transparent),
+      color-mix(in srgb, currentColor 8%, transparent)
+    );
+  }
+
+  &[aria-pressed='true'] {
+    border-color: var(--mat-sys-outline);
+    background-color: var(--mat-sys-surface-container-highest);
+    color: var(--mat-sys-on-surface);
+  }
+
+  @media (pointer: coarse) {
+    height: 36px;
+  }
+}
+
+/*
+ * Icon-only button or link (no Material module): 40 px, 44 px on touch
+ * screens. It carries an aria-label.
+ */
+@utility icon-btn {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--mat-sys-corner-small);
+  background: none;
+  color: var(--tone-fg, var(--mat-sys-on-surface-variant));
+  cursor: pointer;
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    background: color-mix(in srgb, currentColor 12%, transparent);
+    text-decoration: none;
+  }
+
+  &:disabled {
+    opacity: 0.38;
+    cursor: default;
+    background: none;
+  }
+
+  @media (pointer: coarse) {
+    width: 44px;
+    height: 44px;
+  }
+}

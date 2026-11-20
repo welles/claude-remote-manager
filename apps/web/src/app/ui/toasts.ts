@@ -124,7 +124,7 @@ export class Toasts {
         </div>
         <button
           type="button"
-          class="dismiss"
+          class="icon-btn [--app-icon-size:16px] [--tone-fg:currentColor]"
           [attr.aria-label]="'Dismiss: ' + toast.title"
           (click)="toasts.dismiss(toast.id)"
           data-testid="toast-dismiss"
@@ -190,24 +190,6 @@ export class Toasts {
     }
     .line {
       font: var(--mat-sys-body-small);
-    }
-    .dismiss {
-      flex: none;
-      display: grid;
-      place-items: center;
-      width: 40px;
-      height: 40px;
-      padding: 0;
-      border: 0;
-      border-radius: var(--mat-sys-corner-small);
-      background: none;
-      color: inherit;
-      cursor: pointer;
-      --app-icon-size: 16px;
-    }
-    .dismiss:hover,
-    .dismiss:focus-visible {
-      background: color-mix(in srgb, currentColor 12%, transparent);
     }
     @media (prefers-reduced-motion: no-preference) {
       .toast {

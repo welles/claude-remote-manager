@@ -8,24 +8,6 @@
   gap: 4px;
 }
 
-.send-all {
-  flex: none;
-  min-height: 32px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--mat-sys-corner-small);
-  background: none;
-  color: var(--mat-sys-primary);
-  font: var(--mat-sys-label-large);
-  cursor: pointer;
-
-  &:disabled {
-    color: var(--mat-sys-on-surface-variant);
-    opacity: 0.38;
-    cursor: default;
-  }
-}
-
 .summary {
   display: flex;
   flex: 1;

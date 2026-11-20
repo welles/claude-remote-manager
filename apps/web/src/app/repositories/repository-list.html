@@ -1,6 +1,6 @@
 <app-page-bar heading="Repositories">
   <a
-    class="app-icon-btn"
+    class="icon-btn"
     routerLink="/workspace"
     title="Workspace cleanup: leftover clones and scratch directories"
     data-testid="workspace-link"
@@ -37,7 +37,7 @@
       <mat-hint>https, ssh, git&#64;host:owner/repo or a local path</mat-hint>
     </mat-form-field>
     <button
-      matButton="outlined"
+      matButton
       type="submit"
       [disabled]="!cloneUrl.trim() || adding()"
       data-testid="add"
@@ -65,7 +65,7 @@
       <mat-hint>A repository without remote; sessions clone it</mat-hint>
     </mat-form-field>
     <button
-      matButton="outlined"
+      matButton
       type="submit"
       [disabled]="!projectName.trim() || adding()"
       data-testid="add-project"
@@ -93,7 +93,7 @@
         <h2 class="name">{{ repository.fullName }}</h2>
         <button
           type="button"
-          class="app-icon-btn"
+          class="icon-btn"
           (click)="fetch(repository)"
           [disabled]="repository.activity !== null"
           title="Fetch from the remote"
@@ -121,7 +121,7 @@
       <div class="paths">
         @if (repository.github; as github) {
         <a
-          class="app-tag tag-github"
+          class="badge no-underline"
           [href]="github.htmlUrl"
           target="_blank"
           rel="noopener"
@@ -131,7 +131,7 @@
         } @if (repository.cloneUrl) {
         <code>{{ repository.cloneUrl }}</code>
         } @else {
-        <span class="app-tag">Local project</span> no remote ·
+        <span class="badge">Local project</span> no remote ·
         <code>{{ repository.localPath }}</code>
         <button
           matButton
@@ -274,7 +274,7 @@
           }
           <button
             type="button"
-            class="app-icon-btn"
+            class="icon-btn"
             (click)="editSetup(repository)"
             title="Edit the setup script"
             data-testid="setup-edit"
@@ -303,9 +303,9 @@
                 >{{ cloneLabel(clone) }}</a
               >
               } @else { {{ cloneLabel(clone) }} } @if (clone.orphaned) {
-              <span class="app-tag tag-warning">Orphaned</span>
+              <span class="badge tone-error">Orphaned</span>
               } @if (clone.missing) {
-              <span class="app-tag tag-error">Missing</span>
+              <span class="badge tone-error">Missing</span>
               }
             </span>
             @if (clone.branch) {

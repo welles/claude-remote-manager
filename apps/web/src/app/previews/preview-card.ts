@@ -56,15 +56,11 @@ import { PREVIEW_STATE_LABELS, PreviewsApi, previewHref } from './previews-api';
       </div>
       @if (p.state !== 'stopped') {
         <div class="actions">
-          <button
-            matButton="outlined"
-            (click)="embed.emit(p)"
-            data-testid="preview-embed"
-          >
+          <button matButton (click)="embed.emit(p)" data-testid="preview-embed">
             Embed
           </button>
           <button
-            matButton="outlined"
+            matButton
             (click)="stop()"
             [disabled]="stopping()"
             data-testid="preview-stop"

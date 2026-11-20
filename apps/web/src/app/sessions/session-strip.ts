@@ -5,6 +5,7 @@ import {
   type SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { AppIcon } from '../ui/icon';
+import { Meter } from '../ui/meter';
 import { StatusDot, STATUS_KIND_CLASS, statusKind } from '../ui/status-badge';
 import { needLabel } from './format';
 import type { Todo } from './todos';
@@ -27,12 +28,12 @@ export type DetailSection =
  */
 @Component({
   selector: 'app-session-strip',
-  imports: [AppIcon, StatusDot],
+  imports: [AppIcon, Meter, StatusDot],
   template: `
     @let s = session();
     <button
       type="button"
-      class="chip state {{ kindClass() }}"
+      class="chip {{ toneClass() }}"
       (click)="opened.emit(kind() === 'attention' ? 'dock' : 'status')"
       data-testid="strip-state"
     >
@@ -43,14 +44,13 @@ export type DetailSection =
       <button
         type="button"
         class="chip"
-        [class.high]="c.percentage >= 80"
         (click)="opened.emit('context')"
         [attr.aria-label]="'Context ' + percent() + '% used'"
         data-testid="strip-context"
       >
-        <span class="meter" aria-hidden="true"
-          ><span class="fill" [style.width.%]="percent()"></span></span
-        >{{ percent() }}%
+        <app-meter inline [value]="percent()" [high]="c.percentage >= 80" />{{
+          percent()
+        }}%
       </button>
     }
     @if (pull(); as p) {
@@ -62,11 +62,11 @@ export type DetailSection =
       >
         <app-icon name="pull-request" />#{{ p.number }}
         @let state = p.draft && p.state === 'open' ? 'draft' : p.state;
-        <span class="pr-state pr-{{ state }}" data-testid="strip-pr-state">{{
+        <span class="badge tone-{{ state }}" data-testid="strip-pr-state">{{
           state
         }}</span>
         @if (p.automation.autofix && p.state === 'open') {
-          <span class="sub">· autofix</span>
+          autofix
         }
       </button>
     }
@@ -94,117 +94,20 @@ export type DetailSection =
     <button
       type="button"
       class="chip"
-      [class.danger]="dangerous()"
+      [class.tone-attention]="dangerous()"
       (click)="opened.emit('settings')"
       data-testid="strip-settings"
     >
       {{ model() }} · {{ mode() }}
     </button>
     @if (s.archivedAt) {
-      <span class="app-tag">Archived</span>
+      <span class="badge self-center">Archived</span>
     }
   `,
-  styles: `
-    :host {
-      display: flex;
-      gap: 6px;
-      overflow-x: auto;
-      scrollbar-width: none;
-      padding: 6px var(--app-gutter);
-      margin: 0 calc(-1 * var(--app-gutter));
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
-      background: var(--mat-sys-surface-container-low);
-    }
-    .chip {
-      display: inline-flex;
-      flex: none;
-      align-items: center;
-      gap: 6px;
-      height: 28px;
-      padding: 0 10px;
-      border: 0;
-      border-radius: var(--mat-sys-corner-small);
-      background: var(--mat-sys-surface-container-high);
-      color: var(--mat-sys-on-surface-variant);
-      font: var(--mat-sys-label-medium);
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-      cursor: pointer;
-      --app-icon-size: 14px;
-    }
-    .chip:hover {
-      color: var(--mat-sys-on-surface);
-    }
-    @media (pointer: coarse) {
-      .chip {
-        height: 32px;
-      }
-    }
-    .state {
-      font-weight: 600;
-      color: var(--mat-sys-on-surface);
-    }
-    .state.status-permission {
-      background: var(--app-status-attention-container);
-      color: var(--app-status-on-attention-container);
-    }
-    .state.status-waiting {
-      background: var(--app-status-ready-container);
-      color: var(--app-status-on-ready-container);
-    }
-    /* Claude goes on by itself: as quiet as the other chips. */
-    .state.status-running {
-      font-weight: 500;
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .state.status-failed {
-      background: var(--app-status-failed-container);
-      color: var(--app-status-on-failed-container);
-    }
-    /* Tool uses run without asking (bypass permissions). */
-    .chip.danger {
-      background: var(--app-status-attention-container);
-      color: var(--app-status-on-attention-container);
-      font-weight: 600;
-    }
-    .meter {
-      position: relative;
-      width: 24px;
-      height: 4px;
-      border-radius: 2px;
-      background: var(--mat-sys-outline-variant);
-      overflow: hidden;
-    }
-    .fill {
-      position: absolute;
-      inset: 0 auto 0 0;
-      background: var(--app-status-running);
-    }
-    .high .fill {
-      background: var(--mat-sys-error);
-    }
-    .pr-state {
-      font-weight: 600;
-    }
-    .pr-open {
-      color: var(--app-success);
-    }
-    .pr-merged {
-      color: var(--app-gh-merged);
-    }
-    .pr-closed {
-      color: var(--app-diff-del-fg);
-    }
-    .pr-draft {
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .sub {
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .app-tag {
-      align-self: center;
-    }
-  `,
+  host: {
+    class:
+      'flex gap-1.5 overflow-x-auto [scrollbar-width:none] py-1.5 px-(--app-gutter) -mx-(--app-gutter) border-b border-outline-variant bg-surface-container-low',
+  },
 })
 export class SessionStrip {
   readonly session = input.required<SessionDto>();
@@ -225,7 +128,13 @@ export class SessionStrip {
       !s.permissionModeOverride
     );
   });
-  protected readonly kindClass = computed(() => STATUS_KIND_CLASS[this.kind()]);
+  /** The state chip is toned like the state's badge (none while running). */
+  protected readonly toneClass = computed(() =>
+    STATUS_KIND_CLASS[this.kind()]
+      .split(' ')
+      .filter((name) => name.startsWith('tone-'))
+      .join(' '),
+  );
   protected readonly label = computed(() => needLabel(this.session()));
   protected readonly percent = computed(() =>
     Math.min(100, Math.round(this.context()?.percentage ?? 0)),

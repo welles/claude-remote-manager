@@ -7,6 +7,7 @@ import {
   type OnInit,
 } from '@angular/core';
 import { formatTime, isStale, limitViews } from './limit-format';
+import { Meter } from '../ui/meter';
 import { LimitsStore } from './limits-store';
 
 /**
@@ -16,94 +17,44 @@ import { LimitsStore } from './limits-store';
  */
 @Component({
   selector: 'app-limit-windows',
+  imports: [Meter],
   template: `
-    <div class="windows" data-testid="limits-details">
+    <div class="flex flex-col gap-3" data-testid="limits-details">
       @for (view of views(); track view.type) {
-        <div class="window level-{{ view.level }}" data-testid="limit">
-          <div class="row">
-            <span class="label">{{ view.label }}</span>
-            <span class="percent">{{ view.percentText }}</span>
-          </div>
+        @let high = view.level !== 'normal';
+        <div class="flex flex-col gap-1.5" data-testid="limit">
           <div
-            class="bar"
-            role="progressbar"
-            [attr.aria-label]="view.label"
-            [attr.aria-valuenow]="view.percent"
-            aria-valuemin="0"
-            aria-valuemax="100"
+            class="type-body-medium flex items-baseline justify-between gap-2"
           >
-            <div class="fill" [style.width.%]="view.percent ?? 0"></div>
+            <span>{{ view.label }}</span>
+            <span
+              class="type-body-small tabular-nums"
+              [class]="
+                high ? 'font-bold text-error' : 'text-on-surface-variant'
+              "
+              >{{ view.percentText }}</span
+            >
           </div>
-          <span class="reset" [class.old]="view.resetPassed">{{
-            view.resetText
-          }}</span>
+          <app-meter
+            [value]="view.percent"
+            [high]="high"
+            [label]="view.label"
+          />
+          <span
+            class="type-body-small text-on-surface-variant"
+            [class.line-through]="view.resetPassed"
+            >{{ view.resetText }}</span
+          >
         </div>
       } @empty {
-        <p class="hint">
+        <p class="type-body-small m-0 text-on-surface-variant">
           Not known yet: Claude Code reports the limits with the first answer of
           a session (or when they are read on request).
         </p>
       }
       <!-- prettier-ignore -->
-      <p class="hint" [class.warn]="stale()">@if (failed()) {Could not load the limits.} @else if (updated()) {Last updated {{ updated() }}{{ stale() ? ' (may be outdated)' : '' }}.} @else {Never updated.}</p>
+      <p class="type-body-small m-0" [class]="stale() ? 'text-error' : 'text-on-surface-variant'">@if (failed()) {Could not load the limits.} @else if (updated()) {Last updated {{ updated() }}{{ stale() ? ' (may be outdated)' : '' }}.} @else {Never updated.}</p>
     </div>
-  `,
-  styles: `
-    .windows {
-      display: flex;
-      flex-direction: column;
-      gap: var(--app-space-3);
-    }
-    .window {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    /* The same meter as the context in the session details. */
-    .row {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: var(--app-space-2);
-      font: var(--mat-sys-body-medium);
-    }
-    .percent {
-      font: var(--mat-sys-body-small);
-      font-variant-numeric: tabular-nums;
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .bar {
-      height: 4px;
-      border-radius: 2px;
-      background: var(--mat-sys-surface-container-highest);
-      overflow: hidden;
-    }
-    .fill {
-      height: 100%;
-      background: var(--mat-sys-on-surface-variant);
-    }
-    .level-high,
-    .level-exhausted {
-      .percent {
-        color: var(--mat-sys-error);
-        font-weight: 700;
-      }
-      .fill {
-        background: var(--mat-sys-error);
-      }
-    }
-    .reset,
-    .hint {
-      margin: 0;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .old {
-      text-decoration: line-through;
-    }
-    .warn {
-      color: var(--mat-sys-error);
-    }
   `,
 })
 export class LimitWindows implements OnInit {

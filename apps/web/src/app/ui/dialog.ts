@@ -38,7 +38,7 @@ let nextId = 0;
         <h2 class="title" [id]="titleId">{{ heading() }}</h2>
         <button
           type="button"
-          class="close"
+          class="icon-btn"
           aria-label="Close"
           (click)="close()"
         >
@@ -50,24 +50,7 @@ let nextId = 0;
     </dialog>
   `,
   styles: `
-    /* Dialogs look the same wherever they are placed: no compact sizes
-       inherited from a container (e.g. the session details). */
     .dialog {
-      --mat-button-outlined-container-height: initial;
-      --mat-button-text-container-height: initial;
-      --mat-button-filled-container-height: initial;
-      --mat-slide-toggle-track-height: initial;
-      --mat-slide-toggle-track-width: initial;
-      --mat-slide-toggle-unselected-handle-size: initial;
-      --mat-slide-toggle-selected-handle-size: initial;
-      --mat-slide-toggle-with-icon-handle-size: initial;
-      --mat-slide-toggle-pressed-handle-size: initial;
-      --mat-slide-toggle-selected-icon-size: initial;
-      --mat-slide-toggle-unselected-icon-size: initial;
-      --mat-slide-toggle-state-layer-size: initial;
-      --mat-slide-toggle-label-text-size: initial;
-      --mat-select-trigger-text-size: initial;
-      --mat-select-trigger-text-line-height: initial;
       width: min(560px, calc(100vw - 32px));
       max-width: none;
       max-height: 90dvh;
@@ -103,20 +86,6 @@ let nextId = 0;
       margin: 0;
       font: var(--mat-sys-headline-small);
       overflow-wrap: anywhere;
-    }
-    .close {
-      display: grid;
-      place-items: center;
-      width: 40px;
-      height: 40px;
-      border: 0;
-      border-radius: var(--mat-sys-corner-small);
-      background: none;
-      color: var(--mat-sys-on-surface-variant);
-      cursor: pointer;
-    }
-    .close:hover {
-      background: var(--mat-sys-surface-container-highest);
     }
     .body {
       flex: 1 1 auto;

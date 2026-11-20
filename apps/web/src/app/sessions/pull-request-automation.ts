@@ -67,7 +67,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       <span class="limit-buttons">
         <button
           type="button"
-          class="app-icon-btn"
+          class="icon-btn"
           aria-label="Lower the attempt limit"
           [disabled]="busy() || automation.maxAttempts <= range.min"
           (click)="save({ maxAttempts: automation.maxAttempts - 1 })"
@@ -77,7 +77,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
         </button>
         <button
           type="button"
-          class="app-icon-btn"
+          class="icon-btn"
           aria-label="Raise the attempt limit"
           [disabled]="busy() || automation.maxAttempts >= range.max"
           (click)="save({ maxAttempts: automation.maxAttempts + 1 })"
@@ -88,7 +88,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       </span>
       @if (automation.attempts > 0) {
         <button
-          matButton="outlined"
+          matButton
           type="button"
           [disabled]="busy()"
           (click)="save({ resetAttempts: true })"
@@ -102,7 +102,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       <p class="note running" data-testid="autofix-running">
         Autofix run going on{{ trigger() ? ' for ' + trigger() : '' }}.
         <button
-          matButton="outlined"
+          matButton
           type="button"
           [disabled]="busy()"
           (click)="stop()"
@@ -166,13 +166,6 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
     .limit-buttons {
       display: inline-flex;
       margin-left: -8px;
-    }
-    /* As small as the other actions of the details (touch screens keep 44 px). */
-    @media (pointer: fine) {
-      .limit-buttons .app-icon-btn {
-        width: 32px;
-        height: 32px;
-      }
     }
     .note {
       margin: 2px 0;
