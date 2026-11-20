@@ -2004,6 +2004,42 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       expect(harness.service.get(session.id).status).toBe('finished');
     });
 
+    it('waits for the turn also when the pull request merged has no autoclose itself', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      // Another pull request with autoclose, merged before.
+      const now = new Date();
+      const other = harness.sessions.savePullRequest({
+        sessionId: session.id,
+        repositoryId,
+        number: pull.number + 100,
+        url: `${pull.url}0`,
+        title: 'Other',
+        state: 'merged',
+        draft: false,
+        headBranch: 'other',
+        baseBranch: 'main',
+        createdBy: 'user',
+        openedAt: now,
+        closedAt: now,
+        mergedAt: now,
+        syncedAt: now,
+      });
+      harness.sessions.updatePullRequest(other.id, {
+        autoclose: true,
+        closeHandledAt: now,
+      });
+      await harness.service.send(session.id, { text: 'Go on' });
+      await waitFor(() => harness.service.get(session.id).status === 'running');
+      merge(pull.number);
+      await automation.check(pull.id);
+      expect(harness.sessions.pullRequest(pull.id)?.closeHandledAt).toBeNull();
+      expect(harness.service.get(session.id).status).toBe('running');
+
+      harness.runner.last.emit(resultMessage(20, 0.02));
+      await waitFor(() => notifications.closed.length === 1);
+      expect(harness.service.get(session.id).status).toBe('finished');
+    });
+
     it('handles a close left unhandled by a restart with the first poll', async () => {
       const { session, pull } = await sessionWithPullRequest();
       automation.update(session.id, pull.id, { autoclose: true });

@@ -1041,14 +1041,23 @@ export class PrAutomationService
   }
 
   /**
-   * Handles merged or closed pull requests with autoclose of a session
-   * whose close was not handled yet (it waited for the end of a turn).
-   * Only pull requests with autoclose: earlier versions left the close of
-   * others unrecorded.
+   * Handles merged or closed pull requests of a session whose close was
+   * not handled yet (it waited for the end of a turn): all of them, as
+   * `handleClosed` waits for any pull request once autoclose of the session
+   * is due. Only in sessions with autoclose on a pull request and not
+   * autoclosed yet: earlier versions left other closes unrecorded.
    */
   private handleUnhandledCloses(sessionId: string): void {
-    for (const pull of this.records.get(sessionId)?.pullRequests ?? []) {
-      if (pull.state !== 'open' && pull.autoclose && !pull.closeHandledAt) {
+    const session = this.records.get(sessionId);
+    if (
+      !session ||
+      session.autoclosedAt ||
+      !session.pullRequests.some((pull) => pull.autoclose)
+    ) {
+      return;
+    }
+    for (const pull of session.pullRequests) {
+      if (pull.state !== 'open' && !pull.closeHandledAt) {
         void this.handleClosed(pull.id).catch((error: unknown) =>
           this.logger.error(
             `Handling the close of ${pull.repositoryName}#${pull.number} failed: ${errorText(error)}`,
