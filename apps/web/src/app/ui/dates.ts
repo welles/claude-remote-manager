@@ -146,3 +146,32 @@ export class AppDatePipe implements PipeTransform {
       : formatDate(value, style, now ?? Date.now());
   }
 }
+
+/**
+ * `yyyy-MM-dd HH:mm` in the given IANA time zone (e.g. the server's, for
+ * build times), whatever the browser's; in the browser's zone when the
+ * zone is unknown to it.
+ */
+export function formatIsoMinute(
+  value: string | number | Date,
+  timeZone?: string,
+): string {
+  const options: Intl.DateTimeFormatOptions = {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  };
+  let format: Intl.DateTimeFormat;
+  try {
+    format = dateFormat({ ...options, timeZone });
+  } catch {
+    format = dateFormat(options);
+  }
+  const parts = format.formatToParts(toDate(value));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((entry) => entry.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`;
+}

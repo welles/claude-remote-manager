@@ -20,12 +20,14 @@ describe('HealthController', () => {
     delete process.env.APP_VERSION;
     delete process.env.APP_COMMIT;
     delete process.env.APP_COMMIT_TIME;
+    delete process.env.TZ;
 
     expect(controller.getHealth()).toEqual({
       status: 'ok',
       version: '0.0.0',
       commit: null,
       commitTime: null,
+      timeZone: 'UTC',
     });
   });
 
@@ -33,12 +35,14 @@ describe('HealthController', () => {
     process.env.APP_VERSION = '1.2.3';
     process.env.APP_COMMIT = 'abc123';
     process.env.APP_COMMIT_TIME = '2026-01-01T00:00:00Z';
+    process.env.TZ = 'Europe/Berlin';
 
     expect(controller.getHealth()).toEqual({
       status: 'ok',
       version: '1.2.3',
       commit: 'abc123',
       commitTime: '2026-01-01T00:00:00Z',
+      timeZone: 'Europe/Berlin',
     });
   });
 });

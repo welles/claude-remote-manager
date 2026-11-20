@@ -53,9 +53,5 @@ export const appRoutes: Route[] = [
     loadComponent: () =>
       import('./workspace/workspace-page').then((m) => m.WorkspacePage),
   },
-  {
-    path: 'status',
-    loadComponent: () => import('./home/home').then((m) => m.Home),
-  },
   { path: '**', redirectTo: '' },
 ];

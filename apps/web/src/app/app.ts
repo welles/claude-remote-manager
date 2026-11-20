@@ -63,8 +63,7 @@ const DESTINATIONS: Destination[] = [
     matches: (url) =>
       url.startsWith('/settings') ||
       url.startsWith('/environments') ||
-      url.startsWith('/workspace') ||
-      url.startsWith('/status'),
+      url.startsWith('/workspace'),
     testId: 'nav-settings',
   },
 ];
