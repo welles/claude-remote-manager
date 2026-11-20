@@ -17,6 +17,8 @@ interface Entry {
 class FakeHistory extends PlatformLocation {
   entries: Entry[] = [{ url: new URL('http://app/'), state: null }];
   index = 0;
+  /** Traversals not done yet. */
+  pending = 0;
   private readonly listeners = new Set<(event: PopStateEvent) => void>();
 
   private get current(): Entry {
@@ -75,7 +77,9 @@ class FakeHistory extends PlatformLocation {
   }
   override historyGo(delta = 0) {
     // As in browsers: the URL and state change with the traversal, later.
+    this.pending++;
     setTimeout(() => {
+      this.pending--;
       this.index = Math.max(
         0,
         Math.min(this.entries.length - 1, this.index + delta),
@@ -92,7 +96,23 @@ function clone(state: unknown): unknown {
   return state == null ? null : JSON.parse(JSON.stringify(state));
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+/**
+ * Waits until the history traversals and the router's navigations are done
+ * (for a few ticks in a row, as one may start the other), not for a fixed
+ * time that a busy machine may exceed.
+ */
+const settle = async () => {
+  const platform = TestBed.inject(PlatformLocation) as FakeHistory;
+  const router = TestBed.inject(Router);
+  let idle = 0;
+  for (let tick = 0; tick < 500 && idle < 3; tick++) {
+    await new Promise((resolve) => setTimeout(resolve));
+    idle =
+      platform.pending === 0 && router.currentNavigation() === null
+        ? idle + 1
+        : 0;
+  }
+};
 
 describe('ListBelowLocationStrategy', () => {
   /** Starts on `url`, after `before` (entries of an earlier load). */
