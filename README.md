@@ -1332,7 +1332,7 @@ its branches and tags, and points the existing session clones' `origin` there (s
 1. `POST /api/sessions` with `repositories: [{ repositoryId, baseBranch? }, …]` (the first is
    the main repository), `newProject: { name }` (creates the local project and makes it the
    main repository), or `scratch: true`. The request is validated and a slug is chosen:
-   the server's local date plus 6 random characters (`crypto.randomInt`), e.g. `2026-11-20-k3x9q2`,
+   the date (in the time zone `TZ` names, else UTC) plus 6 random characters (`crypto.randomInt`), e.g. `2026-11-20-k3x9q2`,
    unique among sessions and directories. Nothing of the title or prompt goes into it, so the
    branch pushed to the remote and the directory names reveal nothing of the task.
 2. Per repository, in parallel: the mirror is created on first use, otherwise fetched. If the
