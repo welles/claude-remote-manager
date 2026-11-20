@@ -105,6 +105,8 @@ describe('PullRequestChecksService', () => {
       maxWaitMs: 50,
       runningWindowMs: 60_000,
       emptyWindowMs: 0,
+      ciStartMs: 0,
+      ciSettleMs: 60_000,
     };
     checks = new PullRequestChecksService(
       harness.sessions,
@@ -219,7 +221,8 @@ describe('PullRequestChecksService', () => {
     harness.github.checkRuns.set(head, runs);
     await waitFor(() => checksOf(pull) !== null);
 
-    // Not viewed: nothing is read.
+    // Not viewed and not waiting for its CI: nothing is read.
+    harness.service.setCiWait(sessionId, pull.id, null);
     let reads = checkReads();
     await checks.poll();
     expect(checkReads()).toBe(reads);
@@ -363,5 +366,149 @@ describe('PullRequestChecksService', () => {
   it('keeps polling going when a viewed session is gone', async () => {
     presence.update({}, 'missing', true);
     await expect(checks.poll()).resolves.toBeUndefined();
+  });
+
+  describe('waiting for CI', () => {
+    const running = {
+      id: 1,
+      name: 'test',
+      status: 'in_progress' as const,
+      conclusion: null,
+      app: 'github-actions',
+    };
+
+    it('shows a session whose checks run as waiting for them, ready once they passed', async () => {
+      const { sessionId, pull, head } = await sessionWithPullRequest();
+      harness.github.checkRuns.set(head, [running]);
+      await waitFor(
+        () => harness.service.get(sessionId).waitingFor === 'background',
+      );
+      expect(harness.service.get(sessionId)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'background',
+        waitingReason: `CI of #${pull.number}`,
+        backgroundTasks: 0,
+      });
+      // The app may send it messages (autofix) meanwhile.
+      expect(harness.service.acceptsAppMessage(sessionId)).toBe(true);
+
+      // Not viewed, but waiting for CI: polled.
+      harness.github.checkRuns.set(head, [
+        { ...running, status: 'completed', conclusion: 'success' } as never,
+      ]);
+      await checks.poll();
+      expect(harness.service.get(sessionId)).toMatchObject({
+        waitingFor: 'message',
+        waitingReason: null,
+      });
+      expect(harness.service.ciWaitingSessions()).toEqual([]);
+    });
+
+    it('waits a short time for the checks of a new head commit to show up', async () => {
+      timing.ciStartMs = 60_000;
+      const { sessionId, pull, head } = await sessionWithPullRequest();
+      await waitFor(() => checksOf(pull) !== null);
+      expect(harness.service.get(sessionId).waitingFor).toBe('background');
+      // Checks show up: the wait goes on while they run.
+      harness.github.checkRuns.set(head, [running]);
+      await checks.read(pull.id);
+      expect(harness.service.ciWaitPhase(sessionId, pull.id)).toBe('running');
+
+      // Without any checks the wait ends by itself.
+      timing.ciStartMs = 30;
+      harness.github.checkRuns.set(head, []);
+      harness.sessions.updatePullRequest(pull.id, { headSha: 'd'.repeat(40) });
+      await checks.read(pull.id);
+      expect(harness.service.get(sessionId).waitingFor).toBe('background');
+      await waitFor(
+        () => harness.service.get(sessionId).waitingFor === 'message',
+      );
+    });
+
+    it('does not wait for settled checks read again, nor for a pull request without CI', async () => {
+      const { sessionId, pull, head } = await sessionWithPullRequest();
+      await waitFor(() => checksOf(pull) !== null);
+      expect(harness.service.get(sessionId).waitingFor).toBe('message');
+      harness.github.checkRuns.set(head, [
+        { ...running, status: 'completed', conclusion: 'success' } as never,
+      ]);
+      harness.sessions.updatePullRequest(pull.id, { autofix: true });
+      await checks.read(pull.id);
+      expect(harness.service.get(sessionId).waitingFor).toBe('message');
+    });
+
+    it('keeps waiting for settled checks with autofix until the automation looked', async () => {
+      const { sessionId, pull, head } = await sessionWithPullRequest();
+      harness.sessions.updatePullRequest(pull.id, { autofix: true });
+      const settled: number[] = [];
+      const subscription = checks.settled$.subscribe((id) => settled.push(id));
+      harness.github.checkRuns.set(head, [running]);
+      await waitFor(() => checksOf(pull)?.checks.length === 1);
+      expect(harness.service.ciWaitPhase(sessionId, pull.id)).toBe('running');
+
+      harness.github.checkRuns.set(head, [
+        { ...running, status: 'completed', conclusion: 'failure' } as never,
+      ]);
+      await checks.read(pull.id);
+      expect(settled).toEqual([pull.id]);
+      expect(harness.service.ciWaitPhase(sessionId, pull.id)).toBe('settling');
+      expect(harness.service.get(sessionId).waitingFor).toBe('background');
+      // Read again meanwhile: still waiting, not announced again.
+      await checks.read(pull.id);
+      expect(settled).toEqual([pull.id]);
+      expect(harness.service.ciWaitPhase(sessionId, pull.id)).toBe('settling');
+
+      harness.service.endCiSettling(sessionId, pull.id);
+      expect(harness.service.get(sessionId).waitingFor).toBe('message');
+      subscription.unsubscribe();
+    });
+
+    it('ends the settling wait by itself when the automation never looks', async () => {
+      timing.ciSettleMs = 30;
+      const { sessionId, pull, head } = await sessionWithPullRequest();
+      harness.sessions.updatePullRequest(pull.id, { autofix: true });
+      harness.github.checkRuns.set(head, [running]);
+      await waitFor(() => checksOf(pull)?.checks.length === 1);
+      harness.github.checkRuns.set(head, [
+        { ...running, status: 'completed', conclusion: 'success' } as never,
+      ]);
+      await checks.read(pull.id);
+      expect(harness.service.ciWaitPhase(sessionId, pull.id)).toBe('settling');
+      await waitFor(
+        () => harness.service.get(sessionId).waitingFor === 'message',
+      );
+    });
+
+    it('stops waiting when the pull request is closed', async () => {
+      const { sessionId, pull, head } = await sessionWithPullRequest();
+      harness.github.checkRuns.set(head, [running]);
+      await waitFor(
+        () => harness.service.get(sessionId).waitingFor === 'background',
+      );
+      harness.sessions.updatePullRequest(pull.id, { state: 'merged' });
+      expect(harness.service.get(sessionId).waitingFor).toBe('message');
+    });
+
+    it('reads checks that ran before a restart again', async () => {
+      const { sessionId, pull, head } = await sessionWithPullRequest();
+      harness.github.checkRuns.set(head, [running]);
+      await waitFor(() => checksOf(pull)?.checks.length === 1);
+      harness.service.setCiWait(sessionId, pull.id, null);
+      checks.onModuleDestroy();
+      checks = new PullRequestChecksService(
+        harness.sessions,
+        harness.repositoryRecords,
+        harness.service,
+        harness.sessionGit,
+        harness.github.service,
+        new PullRequestFeedback(harness.github.service, harness.github.http),
+        presence,
+        timing,
+      );
+      checks.onModuleInit();
+      await waitFor(
+        () => harness.service.get(sessionId).waitingFor === 'background',
+      );
+    });
   });
 });

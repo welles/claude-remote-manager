@@ -47,12 +47,14 @@ export type SessionStatus =
  *   tasks it started (subagents, background commands, monitors, workflows)
  *   still run and Claude Code continues when they report back
  *   (`backgroundTasks` says how many), or Claude said it waits for
- *   something (`waitingReason`, see the tool `set_waiting_state`). A message
- *   can be sent meanwhile.
+ *   something (`waitingReason`, see the tool `set_waiting_state`); or the
+ *   app goes on with what the CI of one of the session's open pull requests
+ *   brings (`waitingReason` `CI of #12`). A message can be sent meanwhile.
  *
  * What Claude says with `set_waiting_state` comes first: `user` makes a
  * session with background tasks `message`, `work` one without them
- * `background` (for at most `CLAUDE_WAIT_LIMIT_MINUTES`).
+ * `background` (for at most `CLAUDE_WAIT_LIMIT_MINUTES`). Running CI of
+ * its pull requests makes it `background` even after `user`.
  */
 export type SessionWaitingFor =
   | 'message'
@@ -351,8 +353,9 @@ export interface SessionDto {
   backgroundTasks?: number;
   /**
    * With `waitingFor: 'background'`: what Claude said it waits for (e.g.
-   * "CI of PR #12"), when it did; `null` otherwise. Absent from older
-   * servers.
+   * "CI of PR #12"), when it did, else the CI of its pull requests it
+   * waits for ("CI of #12") unless background tasks are what it waits
+   * for; `null` otherwise. Absent from older servers.
    */
   waitingReason?: string | null;
   /**

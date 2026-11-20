@@ -283,6 +283,15 @@ export class PrAutomationService
         this.sessionChanged(session),
       ),
     );
+    if (this.checksView) {
+      // CI settled while the session waited for it: look now, so that a
+      // run or ready message follows right away.
+      this.subscriptions.push(
+        this.checksView.settled$.subscribe((pullRequestId) =>
+          this.schedule(pullRequestId, this.timing.idleRecheckMs),
+        ),
+      );
+    }
     if (this.timing.pollMs > 0) {
       this.pollTimer = setInterval(() => void this.poll(), this.timing.pollMs);
       this.pollTimer.unref?.();
@@ -684,6 +693,12 @@ export class PrAutomationService
         }
       } finally {
         this.checking.delete(pullRequestId);
+        // Settled checks were looked at: the session no longer waits for
+        // them (a run started is a turn by now).
+        const pull = this.records.pullRequest(pullRequestId);
+        if (pull) {
+          this.sessions.endCiSettling(pull.sessionId, pull.id);
+        }
       }
     })();
     this.checking.set(pullRequestId, task);

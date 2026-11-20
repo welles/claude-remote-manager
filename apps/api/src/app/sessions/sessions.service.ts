@@ -496,6 +496,27 @@ export function setupFailedNotice(repositories: string[]): string {
 }
 
 /**
+ * Phase of waiting for the CI of a pull request: `running` while its head
+ * commit's checks run (or are about to start right after a push);
+ * `settling` once they settled on a pull request with autofix, until the PR
+ * automation looked at them (a run or ready message it starts follows
+ * without the session showing `Ready` in between).
+ */
+export type CiWaitPhase = 'running' | 'settling';
+
+/**
+ * The session waits for the CI of one of its open pull requests: its turn
+ * is over, but the app goes on with what CI brings (autofix, the ready
+ * message), so it shows `background` (`CI of #12`) instead of
+ * `message`, and `finished` is reported once CI is done. Set by
+ * `PullRequestChecksService`; ends by itself after a time limit.
+ */
+interface CiWait {
+  phase: CiWaitPhase;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/**
  * Runs sessions: starts Claude Code processes, keeps them for follow-up
  * messages, turns their messages into session events, tracks status and
  * usage, and resumes sessions whose process has ended.
@@ -507,6 +528,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly events = new Subject<SessionEventEnvelope>();
   private readonly updates = new Subject<SessionDto>();
   private readonly deletions = new Subject<string>();
+  /** CI the sessions wait for, by session and pull request ID. */
+  private readonly ciWaits = new Map<string, Map<number, CiWait>>();
   private shuttingDown = false;
   /** See {@link BACKGROUND_REPORT_GRACE_MS}; tests shorten it. */
   backgroundReportGraceMs = BACKGROUND_REPORT_GRACE_MS;
@@ -3269,7 +3292,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         `reason (e.g. "CI of PR #12", at most ${MAX_WAITING_REASON_LENGTH} characters). It holds ` +
         `until the next turn starts, "work" at most ${CLAUDE_WAIT_LIMIT_MINUTES} minutes after ` +
         'the turn; after that an idle process may be closed, so a later wakeup may not fire. ' +
-        'Without it, the session manager decides from the background tasks still running.',
+        'Without it, the session manager decides from the background tasks still running. ' +
+        'It shows by itself while CI of your pull requests runs and it reports the result to ' +
+        'you; you need not say "work" for that.',
       inputSchema: (z) => ({
         waiting_on: z
           .enum(['user', 'work'])
@@ -3531,21 +3556,32 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return this.live.get(sessionId)?.backgroundTasks.size ?? 0;
   }
 
-  /** What Claude said it waits for, while the session shows it. */
+  /**
+   * What the session waits for, while it shows `background`: what Claude
+   * said (`set_waiting_state` with `work`), else the CI of its pull
+   * requests (`CI of #12`) unless background tasks are what it waits for
+   * (the client shows their number).
+   */
   private waitingReason(record: SessionRecord): string | null {
-    const wait = this.live.get(record.id)?.claudeWait;
-    return wait?.on === 'work' &&
-      this.effectiveStatus(record).waitingFor === 'background'
-      ? wait.reason
-      : null;
+    if (this.effectiveStatus(record).waitingFor !== 'background') {
+      return null;
+    }
+    const live = this.live.get(record.id);
+    if (live?.claudeWait?.on === 'work') {
+      return live.claudeWait.reason ?? this.ciWaitLabel(record);
+    }
+    return live && this.waitsForBackground(live)
+      ? null
+      : this.ciWaitLabel(record);
   }
 
   /**
    * Whether a message of the app (such as an autofix run) may start a turn
    * now: the session waits for a message, or only because Claude said it
    * goes on by itself (`set_waiting_state` with `work`, e.g. "CI of PR #12")
-   * while no background task of it still runs or is about to report back.
-   * Claude may well be waiting for exactly what the app brings.
+   * while no background task of it still runs or is about to report back,
+   * or only for the CI of its pull requests. Claude may well be waiting for
+   * exactly what the app brings.
    */
   acceptsAppMessage(sessionId: string): boolean {
     const record = this.sessions.get(sessionId);
@@ -3559,14 +3595,114 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (waitingFor === 'message') {
       return true;
     }
+    if (waitingFor !== 'background') {
+      return false;
+    }
     const live = this.live.get(sessionId);
+    if (!live || !this.waitsForBackground(live)) {
+      // Only the CI of its pull requests.
+      return true;
+    }
     return (
-      waitingFor === 'background' &&
-      live !== undefined &&
       live.claudeWait?.on === 'work' &&
       live.backgroundTasks.size === 0 &&
       live.backgroundGrace === null
     );
+  }
+
+  // --- CI of the session's pull requests ---------------------------------
+
+  /**
+   * Sets (or with `null` clears) that the session waits for the CI of one
+   * of its open pull requests (see {@link CiWait}); it ends by itself at
+   * `untilMs`. Published when what clients see changed.
+   */
+  setCiWait(
+    sessionId: string,
+    pullRequestId: number,
+    wait: { phase: CiWaitPhase; untilMs: number } | null,
+  ): void {
+    const before = this.ciWaitKey(sessionId);
+    let waits = this.ciWaits.get(sessionId);
+    const previous = waits?.get(pullRequestId);
+    if (previous) {
+      clearTimeout(previous.timer);
+      waits?.delete(pullRequestId);
+    }
+    if (wait && wait.untilMs > Date.now()) {
+      if (!waits) {
+        waits = new Map();
+        this.ciWaits.set(sessionId, waits);
+      }
+      const timer = setTimeout(() => {
+        if (this.ciWaits.get(sessionId)?.get(pullRequestId)?.timer === timer) {
+          this.setCiWait(sessionId, pullRequestId, null);
+        }
+      }, wait.untilMs - Date.now());
+      timer.unref?.();
+      waits.set(pullRequestId, { phase: wait.phase, timer });
+    }
+    if (waits?.size === 0) {
+      this.ciWaits.delete(sessionId);
+    }
+    if (this.ciWaitKey(sessionId) !== before) {
+      this.ciWaitChanged(sessionId);
+    }
+  }
+
+  /** The phase of the CI wait for a pull request, if there is one. */
+  ciWaitPhase(sessionId: string, pullRequestId: number): CiWaitPhase | null {
+    return this.ciWaits.get(sessionId)?.get(pullRequestId)?.phase ?? null;
+  }
+
+  /**
+   * The PR automation looked at a pull request whose checks settled: the
+   * session no longer waits for it (a run it started is a turn by now).
+   */
+  endCiSettling(sessionId: string, pullRequestId: number): void {
+    if (this.ciWaitPhase(sessionId, pullRequestId) === 'settling') {
+      this.setCiWait(sessionId, pullRequestId, null);
+    }
+  }
+
+  /** Sessions that wait for CI of one of their pull requests. */
+  ciWaitingSessions(): string[] {
+    return [...this.ciWaits.keys()];
+  }
+
+  /**
+   * What the session waits for in CI (`CI of #12`), from its open pull
+   * requests only; `null` if nothing.
+   */
+  private ciWaitLabel(record: SessionRecord): string | null {
+    const waits = this.ciWaits.get(record.id);
+    if (!waits) {
+      return null;
+    }
+    const labels = record.pullRequests
+      .filter((pull) => pull.state === 'open' && waits.has(pull.id))
+      .map((pull) => `#${pull.number}`);
+    return labels.length > 0
+      ? `CI of ${[...new Set(labels)].join(', ')}`
+      : null;
+  }
+
+  private ciWaitKey(sessionId: string): string {
+    const record = this.sessions.get(sessionId);
+    return record ? (this.ciWaitLabel(record) ?? '') : '';
+  }
+
+  private ciWaitChanged(sessionId: string): void {
+    const record = this.sessions.get(sessionId);
+    if (!record) {
+      return;
+    }
+    const live = this.live.get(sessionId);
+    if (!live || !this.publishStatus(live)) {
+      // Another label, or a session without process: clients (and the PR
+      // automation, see `acceptsAppMessage`) look again.
+      this.updates.next(this.toDto(record));
+    }
   }
 
   private waitsForBackgroundById(sessionId: string): boolean {
@@ -3586,7 +3722,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         status: 'waiting',
         waitingFor: record.pendingMessage
           ? 'setup'
-          : this.waitsForBackgroundById(record.id)
+          : this.waitsForBackgroundById(record.id) ||
+              this.ciWaitLabel(record) !== null
             ? 'background'
             : 'message',
       };
