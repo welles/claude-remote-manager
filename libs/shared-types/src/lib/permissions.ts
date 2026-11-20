@@ -83,6 +83,26 @@ export interface PullRequestCall {
 }
 
 /**
+ * A `reply_to_review_thread` call as the approval shows it. The body is
+ * Claude's (Markdown, shown rendered like a pull request's description).
+ */
+export interface ReviewThreadReplyCall {
+  /** `owner/name`; filled in when Claude omitted it and it is unambiguous. */
+  repository: string | null;
+  /** Number of the pull request. */
+  pullRequest: number | null;
+  /** REST ID of the review comment whose thread gets the reply. */
+  commentId: number | null;
+  /** The reply (Markdown); `null` when it only resolves the thread. */
+  body: string | null;
+  /** Whether the thread is resolved as well. */
+  resolve: boolean;
+}
+
+/** Longest reply `reply_to_review_thread` takes. */
+export const MAX_REVIEW_REPLY_LENGTH = 65_536;
+
+/**
  * What "Allow for this session" would allow from now on, in addition to
  * this request: permission rules (e.g. `Bash(npm test:*)`) and/or
  * directories. Kept until the session ends (also across

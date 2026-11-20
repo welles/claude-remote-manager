@@ -8,7 +8,10 @@ import {
   Logger,
   Optional,
 } from '@nestjs/common';
-import { MAX_PREVIEW_NAME_LENGTH } from '@claude-remote-manager/shared-types';
+import {
+  MAX_PREVIEW_NAME_LENGTH,
+  MAX_REVIEW_REPLY_LENGTH,
+} from '@claude-remote-manager/shared-types';
 import type { AgentTool } from '../agent/agent-runner';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { handOverToSession } from '../common/ownership';
@@ -20,6 +23,7 @@ import {
   CREATE_PULL_REQUEST_TOOL,
   EXPOSE_PORT_TOOL,
   EXPOSE_PORT_TOOL_NAME,
+  REPLY_TO_REVIEW_THREAD_TOOL,
   REQUEST_OWNER_DECISION_TOOL,
   REQUEST_OWNER_DECISION_TOOL_NAME,
   SHOW_FILE_TOOL,
@@ -178,7 +182,7 @@ function errorText(error: unknown): string {
 
 /**
  * The session's integrations with git and GitHub:
- * - the tool `create_pull_request`;
+ * - the tools `create_pull_request` and `reply_to_review_thread`;
  * - auto-memory per repository: Claude Code keeps its memory per working
  *   directory, i.e. per session clone; all sessions of a repository share
  *   `<memoryDir>/<repository id>` instead (scratch sessions keep Claude
@@ -288,6 +292,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         ...(githubClones.length > 0
           ? [
               this.createPullRequestTool(record.id),
+              this.replyToReviewThreadTool(record.id),
               this.requestOwnerDecisionTool(record.id),
             ]
           : []),
@@ -620,6 +625,94 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         return {
           text: `Pull request #${pull.number} (${pull.state}) of ${pull.repository}: ${pull.url}`,
         };
+      },
+    };
+  }
+
+  /**
+   * The tool `reply_to_review_thread` of a session: a reply on a review
+   * thread of one of the session's own pull requests and/or its
+   * resolution, done by the backend with an installation token for that
+   * repository (`gh` in sessions stays read-only). Asks as the permission
+   * mode says, except during an Autofix run (see `SessionsService`).
+   */
+  replyToReviewThreadTool(sessionId: string): AgentTool {
+    return {
+      name: REPLY_TO_REVIEW_THREAD_TOOL,
+      description:
+        "Reply on a review thread of one of this session's own pull requests on GitHub, and/or " +
+        'resolve the thread. Name the thread by the numeric REST ID of any review comment in it ' +
+        '(the `id` that `gh api repos/{owner}/{repo}/pulls/{number}/comments` lists, or the ' +
+        'comment-id the session manager gives with review feedback). Use it after fixing a ' +
+        'review finding: reply with what changed (name the commit) and resolve the thread. ' +
+        'For a finding you did not fix, reply with the reason and leave the thread unresolved. ' +
+        'Only pull requests of this session; gh itself can only read.',
+      inputSchema: (z) => ({
+        repository: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            'owner/name of the repository; may be omitted if the session has only one GitHub repository',
+          ),
+        pull_request: z
+          .number()
+          .int()
+          .positive()
+          .describe('Number of the pull request'),
+        comment_id: z
+          .number()
+          .int()
+          .positive()
+          .describe('REST ID of a review comment in the thread'),
+        body: z
+          .string()
+          .max(MAX_REVIEW_REPLY_LENGTH)
+          .optional()
+          .describe('The reply in Markdown; omit to only resolve'),
+        resolve: z
+          .boolean()
+          .optional()
+          .describe('Resolve the thread as well (default: false)'),
+      }),
+      handler: async (input) => {
+        try {
+          const repositoryId = this.repositoryOf(
+            sessionId,
+            typeof input['repository'] === 'string'
+              ? input['repository']
+              : null,
+          );
+          const outcome = await this.sessionGit.replyToReviewThread(
+            sessionId,
+            repositoryId,
+            {
+              number: Number(input['pull_request']),
+              commentId: Number(input['comment_id']),
+              body: typeof input['body'] === 'string' ? input['body'] : null,
+              resolve: input['resolve'] === true,
+            },
+          );
+          return {
+            text: [
+              outcome.replyUrl
+                ? `Replied on the review thread of ${outcome.pullRequest}: ${outcome.replyUrl}.`
+                : null,
+              outcome.resolved === 'resolved'
+                ? `Resolved the thread on ${outcome.pullRequest}.`
+                : outcome.resolved === 'already'
+                  ? `The thread on ${outcome.pullRequest} was resolved already.`
+                  : null,
+            ]
+              .filter(Boolean)
+              .join(' '),
+          };
+        } catch (error) {
+          return {
+            isError: true,
+            text: `reply_to_review_thread failed: ${errorText(error)}`,
+          };
+        }
       },
     };
   }

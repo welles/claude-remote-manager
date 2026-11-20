@@ -35,6 +35,7 @@ import {
   type PermissionResponseResult,
   type PullRequestCall,
   type RepositoryAddedBy,
+  type ReviewThreadReplyCall,
   type SessionDto,
   type SessionEnvironmentDto,
   type SessionEvent,
@@ -78,6 +79,7 @@ import {
   APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
   READ_ONLY_TOOLS,
+  REPLY_TO_REVIEW_THREAD_TOOL_NAME,
   SET_SESSION_TITLE_TOOL,
   SET_SESSION_TITLE_TOOL_NAME,
   SET_WAITING_STATE_TOOL,
@@ -273,6 +275,23 @@ const LATER_WORK_TOOLS: ReadonlySet<string> = new Set([
   'TeamCreate',
   'SendMessage',
 ]);
+
+/**
+ * The app's tools that run without asking during an Autofix run (and only
+ * then; otherwise as the permission mode says): answering and resolving
+ * review threads, which the tool allows only on the session's own pull
+ * requests. Only the app's own server (`sdk`) counts.
+ */
+function autofixAppTool(
+  toolName: string,
+  mcpServer: { name: string; source: string } | null,
+): boolean {
+  return (
+    toolName === REPLY_TO_REVIEW_THREAD_TOOL_NAME &&
+    (mcpServer === null ||
+      (mcpServer.name === APP_MCP_SERVER && mcpServer.source === 'sdk'))
+  );
+}
 
 /** Error text, completed with Claude Code's last stderr line if any. */
 function errorMessage(error: unknown, run?: AgentRun): string {
@@ -2618,7 +2637,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live: LiveSession,
     call: AgentToolCall,
   ): AgentGateDecision | null {
-    if (!live.autoHold?.delivered || READ_ONLY_TOOLS.has(call.toolName)) {
+    if (
+      !live.autoHold?.delivered ||
+      READ_ONLY_TOOLS.has(call.toolName) ||
+      autofixAppTool(call.toolName, call.mcpServer)
+    ) {
       return null;
     }
     if (LATER_WORK_TOOLS.has(call.toolName)) {
@@ -2654,6 +2677,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       ) {
         // Showing a file reads only inside the session's directories;
         // previews forward only the session user's ports: never asks.
+        return { behavior: 'allow', updatedInput: input };
+      }
+      if (
+        live.autoHold?.delivered &&
+        autofixAppTool(toolName, options.mcpServer ?? null)
+      ) {
+        // During an Autofix run: answering review threads touches only
+        // the session's own pull requests (the tool refuses others).
         return { behavior: 'allow', updatedInput: input };
       }
       const command =
@@ -2733,6 +2764,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           toolName === CREATE_PULL_REQUEST_TOOL_NAME &&
           (mcpServer === null || mcpServer.source === 'sdk')
             ? this.pullRequestCall(live.id, input)
+            : null,
+        reviewThreadReply:
+          toolName === REPLY_TO_REVIEW_THREAD_TOOL_NAME &&
+          (mcpServer === null || mcpServer.source === 'sdk')
+            ? this.reviewThreadReplyCall(live.id, input)
             : null,
         diff: await this.proposedChange(live.id, toolName, input),
         toolUseId: options.toolUseID,
@@ -2843,11 +2879,55 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): PullRequestCall {
     const text = (name: string) =>
       typeof input[name] === 'string' ? (input[name] as string) : null;
+    const { named, clone } = this.namedGitHubClone(sessionId, input);
+    return {
+      repository: named ?? clone?.repositoryName ?? null,
+      title: text('title') ?? '',
+      body: text('body'),
+      base: text('base') ?? clone?.baseBranch ?? null,
+      draft: input['draft'] === true,
+    };
+  }
+
+  /**
+   * A `reply_to_review_thread` call as the approval shows it: the
+   * repository filled in when Claude omitted it.
+   */
+  private reviewThreadReplyCall(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): ReviewThreadReplyCall {
+    const integer = (name: string) => {
+      const value = input[name];
+      return typeof value === 'number' && Number.isSafeInteger(value)
+        ? value
+        : null;
+    };
+    const { named, clone } = this.namedGitHubClone(sessionId, input);
+    const body = input['body'];
+    return {
+      repository: named ?? clone?.repositoryName ?? null,
+      pullRequest: integer('pull_request'),
+      commentId: integer('comment_id'),
+      body: typeof body === 'string' && body.trim() ? body : null,
+      resolve: input['resolve'] === true,
+    };
+  }
+
+  /**
+   * The repository an app tool's call names (`repository`), and the
+   * session's GitHub clone it is; without a name, the only GitHub clone.
+   */
+  private namedGitHubClone(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): { named: string | null; clone: SessionDirectoryRecord | undefined } {
     const record = this.requireRecord(sessionId);
     const clones = record.directories.filter(
       (directory) => directory.kind === 'clone' && directory.repositoryGitHub,
     );
-    const named = text('repository');
+    const named =
+      typeof input['repository'] === 'string' ? input['repository'] : null;
     const clone = named
       ? clones.find(
           (directory) =>
@@ -2856,13 +2936,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       : clones.length === 1
         ? clones[0]
         : undefined;
-    return {
-      repository: named ?? clone?.repositoryName ?? null,
-      title: text('title') ?? '',
-      body: text('body'),
-      base: text('base') ?? clone?.baseBranch ?? null,
-      draft: input['draft'] === true,
-    };
+    return { named, clone };
   }
 
   // --- Adding repositories ------------------------------------------------

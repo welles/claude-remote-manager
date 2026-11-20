@@ -2,6 +2,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -16,7 +17,8 @@ import { optionalString, requireObject } from '../common/validation';
 import { GitError } from '../git/git-runner';
 import { GitService, isValidBranchName } from '../git/git.service';
 import { KeyedMutex } from '../git/keyed-mutex';
-import { GitHubService } from '../github/github.service';
+import { GitHubApiError } from '../github/github-errors';
+import { GitHubService, type ReviewThreadInfo } from '../github/github.service';
 import {
   isGitHubRepository,
   RepositoryCredentials,
@@ -46,14 +48,36 @@ export interface SessionClone {
   repository: RepositoryRecord;
 }
 
+/** A reply on a review thread and/or its resolution. */
+export interface ReviewThreadReplyRequest {
+  /** Number of the pull request. */
+  number: number;
+  /** REST ID of a review comment of the thread. */
+  commentId: number;
+  /** The reply (Markdown); `null` or blank: no reply. */
+  body: string | null;
+  resolve: boolean;
+}
+
+/** What {@link SessionGitService.replyToReviewThread} did. */
+export interface ReviewThreadReplyOutcome {
+  /** `owner/name#number`. */
+  pullRequest: string;
+  /** URL of the reply, `null` without one. */
+  replyUrl: string | null;
+  /** `already`: it was resolved before; `null`: not asked to. */
+  resolved: 'resolved' | 'already' | null;
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /**
- * Pushing session branches and creating pull requests, for one repository
- * of a session at a time. Used by the session view's buttons (the user's
- * click is the approval) and by Claude's `create_pull_request` tool (asked
+ * Pushing session branches, creating pull requests and answering their
+ * review threads, for one repository of a session at a time. Used by the
+ * session view's buttons (the user's click is the approval) and by
+ * Claude's tools `create_pull_request` and `reply_to_review_thread` (asked
  * as the session's permission mode says). Pushes and pull requests of GitHub
  * repositories use installation tokens for exactly that repository;
  * repositories registered by clone URL push with the server's own git
@@ -360,6 +384,117 @@ export class SessionGitService {
       this.refreshed.next(updated);
     }
     return updated;
+  }
+
+  /**
+   * Replies on a review thread of one of the session's own pull requests
+   * and/or resolves it (Claude's tool `reply_to_review_thread`). The thread
+   * is named by any of its review comments (REST ID). Pull requests not
+   * recorded for the session are refused. When it resolves, the thread is
+   * looked up first, so that nothing is posted for a comment that is in
+   * no thread of the pull request.
+   */
+  async replyToReviewThread(
+    sessionId: string,
+    repositoryId: string,
+    request: ReviewThreadReplyRequest,
+  ): Promise<ReviewThreadReplyOutcome> {
+    const { number, commentId, resolve } = request;
+    const body = request.body?.trim() ? request.body : null;
+    if (!Number.isSafeInteger(number) || number < 1) {
+      throw new BadRequestException('pull_request must be a positive number');
+    }
+    if (!Number.isSafeInteger(commentId) || commentId < 1) {
+      throw new BadRequestException('comment_id must be a positive number');
+    }
+    if (body === null && !resolve) {
+      throw new BadRequestException(
+        'Give a reply (body), resolve the thread (resolve: true), or both',
+      );
+    }
+    if (body !== null && body.length > MAX_BODY_LENGTH) {
+      throw new BadRequestException(
+        `The reply is longer than ${MAX_BODY_LENGTH} characters`,
+      );
+    }
+    const session = this.sessionRecord(sessionId);
+    const repository = this.repositories.get(repositoryId);
+    if (!repository || !isGitHubRepository(repository)) {
+      throw new ConflictException(
+        'Review threads need a repository registered from GitHub',
+      );
+    }
+    const fullName = `${repository.owner}/${repository.name}`;
+    const pull = session.pullRequests.find(
+      (entry) => entry.repositoryId === repositoryId && entry.number === number,
+    );
+    if (!pull) {
+      const own = session.pullRequests
+        .filter((entry) => entry.repositoryId === repositoryId)
+        .map((entry) => `#${entry.number}`);
+      throw new ForbiddenException(
+        `${fullName}#${number} is not a pull request of this session (${own.length > 0 ? `its pull requests there: ${own.join(', ')}` : `it has none in ${fullName}`}); only the session's own pull requests can be answered`,
+      );
+    }
+    const installation = repository.githubInstallationId;
+    const githubId = repository.githubRepositoryId;
+    let thread: ReviewThreadInfo | null = null;
+    if (resolve) {
+      thread = await this.github.findReviewThread(
+        installation,
+        githubId,
+        fullName,
+        number,
+        commentId,
+      );
+      if (!thread) {
+        throw new NotFoundException(
+          `No review thread of ${fullName}#${number} has the comment ${commentId}`,
+        );
+      }
+    }
+    let reply: { id: number; url: string } | null = null;
+    if (body !== null) {
+      try {
+        reply = await this.github.replyToReviewComment(
+          installation,
+          githubId,
+          fullName,
+          number,
+          commentId,
+          body,
+        );
+      } catch (error) {
+        if (error instanceof GitHubApiError && error.githubStatus === 404) {
+          throw new NotFoundException(
+            `The review comment ${commentId} of ${fullName}#${number} was not found (${error.message})`,
+          );
+        }
+        throw error;
+      }
+    }
+    if (!thread || thread.resolved) {
+      return {
+        pullRequest: `${fullName}#${number}`,
+        replyUrl: reply?.url ?? null,
+        resolved: thread ? 'already' : null,
+      };
+    }
+    try {
+      await this.github.resolveReviewThread(installation, githubId, thread.id);
+    } catch (error) {
+      if (reply) {
+        throw new BadGatewayException(
+          `Replied (${reply.url}), but the thread was not resolved: ${errorText(error)}`,
+        );
+      }
+      throw error;
+    }
+    return {
+      pullRequest: `${fullName}#${number}`,
+      replyUrl: reply?.url ?? null,
+      resolved: 'resolved',
+    };
   }
 
   // -------------------------------------------------------------------------

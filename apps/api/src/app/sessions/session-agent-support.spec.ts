@@ -8,11 +8,12 @@ import { commitFile, git } from '../git/testing/git-fixtures';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import {
   CREATE_PULL_REQUEST_TOOL_NAME,
+  REPLY_TO_REVIEW_THREAD_TOOL_NAME,
   SHOW_FILE_TOOL_NAME,
 } from './app-tools';
 import { SESSION_SETTINGS } from './session-agent-support';
 import { pngImage } from '../attachments/testing/images';
-import { waitFor } from './testing/fake-agent';
+import { flush, resultMessage, waitFor } from './testing/fake-agent';
 
 describe('session integrations (tools, memory, pushes)', () => {
   let harness: WorkspaceHarness;
@@ -99,6 +100,7 @@ describe('session integrations (tools, memory, pushes)', () => {
     expect(options().tools?.map((entry) => entry.name)).toEqual([
       'show_file',
       'create_pull_request',
+      'reply_to_review_thread',
       'request_owner_decision',
       'set_session_title',
       'set_waiting_state',
@@ -304,6 +306,314 @@ describe('session integrations (tools, memory, pushes)', () => {
     expect(harness.service.get(session.id).pullRequests).toEqual([
       expect.objectContaining({ createdBy: 'claude', title: 'Add work' }),
     ]);
+  });
+
+  describe('reply_to_review_thread', () => {
+    /**
+     * A session with pull request #1 (created by its tool) whose review
+     * threads have the first comments 501 and 601.
+     */
+    const withPullRequest = async () => {
+      const repository = await githubRepository();
+      const session = await start(repository.id);
+      await commitFile(session.cwd, 'work.txt', 'w');
+      await harness.sessionGit.push(session.id, repository.id);
+      await tool('create_pull_request').handler(
+        { title: 'Add work' },
+        { toolUseId: 'tu-pr' },
+      );
+      const remoteId = harness.repositoryRecords.get(repository.id)
+        ?.githubRepositoryId as number;
+      const threads = [
+        { resolved: false, author: 'bob', body: 'Fix this', commentIds: [501] },
+        {
+          resolved: false,
+          author: 'bob',
+          body: 'And this',
+          commentIds: [601, 602],
+        },
+      ];
+      harness.github.reviewThreads.set(`${remoteId}#1`, threads);
+      const reply = (input: Record<string, unknown>) =>
+        tool('reply_to_review_thread').handler(input, { toolUseId: 'tu-r' });
+      return { repository, session, remoteId, threads, reply };
+    };
+
+    it('replies, resolves, or both, on the session’s own pull request', async () => {
+      const { remoteId, threads, reply } = await withPullRequest();
+
+      const replied = await reply({
+        pull_request: 1,
+        comment_id: 501,
+        body: 'Fixed in abc123',
+      });
+      expect(replied.isError).toBeUndefined();
+      expect(replied.text).toContain(
+        'Replied on the review thread of alice/app#1: https://github.com/alice/app/pull/1#discussion_r',
+      );
+      expect(harness.github.reviewReplies).toEqual([
+        expect.objectContaining({
+          repositoryId: remoteId,
+          number: 1,
+          commentId: 501,
+          body: 'Fixed in abc123',
+        }),
+      ]);
+      expect(threads[0].resolved).toBe(false);
+
+      // Only resolving; also by a later comment of the thread.
+      const resolved = await reply({
+        pull_request: 1,
+        comment_id: 602,
+        resolve: true,
+      });
+      expect(resolved).toEqual({
+        text: 'Resolved the thread on alice/app#1.',
+      });
+      expect(threads[1].resolved).toBe(true);
+      expect(harness.github.reviewReplies).toHaveLength(1);
+
+      // Both; the repository named.
+      const both = await reply({
+        repository: 'alice/app',
+        pull_request: 1,
+        comment_id: 501,
+        body: 'Done',
+        resolve: true,
+      });
+      expect(both.isError).toBeUndefined();
+      expect(both.text).toMatch(/^Replied .* Resolved the thread/);
+      expect(threads[0].resolved).toBe(true);
+      expect(harness.github.reviewReplies).toHaveLength(2);
+      expect(harness.github.resolvedThreads).toHaveLength(2);
+
+      // Again: nothing to resolve any more.
+      await expect(
+        reply({ pull_request: 1, comment_id: 501, resolve: true }),
+      ).resolves.toEqual({
+        text: 'The thread on alice/app#1 was resolved already.',
+      });
+      expect(harness.github.resolvedThreads).toHaveLength(2);
+
+      // With tokens for exactly this repository, writing pull requests only.
+      const tokens = harness.github.requests
+        .filter(
+          (request) =>
+            /\/replies$/.test(request.path) || request.path === '/graphql',
+        )
+        .map((request) => request.auth);
+      expect(tokens.length).toBeGreaterThan(0);
+      for (const auth of tokens) {
+        expect(auth).toMatchObject({
+          repositoryIds: [remoteId],
+          permissions: { pull_requests: 'write' },
+        });
+      }
+    });
+
+    it('refuses pull requests of others and calls without a reply or resolve', async () => {
+      const { remoteId, reply } = await withPullRequest();
+      harness.github.pulls.push({
+        ...harness.github.pulls[0],
+        number: 2,
+        head: 'someone-else',
+      });
+      harness.github.reviewThreads.set(`${remoteId}#2`, [
+        { resolved: false, author: 'bob', body: 'x', commentIds: [701] },
+      ]);
+      const before = harness.github.requests.length;
+
+      const foreign = await reply({
+        pull_request: 2,
+        comment_id: 701,
+        body: 'Hi',
+        resolve: true,
+      });
+      expect(foreign.isError).toBe(true);
+      expect(foreign.text).toContain(
+        'alice/app#2 is not a pull request of this session',
+      );
+      expect(foreign.text).toContain('#1');
+      const empty = await reply({ pull_request: 1, comment_id: 501 });
+      expect(empty.isError).toBe(true);
+      expect(empty.text).toContain('Give a reply');
+      const repository = await reply({
+        repository: 'bob/app',
+        pull_request: 1,
+        comment_id: 501,
+        body: 'Hi',
+      });
+      expect(repository.isError).toBe(true);
+      expect(repository.text).toContain(
+        'not a GitHub repository of this session',
+      );
+      // Nothing reached GitHub.
+      expect(harness.github.requests.length).toBe(before);
+      expect(harness.github.reviewReplies).toHaveLength(0);
+    });
+
+    it('says when the comment is in no thread, before replying', async () => {
+      const { threads, reply } = await withPullRequest();
+      const resolving = await reply({
+        pull_request: 1,
+        comment_id: 999,
+        body: 'Fixed',
+        resolve: true,
+      });
+      expect(resolving).toEqual({
+        isError: true,
+        text: expect.stringContaining(
+          'No review thread of alice/app#1 has the comment 999',
+        ),
+      });
+      expect(harness.github.reviewReplies).toHaveLength(0);
+      const replying = await reply({
+        pull_request: 1,
+        comment_id: 999,
+        body: 'Fixed',
+      });
+      expect(replying.isError).toBe(true);
+      expect(replying.text).toContain(
+        'The review comment 999 of alice/app#1 was not found',
+      );
+      expect(threads.every((thread) => !thread.resolved)).toBe(true);
+    });
+
+    it('passes GitHub’s refusals on as tool errors', async () => {
+      const { threads, reply } = await withPullRequest();
+      const forbidden = new Response(
+        JSON.stringify({ message: 'Resource not accessible by integration' }),
+        { status: 403, headers: { 'content-type': 'application/json' } },
+      );
+      harness.github.intercept = (request) =>
+        /\/replies$/.test(request.path) ? forbidden.clone() : undefined;
+      const replying = await reply({
+        pull_request: 1,
+        comment_id: 501,
+        body: 'Fixed',
+      });
+      expect(replying.isError).toBe(true);
+      expect(replying.text).toContain('Resource not accessible by integration');
+
+      // GraphQL reports errors with status 200.
+      harness.github.intercept = (request) =>
+        request.path === '/graphql' &&
+        JSON.stringify(request.body).includes('resolveReviewThread')
+          ? new Response(
+              JSON.stringify({
+                data: { resolveReviewThread: null },
+                errors: [{ message: 'Resource not accessible by integration' }],
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            )
+          : undefined;
+      const resolving = await reply({
+        pull_request: 1,
+        comment_id: 501,
+        resolve: true,
+      });
+      expect(resolving).toEqual({
+        isError: true,
+        text: expect.stringContaining(
+          'GitHub did not resolve the review thread: Resource not accessible by integration',
+        ),
+      });
+      // A reply that went out is named when resolving fails.
+      harness.github.intercept = (request) =>
+        request.path === '/graphql' &&
+        JSON.stringify(request.body).includes('resolveReviewThread')
+          ? forbidden.clone()
+          : undefined;
+      const both = await reply({
+        pull_request: 1,
+        comment_id: 501,
+        body: 'Fixed',
+        resolve: true,
+      });
+      expect(both.isError).toBe(true);
+      expect(both.text).toContain(
+        'Replied (https://github.com/alice/app/pull/1',
+      );
+      expect(both.text).toContain('but the thread was not resolved');
+      expect(threads[0].resolved).toBe(false);
+    });
+
+    it('asks as the permission mode says, but not during an Autofix run', async () => {
+      const { session } = await withPullRequest();
+      const sdk = { name: 'crm', source: 'sdk' };
+      const input = {
+        pull_request: 1,
+        comment_id: 501,
+        body: 'Fixed in abc123',
+        resolve: true,
+      };
+      // Not pre-approved: in the default mode Claude Code asks.
+      expect(options().allowedTools).not.toContain(
+        REPLY_TO_REVIEW_THREAD_TOOL_NAME,
+      );
+      harness.approver.autoAnswer = { decision: 'deny', message: 'Not yet' };
+      await expect(
+        ask(REPLY_TO_REVIEW_THREAD_TOOL_NAME, input, 'tu-1', sdk),
+      ).resolves.toMatchObject({ behavior: 'deny' });
+      expect(
+        harness.eventsOfType(session.id, 'permission.request').at(-1),
+      ).toMatchObject({
+        reviewThreadReply: {
+          repository: 'alice/app',
+          pullRequest: 1,
+          commentId: 501,
+          body: 'Fixed in abc123',
+          resolve: true,
+        },
+      });
+      const gate = options().gate;
+      if (!gate) {
+        throw new Error('no gate');
+      }
+      const call = (mcpServer: { name: string; source: string } | null) =>
+        gate({
+          toolName: REPLY_TO_REVIEW_THREAD_TOOL_NAME,
+          input,
+          toolUseId: 'tu-g',
+          agentId: null,
+          mcpServer,
+        });
+      expect(call(sdk)).toBeNull();
+
+      // An Autofix run: it runs without asking.
+      harness.runner.last.emit(resultMessage(1, 0));
+      await flush();
+      await harness.service.sendMessage(session.id, {
+        text: 'Fix the review findings',
+        origin: 'app',
+        holdAutoMode: true,
+      });
+      await waitFor(() =>
+        harness.runner.last.sent.some((message) =>
+          message.text.includes('Fix the review findings'),
+        ),
+      );
+      const asked = harness.approver.requests.length;
+      // Not sent to the user by the gate, and allowed when Claude Code asks.
+      expect(call(sdk)).toBeNull();
+      await expect(
+        ask(REPLY_TO_REVIEW_THREAD_TOOL_NAME, input, 'tu-2', sdk),
+      ).resolves.toEqual({ behavior: 'allow', updatedInput: input });
+      expect(harness.approver.requests).toHaveLength(asked);
+      // A tool of that name from another server is not the app's.
+      const other = { name: 'crm', source: 'user' };
+      expect(call(other)).toMatchObject({ decision: 'ask' });
+      // Other actions still ask during the run.
+      expect(
+        gate({
+          toolName: CREATE_PULL_REQUEST_TOOL_NAME,
+          input: {},
+          toolUseId: 'tu-c',
+          agentId: null,
+          mcpServer: sdk,
+        }),
+      ).toMatchObject({ decision: 'ask' });
+    });
   });
 
   it('names the repository when the call is ambiguous or foreign', async () => {

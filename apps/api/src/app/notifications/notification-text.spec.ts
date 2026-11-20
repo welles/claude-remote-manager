@@ -174,6 +174,24 @@ describe('notification texts', () => {
     expect(
       approvalSummary(
         request({
+          toolName: 'mcp__crm__reply_to_review_thread',
+          reviewThreadReply: {
+            repository: 'acme/app',
+            pullRequest: 4,
+            commentId: 501,
+            body: 'Fixed in\nabc123',
+            resolve: true,
+          },
+        }),
+        session,
+      ),
+    ).toEqual({
+      action: 'Reply to and resolve a review thread',
+      detail: 'acme/app#4: Fixed in abc123',
+    });
+    expect(
+      approvalSummary(
+        request({
           toolName: 'WebFetch',
           input: { url: 'https://example.com/a' },
         }),

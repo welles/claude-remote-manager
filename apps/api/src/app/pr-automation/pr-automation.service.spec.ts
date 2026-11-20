@@ -1155,6 +1155,7 @@ describe('PrAutomationService', () => {
           author: REVIEWER,
           authorType: 'Bot',
           body: 'Hint: rename this.',
+          commentIds: [4242],
         },
         { resolved: false, author: 'reader', body: 'Drive-by remark' },
         { resolved: true, author: REVIEWER, body: 'Done already' },
@@ -1166,10 +1167,12 @@ describe('PrAutomationService', () => {
       const messages = readyMessages();
       expect(messages).toHaveLength(1);
       expect(messages[0].text).toContain('2 review thread(s) are not resolved');
+      expect(messages[0].text).toContain('reply_to_review_thread');
       expect(messages[0].text).toContain('request_owner_decision');
       expect(messages[0].text).not.toContain('@');
       const context = messages[0].context?.text ?? '';
       expect(context).toContain('Hint: rename this.');
+      expect(context).toContain('comment-id="4242"');
       // Only threads of reviewers who count go to Claude.
       expect(context).not.toContain('Drive-by remark');
       expect(record(pull)).toMatchObject({
