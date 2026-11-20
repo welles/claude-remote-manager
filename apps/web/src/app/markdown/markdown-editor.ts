@@ -18,6 +18,7 @@ import {
   history,
   historyKeymap,
   isolateHistory,
+  toggleComment,
 } from '@codemirror/commands';
 import {
   Annotation,
@@ -140,6 +141,8 @@ export class MarkdownEditor implements TextField, MatFormFieldControl<string> {
           if (focused) {
             this.view.focus();
           }
+          // Not seen by the update listener: the form field's label.
+          this.stateChanges.next();
         }
       });
     });
@@ -151,6 +154,7 @@ export class MarkdownEditor implements TextField, MatFormFieldControl<string> {
           annotations: programmatic.of(true),
         }),
       );
+      this.stateChanges.next();
     });
     effect(() => {
       const extension = this.attributeExtension();
@@ -263,6 +267,9 @@ export class MarkdownEditor implements TextField, MatFormFieldControl<string> {
             this.beforePaste.emit(event);
             return event.defaultPrevented;
           },
+          // Dropped files are the page's (images are attached); the editor
+          // would insert the text of text-like ones.
+          drop: (event) => event.dataTransfer?.types.includes('Files') ?? false,
           blur: () => {
             if (!this.destroyed) {
               this.blurred.emit();
@@ -272,7 +279,13 @@ export class MarkdownEditor implements TextField, MatFormFieldControl<string> {
       ),
       Prec.high(markdownEditing()),
       history(),
-      keymap.of([...historyKeymap, ...defaultKeymap]),
+      // Without Mod-/ (comments): on German and other layouts Shift+7 types
+      // `/`, and CodeMirror tries the typed character first, so Ctrl+Shift+7
+      // (numbered list) would wrap the lines in `<!-- -->`.
+      keymap.of([
+        ...historyKeymap,
+        ...defaultKeymap.filter((binding) => binding.run !== toggleComment),
+      ]),
       EditorView.lineWrapping,
       EditorState.tabSize.of(4),
       this.placeholderSlot.of(this.placeholderExtension()),

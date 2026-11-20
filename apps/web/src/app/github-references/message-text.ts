@@ -33,6 +33,8 @@ export type Segment =
 export function messageSegments(
   text: string,
   references: readonly MessageReference[],
+  /** Between the text and the references it does not contain. */
+  separator = '\n',
 ): Segment[] {
   if (references.length === 0) {
     return [{ kind: 'text', text }];
@@ -59,7 +61,7 @@ export function messageSegments(
   }
   const rest = references.filter((reference) => !used.has(reference));
   if (rest.length > 0) {
-    segments.push({ kind: 'text', text: segments.length > 0 ? '\n' : '' });
+    segments.push({ kind: 'text', text: segments.length > 0 ? separator : '' });
     rest.forEach((reference, index) => {
       if (index > 0) {
         segments.push({ kind: 'text', text: ' ' });
@@ -74,6 +76,8 @@ export function messageSegments(
 const CHIP_START = '\uE000';
 const CHIP_END = '\uE001';
 const CHIP = /\uE000(\d+)\uE001/g;
+/** The marks in an attribute, also percent-encoded (in a URL). */
+const CHIP_IN_ATTRIBUTE = /(?:\uE000|%EE%80%80)(\d+)(?:\uE001|%EE%80%81)/gi;
 
 /**
  * A sent message's text rendered as Markdown (see
@@ -90,7 +94,9 @@ export class MessageText {
   /** Name the repository of `#12` (the session has several). */
   readonly showRepository = input(false);
   protected readonly segments = computed(() =>
-    messageSegments(this.text(), this.references()),
+    // The other references as a paragraph of their own (in Markdown a
+    // single line break would continue a list item or table).
+    messageSegments(this.text(), this.references(), '\n\n'),
   );
 
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -121,6 +127,7 @@ export class MessageText {
       ) ?? '';
     const host = this.host.nativeElement;
     host.innerHTML = html;
+    const placed = new Set<number>();
     const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
     const texts: Text[] = [];
     while (walker.nextNode()) {
@@ -137,26 +144,59 @@ export class MessageText {
           if (part) {
             fragment.append(part);
           }
-          return;
+        } else if (!placed.has(Number(part))) {
+          placed.add(Number(part));
+          fragment.append(this.chip(segments[Number(part)], showRepository));
         }
-        const segment = segments[Number(part)];
-        if (segment?.kind !== 'chip') {
-          return;
-        }
-        const element = document.createElement('app-reference-chip');
-        fragment.append(element);
-        const chip = createComponent(ReferenceChip, {
-          environmentInjector: this.environment,
-          elementInjector: this.injector,
-          hostElement: element,
-        });
-        chip.setInput('chip', segment.chip);
-        chip.setInput('showRepository', showRepository);
-        this.application.attachView(chip.hostView);
-        this.chips.push(chip);
       });
       node.replaceWith(fragment);
     }
+    // A reference that ended up in an attribute (`[x](#12)`): out of it,
+    // its chip after the text.
+    for (const element of Array.from(host.querySelectorAll('*'))) {
+      for (const attribute of Array.from(element.attributes)) {
+        if (attribute.value.search(CHIP_IN_ATTRIBUTE) >= 0) {
+          element.setAttribute(
+            attribute.name,
+            attribute.value.replace(CHIP_IN_ATTRIBUTE, (_, index: string) => {
+              const segment = segments[Number(index)];
+              return segment?.kind === 'chip' ? segment.chip.token : '';
+            }),
+          );
+        }
+      }
+    }
+    const rest = segments
+      .map((_, index) => index)
+      .filter((index) => segments[index].kind === 'chip' && !placed.has(index));
+    if (rest.length > 0) {
+      const paragraph = document.createElement('p');
+      rest.forEach((index, position) => {
+        if (position > 0) {
+          paragraph.append(' ');
+        }
+        paragraph.append(this.chip(segments[index], showRepository));
+      });
+      host.append(paragraph);
+    }
+  }
+
+  /** A chip component in an element of its own (empty if not a chip). */
+  private chip(segment: Segment | undefined, showRepository: boolean): Node {
+    if (segment?.kind !== 'chip') {
+      return document.createTextNode('');
+    }
+    const element = document.createElement('app-reference-chip');
+    const chip = createComponent(ReferenceChip, {
+      environmentInjector: this.environment,
+      elementInjector: this.injector,
+      hostElement: element,
+    });
+    chip.setInput('chip', segment.chip);
+    chip.setInput('showRepository', showRepository);
+    this.application.attachView(chip.hostView);
+    this.chips.push(chip);
+    return element;
   }
 
   private removeChips(): void {

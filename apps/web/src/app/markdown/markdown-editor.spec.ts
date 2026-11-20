@@ -111,6 +111,28 @@ describe('MarkdownEditor', () => {
     expect(editor.value).toBe('> **word**');
   });
 
+  it('numbers lists with Ctrl+Shift+7 on layouts where that types /', async () => {
+    const { editor } = await render();
+    editor.type('one');
+    editor.press('/', {
+      ctrlKey: true,
+      shiftKey: true,
+      keyCode: 55,
+    } as KeyboardEventInit);
+    expect(editor.value).toBe('1. one');
+  });
+
+  it('floats the form field label for text set by the page', async () => {
+    const { fixture, host } = await render();
+    host.text.set('Prefilled');
+    await fixture.whenStable();
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelector(
+        '.mdc-floating-label--float-above',
+      ),
+    ).not.toBeNull();
+  });
+
   it('lets the page take keys first', async () => {
     const { host, editor } = await render();
     host.taken = ['Enter'];
