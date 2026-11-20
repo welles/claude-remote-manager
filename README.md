@@ -30,7 +30,7 @@ PWA with an offline shell, badge, shortcuts and a share target. Per open pull re
 autofix continues the session when CI fails or reviewers with write access comment,
 automerge merges once CI is green, nobody requests changes and no review thread is open
 (no approval needed; Claude can pause it for the owner's decision, or merge it itself with
-`merge_pull_request`), and
+`merge_pull_request`; Claude turns the switches on when asked, with `set_pr_automation`), and
 autoclose ends the session and removes its clones when the pull request is merged or closed
 (see [PR automation](#pr-automation)). Dev servers Claude starts become previews on host names
 of their own, opened as links or embedded (see [Previews](#previews-of-dev-servers)).
@@ -1684,6 +1684,13 @@ off by default, with the attempt count and limit, "Reset count", what started th
 - **Automerge** (turns autofix on with it; autofix off turns it off): the app merges the pull
   request itself once it is green, approved and without unresolved review threads; findings
   are worked off by autofix first (see [Automerge](#automerge)).
+
+Claude switches them too, with the tool `set_pr_automation` (repository, pull request,
+`autofix`, `automerge`, `autoclose`; omitted switches stay): for the session's own open pull
+requests, as the switches do (`PrAutomationService.setAutomationByClaude`). It asks as the
+permission mode says (the dialog shows the pull request and each switch it sets). During an
+Autofix run it only turns switches off: the run acts on GitHub's untrusted content, which must
+not turn on fixing or merging.
 
 ### Where events come from
 

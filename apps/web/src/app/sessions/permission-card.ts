@@ -79,6 +79,12 @@ export class PermissionCard {
 
   protected readonly modeInfo = PERMISSION_MODE_INFO;
   protected readonly other = OTHER;
+  /** The switches a `set_pr_automation` call can set, in display order. */
+  protected readonly automationSwitches = [
+    'autofix',
+    'automerge',
+    'autoclose',
+  ] as const;
   protected readonly summary = computed(() => requestSummary(this.request()));
   protected readonly diffLabel = computed(() => {
     const diff = this.request().diff;

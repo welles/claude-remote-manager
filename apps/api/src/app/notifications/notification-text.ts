@@ -117,6 +117,16 @@ export function approvalSummary(
       ),
     };
   }
+  if (request.pullRequestAutomation) {
+    const automation = request.pullRequestAutomation;
+    return {
+      action: 'Switch the automation of a pull request',
+      detail: shorten(
+        `${automation.repository ?? ''}#${automation.pullRequest ?? '?'}: ${automationSwitches(automation)}`,
+        DETAIL_LENGTH,
+      ),
+    };
+  }
   if (request.repositoryAddition) {
     const addition = request.repositoryAddition;
     const from =
@@ -203,4 +213,16 @@ export function approvalActions(
 
 export function pullRequestLabel(pullRequest: PullRequestDto): string {
   return `${pullRequest.repository}#${pullRequest.number}`;
+}
+
+/** The switches a `set_pr_automation` call sets, e.g. "automerge on". */
+function automationSwitches(call: {
+  autofix: boolean | null;
+  automerge: boolean | null;
+  autoclose: boolean | null;
+}): string {
+  const parts = (['autofix', 'automerge', 'autoclose'] as const)
+    .filter((name) => call[name] !== null)
+    .map((name) => `${name} ${call[name] ? 'on' : 'off'}`);
+  return parts.join(', ') || 'nothing';
 }

@@ -205,6 +205,27 @@
         </dd>
       </div>
     </dl>
+    } @if (r.pullRequestAutomation; as automation) {
+    <dl class="fields" data-testid="pull-request-automation">
+      <div class="field">
+        <dt>Pull request</dt>
+        <dd>
+          <code
+            >{{ automation.repository ?? 'not named' }}#{{
+            automation.pullRequest ?? '?' }}</code
+          >@if (automation.title) { {{ automation.title }} }
+        </dd>
+      </div>
+      @for (name of automationSwitches; track name) { @if (automation[name] !==
+      null) {
+      <div class="field">
+        <dt>{{ name }}</dt>
+        <dd [attr.data-testid]="'automation-' + name">
+          {{ automation[name] ? 'turn on' : 'turn off' }}
+        </dd>
+      </div>
+      } }
+    </dl>
     } @if (r.repositoryAddition; as add) {
     <dl class="fields" data-testid="repository-addition">
       <div class="field">

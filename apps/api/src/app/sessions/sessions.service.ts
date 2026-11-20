@@ -34,6 +34,7 @@ import {
   type PermissionRequestEvent,
   type PermissionResponseResult,
   type PullRequestCall,
+  type PullRequestAutomationCall,
   type PullRequestMergeCall,
   type RepositoryAddedBy,
   type ReviewThreadReplyCall,
@@ -80,6 +81,7 @@ import {
   APP_TOOLS_WITHOUT_APPROVAL,
   CREATE_PULL_REQUEST_TOOL_NAME,
   MERGE_PULL_REQUEST_TOOL_NAME,
+  SET_PR_AUTOMATION_TOOL_NAME,
   REPLY_TO_REVIEW_THREAD_TOOL_NAME,
   SET_SESSION_TITLE_TOOL,
   SET_SESSION_TITLE_TOOL_NAME,
@@ -2748,6 +2750,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           toolName === MERGE_PULL_REQUEST_TOOL_NAME && isAppServer(mcpServer)
             ? this.pullRequestMergeCall(live.id, input)
             : null,
+        pullRequestAutomation:
+          toolName === SET_PR_AUTOMATION_TOOL_NAME && isAppServer(mcpServer)
+            ? this.pullRequestAutomationCall(live.id, input)
+            : null,
         diff: await this.proposedChange(live.id, toolName, input),
         toolUseId: options.toolUseID,
         title: options.title ?? null,
@@ -2897,6 +2903,58 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     sessionId: string,
     input: Record<string, unknown>,
   ): PullRequestMergeCall {
+    const { repository, pullRequest, title } = this.namedPullRequest(
+      sessionId,
+      input,
+    );
+    const method = input['method'];
+    return {
+      repository,
+      pullRequest,
+      title,
+      method:
+        method === 'rebase' || method === 'squash' || method === 'merge'
+          ? method
+          : null,
+    };
+  }
+
+  /**
+   * A `set_pr_automation` call as the approval shows it: the repository
+   * filled in when Claude omitted it, the title if it is the session's.
+   */
+  private pullRequestAutomationCall(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): PullRequestAutomationCall {
+    const { repository, pullRequest, title } = this.namedPullRequest(
+      sessionId,
+      input,
+    );
+    const flag = (name: string) =>
+      typeof input[name] === 'boolean' ? (input[name] as boolean) : null;
+    return {
+      repository,
+      pullRequest,
+      title,
+      autofix: flag('autofix'),
+      automerge: flag('automerge'),
+      autoclose: flag('autoclose'),
+    };
+  }
+
+  /**
+   * The pull request an app tool's call names (`repository`,
+   * `pull_request`), with its title if it is one of the session's.
+   */
+  private namedPullRequest(
+    sessionId: string,
+    input: Record<string, unknown>,
+  ): {
+    repository: string | null;
+    pullRequest: number | null;
+    title: string | null;
+  } {
     const number = input['pull_request'];
     const pullRequest =
       typeof number === 'number' && Number.isSafeInteger(number)
@@ -2910,15 +2968,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             entry.number === pullRequest,
         )
       : undefined;
-    const method = input['method'];
     return {
       repository: named ?? clone?.repositoryName ?? null,
       pullRequest,
       title: pull?.title ?? null,
-      method:
-        method === 'rebase' || method === 'squash' || method === 'merge'
-          ? method
-          : null,
     };
   }
 

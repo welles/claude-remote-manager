@@ -14,6 +14,7 @@ import type {
   PermissionResolutionCause,
   PermissionResponse,
   PullRequestCall,
+  PullRequestAutomationCall,
   PullRequestMergeCall,
   ReviewThreadReplyCall,
   SessionAllowOffer,
@@ -250,6 +251,11 @@ export interface PermissionRequestEvent extends SessionEventBase {
    * is merged (absent from older servers).
    */
   pullRequestMerge?: PullRequestMergeCall | null;
+  /**
+   * For the app's `set_pr_automation` tool: the pull request and the
+   * switches it sets (absent from older servers).
+   */
+  pullRequestAutomation?: PullRequestAutomationCall | null;
   /**
    * For file changes (`Edit`, `Write`, `NotebookEdit`): the change it would
    * make, against the file's current content where it could be read

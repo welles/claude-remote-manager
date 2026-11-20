@@ -177,6 +177,7 @@ export function describeRequest(
     repositoryAddition: request.repositoryAddition ?? null,
     reviewThreadReply: request.reviewThreadReply ?? null,
     pullRequestMerge: request.pullRequestMerge ?? null,
+    pullRequestAutomation: request.pullRequestAutomation ?? null,
     sessionAllow: offer,
     questions: kind === 'question' ? parseQuestions(request.input) : null,
     plan: kind === 'plan' ? planText(request.input) : null,
