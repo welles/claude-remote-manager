@@ -192,6 +192,25 @@ describe('notification texts', () => {
     expect(
       approvalSummary(
         request({
+          toolName: 'mcp__crm__set_pr_automation',
+          pullRequestAutomation: {
+            repository: 'acme/app',
+            pullRequest: 4,
+            title: 'Fix login',
+            autofix: null,
+            automerge: true,
+            autoclose: false,
+          },
+        }),
+        session,
+      ),
+    ).toEqual({
+      action: 'Switch the automation of a pull request',
+      detail: 'acme/app#4: automerge on, autoclose off',
+    });
+    expect(
+      approvalSummary(
+        request({
           toolName: 'WebFetch',
           input: { url: 'https://example.com/a' },
         }),

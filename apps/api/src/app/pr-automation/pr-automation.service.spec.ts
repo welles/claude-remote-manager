@@ -1705,20 +1705,36 @@ describe('PrAutomationService', () => {
 
     it('only turns switches off with set_pr_automation during an Autofix run', async () => {
       const { session, pull } = await sessionWithPullRequest();
-      enableAutomerge(session.id, pull);
-      harness.sessions.updatePullRequest(pull.id, {
-        automerge: false,
-        autofixRunning: true,
-      });
+      enableAutofix(session.id, pull);
+      harness.github.checkRuns.set(fakePull(pull.number).headSha, [
+        {
+          id: 11,
+          name: 'test',
+          status: 'completed',
+          conclusion: 'failure',
+          app: 'github-actions',
+        },
+      ]);
+      await automation.check(pull.id);
+      await waitFor(() => appMessages().length === 1);
       const tool = harness.support.setPrAutomationTool(session.id);
+      const turnOn = () =>
+        tool.handler(
+          { pull_request: pull.number, automerge: true, autoclose: true },
+          { toolUseId: null },
+        );
 
-      const on = await tool.handler(
-        { pull_request: pull.number, automerge: true },
-        { toolUseId: null },
-      );
-      expect(on.isError).toBe(true);
-      expect(on.text).toContain('can only be turned off');
-      expect(record(pull).automerge).toBe(false);
+      const during = await turnOn();
+      expect(during.isError).toBe(true);
+      expect(during.text).toContain('can only be turned off');
+      // Also when the pull request's flag is gone, as after a reopen
+      // (the continuation is still the run).
+      harness.sessions.updatePullRequest(pull.id, { autofixRunning: false });
+      expect((await turnOn()).isError).toBe(true);
+      expect(record(pull)).toMatchObject({
+        automerge: false,
+        autoclose: false,
+      });
 
       const off = await tool.handler(
         { pull_request: pull.number, autofix: false },
@@ -1726,6 +1742,102 @@ describe('PrAutomationService', () => {
       );
       expect(off.isError).toBeFalsy();
       expect(record(pull).autofix).toBe(false);
+
+      // After the run's turn, turning on works again.
+      harness.runner.last.emit(resultMessage(20, 0.02));
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'message',
+      );
+      expect((await turnOn()).isError).toBeFalsy();
+      expect(record(pull)).toMatchObject({ automerge: true, autoclose: true });
+    });
+
+    it('does not lift a hold of request_owner_decision with set_pr_automation', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutomerge(session.id, pull);
+      automation.holdAutomerge(session.id, 'Which name?');
+      const tool = harness.support.setPrAutomationTool(session.id);
+
+      // Already on: nothing changes, the hold stays.
+      const again = await tool.handler(
+        { pull_request: pull.number, automerge: true },
+        { toolUseId: null },
+      );
+      expect(again.text).toContain('Nothing changed');
+      expect(record(pull).automergeHeldAt).not.toBeNull();
+
+      // Off and on again: the hold stays and refuses turning it on.
+      await tool.handler(
+        { pull_request: pull.number, automerge: false },
+        { toolUseId: null },
+      );
+      expect(record(pull)).toMatchObject({
+        automerge: false,
+        automergeHoldReason: 'Which name?',
+      });
+      const on = await tool.handler(
+        { pull_request: pull.number, automerge: true },
+        { toolUseId: null },
+      );
+      expect(on.isError).toBe(true);
+      expect(on.text).toContain("waits for the user's decision");
+      expect(record(pull).automerge).toBe(false);
+
+      // The owner's next message lifts it.
+      automation.ownerMessage(session.id);
+      expect(
+        (
+          await tool.handler(
+            { pull_request: pull.number, automerge: true },
+            { toolUseId: null },
+          )
+        ).isError,
+      ).toBeFalsy();
+      expect(record(pull).automerge).toBe(true);
+    });
+
+    it('keeps the rules of the switches for set_pr_automation', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      const tool = harness.support.setPrAutomationTool(session.id);
+      const call = (input: Record<string, unknown>) =>
+        tool.handler(
+          { pull_request: pull.number, ...input },
+          { toolUseId: null },
+        );
+
+      const both = await call({ autofix: false, automerge: true });
+      expect(both.isError).toBe(true);
+      expect(both.text).toContain('Automerge needs autofix');
+
+      const elsewhere = await call({
+        repository: 'alice/other',
+        automerge: true,
+      });
+      expect(elsewhere.isError).toBe(true);
+      expect(elsewhere.text).toContain(
+        'is not a GitHub repository of this session',
+      );
+
+      // Shown in the session's history.
+      await call({ autoclose: true });
+      expect(
+        harness
+          .eventsOfType(session.id, 'notice')
+          .some((event) =>
+            event.text.includes(
+              `Claude switched the automation of alice/app#${pull.number}`,
+            ),
+          ),
+      ).toBe(true);
+
+      harness.sessions.updatePullRequest(pull.id, { state: 'closed' });
+      const closed = await call({ automerge: true });
+      expect(closed.isError).toBe(true);
+      expect(closed.text).toContain(
+        'the automation works on open pull requests',
+      );
+      expect((await call({ autoclose: false })).isError).toBeFalsy();
+      expect(record(pull).autoclose).toBe(false);
     });
 
     it('does not merge a draft, nor while feedback waits to be handled', async () => {

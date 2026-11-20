@@ -3629,6 +3629,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Whether an Autofix run is under way in the session: from sending its
+   * message until the end of the turn it started, carried over to the
+   * continuation after a reopen.
+   */
+  inAutofixRun(sessionId: string): boolean {
+    return this.live.get(sessionId)?.autofixTurn != null;
+  }
+
+  /**
    * Whether a message of the app (such as an autofix run) may start a turn
    * now: the session waits for a message, or only because Claude said it
    * goes on by itself (`set_waiting_state` with `work`, e.g. "CI of PR #12")

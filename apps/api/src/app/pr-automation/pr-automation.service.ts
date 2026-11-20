@@ -481,9 +481,12 @@ export class PrAutomationService
   /**
    * Claude switches the automation of one of the session's pull requests
    * (tool `set_pr_automation`, after the approval the permission mode asks
-   * for), as the switches of the session view do. During an Autofix run it
-   * may only turn switches off: the run acts on GitHub's untrusted content,
-   * which must not turn on fixing or merging. Returns what Claude is told.
+   * for), as the switches of the session view do. Switches already as asked
+   * are left alone (turning automerge on again would lift a hold and retry
+   * a refused merge). Turning on is refused during an Autofix run (it acts
+   * on GitHub's untrusted content, which must not turn on fixing or
+   * merging), and automerge while the session waits for the owner's
+   * decision (`request_owner_decision`). Returns what Claude is told.
    */
   setAutomationByClaude(
     sessionId: string,
@@ -501,32 +504,64 @@ export class PrAutomationService
       );
     }
     const name = `${pull.repositoryName}#${pull.number}`;
-    const { autofix, automerge, autoclose } = switches;
-    if (
-      autofix === undefined &&
-      automerge === undefined &&
-      autoclose === undefined
-    ) {
+    const names = ['autofix', 'automerge', 'autoclose'] as const;
+    if (names.every((key) => switches[key] === undefined)) {
       throw new BadRequestException(
         'Name at least one of autofix, automerge, autoclose',
       );
     }
-    const turnsOn =
-      autofix === true || automerge === true || autoclose === true;
-    if (turnsOn && session.pullRequests.some((entry) => entry.autofixRunning)) {
+    if (switches.automerge === true && switches.autofix === false) {
+      throw new BadRequestException('Automerge needs autofix');
+    }
+    const changes: PullRequestAutomationSwitches = {};
+    for (const key of names) {
+      const value = switches[key];
+      if (value !== undefined && value !== pull[key]) {
+        changes[key] = value;
+      }
+    }
+    const turnsOn = names.some((key) => changes[key] === true);
+    if (
+      turnsOn &&
+      (this.sessions.inAutofixRun(sessionId) ||
+        session.pullRequests.some((entry) => entry.autofixRunning))
+    ) {
       throw new ConflictException(
-        'During an Autofix run switches can only be turned off; ask the user to turn them on',
+        'During an Autofix run switches can only be turned off (only false values); ask the user to turn them on',
       );
     }
-    this.update(sessionId, pull.id, {
-      ...(autofix !== undefined ? { autofix } : {}),
-      ...(automerge !== undefined ? { automerge } : {}),
-      ...(autoclose !== undefined ? { autoclose } : {}),
-    });
-    const updated = this.records.pullRequest(pull.id) ?? pull;
+    if (
+      changes.automerge === true &&
+      session.pullRequests.some((entry) => entry.automergeHeldAt !== null)
+    ) {
+      throw new ConflictException(
+        "Automerge waits for the user's decision (request_owner_decision); only the user's next message lifts that",
+      );
+    }
     const state = (on: boolean) => (on ? 'on' : 'off');
+    const describe = (current: PullRequestRecord) =>
+      names.map((key) => `${key} ${state(current[key])}`).join(', ');
+    if (Object.keys(changes).length === 0) {
+      return `Nothing changed. ${name}: ${describe(pull)}.`;
+    }
+    this.update(sessionId, pull.id, changes);
+    if (pull.automergeHeldAt !== null) {
+      // Turning automerge off must not end the wait for the owner (only
+      // their next message does): a hold kept on would refuse turning it
+      // on again.
+      this.records.updatePullRequest(pull.id, {
+        automergeHeldAt: pull.automergeHeldAt,
+        automergeHoldReason: pull.automergeHoldReason,
+      });
+    }
+    const updated = this.records.pullRequest(pull.id) ?? pull;
+    this.sessions.recordEvent(sessionId, {
+      type: 'notice',
+      level: 'info',
+      text: `Claude switched the automation of ${name}: ${describe(updated)}.`,
+    });
     this.logger.log(`Claude switched the automation of ${name}`);
-    return `${name}: autofix ${state(updated.autofix)}, automerge ${state(updated.automerge)}, autoclose ${state(updated.autoclose)}.`;
+    return `${name}: ${describe(updated)}.`;
   }
 
   /** The owner sent a message: automerge waits no longer for them. */
