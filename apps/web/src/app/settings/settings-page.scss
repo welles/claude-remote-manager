@@ -37,28 +37,9 @@
   color: var(--mat-sys-on-surface-variant);
 }
 
-.identity {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 8px 12px;
-}
-
-.identity mat-form-field {
-  flex: 1 1 220px;
-}
-
-.identity button {
-  margin-top: 8px;
-}
-
 .warning,
 .error {
   color: var(--mat-sys-error);
-}
-
-.message {
-  margin: 8px 0 0;
 }
 
 .facts {

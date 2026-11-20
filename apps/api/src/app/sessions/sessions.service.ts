@@ -659,6 +659,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     // Before anything starts (no session's git races it; failures only log).
     await this.support.cleanUpClones(this.sessions.list());
+    const updated = await this.workspaces.applyIdentity();
+    if (updated > 0) {
+      this.logger.log(`Set the commit identity in ${updated} session clone(s)`);
+    }
     const ids = this.sessions.stopRunningSessions();
     for (const id of ids) {
       // Where in the conversation is unknown: placed at the end.

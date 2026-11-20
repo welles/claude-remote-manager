@@ -225,6 +225,8 @@ let
   // optionalAttrs (cfg.allowedHosts != [ ]) { ALLOWED_HOSTS = list cfg.allowedHosts; }
   // optionalAttrs (cfg.allowedOrigins != [ ]) { ALLOWED_ORIGINS = list cfg.allowedOrigins; }
   // optionalAttrs (cfg.publicUrl != null) { PUBLIC_URL = cfg.publicUrl; }
+  // optionalAttrs (cfg.gitAuthor.name != null) { CRM_GIT_AUTHOR_NAME = cfg.gitAuthor.name; }
+  // optionalAttrs (cfg.gitAuthor.email != null) { CRM_GIT_AUTHOR_EMAIL = cfg.gitAuthor.email; }
   // optionalAttrs (cfg.preview.url != null) { PREVIEW_URL = cfg.preview.url; }
   // optionalAttrs (cfg.preview.accessAudiences != [ ]) {
     PREVIEW_ACCESS_AUD = list cfg.preview.accessAudiences;
@@ -419,6 +421,24 @@ in
       description = "Public URL of the app (links in ntfy notifications).";
     };
 
+    gitAuthor = {
+      name = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "Jane Doe";
+        description = ''
+          Author name of the commits in session clones (`CRM_GIT_AUTHOR_NAME`);
+          without it sessions with repositories cannot start.
+        '';
+      };
+      email = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "jane@example.com";
+        description = "Author email of the commits in session clones (`CRM_GIT_AUTHOR_EMAIL`).";
+      };
+    };
+
     preview = {
       url = mkOption {
         type = types.nullOr types.str;
@@ -586,6 +606,10 @@ in
       {
         assertion = cfg.ntfy.url == null || cfg.ntfy.tokenFile != null || cfg.environmentFiles != [ ];
         message = "services.claude-remote-manager: ntfy needs ntfy.tokenFile.";
+      }
+      {
+        assertion = (cfg.gitAuthor.name == null) == (cfg.gitAuthor.email == null);
+        message = "services.claude-remote-manager: set both gitAuthor.name and gitAuthor.email, or neither.";
       }
       {
         assertion = cfg.github.privateKeyFile == null || cfg.github.appId != null;

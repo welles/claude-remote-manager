@@ -81,31 +81,21 @@ describe('SettingsPage', () => {
     return { fixture, element, all };
   };
 
-  it('asks for the commit identity and saves it', async () => {
-    const { fixture, element, all } = await render();
-    expect(all('identity-missing')).toHaveLength(1);
-    const type = (testId: string, value: string) => {
-      const input = element.querySelector(
-        `[data-testid="${testId}"]`,
-      ) as HTMLInputElement;
-      input.value = value;
-      input.dispatchEvent(new Event('input'));
-    };
-    type('author-name', 'Ada Lovelace');
-    type('author-email', 'ada@example.com');
-    fixture.detectChanges();
-    (
-      element.querySelector('[data-testid="save-identity"]') as HTMLElement
-    ).click();
-    const request = http.expectOne({ method: 'PUT', url: '/api/settings' });
-    expect(request.request.body).toEqual({
+  it('says when the commit identity is not set', async () => {
+    const { all } = await render();
+    expect(all('identity-missing')[0]).toContain('cannot start');
+    expect(all('author-name')).toEqual([]);
+  });
+
+  it('shows the commit identity read-only', async () => {
+    const { element, all } = await render({
       gitAuthorName: 'Ada Lovelace',
       gitAuthorEmail: 'ada@example.com',
     });
-    request.flush(request.request.body);
-    fixture.detectChanges();
     expect(all('identity-missing')).toEqual([]);
-    expect(all('settings-message')[0]).toContain('Saved');
+    expect(all('author-name')).toEqual(['Ada Lovelace']);
+    expect(all('author-email')).toEqual(['ada@example.com']);
+    expect(element.querySelector('[data-testid="save-identity"]')).toBeNull();
   });
 
   it('shows the GitHub App with its installations and an install link', async () => {

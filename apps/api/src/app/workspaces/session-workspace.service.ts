@@ -8,10 +8,7 @@ import {
   Injectable,
   Logger,
   Optional,
-  type OnModuleDestroy,
-  type OnModuleInit,
 } from '@nestjs/common';
-import type { Subscription } from 'rxjs';
 import type {
   CreateSessionRequest,
   RepositoryAddedBy,
@@ -131,9 +128,8 @@ const isClone = (directory: SessionDirectoryRecord) =>
  * session gets a clear error.
  */
 @Injectable()
-export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
+export class SessionWorkspaceService {
   private readonly logger = new Logger(SessionWorkspaceService.name);
-  private subscription: Subscription | null = null;
   private workspaceEntries: WorkspaceEntries | null = null;
 
   constructor(
@@ -148,24 +144,6 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
     @Optional()
     private readonly environmentFiles?: EnvironmentFiles,
   ) {}
-
-  /** A changed commit identity applies to all existing session clones. */
-  onModuleInit(): void {
-    this.subscription = this.settings.changes$.subscribe(
-      ({ before, after }) => {
-        if (
-          before.gitAuthorName !== after.gitAuthorName ||
-          before.gitAuthorEmail !== after.gitAuthorEmail
-        ) {
-          void this.applyIdentity();
-        }
-      },
-    );
-  }
-
-  onModuleDestroy(): void {
-    this.subscription?.unsubscribe();
-  }
 
   /**
    * What the `git push` commands in a shell command would update, judged
@@ -197,14 +175,18 @@ export class SessionWorkspaceService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Writes the configured commit identity into every session clone that
-   * exists. Returns the number of clones updated.
+   * exists and has another one; at startup, as the identity comes from the
+   * environment. Returns the number of clones updated.
    */
   async applyIdentity(): Promise<number> {
     const identity = this.settings.gitIdentity();
     let updated = 0;
     for (const path of this.sessions.readyClonePaths()) {
       try {
-        if (await exists(path)) {
+        if (
+          (await exists(path)) &&
+          !(await this.git.hasIdentity(path, identity))
+        ) {
           await this.git.setIdentity(path, identity);
           updated++;
         }

@@ -8,52 +8,29 @@
     <mat-card-content>
       <p class="hint">
         Commits in session clones are made with this name and email, by Claude
-        and by you. Sessions with repositories cannot start without it.
+        and by you. They are set with the server&#39;s environment variables
+        <code>CRM_GIT_AUTHOR_NAME</code> and <code>CRM_GIT_AUTHOR_EMAIL</code>;
+        a change applies to existing clones at the next start.
       </p>
-      @if (loaded() && !identitySet()) {
+      @if (error()) {
+      <p class="error" data-testid="settings-message">
+        The settings could not be loaded.
+      </p>
+      } @else if (settings(); as current) { @if (current.gitAuthorName !== null)
+      {
+      <dl class="facts">
+        <dt>Name</dt>
+        <dd data-testid="author-name">{{ current.gitAuthorName }}</dd>
+        <dt>Email</dt>
+        <dd data-testid="author-email">{{ current.gitAuthorEmail }}</dd>
+      </dl>
+      } @else {
       <p class="warning" data-testid="identity-missing">
-        Not set yet: set it before starting sessions with repositories.
+        Not set: sessions with repositories cannot start until both variables
+        are set and the server is restarted.
       </p>
-      }
-      <form class="identity" (ngSubmit)="save()">
-        <mat-form-field appearance="outline" subscriptSizing="dynamic">
-          <mat-label>Git author name</mat-label>
-          <input
-            matInput
-            name="authorName"
-            [(ngModel)]="authorName"
-            autocomplete="name"
-            data-testid="author-name"
-          />
-        </mat-form-field>
-        <mat-form-field appearance="outline" subscriptSizing="dynamic">
-          <mat-label>Git author email</mat-label>
-          <input
-            matInput
-            name="authorEmail"
-            type="email"
-            [(ngModel)]="authorEmail"
-            autocomplete="email"
-            data-testid="author-email"
-          />
-        </mat-form-field>
-        <button
-          matButton="filled"
-          type="submit"
-          [disabled]="saving() || !loaded()"
-          data-testid="save-identity"
-        >
-          Save
-        </button>
-      </form>
-      @if (message(); as text) {
-      <p
-        class="message"
-        [class.error]="text.error"
-        data-testid="settings-message"
-      >
-        {{ text.text }}
-      </p>
+      } } @else {
+      <mat-progress-bar mode="indeterminate" />
       }
     </mat-card-content>
   </mat-card>

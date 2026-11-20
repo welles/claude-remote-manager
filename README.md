@@ -84,8 +84,8 @@ config directory is `~/.claude` or `CLAUDE_CONFIG_DIR`). Never an API key.
 npm start                        # then open http://localhost:4200
 ```
 
-Set the git author name and email on the Settings page first (commits in session clones are
-made with them). Add a repository on the Repositories page (from GitHub if the GitHub App is
+Set the git author name and email first, `CRM_GIT_AUTHOR_NAME=… CRM_GIT_AUTHOR_EMAIL=… npm start`
+(commits in session clones are made with them). Add a repository on the Repositories page (from GitHub if the GitHub App is
 configured, see [GitHub](#github); or any clone URL git can use with the credentials of your
 shell, or a local path), then start a session on it with a short prompt (choose Haiku to
 keep it cheap), watch the answer stream in, send a follow-up, restart the API and send another
@@ -118,6 +118,8 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                                            |
 | `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, skills, plugins, MCP servers, transcripts                          |
 | `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository (NixOS module: `<dataDir>/memory`)                              |
+| `CRM_GIT_AUTHOR_NAME`               | none (sessions with repositories are refused)                                                    | Author name of the commits in session clones (with `CRM_GIT_AUTHOR_EMAIL`)                               |
+| `CRM_GIT_AUTHOR_EMAIL`              | none                                                                                             | Author email of the commits in session clones                                                            |
 | `GITHUB_APP_ID`                     | none (GitHub not configured)                                                                     | App ID of the GitHub App (plain configuration)                                                           |
 | `GITHUB_APP_PRIVATE_KEY_FILE`       | none                                                                                             | File with the app's private key (PEM), e.g. a Docker secret                                              |
 | `CRM_SECRET_GITHUB_APP_PRIVATE_KEY` | none                                                                                             | The private key itself, instead of the file                                                              |
@@ -462,7 +464,7 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `GET /api/repositories/:id`, `POST /api/repositories`, `PATCH /api/repositories/:id`,
 `POST /api/repositories/:id/fetch`, `POST /api/repositories/:id/github`,
 `GET /api/repositories/:id/branches`, `GET /api/github/status`, `GET /api/github/repositories`,
-`GET /api/settings`, `PUT /api/settings`,
+`GET /api/settings`,
 `GET /api/models`, `GET /api/limits`, `GET /api/health`, `GET /api/sessions/:id/diff`,
 `GET /api/sessions/:id/diff/file`, `GET /api/sessions/:id/files`, `POST /api/attachments`,
 `GET /api/attachments/:id`, `GET /api/shown-files/:id`, `GET /api/shown-files/:id/content`,
@@ -1339,8 +1341,9 @@ its branches and tags, and points the existing session clones' `origin` there (s
   afterwards were kept because they hold work that is not on GitHub.
 - `webhook_deliveries`: IDs of processed webhook deliveries (a week), so redeliveries do
   nothing.
-- `app_settings`: settings edited in the UI (key, JSON value): the commit identity, and under
-  `notifications` which events go to which channel.
+- `app_settings`: settings edited in the UI (key, JSON value): under `notifications` which
+  events go to which channel. Rows `gitAuthorName`/`gitAuthorEmail` of earlier versions are
+  unused (the commit identity comes from the environment).
 - `message_contexts`: per user message with GitHub references or untrusted context: the
   references as resolved, the context text Claude got, the transcript UUID of the context
   message and the origin (`user`, or `app` for messages the app composed).
@@ -1570,11 +1573,13 @@ In the container they get narrow ones of their own (see
 ### Commit identity
 
 Commits in session clones are made as the user, not as the app: the git author name and email
-are app settings (Settings page, `PUT /api/settings`), written into every session clone
-(`user.name`, `user.email`, `user.useConfigOnly`) and into existing clones when they change.
-While they are not set, sessions with repositories and new local projects are refused with a
-message pointing to the Settings page; a clone whose identity was cleared cannot commit at all
-(git's global identity is hidden). Scratch sessions need none.
+come from the API's environment (`CRM_GIT_AUTHOR_NAME`, `CRM_GIT_AUTHOR_EMAIL`, both or
+neither; an invalid value stops the start) and are shown read-only on the Settings page
+(`GET /api/settings`). They are written into every session clone (`user.name`, `user.email`,
+`user.useConfigOnly`); at startup, before sessions resume, every existing clone with another
+identity gets the current one. While they are not set, sessions with repositories and new
+local projects are refused with a message naming the variables; a clone whose identity was
+cleared cannot commit at all (git's global identity is hidden). Scratch sessions need none.
 
 ### Push and pull requests
 
@@ -2256,6 +2261,7 @@ topic or token, a GitHub key without App ID, secret files in the Nix store or as
 | `auth.allowedEmails`                       | `[ ]`                            | Optional email allowlist                                                 |
 | `allowedHosts`, `allowedOrigins`           | `[ ]`                            | `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`                                       |
 | `publicUrl`                                | `null`                           | `PUBLIC_URL`                                                             |
+| `gitAuthor.name`, `gitAuthor.email`        | `null`                           | `CRM_GIT_AUTHOR_NAME`, `CRM_GIT_AUTHOR_EMAIL` (both or neither)          |
 | `preview.url`, `preview.accessAudiences`   | `null`, `[ ]`                    | `PREVIEW_URL`, `PREVIEW_ACCESS_AUD`                                      |
 | `ntfy.url`, `ntfy.topic`                   | `null`                           | `NTFY_URL`, `NTFY_TOPIC`                                                 |
 | `ntfy.tokenFile`                           | `null`                           | Secret file: ntfy token                                                  |

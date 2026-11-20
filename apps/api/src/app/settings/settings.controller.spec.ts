@@ -6,50 +6,44 @@ import {
 } from '../testing/test-app';
 
 describe('settings REST API', () => {
-  let app: TestApp;
+  let app: TestApp | undefined;
 
-  beforeEach(async () => {
-    app = await startTestApp({}, { identity: false });
-  });
-  afterEach(() => app.close());
+  afterEach(() => app?.close());
 
-  const put = (body: unknown) =>
-    rawRequest(
-      app.port,
-      'PUT',
-      '/api/settings',
-      { 'content-type': 'application/json' },
-      JSON.stringify(body),
-    );
-
-  it('reads and changes the settings', async () => {
-    expect((await rawRequest(app.port, 'GET', '/api/settings')).json()).toEqual(
-      {
-        gitAuthorName: null,
-        gitAuthorEmail: null,
-      },
-    );
-    const response = await put({
-      gitAuthorName: 'Ada',
-      gitAuthorEmail: 'ada@example.com',
+  it('shows the commit identity of the environment, read-only', async () => {
+    app = await startTestApp({
+      gitIdentity: { name: 'Ada', email: 'ada@example.com' },
     });
-    expect(response.status).toBe(200);
     expect((await rawRequest(app.port, 'GET', '/api/settings')).json()).toEqual(
       {
         gitAuthorName: 'Ada',
         gitAuthorEmail: 'ada@example.com',
       },
     );
-    expect((await put({ gitAuthorEmail: 'nope' })).status).toBe(400);
+    const put = await rawRequest(
+      app.port,
+      'PUT',
+      '/api/settings',
+      { 'content-type': 'application/json' },
+      JSON.stringify({ gitAuthorName: 'Eve', gitAuthorEmail: 'eve@x.y' }),
+    );
+    expect(put.status).toBe(404);
   });
 
-  it('refuses sessions with repositories until the identity is set', async () => {
+  it('refuses sessions with repositories without an identity', async () => {
+    app = await startTestApp({}, { identity: false });
+    expect((await rawRequest(app.port, 'GET', '/api/settings')).json()).toEqual(
+      {
+        gitAuthorName: null,
+        gitAuthorEmail: null,
+      },
+    );
     const response = await postJson(app.port, '/api/repositories', {
       projectName: 'new-app',
     });
     expect(response.status).toBe(409);
     expect(response.json<{ message: string }>().message).toContain(
-      'Settings page',
+      'CRM_GIT_AUTHOR_EMAIL',
     );
   });
 });

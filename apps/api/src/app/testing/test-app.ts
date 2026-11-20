@@ -19,8 +19,7 @@ import {
   FakeAgentRunner,
   FakeTranscriptReader,
 } from '../sessions/testing/fake-agent';
-import { SettingsService } from '../settings/settings.service';
-import { withTestIdentity } from '../workspaces/testing/workspace-harness';
+import { TEST_IDENTITY } from '../workspaces/testing/workspace-harness';
 
 /** The whole API on a random port, with a fake Claude Code. */
 export interface TestApp {
@@ -56,6 +55,7 @@ export async function startTestApp(
   const config: AppConfig = testAppConfig(dir, {
     dbDir: join(dir, 'db'),
     setupScriptTimeoutMs: 60_000,
+    gitIdentity: identity ? TEST_IDENTITY : null,
     ...overrides,
   });
   let builder = Test.createTestingModule({ imports: [AppModule] })
@@ -74,9 +74,6 @@ export async function startTestApp(
     bodyParser: false,
   });
   configureApp(app);
-  if (identity) {
-    withTestIdentity(app.get(SettingsService));
-  }
   await app.listen(0, '127.0.0.1');
   const { port } = app.getHttpServer().address() as AddressInfo;
   let closed = false;
