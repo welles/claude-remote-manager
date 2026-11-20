@@ -474,8 +474,62 @@ describe('session integrations (tools, memory, pushes)', () => {
       });
       expect(replying.isError).toBe(true);
       expect(replying.text).toContain(
-        'The review comment 999 of alice/app#1 was not found',
+        'No review thread of alice/app#1 has the comment 999',
       );
+      expect(harness.github.reviewReplies).toHaveLength(0);
+      expect(threads.every((thread) => !thread.resolved)).toBe(true);
+    });
+
+    it('replies to the first comment of the thread when named by a later one', async () => {
+      const { reply } = await withPullRequest();
+      // GitHub refuses replies to replies.
+      const replied = await reply({
+        pull_request: 1,
+        comment_id: 602,
+        body: 'Fixed in abc123',
+      });
+      expect(replied.isError).toBeUndefined();
+      expect(harness.github.reviewReplies).toEqual([
+        expect.objectContaining({ commentId: 601, body: 'Fixed in abc123' }),
+      ]);
+    });
+
+    it('refuses a comment of another pull request, also for a reply only', async () => {
+      const { remoteId, threads, reply } = await withPullRequest();
+      harness.github.pulls.push({
+        ...harness.github.pulls[0],
+        number: 2,
+        head: 'someone-else',
+      });
+      const foreign = {
+        resolved: false,
+        author: 'bob',
+        body: 'x',
+        commentIds: [701],
+      };
+      harness.github.reviewThreads.set(`${remoteId}#2`, [foreign]);
+      harness.github.reviewItems.set(`${remoteId}#2`, [
+        {
+          kind: 'review_comment',
+          id: 701,
+          author: 'bob',
+          body: 'x',
+          createdAt: '2026-11-20T10:00:00Z',
+        },
+      ]);
+      for (const input of [
+        { pull_request: 1, comment_id: 701, body: 'Fixed' },
+        { pull_request: 1, comment_id: 701, body: 'Fixed', resolve: true },
+        { pull_request: 1, comment_id: 701, resolve: true },
+      ]) {
+        const result = await reply(input);
+        expect(result.isError).toBe(true);
+        expect(result.text).toContain(
+          'No review thread of alice/app#1 has the comment 701',
+        );
+      }
+      expect(harness.github.reviewReplies).toHaveLength(0);
+      expect(foreign.resolved).toBe(false);
       expect(threads.every((thread) => !thread.resolved)).toBe(true);
     });
 
@@ -536,6 +590,36 @@ describe('session integrations (tools, memory, pushes)', () => {
       );
       expect(both.text).toContain('but the thread was not resolved');
       expect(threads[0].resolved).toBe(false);
+
+      // Any GraphQL error counts, also with data and without a message.
+      harness.github.intercept = (request) =>
+        request.path === '/graphql'
+          ? new Response(
+              JSON.stringify({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      reviewThreads: {
+                        pageInfo: { hasNextPage: false },
+                        nodes: [],
+                      },
+                    },
+                  },
+                },
+                errors: [{}],
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            )
+          : undefined;
+      const partial = await reply({
+        pull_request: 1,
+        comment_id: 501,
+        body: 'Fixed',
+      });
+      expect(partial).toEqual({
+        isError: true,
+        text: expect.stringContaining('GitHub did not list the review threads'),
+      });
     });
 
     it('asks as the permission mode says, but not during an Autofix run', async () => {

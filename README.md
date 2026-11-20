@@ -365,7 +365,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   run started anyway (a command moved to the background at its timeout) is stopped when the
   run ends. Still unasked: the app's own tools that never ask (showing a file, previews, the
   session title), and `reply_to_review_thread`, which can only answer and resolve review
-  threads of the session's own pull requests (allowed in `canUseTool` during the run).
+  threads of the session's own pull requests (allowed in `canUseTool` during the run; in
+  `dontAsk` Claude Code never calls `canUseTool`, so it is refused there unless an allow rule
+  covers it, like the Autofix `git` allowance).
   Not covered: a `PermissionRequest` hook in the user's or the project's Claude Code settings
   that approves requests itself. Injected text in a CI
   log or comment cannot push elsewhere with the user's credentials. The app's narrow
@@ -1805,7 +1807,8 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   sessions cannot approve (`gh`'s token is read only, approvals by bots
   count only when listed in `PR_TRUSTED_BOTS`; never list the app's own bot there); they can
   resolve threads of their own pull requests, but only through `reply_to_review_thread`
-  (the owner's decision), which asks outside Autofix runs and shows in the history. The
+  (the owner's decision), which outside Autofix runs asks as the session's permission mode
+  says (`auto` may not ask, `bypassPermissions` never does) and shows in the history. The
   `git` token's `contents: write` can merge a pull request or push to the default branch
   directly (e.g. with `curl` and the token from `git credential fill`). The gate therefore
   holds only together with branch protection on GitHub (required reviews and checks, no

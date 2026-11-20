@@ -37,6 +37,8 @@ sessions.
   works only on the session branch.
 - `gh` can read: pull requests, reviews and comments, issues, checks, Actions runs and logs.
   It cannot comment, approve, merge, resolve review threads or change settings; create pull
-  requests with the tool `create_pull_request`, and tell the user what else needs doing. Use the
+  requests with the tool `create_pull_request`, reply to and resolve review threads of this
+  session's own pull requests with the tool `reply_to_review_thread`, and tell the user what
+  else needs doing. Use the
   image's `gh` (a `gh` from a Nix shell gets no token); commands that need a user, such as
   `gh pr status`, do not work.

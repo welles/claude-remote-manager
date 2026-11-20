@@ -306,7 +306,7 @@ const ASK_OWNER =
 
 /** How Claude answers review threads (`reply_to_review_thread`). */
 const THREAD_REPLIES =
-  "Answer each review finding on its thread with the tool reply_to_review_thread (the attached review comments and threads give their comment-id): after fixing and pushing a finding, reply with what changed, naming the commit, and resolve the thread (resolve true); for a finding you do not fix, reply with the reason and leave the thread unresolved. The tool needs no approval during autofix and works only on this session's own pull requests.";
+  "Answer each review finding on its thread with the tool reply_to_review_thread (the attached review comments and threads give their comment-id): after fixing and pushing a finding, reply with what changed, naming the commit, and resolve the thread (resolve true); for a finding you do not fix, reply with the reason and leave the thread unresolved. The tool needs no approval during autofix (except in a session that never asks, where only actions allowed beforehand run) and works only on this session's own pull requests.";
 
 function automergeText(note: AutomergeNote, branch: string): string {
   switch (note.state) {
