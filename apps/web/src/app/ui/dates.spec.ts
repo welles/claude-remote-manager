@@ -1,4 +1,9 @@
-import { formatClock, formatDate, formatRelative } from './dates';
+import {
+  formatClock,
+  formatDate,
+  formatIsoMinute,
+  formatRelative,
+} from './dates';
 
 describe('dates', () => {
   const now = new Date(2026, 10, 13, 16, 30).getTime();
@@ -29,5 +34,14 @@ describe('dates', () => {
   it('adds the weekday to clock times of other days', () => {
     expect(formatClock(new Date(2026, 10, 13, 21, 15), now)).toBe('21:15');
     expect(formatClock(new Date(2026, 10, 16, 21, 15), now)).toBe('Mon 21:15');
+  });
+
+  it('formats yyyy-MM-dd HH:mm in the given time zone', () => {
+    const late = '2026-11-20T23:30:00Z';
+    expect(formatIsoMinute(late, 'UTC')).toBe('2026-11-20 23:30');
+    expect(formatIsoMinute(late, 'Europe/Berlin')).toBe('2026-11-21 00:30');
+    expect(formatIsoMinute('2027-01-05T08:05:00Z', 'UTC')).toBe(
+      '2027-01-05 08:05',
+    );
   });
 });

@@ -1,4 +1,5 @@
 import { randomInt } from 'node:crypto';
+import { serverTimeZone } from '../common/time-zone';
 
 const RANDOM_LENGTH = 6;
 const ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
@@ -16,19 +17,12 @@ export function randomSuffix(length = RANDOM_LENGTH): string {
  * `TZ` is not set or not a valid IANA time zone.
  */
 export function slugDate(date: Date, timeZone: string | undefined): string {
-  const parts = (zone: string) =>
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: zone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).formatToParts(date);
-  let found: Intl.DateTimeFormatPart[];
-  try {
-    found = parts(timeZone?.trim() || 'UTC');
-  } catch {
-    found = parts('UTC');
-  }
+  const found = new Intl.DateTimeFormat('en-US', {
+    timeZone: serverTimeZone(timeZone),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
   const part = (type: string) =>
     found.find((entry) => entry.type === type)?.value ?? '';
   return `${part('year')}-${part('month')}-${part('day')}`;

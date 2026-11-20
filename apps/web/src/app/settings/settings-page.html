@@ -103,6 +103,40 @@
       <button matButton type="button" (click)="loadGitHub()">Refresh</button>
     </mat-card-actions>
   </mat-card>
+  <mat-card appearance="outlined">
+    <mat-card-header>
+      <mat-card-title>Server</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      @if (health.isLoading()) {
+      <mat-progress-bar mode="indeterminate" />
+      } @else if (health.error()) {
+      <p class="error" data-testid="server-unreachable">
+        The server is not reachable.
+      </p>
+      } @else if (server(); as server) {
+      <dl class="facts">
+        <dt>Status</dt>
+        <dd data-testid="server-status">{{ server.status }}</dd>
+        <dt>Version</dt>
+        <dd data-testid="server-version">{{ server.version }}</dd>
+        <dt>Commit</dt>
+        <dd data-testid="server-commit">
+          {{ server.commit ?? 'local build' }}
+        </dd>
+        @if (server.date) {
+        <dt>Date</dt>
+        <dd data-testid="server-date" [title]="server.timeZone">
+          {{ server.date }}
+        </dd>
+        }
+      </dl>
+      }
+    </mat-card-content>
+    <mat-card-actions>
+      <button matButton type="button" (click)="health.reload()">Refresh</button>
+    </mat-card-actions>
+  </mat-card>
 
   <section class="maintenance" aria-labelledby="sessions-title">
     <h2 class="app-section-label" id="sessions-title">Sessions</h2>
@@ -138,14 +172,6 @@
           <span class="hint"
             >Leftover clones and scratch directories without a session</span
           >
-        </span>
-        <app-icon name="chevron-right" />
-      </a>
-      <a class="link" routerLink="/status" data-testid="maintenance-status">
-        <app-icon name="server" />
-        <span class="text">
-          <span class="name">Server status</span>
-          <span class="hint">Version and commit of the server</span>
         </span>
         <app-icon name="chevron-right" />
       </a>
