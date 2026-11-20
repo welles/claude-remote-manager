@@ -475,6 +475,7 @@ describe('PrAutomationService', () => {
             maxWaitMs: 50,
             runningWindowMs: 60_000,
             emptyWindowMs: 0,
+            headRetryMs: 5,
             ciStartMs: 0,
             ciSettleMs: 60_000,
           },

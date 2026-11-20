@@ -285,11 +285,17 @@ export class PrAutomationService
     );
     if (this.checksView) {
       // CI settled while the session waited for it: look now, so that a
-      // run or ready message follows right away.
+      // run or ready message follows right away. A check that runs may
+      // have read the checks before they settled: it checks again before
+      // it ends the wait.
       this.subscriptions.push(
-        this.checksView.settled$.subscribe((pullRequestId) =>
-          this.schedule(pullRequestId, this.timing.idleRecheckMs),
-        ),
+        this.checksView.settled$.subscribe((pullRequestId) => {
+          if (this.checking.has(pullRequestId)) {
+            this.again.add(pullRequestId);
+          } else {
+            this.schedule(pullRequestId, this.timing.idleRecheckMs);
+          }
+        }),
       );
     }
     if (this.timing.pollMs > 0) {

@@ -9,6 +9,7 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { SESSIONS_WS_PATH } from '../sessions/sessions.gateway';
+import { SessionsService } from '../sessions/sessions.service';
 import { flush, resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import {
   postJson,
@@ -456,6 +457,41 @@ describe('notifications', () => {
     expect(push.payloads('show')).toMatchObject([
       { tag: `turn-${session.id}`, body: expect.stringContaining('found it') },
     ]);
+  });
+
+  it('reports a turn finished once, not again after waiting without a turn', async () => {
+    await device();
+    const session = await createSession();
+    app.app.get(SessionsService).backgroundReportGraceMs = 5;
+    await finishTurn('Opened the pull request.');
+    expect(push.payloads('show')).toHaveLength(1);
+
+    // Waiting again without a turn of its own (such as CI of a pull request
+    // someone else pushed to) and Ready again: nothing new to report.
+    const tasks = (...ids: string[]) => ({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: ids.map((id) => ({
+        task_id: id,
+        task_type: 'local_bash',
+        description: id,
+      })),
+    });
+    app.runner.last.emit(tasks('watch'));
+    await flush();
+    await waitFor(
+      () =>
+        app.app.get(SessionsService).get(session.id).waitingFor ===
+        'background',
+    );
+    app.runner.last.emit(tasks());
+    await waitFor(
+      () =>
+        app.app.get(SessionsService).get(session.id).waitingFor === 'message',
+    );
+    await flush();
+    await service.settled();
+    expect(push.payloads('show')).toHaveLength(1);
   });
 
   it('skips sessions an active client shows', async () => {

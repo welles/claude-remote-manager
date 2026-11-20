@@ -3293,8 +3293,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         `until the next turn starts, "work" at most ${CLAUDE_WAIT_LIMIT_MINUTES} minutes after ` +
         'the turn; after that an idle process may be closed, so a later wakeup may not fire. ' +
         'Without it, the session manager decides from the background tasks still running. ' +
-        'It shows by itself while CI of your pull requests runs and it reports the result to ' +
-        'you; you need not say "work" for that.',
+        'It shows by itself while CI of your pull requests runs, so "work" is not needed just ' +
+        'for that.',
       inputSchema: (z) => ({
         waiting_on: z
           .enum(['user', 'work'])
@@ -3645,9 +3645,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (waits?.size === 0) {
       this.ciWaits.delete(sessionId);
     }
-    if (this.ciWaitKey(sessionId) !== before) {
-      this.ciWaitChanged(sessionId);
-    }
+    this.ciWaitChanged(sessionId, this.ciWaitKey(sessionId) !== before);
   }
 
   /** The phase of the CI wait for a pull request, if there is one. */
@@ -3667,7 +3665,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /** Sessions that wait for CI of one of their pull requests. */
   ciWaitingSessions(): string[] {
-    return [...this.ciWaits.keys()];
+    return [...this.ciWaits.keys()].filter((sessionId) => {
+      const status = this.sessions.get(sessionId)?.status;
+      return status !== undefined && status !== 'finished';
+    });
   }
 
   /**
@@ -3692,15 +3693,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     return record ? (this.ciWaitLabel(record) ?? '') : '';
   }
 
-  private ciWaitChanged(sessionId: string): void {
+  /**
+   * Publishes the status after a change of the CI waits: always compared
+   * with what was published last (a pull request closed meanwhile changed
+   * it already), else when the label changed (another label, or a session
+   * without process: clients and the PR automation look again).
+   */
+  private ciWaitChanged(sessionId: string, labelChanged: boolean): void {
     const record = this.sessions.get(sessionId);
     if (!record) {
       return;
     }
     const live = this.live.get(sessionId);
-    if (!live || !this.publishStatus(live)) {
-      // Another label, or a session without process: clients (and the PR
-      // automation, see `acceptsAppMessage`) look again.
+    if (live && this.publishStatus(live)) {
+      return;
+    }
+    if (labelChanged) {
       this.updates.next(this.toDto(record));
     }
   }
