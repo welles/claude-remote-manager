@@ -320,7 +320,14 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   after that; Claude can also say it itself with the tool `set_waiting_state`: `user` makes it
   `message` despite running tasks, `work` with a short reason (`waitingReason`, shown as the
   status) makes it `background` until the next turn, for at most 30 minutes after the turn;
-  dropped after Stop, an error or a queued message), `finished`
+  dropped after Stop, an error or a queued message; also `background` while the session waits
+  for the CI of one of its open pull requests, ahead of Claude's `user`: the checks of the head
+  commit run (at most 60 minutes after they were first read), for a minute after a new head
+  commit until GitHub lists its checks, and with autofix after they settled until the PR
+  automation looked at them (at most 2 minutes), so that its run or ready message follows
+  without `message` in between; `waitingReason` is then `CI of #12`, a message or an app
+  message can still be sent, the process may still be closed for idleness, and such sessions
+  are polled for their checks like viewed ones), `finished`
   (ended with "End session", `POST /api/sessions/:id/end` or the `session.end` frame) and
   `failed` (a clone could not be created, or the process could not start or ended with an
   error during a turn). A message to a finished or failed session resumes it, unless its

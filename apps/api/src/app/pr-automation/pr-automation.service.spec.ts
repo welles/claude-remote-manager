@@ -16,8 +16,10 @@ import type {
 import type { NotificationsService } from '../notifications/notifications.service';
 import { SessionEventRepository } from '../sessions/session-event.repository';
 import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
+import { ViewerPresence } from '../sessions/viewer-presence';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import { PrAutomationService } from './pr-automation.service';
+import { PullRequestChecksService } from './pull-request-checks.service';
 import { PullRequestFeedback } from './pull-request-feedback';
 
 /** Notifications the automation sent. */
@@ -83,7 +85,7 @@ describe('PrAutomationService', () => {
   let origin: string;
   let repositoryId: string;
 
-  const createAutomation = () => {
+  const createAutomation = (checksView?: PullRequestChecksService) => {
     automation = new PrAutomationService(
       harness.config,
       {
@@ -103,6 +105,7 @@ describe('PrAutomationService', () => {
       notifications as unknown as NotificationsService,
       harness.hooks,
       devServers,
+      checksView,
     );
     automation.onModuleInit();
   };
@@ -450,6 +453,112 @@ describe('PrAutomationService', () => {
       await setWaitingState({ waiting_on: 'work', reason: 'CI of PR #1' });
       harness.runner.last.emit(resultMessage(30, 0.03));
       await waitFor(() => appMessages().length === 1);
+    });
+
+    describe('while the session waits for CI', () => {
+      let checksView: PullRequestChecksService;
+
+      beforeEach(() => {
+        automation.onModuleDestroy();
+        checksView = new PullRequestChecksService(
+          harness.sessions,
+          harness.repositoryRecords,
+          harness.service,
+          harness.sessionGit,
+          harness.github.service,
+          new PullRequestFeedback(harness.github.service, harness.github.http),
+          new ViewerPresence(),
+          {
+            pollMs: 0,
+            staleMs: 60_000,
+            debounceMs: 5,
+            maxWaitMs: 50,
+            runningWindowMs: 60_000,
+            emptyWindowMs: 0,
+            ciStartMs: 0,
+            ciSettleMs: 60_000,
+          },
+        );
+        checksView.onModuleInit();
+        createAutomation(checksView);
+      });
+
+      afterEach(() => checksView.onModuleDestroy());
+
+      /** Session states as published, `status/waitingFor`. */
+      const recordStates = (sessionId: string) => {
+        const states: string[] = [];
+        const subscription = harness.service.updates$.subscribe((session) => {
+          const state = `${session.status}/${session.waitingFor ?? ''}`;
+          if (session.id === sessionId && states.at(-1) !== state) {
+            states.push(state);
+          }
+        });
+        return { states, stop: () => subscription.unsubscribe() };
+      };
+
+      it("shows the CI although Claude said it is the user's turn, and starts the run without Ready in between", async () => {
+        const { session, pull } = await sessionWithPullRequest();
+        enableAutofix(session.id, pull);
+        const head = fakePull(pull.number).headSha;
+        harness.github.checkRuns.set(head, [
+          {
+            id: 51,
+            name: 'test',
+            status: 'in_progress',
+            conclusion: null,
+            app: 'github-actions',
+          },
+        ]);
+        await harness.service.sendMessage(session.id, { text: 'Push it' });
+        await setWaitingState({ waiting_on: 'user' });
+        harness.runner.last.emit(resultMessage(30, 0.03));
+        await checksView.read(pull.id);
+        await waitFor(
+          () => harness.service.get(session.id).waitingFor === 'background',
+        );
+        expect(harness.service.get(session.id).waitingReason).toBe('CI of #1');
+
+        const { states, stop } = recordStates(session.id);
+        failingCheck(head);
+        await checksView.read(pull.id);
+        await waitFor(() => appMessages().length === 1);
+        stop();
+        expect(states).not.toContain('waiting/message');
+        expect(harness.service.get(session.id).status).toBe('running');
+      });
+
+      it('is ready once the automation found nothing to do for the settled checks', async () => {
+        const { session, pull } = await sessionWithPullRequest();
+        enableAutofix(session.id, pull);
+        const head = fakePull(pull.number).headSha;
+        const runs = [
+          {
+            id: 52,
+            name: 'test',
+            status: 'in_progress' as const,
+            conclusion: null as string | null,
+            app: 'github-actions',
+          },
+        ];
+        harness.github.checkRuns.set(head, runs);
+        await checksView.read(pull.id);
+        expect(harness.service.get(session.id).waitingFor).toBe('background');
+        runs[0] = {
+          ...runs[0],
+          status: 'completed',
+          conclusion: 'success',
+        } as never;
+        await checksView.read(pull.id);
+        expect(harness.service.ciWaitPhase(session.id, pull.id)).toBe(
+          'settling',
+        );
+        // Green, but not approved: nothing to tell the session.
+        await waitFor(
+          () => harness.service.get(session.id).waitingFor === 'message',
+        );
+        expect(appMessages()).toHaveLength(0);
+      });
     });
 
     it('waits while background tasks of Claude still run', async () => {

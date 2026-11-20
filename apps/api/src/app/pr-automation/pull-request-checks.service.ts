@@ -6,7 +6,7 @@ import {
   type OnModuleInit,
   Optional,
 } from '@nestjs/common';
-import type { Subscription } from 'rxjs';
+import { Subject, type Subscription } from 'rxjs';
 import type {
   PullRequestCheckDto,
   PullRequestChecksDto,
@@ -46,6 +46,16 @@ export interface PullRequestChecksTiming {
   runningWindowMs: number;
   /** The same for a head commit without any checks (yet). */
   emptyWindowMs: number;
+  /**
+   * A session waits this long for the checks of a new head commit to show
+   * up (`CI of #12`) before a pull request without CI no longer holds it.
+   */
+  ciStartMs: number;
+  /**
+   * Once the checks of a pull request with autofix settled, the session
+   * waits at most this long for the PR automation to look at them.
+   */
+  ciSettleMs: number;
 }
 
 export const PR_CHECKS_TIMING = Symbol('PR_CHECKS_TIMING');
@@ -57,6 +67,8 @@ export const DEFAULT_CHECKS_TIMING: PullRequestChecksTiming = {
   maxWaitMs: 10_000,
   runningWindowMs: 60 * 60_000,
   emptyWindowMs: 5 * 60_000,
+  ciStartMs: 60_000,
+  ciSettleMs: 2 * 60_000,
 };
 
 /** Checks kept per pull request (the most important first). */
@@ -163,9 +175,18 @@ interface ScheduledRead {
  * a new head commit, on webhook deliveries about checks and statuses
  * (debounced; skipped when the PR automation read them meanwhile), by the
  * PR automation's own reads, and every {@link
- * PullRequestChecksTiming.pollMs} for sessions someone looks at while
- * checks run (settled ones after {@link PullRequestChecksTiming.staleMs}).
- * Changes are published as session updates.
+ * PullRequestChecksTiming.pollMs} for sessions someone looks at or that
+ * wait for CI while checks run (settled ones after {@link
+ * PullRequestChecksTiming.staleMs}). Changes are published as session
+ * updates.
+ *
+ * It also tells the session whether it waits for the CI of a pull request
+ * (`SessionsService.setCiWait`): while the head commit's checks run (at
+ * most {@link PullRequestChecksTiming.runningWindowMs}), and for {@link
+ * PullRequestChecksTiming.ciStartMs} after a new head commit without
+ * checks yet. Once they settled on a pull request with autofix, the wait
+ * goes on until the PR automation looked at them (`settled$`), so that a
+ * run or ready message follows without `Ready` in between.
  */
 @Injectable()
 export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
@@ -180,6 +201,12 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     { headSha: string; at: number }
   >();
   private subscription: Subscription | null = null;
+  private readonly settled = new Subject<number>();
+  /**
+   * Pull requests with autofix whose checks settled while the session
+   * waited for them: the PR automation should look now.
+   */
+  readonly settled$ = this.settled.asObservable();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private polling: Promise<void> | null = null;
   private pausedUntil = 0;
@@ -209,6 +236,19 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     if (this.timing.pollMs > 0) {
       this.pollTimer = setInterval(() => void this.poll(), this.timing.pollMs);
       this.pollTimer.unref?.();
+    }
+    // Checks that ran before a restart: read again, so that their sessions
+    // show that they wait for them.
+    for (const session of this.records.list('exclude')) {
+      for (const pull of session.pullRequests) {
+        if (
+          pull.state === 'open' &&
+          pull.checks?.headSha === pull.headSha &&
+          pull.checks.checks.some((check) => check.state === 'pending')
+        ) {
+          this.schedule(pull.id);
+        }
+      }
     }
   }
 
@@ -320,9 +360,9 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Viewed sessions: their open pull requests are re-read from GitHub (at
-   * most once a minute, for a new head commit), and their checks when
-   * {@link due}. Errors are logged.
+   * Viewed sessions and those that wait for CI: their open pull requests
+   * are re-read from GitHub (at most once a minute, for a new head commit),
+   * and their checks when {@link due}. Errors are logged.
    */
   poll(): Promise<void> {
     if (!this.polling) {
@@ -344,7 +384,11 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     if (!this.github.configured || this.stopped) {
       return;
     }
-    for (const sessionId of this.presence.viewedSessions()) {
+    const sessionIds = new Set([
+      ...this.presence.viewedSessions(),
+      ...this.sessions.ciWaitingSessions(),
+    ]);
+    for (const sessionId of sessionIds) {
       if (this.stopped || Date.now() < this.pausedUntil) {
         return;
       }
@@ -447,6 +491,45 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
     this.records.setPullRequestChecks(pull.id, checks);
     if (!sameChecks(stored, checks)) {
       this.sessions.publishUpdate(pull.sessionId);
+    }
+    this.updateCiWait(pull, checks, stored?.headSha !== checks.headSha);
+  }
+
+  /**
+   * Whether the pull request's session waits for its CI, after its checks
+   * were read (`newHead`: the first read for this head commit).
+   */
+  private updateCiWait(
+    pull: PullRequestRecord,
+    checks: PullRequestChecksDto,
+    newHead: boolean,
+  ): void {
+    const now = Date.now();
+    const firstAt = this.firstRead.get(pull.id)?.at ?? now;
+    const phase = this.sessions.ciWaitPhase(pull.sessionId, pull.id);
+    if (checks.checks.some((check) => check.state === 'pending')) {
+      this.sessions.setCiWait(pull.sessionId, pull.id, {
+        phase: 'running',
+        untilMs: firstAt + this.timing.runningWindowMs,
+      });
+    } else if (checks.checks.length === 0) {
+      // Right after a push GitHub may not list the checks yet.
+      this.sessions.setCiWait(
+        pull.sessionId,
+        pull.id,
+        newHead || phase === 'running'
+          ? { phase: 'running', untilMs: firstAt + this.timing.ciStartMs }
+          : null,
+      );
+    } else if (pull.autofix && phase === 'running') {
+      this.sessions.setCiWait(pull.sessionId, pull.id, {
+        phase: 'settling',
+        untilMs: now + this.timing.ciSettleMs,
+      });
+      this.settled.next(pull.id);
+    } else if (phase !== 'settling') {
+      // A wait for the PR automation ends when it looked (or timed out).
+      this.sessions.setCiWait(pull.sessionId, pull.id, null);
     }
   }
 

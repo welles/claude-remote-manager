@@ -40,8 +40,8 @@ export function statusLabel(
 /**
  * What a session needs or waits for, as specific as known: `Approve
  * command`, `2 questions`, `Plan ready`, `Setup failed`, what Claude said
- * it waits for (`CI of PR #12`), `2 background tasks`; else the status
- * label.
+ * it waits for (`CI of PR #12`) or the CI of its pull requests the session
+ * waits for (`CI of #12`), `2 background tasks`; else the status label.
  */
 export function needLabel(
   session: Pick<
