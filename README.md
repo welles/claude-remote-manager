@@ -522,6 +522,15 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 
 ### Images, `@` references, `/` commands, files and shown files
 
+- Markdown: the input and the new-session form are a CodeMirror editor
+  (`apps/web/src/app/markdown/`) that styles Markdown as it is typed while keeping the syntax
+  (GitHub flavour); the text goes out exactly as written. Enter continues lists and quotes
+  (an empty item ends them), Tab/Shift+Tab nest list items, GitHub's shortcuts format
+  (Ctrl/⌘+B, I, E, K, Shift+X, Shift+8, Shift+7, Shift+.), and a toolbar shown with the
+  text-format button (kept per browser) does the same. The editor offers the autocompletes a
+  textarea-like interface (`TextField`) and works as a Material form field control. Sent
+  messages render as Markdown in the history (raw HTML shown as typed, line breaks kept),
+  their GitHub references as chips in place.
 - Images: pasted, dropped or picked in the input (or the new-session form), each uploaded
   right away (`POST /api/attachments`, body = the image; PNG, JPEG, GIF or WebP checked by
   content, at most 5 MB, at most 10 per message) into `FILES_DIR/attachments` (`0600`, API

@@ -2,7 +2,6 @@ import {
   Component,
   afterRenderEffect,
   computed,
-  ElementRef,
   inject,
   input,
   model,
@@ -33,6 +32,12 @@ import {
 import { AttachmentDrafts, imageFiles } from '../attachments/attachment-drafts';
 import { AttachmentsApi } from '../attachments/attachments-api';
 import { DraftImages } from '../attachments/draft-images';
+import { MarkdownEditor } from '../markdown/markdown-editor';
+import {
+  FormattingToolbarPreference,
+  MarkdownToolbar,
+} from '../markdown/markdown-toolbar';
+import type { TextField } from '../markdown/text-field';
 import { SessionsApi } from './sessions-api';
 
 /** The `@` reference being typed before the caret: `@` then no spaces. */
@@ -65,8 +70,8 @@ export function matchCommands(
   return [...starts, ...contains].slice(0, MAX_COMMANDS);
 }
 
-/** Eight lines of the composer's text plus its padding. */
-const MAX_INPUT_HEIGHT = 8 * 22 + 20;
+/** Eight lines of the composer's text plus its padding (as in its CSS). */
+const MAX_INPUT_HEIGHT = 8 * 24 + 16;
 
 /** A message the user wants to send. */
 export interface ComposedMessage {
@@ -85,15 +90,23 @@ export interface ComposedMessage {
  * GitHub issues and pull requests (autocomplete, chips with the choice to
  * give Claude comments and diffs), `/` for Claude Code's slash commands and
  * skills at the start of a message (autocomplete), Claude Code's suggested
- * next message as placeholder and the Send and Stop buttons.
+ * next message as placeholder and the Send and Stop buttons. The text is
+ * Markdown, styled live, with an optional formatting toolbar.
  */
 @Component({
   selector: 'app-message-composer',
-  imports: [AppIcon, DraftImages, ReferenceChips, ReferenceSuggestions],
+  imports: [
+    AppIcon,
+    DraftImages,
+    MarkdownEditor,
+    MarkdownToolbar,
+    ReferenceChips,
+    ReferenceSuggestions,
+  ],
   templateUrl: './message-composer.html',
 })
 export class MessageComposer {
-  /** Text in the input box (bound to the textarea's value). */
+  /** Text in the input box (bound to the editor's text). */
   readonly draft = model('');
   readonly label = input('Message');
   /** Sending is not possible right now (not connected, preparing, ...). */
@@ -120,41 +133,43 @@ export class MessageComposer {
   readonly interrupt = output<void>();
 
   private readonly api = inject(SessionsApi);
-  private readonly textarea =
-    viewChild<ElementRef<HTMLTextAreaElement>>('textarea');
-  /** Hidden copy of the input that measures the suggestion. */
-  private readonly mirror =
-    viewChild<ElementRef<HTMLTextAreaElement>>('mirror');
+  private readonly editor = viewChild(MarkdownEditor);
+  protected readonly toolbar = inject(FormattingToolbarPreference);
   /**
    * The whole suggestion fits into the input (at most 8 lines): only then
    * does Send send it, so that nothing unseen goes out.
    */
   protected readonly suggestionFits = signal(true);
   /**
-   * Grows the textarea with its text, up to 8 lines (then it scrolls); also
-   * when the draft changes from outside (sent, restored). An empty input
-   * showing the suggestion grows to fit it, measured in the hidden mirror
-   * (writing the field's value would clear its undo history).
+   * The editor grows with its text (and an offered suggestion) up to 8
+   * lines, then scrolls (CSS); whether the suggestion fits is measured.
    */
-  private readonly autosize = afterRenderEffect(() => {
-    this.draft();
-    const suggestion = this.offering() ? this.suggestion() : null;
-    const field = this.textarea()?.nativeElement;
-    const mirror = this.mirror()?.nativeElement;
-    if (!field) {
-      return;
+  private readonly measure = afterRenderEffect(() => {
+    const offering = this.offering();
+    this.suggestion();
+    const editor = this.editor();
+    if (offering && editor) {
+      this.suggestionFits.set(
+        editor.contentElement.scrollHeight <= MAX_INPUT_HEIGHT,
+      );
     }
-    field.style.height = 'auto';
-    let height = field.scrollHeight;
-    if (suggestion && field.value === '' && mirror) {
-      mirror.style.width = `${field.clientWidth}px`;
-      mirror.value = suggestion;
-      mirror.style.height = 'auto';
-      height = Math.max(height, mirror.scrollHeight);
-      this.suggestionFits.set(mirror.scrollHeight <= MAX_INPUT_HEIGHT);
-    }
-    field.style.height = `${Math.min(height, MAX_INPUT_HEIGHT)}px`;
   });
+  /** ARIA of the editor: a combobox for the autocompletes. */
+  protected readonly editorAttributes = computed(() => ({
+    'aria-label': this.label(),
+    role: 'combobox',
+    'aria-autocomplete': 'list',
+    'aria-controls': this.suggestingCommands()
+      ? 'command-list'
+      : this.suggesting()
+        ? 'mention-list'
+        : null,
+    'aria-expanded': String(this.suggesting() || this.suggestingCommands()),
+    'aria-activedescendant': this.activeCommandId(),
+    'aria-describedby': this.offering() ? 'prompt-suggestion' : null,
+    enterkeyhint: 'send',
+    'data-testid': 'message-input',
+  }));
   /** Where the `@` reference being typed starts, and its text. */
   protected readonly mention = signal<{ start: number; query: string } | null>(
     null,
@@ -294,7 +309,7 @@ export class MessageComposer {
 
   /** Puts the caret into the input. */
   focus(): void {
-    this.textarea()?.nativeElement.focus();
+    this.editor()?.focus();
   }
 
   /** Empties the input after the message went out. */
@@ -308,7 +323,7 @@ export class MessageComposer {
   /** Puts the suggestion into the input, the caret at its end. */
   protected takeSuggestion(): void {
     const text = this.suggestion();
-    const field = this.textarea()?.nativeElement;
+    const field = this.editor();
     if (!text || !this.offering()) {
       return;
     }
@@ -334,7 +349,7 @@ export class MessageComposer {
     number: number;
     repository: string;
   }): void {
-    const field = this.textarea()?.nativeElement;
+    const field = this.editor();
     const text = this.referenceText();
     const next = qualifyReference(
       text,
@@ -367,10 +382,11 @@ export class MessageComposer {
     });
   }
 
-  protected onInput(event: Event): void {
-    const field = event.target as HTMLTextAreaElement;
-    this.draft.set(field.value);
-    this.findMention(field);
+  protected onInput(): void {
+    const field = this.editor();
+    if (field) {
+      this.findMention(field);
+    }
   }
 
   protected onKeydown(event: KeyboardEvent): void {
@@ -379,7 +395,8 @@ export class MessageComposer {
       this.submit();
       return;
     }
-    if (this.references.keydown(event, event.target as HTMLTextAreaElement)) {
+    const field = this.editor();
+    if (field && this.references.keydown(event, field)) {
       return;
     }
     if (
@@ -444,17 +461,17 @@ export class MessageComposer {
   }
 
   /** Caret moved (click, arrow keys): the `@` reference may have changed. */
-  protected onCaret(event: Event): void {
-    const key = (event as KeyboardEvent).key;
-    if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(key)) {
-      this.findMention(event.target as HTMLTextAreaElement);
+  protected onCaret(): void {
+    const field = this.editor();
+    if (field) {
+      this.findMention(field);
     }
   }
 
   /** Replaces the `@` reference being typed with the chosen file. */
   protected choose(file: FileMention): void {
     const mention = this.mention();
-    const field = this.textarea()?.nativeElement;
+    const field = this.editor();
     if (!mention || !field) {
       return;
     }
@@ -483,7 +500,7 @@ export class MessageComposer {
 
   /** Replaces the command being typed with the chosen one. */
   protected chooseCommand(command: SlashCommandOption | undefined): void {
-    const field = this.textarea()?.nativeElement;
+    const field = this.editor();
     if (!command || this.slash() === null || !field) {
       return;
     }
@@ -500,7 +517,7 @@ export class MessageComposer {
   }
 
   /** A message starting with `/` and no space before the caret: commands. */
-  private findCommand(field: HTMLTextAreaElement): boolean {
+  private findCommand(field: TextField): boolean {
     const id = this.sessionId();
     const match =
       id && field.selectionStart === field.selectionEnd
@@ -538,7 +555,7 @@ export class MessageComposer {
       });
   }
 
-  private findMention(field: HTMLTextAreaElement): void {
+  private findMention(field: TextField): void {
     if (this.findCommand(field)) {
       this.closeMention();
       this.references.close();

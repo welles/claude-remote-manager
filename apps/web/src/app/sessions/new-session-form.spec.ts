@@ -12,6 +12,7 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { NewSessionForm, type RepositoryChoice } from './new-session-form';
 import { sessionDto } from './testing/session-dto';
+import { EditorDriver } from '../testing/editor';
 
 const repository = (
   id: string,
@@ -333,12 +334,7 @@ describe('NewSessionForm', () => {
       .expectOne('/api/repositories/r1/branches')
       .flush({ defaultBranch: 'main', branches: [] });
     await fixture.whenStable();
-    const textarea = element.querySelector(
-      '[data-testid="new-prompt"]',
-    ) as HTMLTextAreaElement;
-    textarea.value = 'Fix #1';
-    textarea.setSelectionRange(6, 6);
-    textarea.dispatchEvent(new Event('input'));
+    new EditorDriver(element, 'new-prompt').type('Fix #1');
     await new Promise((resolve) => setTimeout(resolve, 200));
     http
       .expectOne(
