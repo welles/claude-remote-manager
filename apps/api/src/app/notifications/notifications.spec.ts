@@ -492,6 +492,24 @@ describe('notifications', () => {
     await flush();
     await service.settled();
     expect(push.payloads('show')).toHaveLength(1);
+    // ...and the report of the finished turn stays.
+    expect(push.payloads('withdraw')).toEqual([]);
+
+    // Background again, then the next turn starts: now it is withdrawn.
+    app.runner.last.emit(tasks('watch'));
+    await waitFor(
+      () =>
+        app.app.get(SessionsService).get(session.id).waitingFor ===
+        'background',
+    );
+    await postJson(app.port, `/api/sessions/${session.id}/messages`, {
+      text: 'Next',
+    });
+    await flush();
+    await service.settled();
+    expect(push.payloads('withdraw').map((p) => p.tags)).toEqual([
+      [`turn-${session.id}`],
+    ]);
   });
 
   it('skips sessions an active client shows', async () => {

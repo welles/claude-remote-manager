@@ -193,7 +193,14 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
       // Ended on purpose: nothing of it is current any more.
       this.watched.delete(id);
     }
-    if (previous === 'waiting/message') {
+    if (
+      (previous === 'waiting/message' || previous === 'waiting/background') &&
+      state !== 'waiting/message' &&
+      state !== 'waiting/background'
+    ) {
+      // Waiting for CI or background work without a turn leaves the report
+      // of the finished turn (its result is still news) until the next turn
+      // starts or the session ends.
       this.notifications.withdraw(notificationKeys.turn(id));
     }
     if (previous === 'failed/' || previous === 'waiting/setup') {
