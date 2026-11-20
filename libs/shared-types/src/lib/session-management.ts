@@ -112,13 +112,20 @@ export interface RemoteBranch {
   unmergedCount: number;
   /** Pull request (GitHub) that merged exactly this commit. */
   mergedBy: number | null;
-  /** Deleting it loses nothing: offered checked. */
-  safe: boolean;
   /**
-   * Why it cannot be deleted now: an open pull request from the branch
-   * (deleting would close it), or the check failed.
+   * Its pull requests were read (GitHub repositories); otherwise open pull
+   * or merge requests elsewhere are unknown.
    */
+  pullRequestsChecked: boolean;
+  /**
+   * Deleting it loses nothing and closes no pull request: offered
+   * checked.
+   */
+  safe: boolean;
+  /** Why it cannot be deleted: an open pull request would be closed. */
   blocked: string | null;
+  /** Why it could not be checked (the remote or GitHub failed). */
+  error: string | null;
 }
 
 /** One directory's choice in a cleanup. */
@@ -153,10 +160,11 @@ export interface RemoteBranchOutcome {
   name: string;
   branch: string;
   /**
-   * `deleted`, `kept` (it would now lose commits not accepted, or close an
-   * open pull request), `failed`.
+   * `deleted`, `gone` (it was not on the remote anymore), `kept` (it would
+   * now lose commits not accepted, or close an open pull request),
+   * `failed` (it could not be checked or deleted).
    */
-  result: 'deleted' | 'kept' | 'failed';
+  result: 'deleted' | 'gone' | 'kept' | 'failed';
   message: string;
 }
 

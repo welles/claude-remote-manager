@@ -335,11 +335,10 @@ export class GitService {
     if (!isValidBranchName(branch)) {
       throw new Error(`"${branch}" is not a valid branch name`);
     }
-    await this.inClone(path, [
-      'update-ref',
-      '-d',
-      `refs/remotes/origin/${branch}`,
-    ]).catch(() => undefined);
+    const ref = `refs/remotes/origin/${branch}`;
+    if (await this.verify(path, ref)) {
+      await this.inClone(path, ['update-ref', '-d', ref]);
+    }
   }
 
   /** Whether the mirror has no branches (empty remote or new project). */
