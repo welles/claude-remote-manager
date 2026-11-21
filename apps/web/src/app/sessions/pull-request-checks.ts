@@ -73,134 +73,69 @@ let nextId = 0;
 @Component({
   selector: 'app-pull-request-checks',
   imports: [AppIcon],
+  host: {
+    class:
+      'block type-body-small text-on-surface-variant [--app-icon-size:16px] [--app-icon-stroke:2.2]',
+  },
   template: `
     @let all = checks();
     @if (all.checks.length === 0) {
-      <span class="summary" data-testid="pr-checks-summary">{{
-        summary()
-      }}</span>
+      <span
+        class="inline-flex min-h-7 max-w-full items-center gap-1.5 pointer-coarse:min-h-9"
+        data-testid="pr-checks-summary"
+        >{{ summary() }}</span
+      >
     } @else {
       <button
         type="button"
-        class="summary state-{{ overall() }}"
+        class="group/summary inline-flex min-h-7 max-w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 text-left text-inherit [font:inherit] pointer-coarse:min-h-9"
         [attr.aria-expanded]="open()"
         [attr.aria-controls]="listId"
         (click)="open.set(!open())"
         data-testid="pr-checks-summary"
       >
         @if (overall(); as state) {
-          <app-icon class="state-icon" [name]="icons[state]" />
+          <app-icon [class]="stateClass[state]" [name]="icons[state]" />
         }
-        <span class="text">{{ summary() }}</span>
-        <app-icon
-          class="chevron"
-          [name]="open() ? 'chevron-down' : 'chevron-right'"
-        />
+        <span
+          class="group-hover/summary:underline"
+          [class.text-error]="overall() === 'failure'"
+          >{{ summary() }}</span
+        >
+        <app-icon [name]="open() ? 'chevron-down' : 'chevron-right'" />
       </button>
       @if (open()) {
-        <ul class="list" [id]="listId" data-testid="pr-checks-list">
+        <ul
+          class="mt-0.5 mb-0 flex list-none flex-col gap-0.5 py-0 pr-0 pl-1"
+          [id]="listId"
+          data-testid="pr-checks-list"
+        >
           @for (check of all.checks; track $index) {
-            <li class="state-{{ check.state }}" data-testid="pr-check">
-              <app-icon class="state-icon" [name]="icons[check.state]" />
+            <li
+              class="flex min-w-0 items-center gap-1.5 pointer-coarse:min-h-9"
+              data-testid="pr-check"
+            >
+              <app-icon
+                [class]="stateClass[check.state]"
+                [name]="icons[check.state]"
+              />
               @if (check.url) {
                 <a
+                  class="min-w-0 flex-auto truncate text-on-surface"
                   [href]="check.url"
                   target="_blank"
                   rel="noopener noreferrer"
                   >{{ check.name }}</a
                 >
               } @else {
-                <span class="name">{{ check.name }}</span>
+                <span class="min-w-0 flex-auto truncate text-on-surface">{{
+                  check.name
+                }}</span>
               }
-              <span class="label">{{ labels[check.state] }}</span>
+              <span class="flex-none">{{ labels[check.state] }}</span>
             </li>
           }
         </ul>
-      }
-    }
-  `,
-  styles: `
-    :host {
-      display: block;
-      --app-icon-size: 16px;
-      --app-icon-stroke: 2.2;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .summary {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      max-width: 100%;
-      min-height: 28px;
-      padding: 0;
-      border: 0;
-      background: none;
-      color: inherit;
-      font: inherit;
-      text-align: left;
-      cursor: pointer;
-    }
-    span.summary {
-      cursor: default;
-    }
-    button.summary:hover .text {
-      text-decoration: underline;
-    }
-    .list {
-      list-style: none;
-      margin: 2px 0 0;
-      padding: 0 0 0 4px;
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .list li {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      min-width: 0;
-    }
-    /* Fingers need bigger targets than the small text. */
-    @media (pointer: coarse) {
-      .summary,
-      .list li {
-        min-height: 36px;
-      }
-    }
-    .list a,
-    .list .name {
-      flex: 1 1 auto;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      color: var(--mat-sys-on-surface);
-    }
-    .label {
-      flex: none;
-    }
-    .state-success .state-icon,
-    .state-neutral .state-icon {
-      color: var(--app-success);
-    }
-    .state-failure .state-icon {
-      color: var(--mat-sys-error);
-    }
-    .state-pending .state-icon {
-      color: var(--app-status-attention);
-    }
-    .summary.state-failure .text {
-      color: var(--mat-sys-error);
-    }
-    @media (prefers-reduced-motion: no-preference) {
-      .state-pending .state-icon {
-        animation: pulse 1.6s ease-in-out infinite;
-      }
-    }
-    @keyframes pulse {
-      50% {
-        opacity: 0.35;
       }
     }
   `,
@@ -210,6 +145,16 @@ export class PullRequestChecks {
 
   protected readonly icons = CHECK_STATE_ICONS;
   protected readonly labels = CHECK_STATE_LABELS;
+  /** Colour of a state's icon; running checks pulse. */
+  protected readonly stateClass: Record<PullRequestCheckState, string> = {
+    success: 'text-success',
+    neutral: 'text-success',
+    failure: 'text-error',
+    pending:
+      'text-tertiary motion-safe:animate-[app-pulse_1.6s_ease-in-out_infinite]',
+    skipped: '',
+    cancelled: '',
+  };
   protected readonly open = signal(false);
   protected readonly listId = `pr-checks-${nextId++}`;
   protected readonly overall = computed(() => overallCheckState(this.checks()));

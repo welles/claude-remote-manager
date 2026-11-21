@@ -8,42 +8,25 @@ import { ReferencesApi } from './references-api';
  */
 @Component({
   selector: 'app-message-context',
+  host: {
+    class: 'block max-w-[85%] self-end type-body-small text-on-surface-variant',
+  },
   template: `
     <details (toggle)="toggled($event)" data-testid="message-context">
-      <summary>GitHub context for Claude ({{ size() }})</summary>
+      <summary class="cursor-pointer text-end">
+        GitHub context for Claude ({{ size() }})
+      </summary>
       @if (error(); as message) {
-        <p class="error">{{ message }}</p>
+        <p class="text-error">{{ message }}</p>
       } @else if (text() === null) {
         <p>Loading…</p>
       } @else {
-        <pre>{{ text() }}</pre>
+        <pre
+          class="max-h-[50vh] overflow-auto rounded-sm bg-surface-container p-2 whitespace-pre-wrap wrap-anywhere"
+          >{{ text() }}</pre
+        >
       }
     </details>
-  `,
-  styles: `
-    :host {
-      display: block;
-      align-self: flex-end;
-      max-width: 85%;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    summary {
-      cursor: pointer;
-      text-align: end;
-    }
-    pre {
-      max-height: 50vh;
-      overflow: auto;
-      padding: 8px;
-      border-radius: var(--mat-sys-corner-small);
-      background: var(--mat-sys-surface-container);
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-    }
-    .error {
-      color: var(--mat-sys-error);
-    }
   `,
 })
 export class MessageContext {

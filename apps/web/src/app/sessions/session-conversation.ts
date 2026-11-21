@@ -49,7 +49,10 @@ export type QueuedItem = Extract<ConversationItem, { kind: 'queued' }>;
  */
 @Component({
   selector: 'app-session-conversation',
-  host: { 'data-testid': 'conversation' },
+  host: {
+    class: 'flex flex-1 flex-col gap-2.5 py-3',
+    'data-testid': 'conversation',
+  },
   imports: [
     AppBanner,
     AppIcon,
@@ -67,7 +70,6 @@ export type QueuedItem = Extract<ConversationItem, { kind: 'queued' }>;
     ShownFileCard,
   ],
   templateUrl: './session-conversation.html',
-  styleUrls: ['./session-conversation.scss', './tool-rows.scss'],
 })
 export class SessionConversation {
   readonly items = input.required<ShownItem[]>();

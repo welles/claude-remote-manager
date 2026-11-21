@@ -20,81 +20,40 @@ const KIND_LABELS: Record<ShownFileDto['kind'], string> = {
 @Component({
   selector: 'app-shown-file-card',
   imports: [MatButtonModule],
+  host: { class: 'block' },
   template: `
     @let f = file();
     @if (f.kind === 'image') {
       <button
         type="button"
-        class="thumbnail"
+        class="block cursor-zoom-in overflow-hidden rounded-sm border border-outline-variant bg-surface-container p-0"
         (click)="open.emit(f)"
         [attr.aria-label]="'Open ' + f.name"
         data-testid="shown-image"
       >
-        <img [src]="url()" [alt]="f.caption ?? f.name" loading="lazy" />
+        <img
+          class="block max-h-60 max-w-[min(320px,100%)] object-contain"
+          [src]="url()"
+          [alt]="f.caption ?? f.name"
+          loading="lazy"
+        />
       </button>
       @if (f.caption) {
-        <p class="caption">{{ f.caption }}</p>
+        <p class="hint-text mt-1">{{ f.caption }}</p>
       }
     } @else {
-      <div class="card" data-testid="shown-file">
-        <div class="text">
-          <span class="name">{{ f.name }}</span>
-          <span class="meta">{{ kindLabel() }} · {{ size() }}</span>
+      <div class="item-card flex-nowrap" data-testid="shown-file">
+        <div class="flex min-w-0 flex-col">
+          <span class="font-medium wrap-anywhere">{{ f.name }}</span>
+          <span class="hint-text">{{ kindLabel() }} · {{ size() }}</span>
           @if (f.caption) {
-            <span class="caption">{{ f.caption }}</span>
+            <span class="hint-text">{{ f.caption }}</span>
           }
         </div>
         <button matButton (click)="open.emit(f)" data-testid="open-file">
           Open
         </button>
       </div>
-    }
-  `,
-  styles: `
-    :host {
-      display: block;
-    }
-    .thumbnail {
-      display: block;
-      padding: 0;
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-small);
-      overflow: hidden;
-      cursor: zoom-in;
-      background: var(--mat-sys-surface-container);
-    }
-    img {
-      display: block;
-      max-width: min(320px, 100%);
-      max-height: 240px;
-      object-fit: contain;
-    }
-    .card {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 8px 12px;
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-small);
-      background: var(--mat-sys-surface-container-low);
-    }
-    .text {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-    }
-    .name {
-      font-weight: 500;
-      overflow-wrap: anywhere;
-    }
-    .meta,
-    .caption {
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    p.caption {
-      margin: 4px 0 0;
     }
   `,
 })
