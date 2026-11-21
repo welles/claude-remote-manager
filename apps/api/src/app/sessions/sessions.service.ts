@@ -1151,7 +1151,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         this.closeStaleQueued(live, messageId ?? undefined)
       ) {
         throw new ConflictException(
-          'The message was no longer queued: send it again if it did not reach Claude',
+          'Not queued anymore: send the message again if it did not reach Claude',
         );
       }
       throw new ConflictException(
@@ -1795,7 +1795,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         uuid: entries.at(-1)?.uuid ?? null,
         userId: lastUser?.uuid ?? null,
       };
-      this.closeStaleQueued(live);
+      if (!failed) {
+        // Without the transcript it is unknown which of them reached Claude.
+        this.closeStaleQueued(live);
+      }
       live.context = live.log.findLast('context.usage')?.context ?? null;
       return !failed;
     }
@@ -2210,11 +2213,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       (message.type === 'assistant' || message.type === 'user') &&
       message.uuid &&
-      // A subagent's messages are not in the session's transcript: an
-      // anchor there would place the events at the end of the turn, after
-      // later ones (see buildHistory).
+      // Messages of subagents and other agents are not in the session's
+      // transcript: an anchor there would place the events at the end of
+      // the turn, after later ones (see buildHistory).
       message.parent_tool_use_id === null &&
-      !(message.type === 'assistant' && message.agent_id)
+      !('agent_id' in message && message.agent_id)
     ) {
       // Stored events that follow belong after this transcript entry.
       live.anchor = { ...live.anchor, uuid: message.uuid };
