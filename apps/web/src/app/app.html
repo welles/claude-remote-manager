@@ -25,7 +25,7 @@
   </a>
   @for (item of destinations; track item.link) {
   <a
-    class="flex flex-col items-center justify-center gap-0.5 type-label-medium no-underline hover:no-underline max-md:flex-1 md:h-14"
+    class="flex flex-col items-center justify-center gap-0.5 type-label-medium no-underline [&:hover,&:focus-visible]:no-underline max-md:flex-1 md:h-14"
     [class]="
       active(item)
         ? 'text-on-surface'
