@@ -1,6 +1,8 @@
 @if (pane()) {
-<header class="pane-head">
-  <h2 class="pane-title">Sessions</h2>
+<header
+  class="sticky top-0 z-1 -mx-3 flex min-h-(--app-bar-height) items-center border-b border-outline-variant bg-surface pr-1 pl-4"
+>
+  <h2 class="m-0 flex-1 type-title-medium">Sessions</h2>
   <a
     class="icon-btn"
     routerLink="/new"
@@ -13,9 +15,10 @@
 } @else {
 <app-page-bar heading="Sessions">
   <app-limits-indicator />
+  <!-- On phones a floating button above the bottom navigation. -->
   <a
     matButton="filled"
-    class="new-session"
+    class="max-sm:fixed! max-sm:right-4 max-sm:bottom-[calc(var(--app-nav-height)+env(safe-area-inset-bottom)+16px)] max-sm:z-4 max-sm:shadow-3! max-sm:[--mat-button-filled-container-height:48px] max-sm:[--mat-button-filled-container-shape:var(--mat-sys-corner-large)] max-sm:[--mat-button-filled-horizontal-padding:16px]"
     routerLink="/new"
     data-testid="new-session"
     ><app-icon matButtonIcon name="plus" />New session</a
@@ -23,9 +26,13 @@
 </app-page-bar>
 }
 
-<app-session-search (active)="searching.set($event)" />
+<app-session-search class="mt-3" (active)="searching.set($event)" />
 @if (!searching()) {
-<div class="filters" role="group" aria-label="Show">
+<div
+  class="-mx-(--app-gutter) flex gap-1.5 overflow-x-auto px-(--app-gutter) [scrollbar-width:none]"
+  role="group"
+  aria-label="Show"
+>
   <button
     type="button"
     class="chip"
@@ -43,7 +50,7 @@
     data-testid="waiting-filter"
   >
     Needs you @if (!archived() && needsYouCount() > 0) {<span
-      class="count attention"
+      class="font-bold text-tertiary tabular-nums"
       >{{ needsYouCount() }}</span
     >}
   </button>
@@ -54,7 +61,8 @@
     (click)="setFilter('running')"
     data-testid="running-filter"
   >
-    Running @if (!archived() && runningCount() > 0) {<span class="count"
+    Running @if (!archived() && runningCount() > 0) {<span
+      class="font-bold tabular-nums"
       >{{ runningCount() }}</span
     >}
   </button>
@@ -69,9 +77,13 @@
   </button>
 </div>
 @if (staleSince(); as since) {
-<p class="stale" role="status" data-testid="stale-list">
+<p
+  class="m-0 flex items-center gap-2 rounded-sm bg-surface-container py-0.5 pr-1 pl-3 type-body-small text-on-surface-variant [--app-icon-size:16px]"
+  role="status"
+  data-testid="stale-list"
+>
   <app-icon name="cloud-off" />
-  <span class="stale-text"
+  <span class="flex-1"
     >Offline: the sessions as of {{ since | appDate }}. They may be out of
     date.</span
   >
@@ -82,35 +94,69 @@
 } @else if (loadError(); as error) {
 <p class="app-error">{{ error }}</p>
 } @else if (sessions().length === 0) {
-<p class="empty">
+<p class="my-4 text-on-surface-variant">
   @if (archived()) { No archived sessions. } @else { No sessions yet.
   <a routerLink="/new">Start one.</a> }
 </p>
 } @else if (shown().length === 0) {
-<p class="empty" data-testid="no-waiting">
+<p class="my-4 text-on-surface-variant" data-testid="no-waiting">
   {{ filter() === 'running' ? 'No session is running.' : 'No session needs you.'
   }}
 </p>
 } @else { @for (group of groups(); track group.key) { @if (group.label) {
-<h2 class="app-section-label group-label">{{ group.label }}</h2>
+<h2 class="app-section-label mt-3 mb-0" data-testid="group-label">
+  {{ group.label }}
+</h2>
 }
 <nav
-  class="list"
-  [class.stale-list]="staleSince() !== null"
+  class="card-list"
+  [class]="pane() ? '' : 'max-sm:mx-[calc(8px-var(--app-gutter))]'"
+  [class.opacity-70]="staleSince() !== null"
   [attr.aria-label]="group.label || 'Sessions'"
 >
   @for (session of group.sessions; track session.id) { @let kind =
-  statusKind(session);
-  <a class="row" [routerLink]="['/sessions', session.id]" data-testid="session">
-    <app-status-dot [kind]="kind" />
-    <span class="title">{{ session.title || 'Untitled session' }}</span>
+  statusKind(session); @let active = session.id === activeId();
+  <!-- State dot, title, time; below what it needs and where it works.
+       Wide screens (not beside a session) add model and usage, and the
+       time spans both lines. -->
+  <a
+    class="grid grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5 text-inherit no-underline hover:bg-surface-container hover:no-underline focus-visible:-outline-offset-2"
+    [class]="
+      (pane()
+        ? 'px-2.5 py-2'
+        : 'px-3 py-2.5 md:grid-cols-[12px_minmax(0,1fr)_auto_auto] md:gap-x-4') +
+      (active
+        ? ' bg-secondary-container shadow-[inset_3px_0_0_var(--mat-sys-primary)]'
+        : '')
+    "
+    [attr.aria-current]="active ? 'page' : null"
+    [routerLink]="['/sessions', session.id]"
+    data-testid="session"
+  >
+    <app-status-dot
+      class="col-start-1 row-start-1 justify-self-center"
+      [kind]="kind"
+    />
+    <span
+      class="col-start-2 row-start-1 truncate type-title-small"
+      data-testid="title"
+      >{{ session.title || 'Untitled session' }}</span
+    >
     <time
-      class="time"
+      class="row-start-1 type-body-small whitespace-nowrap text-on-surface-variant tabular-nums"
+      [class]="
+        pane()
+          ? 'col-start-3'
+          : 'col-start-3 md:col-start-4 md:row-end-3 md:min-w-[5.5em] md:text-right'
+      "
       [attr.datetime]="session.updatedAt"
       [title]="session.updatedAt | appDate"
       >{{ session.updatedAt | appDate: 'relative' : now() }}</time
     >
-    <span class="meta">
+    <span
+      class="col-start-2 row-start-2 flex min-w-0 items-center gap-2 overflow-hidden type-body-small whitespace-nowrap text-on-surface-variant"
+      [class]="pane() ? 'col-end-4' : 'col-end-4 md:col-end-3'"
+    >
       @if (tagged(kind)) {
       <span [class]="kindClass[kind]" data-testid="session-status"
         >{{ needLabel(session) }}</span
@@ -120,20 +166,26 @@
         >{{ needLabel(session) }}</span
       >
       } @if (workspaceLabel(session); as workspace) {
-      <span class="repo">{{ workspace }}</span>
+      <span class="min-w-0 truncate font-mono">{{ workspace }}</span>
       } @if (!resumable(session)) {
       <span class="badge" data-testid="not-resumable"
         >{{ session.archivedAt ? 'Archived' : 'Clones removed' }}</span
       >
       }
     </span>
-    <span class="extra">
-      <span class="model">{{ modelLabel(models(), session.model) }}</span>
-      <span class="usage"
+    @if (!pane()) {
+    <span
+      class="col-start-3 row-start-1 row-end-3 hidden justify-end gap-4 type-body-small whitespace-nowrap text-on-surface-variant tabular-nums md:flex"
+    >
+      <span class="md:min-w-[7em] md:text-right"
+        >{{ modelLabel(models(), session.model) }}</span
+      >
+      <span
         >{{ formatTokens(totalTokens(session.usage)) }} tokens · {{
         formatCost(session.usage.costUsd) }}</span
       >
     </span>
+    }
   </a>
   }
 </nav>

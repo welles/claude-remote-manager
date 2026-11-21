@@ -197,12 +197,14 @@ describe('SessionList', () => {
     await fixture.whenStable();
     const element = fixture.nativeElement as HTMLElement;
     expect(
-      [...element.querySelectorAll('.group-label')].map((label) =>
-        label.textContent?.trim(),
+      [...element.querySelectorAll('[data-testid="group-label"]')].map(
+        (label) => label.textContent?.trim(),
       ),
     ).toEqual(['Needs you', 'Ready', 'Running', 'Recent']);
     const titles = [
-      ...element.querySelectorAll('[data-testid="session"] .title'),
+      ...element.querySelectorAll(
+        '[data-testid="session"] [data-testid="title"]',
+      ),
     ].map((title) => title.textContent?.trim());
     expect(titles).toEqual(['Ask', 'Idle', 'Busy', 'Done']);
     // What the session needs, not only that it needs the user.
@@ -234,14 +236,18 @@ describe('SessionList', () => {
     const state = (title: string) => {
       const row = [...element.querySelectorAll('[data-testid="session"]')].find(
         (candidate) =>
-          candidate.querySelector('.title')?.textContent?.trim() === title,
+          candidate
+            .querySelector('[data-testid="title"]')
+            ?.textContent?.trim() === title,
       );
       const status = row?.querySelector('[data-testid="session-status"]');
       const dot = row?.querySelector('app-status-dot');
       return {
         classes: [...(status?.classList ?? [])],
         text: status?.textContent?.trim(),
-        dot: [...(dot?.classList ?? [])],
+        dot: [...(dot?.classList ?? [])].filter((name) =>
+          name.startsWith('dot-'),
+        ),
       };
     };
     expect(state('Idle')).toEqual({

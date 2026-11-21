@@ -11,8 +11,6 @@
 
 /* Tones are also built from state names (`tone-{{ state }}`). */
 @source inline('tone-{ready,attention,error,error-line,open,merged,closed,draft}');
-/* Ordinary words in templates that would otherwise become utilities. */
-@source not inline('container filter grid grow table transition ring outline resize transform');
 
 @theme inline {
   --*: initial;
@@ -30,6 +28,8 @@
   --color-on-primary: var(--mat-sys-on-primary);
   --color-primary-container: var(--mat-sys-primary-container);
   --color-on-primary-container: var(--mat-sys-on-primary-container);
+  --color-secondary-container: var(--mat-sys-secondary-container);
+  --color-on-secondary-container: var(--mat-sys-on-secondary-container);
   --color-tertiary: var(--mat-sys-tertiary);
   --color-tertiary-container: var(--mat-sys-tertiary-container);
   --color-on-tertiary-container: var(--mat-sys-on-tertiary-container);
@@ -336,5 +336,23 @@
   @media (pointer: coarse) {
     width: 44px;
     height: 44px;
+  }
+}
+
+/*
+ * A list in a card: hairline border, medium radius, the low container, a
+ * hairline between the rows (session list, search hits, …). The rows set
+ * their own padding and hover.
+ */
+@utility card-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--mat-sys-corner-medium);
+  background: var(--mat-sys-surface-container-low);
+
+  & > * + * {
+    border-top: 1px solid var(--mat-sys-outline-variant);
   }
 }

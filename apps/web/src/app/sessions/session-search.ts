@@ -69,10 +69,14 @@ export function snippetParts(
     MatProgressBarModule,
     RouterLink,
   ],
+  host: { class: 'block' },
   template: `
-    <label class="field">
+    <label
+      class="flex h-10 cursor-text items-center gap-2 rounded-sm border border-outline-variant bg-surface-container px-3 text-on-surface-variant focus-within:border-primary"
+    >
       <app-icon name="search" />
       <input
+        class="h-full min-w-0 flex-1 border-0 bg-transparent type-body-large text-on-surface outline-none placeholder:text-on-surface-variant"
         type="search"
         [maxlength]="maxLength"
         [ngModel]="query()"
@@ -85,29 +89,31 @@ export function snippetParts(
     </label>
     @if (query().trim()) {
       @if (busy()) {
-        <mat-progress-bar mode="indeterminate" />
+        <mat-progress-bar class="mt-2" mode="indeterminate" />
       }
       @if (error(); as text) {
-        <p class="error">{{ text }}</p>
+        <p class="text-error">{{ text }}</p>
       } @else if (result(); as result) {
         @if (result.hits.length === 0 && !busy()) {
-          <p class="empty" data-testid="search-empty">No session matches.</p>
+          <p class="text-on-surface-variant" data-testid="search-empty">
+            No session matches.
+          </p>
         }
-        <nav class="hits">
+        <nav class="card-list mt-3 empty:hidden">
           @for (hit of result.hits; track hit.sessionId) {
             <a
-              class="hit"
+              class="flex flex-col gap-1 px-3 py-2.5 text-inherit no-underline [overflow-wrap:anywhere] hover:bg-surface-container hover:no-underline focus-visible:bg-surface-container"
               [routerLink]="['/sessions', hit.sessionId]"
               [queryParams]="linkParams(hit.matches[0])"
               data-testid="search-hit"
             >
-              <span class="title"
+              <span class="font-medium"
                 >{{ hit.title || 'Untitled session' }}
                 @if (hit.archivedAt) {
                   <span class="badge">Archived</span>
                 }
               </span>
-              <span class="meta"
+              <span class="text-on-surface-variant"
                 >{{ hit.updatedAt | appDate: 'relative' }}
                 @if (hit.repositories.length > 0) {
                   · {{ hit.repositories.join(' + ') }}
@@ -119,100 +125,17 @@ export function snippetParts(
               @for (match of hit.matches; track $index) {
                 <!-- One line: whitespace here would show up around the highlights. -->
                 <!-- prettier-ignore -->
-                <span class="match" data-testid="search-match"><span class="badge kind">{{ kindLabels[match.kind] }}</span>@for (part of parts(match); track $index) {@if (part.hit) {<mark>{{ part.text }}</mark>} @else {<span>{{ part.text }}</span>}}</span>
+                <span class="type-body-small [&_mark]:bg-primary/30 [&_mark]:text-inherit" data-testid="search-match"><span class="badge mr-1.5">{{ kindLabels[match.kind] }}</span>@for (part of parts(match); track $index) {@if (part.hit) {<mark>{{ part.text }}</mark>} @else {<span>{{ part.text }}</span>}}</span>
               }
             </a>
           }
         </nav>
         @if (result.truncated) {
-          <p class="empty">More sessions match; add words to narrow it down.</p>
+          <p class="text-on-surface-variant">
+            More sessions match; add words to narrow it down.
+          </p>
         }
       }
-    }
-  `,
-  styles: `
-    :host {
-      display: block;
-    }
-    .field {
-      display: flex;
-      align-items: center;
-      gap: var(--app-space-2);
-      height: 40px;
-      padding: 0 var(--app-space-3);
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-small);
-      background: var(--mat-sys-surface-container);
-      color: var(--mat-sys-on-surface-variant);
-      cursor: text;
-    }
-    .field:focus-within {
-      border-color: var(--mat-sys-primary);
-    }
-    input {
-      flex: 1;
-      min-width: 0;
-      height: 100%;
-      border: 0;
-      outline: none;
-      background: none;
-      color: var(--mat-sys-on-surface);
-      font: var(--mat-sys-body-large);
-    }
-    input::placeholder {
-      color: var(--mat-sys-on-surface-variant);
-    }
-    mat-progress-bar {
-      margin-top: var(--app-space-2);
-    }
-    .hits {
-      display: flex;
-      flex-direction: column;
-      margin-top: var(--app-space-3);
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-medium);
-      background: var(--mat-sys-surface-container-low);
-      overflow: hidden;
-    }
-    .hits:empty {
-      display: none;
-    }
-    .hit {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
-      color: inherit;
-      text-decoration: none;
-      overflow-wrap: anywhere;
-    }
-    .hit:last-child {
-      border-bottom: 0;
-    }
-    .hit:hover,
-    .hit:focus-visible {
-      background: var(--mat-sys-surface-container);
-    }
-    .title {
-      font-weight: 500;
-    }
-    .meta,
-    .empty {
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .match {
-      font: var(--mat-sys-body-small);
-    }
-    .kind {
-      margin-right: 6px;
-    }
-    mark {
-      background: color-mix(in srgb, var(--mat-sys-primary) 30%, transparent);
-      color: inherit;
-    }
-    .error {
-      color: var(--mat-sys-error);
     }
   `,
 })
