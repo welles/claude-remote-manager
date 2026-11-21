@@ -2016,6 +2016,7 @@ export class PrAutomationService
         level: 'warning',
         text: `${name} was ${pull.state}, but Claude could not be woken to go on: ${errorText(error)}`,
       });
+      this.sessions.wakeFailed(sessionId);
     }
   }
 
