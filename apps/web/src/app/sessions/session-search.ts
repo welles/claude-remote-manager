@@ -102,7 +102,7 @@ export function snippetParts(
         <nav class="card-list mt-3 empty:hidden">
           @for (hit of result.hits; track hit.sessionId) {
             <a
-              class="flex flex-col gap-1 px-3 py-2.5 text-inherit no-underline [overflow-wrap:anywhere] hover:bg-surface-container hover:no-underline focus-visible:bg-surface-container"
+              class="flex flex-col gap-1 px-3 py-2.5 wrap-anywhere hover:bg-surface-container focus-visible:bg-surface-container"
               [routerLink]="['/sessions', hit.sessionId]"
               [queryParams]="linkParams(hit.matches[0])"
               data-testid="search-hit"
