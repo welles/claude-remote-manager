@@ -107,7 +107,6 @@ export interface SessionPrefill {
     TextFieldModule,
   ],
   templateUrl: './new-session-form.html',
-  styleUrl: './new-session-form.scss',
 })
 export class NewSessionForm implements OnInit {
   private readonly sessionsApi = inject(SessionsApi);

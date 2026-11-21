@@ -1,4 +1,4 @@
-<mat-form-field appearance="outline" class="picker" subscriptSizing="dynamic">
+<mat-form-field appearance="outline" class="w-full" subscriptSizing="dynamic">
   <mat-label>{{ label() }}</mat-label>
   <input
     matInput
@@ -38,6 +38,8 @@
     }
   </mat-autocomplete>
   @if (message(); as text) {
-  <mat-hint class="message" data-testid="github-message">{{ text }}</mat-hint>
+  <mat-hint class="text-error" data-testid="github-message"
+    >{{ text }}</mat-hint
+  >
   }
 </mat-form-field>

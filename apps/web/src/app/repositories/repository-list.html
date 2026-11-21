@@ -10,17 +10,25 @@
   >
 </app-page-bar>
 
-<section class="add-card app-compact" aria-labelledby="add-title">
-  <h2 class="app-section-label" id="add-title">Add a repository</h2>
+<section
+  class="app-compact mt-3 grid grid-cols-[minmax(0,1fr)] gap-x-4 gap-y-2 rounded-md border border-outline-variant bg-surface-container-low px-4 pt-3 pb-4 lg:grid-cols-3"
+  aria-labelledby="add-title"
+>
+  <h2 class="app-section-label m-0 lg:col-span-full" id="add-title">
+    Add a repository
+  </h2>
   <app-github-repository-picker
     label="Add from GitHub"
     (picked)="pickedFromGitHub($event)"
   />
 
-  <form class="add" (ngSubmit)="add()">
+  <form
+    class="flex flex-wrap items-start gap-x-3 gap-y-2 [&_button]:mt-1"
+    (ngSubmit)="add()"
+  >
     <mat-form-field
       appearance="outline"
-      class="clone-url"
+      class="flex-[1_1_260px]"
       subscriptSizing="dynamic"
     >
       <mat-label>Clone URL</mat-label>
@@ -45,10 +53,13 @@
       Add
     </button>
   </form>
-  <form class="add" (ngSubmit)="addProject()">
+  <form
+    class="flex flex-wrap items-start gap-x-3 gap-y-2 [&_button]:mt-1"
+    (ngSubmit)="addProject()"
+  >
     <mat-form-field
       appearance="outline"
-      class="clone-url"
+      class="flex-[1_1_260px]"
       subscriptSizing="dynamic"
     >
       <mat-label>New local project</mat-label>
@@ -75,22 +86,26 @@
   </form>
 </section>
 @if (addError(); as error) {
-<p class="error" data-testid="add-error">{{ error }}</p>
+<p class="text-error wrap-anywhere" data-testid="add-error">{{ error }}</p>
 } @if (loading()) {
 <mat-progress-bar mode="indeterminate" />
 } @else if (loadError(); as error) {
-<p class="error">{{ error }}</p>
+<p class="text-error wrap-anywhere">{{ error }}</p>
 } @else if (repositories().length === 0) {
-<p class="empty">
+<p class="text-on-surface-variant">
   No repositories yet. Add one from GitHub or by its clone URL.
 </p>
 } @else {
-<div class="repositories">
+<div
+  class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,520px),1fr))] items-start gap-3"
+>
   @for (repository of repositories(); track repository.id) {
   <mat-card appearance="outlined" class="repository" data-testid="repository">
     <mat-card-content>
-      <div class="repository-head">
-        <h2 class="name">{{ repository.fullName }}</h2>
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="m-0 type-title-medium wrap-anywhere">
+          {{ repository.fullName }}
+        </h2>
         <button
           type="button"
           class="icon-btn"
@@ -102,9 +117,11 @@
           <app-icon name="refresh" /><span class="visually-hidden">Fetch</span>
         </button>
       </div>
-      <div class="facts">
+      <div
+        class="flex flex-wrap items-center gap-x-3 gap-y-1 text-on-surface-variant"
+      >
         @if (repository.activity) {
-        <span class="activity" data-testid="activity">
+        <span class="inline-flex items-center gap-1.5" data-testid="activity">
           <span class="app-pulse"></span>
           {{ repository.activity === 'cloning' ? 'Cloning…' : 'Fetching…' }}
         </span>
@@ -118,7 +135,7 @@
         <span>Fetched {{ repository.fetchedAt | appDate: 'relative' }}</span>
         }
       </div>
-      <div class="paths">
+      <div class="mt-1 type-body-small text-on-surface-variant wrap-anywhere">
         @if (repository.github; as github) {
         <a
           class="badge"
@@ -144,23 +161,25 @@
         }
       </div>
       @if (repository.lastError) {
-      <p class="error" data-testid="repository-error">
+      <p class="text-error wrap-anywhere" data-testid="repository-error">
         {{ repository.lastError }}
       </p>
       } @if (actionError(); as failure) { @if (failure.id === repository.id) {
-      <p class="error">{{ failure.message }}</p>
+      <p class="text-error wrap-anywhere">{{ failure.message }}</p>
       } } @if (publishing() === repository.id) {
       <form
-        class="publish"
+        class="my-2 flex flex-col gap-2"
         (ngSubmit)="publish(repository)"
         data-testid="publish-form"
       >
-        <p class="muted">
+        <p class="text-on-surface-variant">
           Creates a repository in an organization on GitHub (or uses an
           existing, empty one), pushes the project's branches there and makes it
           a normal GitHub repository. Existing session clones keep working.
         </p>
-        <div class="publish-row">
+        <div
+          class="flex flex-wrap items-center gap-x-3 gap-y-2 [&_mat-form-field]:min-w-0 [&_mat-form-field]:flex-[1_1_220px]"
+        >
           <mat-form-field appearance="outline" subscriptSizing="dynamic">
             <mat-label>How</mat-label>
             <mat-select name="publishMode" [(ngModel)]="publishMode">
@@ -198,7 +217,7 @@
             >Private</mat-checkbox
           >
           } @else {
-          <p class="muted" data-testid="attach-hint">
+          <p class="text-on-surface-variant" data-testid="attach-hint">
             For your personal account, create an empty repository on GitHub
             first (the app cannot create it there) and enter it here.
           </p>
@@ -213,7 +232,7 @@
           </mat-form-field>
           }
         </div>
-        <div class="setup-actions">
+        <div class="mt-2 flex justify-end gap-2">
           <button matButton type="button" (click)="publishing.set(null)">
             Cancel
           </button>
@@ -229,9 +248,9 @@
       </form>
       }
 
-      <section class="setup">
+      <section class="mt-3">
         @if (editing() === repository.id) {
-        <mat-form-field appearance="outline" class="setup-script">
+        <mat-form-field appearance="outline" class="w-full">
           <mat-label>Setup script</mat-label>
           <textarea
             matInput
@@ -240,7 +259,7 @@
             cdkTextareaAutosize
             cdkAutosizeMinRows="3"
             spellcheck="false"
-            class="script"
+            class="type-code!"
             data-testid="setup-input"
           ></textarea>
           <mat-hint
@@ -248,7 +267,7 @@
             at the first failing command.</mat-hint
           >
         </mat-form-field>
-        <div class="setup-actions">
+        <div class="mt-2 flex justify-end gap-2">
           <button matButton type="button" (click)="cancelSetup()">
             Cancel
           </button>
@@ -263,14 +282,17 @@
           </button>
         </div>
         } @else {
-        <div class="setup-summary">
-          <span class="label">Setup script</span>
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span class="app-section-label m-0 mr-2">Setup script</span>
           @if (repository.setupScript) {
-          <pre class="script" data-testid="setup-script">
+          <pre
+            class="order-3 m-0 basis-full rounded-sm bg-surface-container p-2 type-code whitespace-pre-wrap wrap-anywhere"
+            data-testid="setup-script"
+          >
 {{ repository.setupScript }}</pre
           >
           } @else {
-          <span class="muted">none</span>
+          <span class="text-on-surface-variant">none</span>
           }
           <button
             type="button"
@@ -285,19 +307,20 @@
         }
       </section>
 
-      <section class="clones">
-        <span class="label">Session clones</span>
+      <section class="mt-3">
+        <span class="app-section-label m-0 mr-2">Session clones</span>
         @if (repository.clones.length === 0) {
-        <span class="muted">none</span>
+        <span class="text-on-surface-variant">none</span>
         } @else {
-        <ul>
+        <ul class="mt-1 mb-0 list-none p-0">
           @for (clone of repository.clones; track clone.path) {
           <li
-            class="clone"
-            [class.orphaned]="clone.orphaned"
+            class="flex min-w-0 flex-col gap-0.5 border-t border-outline-variant py-1.5"
             data-testid="clone"
           >
-            <span class="clone-name">
+            <span
+              class="flex flex-wrap items-center gap-x-2 gap-y-1 wrap-anywhere"
+            >
               @if (clone.sessionId) {
               <a [routerLink]="['/sessions', clone.sessionId]"
                 >{{ cloneLabel(clone) }}</a
@@ -309,9 +332,15 @@
               }
             </span>
             @if (clone.branch) {
-            <code class="branch">{{ clone.branch }}</code>
+            <code class="type-body-small text-on-surface-variant wrap-anywhere"
+              >{{ clone.branch }}</code
+            >
             }
-            <code class="path" [title]="clone.path">{{ clone.path }}</code>
+            <code
+              class="truncate type-body-small text-on-surface-variant"
+              [title]="clone.path"
+              >{{ clone.path }}</code
+            >
           </li>
           }
         </ul>
@@ -322,14 +351,14 @@
   }
 </div>
 } @if (strayDirectories().length > 0) {
-<section class="stray">
+<section>
   <h2 class="app-section-label">Other clone directories</h2>
-  <p class="muted">
+  <p class="text-on-surface-variant">
     Session clones of repositories that are not registered and scratch
     directories. No session uses them; see what they hold and remove them under
     <a routerLink="/workspace">Workspace cleanup</a>.
   </p>
-  <ul>
+  <ul class="mt-1 mb-0 list-none p-0">
     @for (path of strayDirectories(); track path) {
     <li data-testid="stray"><code>{{ path }}</code></li>
     }

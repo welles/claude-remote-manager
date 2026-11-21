@@ -20,7 +20,7 @@ import { NewSessionForm, type SessionPrefill } from './new-session-form';
  */
 @Component({
   selector: 'app-new-session-page',
-  host: { class: 'app-page' },
+  host: { class: 'app-page [--app-page-max:760px]' },
   imports: [AppBanner, AppPageBar, NewSessionForm],
   template: `
     <app-page-bar
@@ -32,19 +32,10 @@ import { NewSessionForm, type SessionPrefill } from './new-session-form';
       <app-banner data-testid="share-notice">{{ notice }}</app-banner>
     }
     <app-new-session-form
-      class="app-compact"
+      class="app-compact block pt-1"
       [prefill]="prefill()"
       (created)="open($event)"
     />
-  `,
-  styles: `
-    :host {
-      --app-page-max: 760px;
-    }
-    app-new-session-form {
-      display: block;
-      padding-top: var(--app-space-1);
-    }
   `,
 })
 export class NewSessionPage implements OnInit {

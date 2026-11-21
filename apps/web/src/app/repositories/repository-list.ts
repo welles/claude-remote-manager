@@ -45,7 +45,7 @@ export const cloneSlug = (path: string) =>
  */
 @Component({
   selector: 'app-repository-list',
-  host: { class: 'app-page' },
+  host: { class: 'app-page [--app-page-max:1320px]' },
   imports: [
     AppIcon,
     AppPageBar,
@@ -63,7 +63,6 @@ export const cloneSlug = (path: string) =>
     TextFieldModule,
   ],
   templateUrl: './repository-list.html',
-  styleUrl: './repository-list.scss',
 })
 export class RepositoryList implements OnInit {
   private readonly api = inject(RepositoriesApi);
