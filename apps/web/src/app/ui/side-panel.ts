@@ -4,6 +4,7 @@ import {
   ElementRef,
   Injector,
   afterNextRender,
+  computed,
   effect,
   inject,
   input,
@@ -26,16 +27,23 @@ import { AppIcon } from './icon';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [AppIcon],
   host: {
-    '[class.open]': 'open()',
-    '[class.docked]': 'docked()',
+    class: 'flex-col bg-surface-container-low text-on-surface',
+    '[class]': 'hostClass()',
     '[attr.role]': 'docked() ? "complementary" : "dialog"',
     '[attr.aria-modal]': 'open() && !docked() ? "true" : null',
     '[attr.aria-labelledby]': 'titleId',
     '(keydown.escape)': 'close()',
   },
   template: `
-    <header class="head">
-      <h2 class="title" [id]="titleId" tabindex="-1" #title>
+    <header
+      class="flex min-h-(--app-bar-height) flex-none items-center gap-1 border-b border-outline-variant pt-[env(safe-area-inset-top)] pr-2 pl-4"
+    >
+      <h2
+        class="m-0 min-w-0 flex-1 truncate type-title-medium outline-none"
+        [id]="titleId"
+        tabindex="-1"
+        #title
+      >
         {{ heading() }}
       </h2>
       <ng-content select="[panel-actions]" />
@@ -51,40 +59,16 @@ import { AppIcon } from './icon';
         </button>
       }
     </header>
-    <div class="body"><ng-content /></div>
+    <div
+      class="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]"
+    >
+      <ng-content />
+    </div>
     <ng-content select="[panel-edge]" />
   `,
   styles: `
-    :host {
-      position: fixed;
-      z-index: 6;
-      inset: 0;
-      display: none;
-      flex-direction: column;
-      background: var(--mat-sys-surface-container-low);
-      color: var(--mat-sys-on-surface);
-    }
-    :host(.open),
-    :host(.docked) {
-      display: flex;
-    }
-    @media (min-width: 600px) {
-      :host(:not(.docked)) {
-        left: auto;
-        width: var(--app-panel-width, min(480px, 100vw));
-        border-left: 1px solid var(--mat-sys-outline-variant);
-        box-shadow: var(--mat-sys-level3);
-      }
-    }
-    :host(.docked) {
-      position: sticky;
-      top: var(--app-top-inset, 0px);
-      z-index: 1;
-      height: calc(100dvh - var(--app-top-inset, 0px));
-      border-left: 1px solid var(--mat-sys-outline-variant);
-    }
     @media (prefers-reduced-motion: no-preference) {
-      :host(.open:not(.docked)) {
+      :host(.entering) {
         animation: enter var(--app-motion) var(--app-ease);
       }
     }
@@ -94,47 +78,6 @@ import { AppIcon } from './icon';
         opacity: 0;
       }
     }
-    .head {
-      display: flex;
-      align-items: center;
-      gap: var(--app-space-1);
-      flex: none;
-      min-height: var(--app-bar-height);
-      padding: 0 var(--app-space-2) 0 var(--app-space-4);
-      padding-top: env(safe-area-inset-top);
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
-    }
-    .title {
-      flex: 1;
-      min-width: 0;
-      margin: 0;
-      font: var(--mat-sys-title-medium);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      outline: none;
-    }
-    /* Sections of the content: label, then the section's own markup. */
-    :host ::ng-deep .panel-section {
-      display: flex;
-      flex-direction: column;
-      gap: var(--app-space-2);
-      padding: var(--app-space-3) var(--app-space-4);
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
-    }
-    :host ::ng-deep .panel-section > .app-section-label {
-      margin: 0;
-    }
-    :host ::ng-deep .panel-section:empty {
-      display: none;
-    }
-    .body {
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      padding-bottom: env(safe-area-inset-bottom);
-    }
   `,
 })
 export class AppSidePanel {
@@ -142,6 +85,16 @@ export class AppSidePanel {
   /** A permanent column of the page instead of an overlay. */
   readonly docked = input(false);
   readonly open = model(false);
+  /**
+   * Phone: the whole screen; from 600 px an overlay on the right; docked: a
+   * sticky column of the page (above the conversation column's bars).
+   */
+  protected readonly hostClass = computed(() =>
+    this.docked()
+      ? 'flex sticky top-[var(--app-top-inset,0px)] z-4 h-[calc(100dvh-var(--app-top-inset,0px))] border-l border-outline-variant'
+      : (this.open() ? 'entering flex' : 'hidden') +
+        ' fixed inset-0 z-6 sm:left-auto sm:w-(--app-panel-width,min(480px,100vw)) sm:border-l sm:border-outline-variant sm:shadow-3',
+  );
   readonly titleId = `side-panel-${Math.random().toString(36).slice(2, 9)}`;
   private readonly title = viewChild<ElementRef<HTMLElement>>('title');
   private readonly host: ElementRef<HTMLElement> = inject(ElementRef);

@@ -2,7 +2,6 @@
 <button
   matButton
   type="button"
-  class="open"
   (click)="show()"
   [disabled]="!enabled() || adding()"
   [title]="adding() ? 'A repository is being added' : ''"
@@ -11,9 +10,13 @@
   <app-icon matButtonIcon name="plus" />Add repository
 </button>
 } @else {
-<form class="form" (ngSubmit)="add()" data-testid="add-repository-form">
-  <div class="head">
-    <span class="title">Add a repository</span>
+<form
+  class="flex flex-col gap-2 rounded-sm border border-outline-variant px-3 pt-2 pb-3"
+  (ngSubmit)="add()"
+  data-testid="add-repository-form"
+>
+  <div class="-mr-2 flex items-center justify-between">
+    <span class="type-title-small">Add a repository</span>
     <button
       type="button"
       class="icon-btn"
@@ -74,8 +77,12 @@
     (picked)="pickedFromGitHub($event)"
   />
   } @case ('url') {
-  <div class="row">
-    <mat-form-field appearance="outline" class="grow" subscriptSizing="dynamic">
+  <div class="flex flex-wrap items-center gap-2">
+    <mat-form-field
+      appearance="outline"
+      class="min-w-0 flex-[2_1_200px]"
+      subscriptSizing="dynamic"
+    >
       <mat-label>Clone URL</mat-label>
       <input
         matInput
@@ -98,8 +105,12 @@
     </button>
   </div>
   } @case ('project') {
-  <div class="row">
-    <mat-form-field appearance="outline" class="grow" subscriptSizing="dynamic">
+  <div class="flex flex-wrap items-center gap-2">
+    <mat-form-field
+      appearance="outline"
+      class="min-w-0 flex-[2_1_200px]"
+      subscriptSizing="dynamic"
+    >
       <mat-label>Project name</mat-label>
       <input
         matInput
@@ -122,10 +133,10 @@
     </button>
   </div>
   } @default {
-  <div class="row">
+  <div class="flex flex-wrap items-center gap-2">
     <mat-form-field
       appearance="outline"
-      class="grow repository"
+      class="min-w-0 flex-[2_1_200px]"
       subscriptSizing="dynamic"
     >
       <mat-label>Repository</mat-label>
@@ -149,7 +160,7 @@
     </mat-form-field>
     <mat-form-field
       appearance="outline"
-      class="branch"
+      class="min-w-0 flex-[1_1_140px]"
       subscriptSizing="dynamic"
     >
       <mat-label>Base branch</mat-label>
@@ -168,14 +179,16 @@
   </div>
   } }
 
-  <p class="hint">
+  <p class="hint-text">
     It gets its own clone on this session's branch, and its setup script runs.
     Claude can work in it once it is ready, also during a turn.
   </p>
   @if (error(); as message) {
-  <p class="app-error" data-testid="add-repository-error">{{ message }}</p>
+  <p class="app-error m-0 wrap-anywhere" data-testid="add-repository-error">
+    {{ message }}
+  </p>
   }
-  <div class="actions">
+  <div class="flex flex-wrap gap-2">
     <button
       matButton="filled"
       type="submit"
