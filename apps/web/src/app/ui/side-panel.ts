@@ -61,6 +61,7 @@ import { AppIcon } from './icon';
     </header>
     <div
       class="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]"
+      #body
     >
       <ng-content />
     </div>
@@ -97,6 +98,8 @@ export class AppSidePanel {
   );
   readonly titleId = `side-panel-${Math.random().toString(36).slice(2, 9)}`;
   private readonly title = viewChild<ElementRef<HTMLElement>>('title');
+  /** The scrolling content (see {@link reveal}). */
+  private readonly body = viewChild<ElementRef<HTMLElement>>('body');
   private readonly host: ElementRef<HTMLElement> = inject(ElementRef);
   private readonly injector = inject(Injector);
 
@@ -122,7 +125,7 @@ export class AppSidePanel {
       () => {
         // Only the panel scrolls (scrollIntoView would move the page too).
         const host = this.host.nativeElement;
-        const body = host.querySelector<HTMLElement>('.body');
+        const body = this.body()?.nativeElement;
         const target = host.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
         if (body && target) {
           body.scrollTop +=
