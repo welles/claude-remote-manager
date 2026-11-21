@@ -173,6 +173,7 @@ describe('PermissionCard', () => {
             deletes: false,
             everything: false,
             sessionBranchOnly: false,
+            leaseOnly: false,
             warnings: [
               'Pushes to main, not only the session branch',
               'Force push: may overwrite commits on the remote',

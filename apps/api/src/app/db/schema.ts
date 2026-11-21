@@ -349,6 +349,8 @@ export const pullRequests = sqliteTable(
     createdAt: createdAt(),
     /** Head commit on GitHub as last read (CI failures count only for it). */
     headSha: text('head_sha'),
+    /** GitHub reported merge conflicts with the base branch (null: unknown). */
+    mergeConflict: integer('merge_conflict', { mode: 'boolean' }),
     // --- PR automation (both off by default) ------------------------------
     /** Autofix: failed checks and review feedback continue the session. */
     autofix: integer('autofix', { mode: 'boolean' }).notNull().default(false),
@@ -364,6 +366,8 @@ export const pullRequests = sqliteTable(
     autofixGaveUpAt: timestamp('autofix_gave_up_at'),
     /** Head commit whose failed checks a run was started for already. */
     autofixCiHandledSha: text('autofix_ci_handled_sha'),
+    /** Head commit whose merge conflicts a run was started for already. */
+    autofixConflictSha: text('autofix_conflict_sha'),
     /** Head commit the session was told is ready to merge (green, approved). */
     autofixReadySha: text('autofix_ready_sha'),
     /** Reviews and review comments after this time are new. */

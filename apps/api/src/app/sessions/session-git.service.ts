@@ -191,13 +191,15 @@ export class SessionGitService {
   }
 
   /**
-   * Pushes the session branch of one clone (no force) and records the
+   * Pushes the session branch of one clone (no force; with `lease`, a force
+   * push over exactly that commit of the remote branch) and records the
    * pushed commit. Returns it.
    */
   async push(
     sessionId: string,
     repositoryId: string,
     branch?: string | null,
+    options: { lease?: string } = {},
   ): Promise<string> {
     const clone = this.clone(sessionId, repositoryId, branch);
     const { directory, repository } = clone;
@@ -222,11 +224,12 @@ export class SessionGitService {
           clonePath: directory.path,
           branch: directory.branch,
           baseCommit: directory.baseCommit,
+          lease: options.lease,
           auth: (workflows) =>
             this.credentials.writeAuth(repository, { workflows }),
         });
       } catch (error) {
-        throw this.pushError(error, directory.branch);
+        throw this.pushError(error, directory.branch, !!options.lease);
       }
     });
     this.recordPush(sessionId, directory.position, commit);
@@ -417,6 +420,11 @@ export class SessionGitService {
         draft: info.draft,
         baseBranch: info.baseBranch,
         headSha: info.headSha,
+        // Kept while GitHub computes it again for the same head commit (the
+        // base branch moved); unknown for a new head commit.
+        ...(info.mergeConflict !== null || info.headSha !== pull.headSha
+          ? { mergeConflict: info.mergeConflict }
+          : {}),
         closedAt: info.closedAt,
         mergedAt: info.mergedAt,
         syncedAt: new Date(),
@@ -729,9 +737,14 @@ export class SessionGitService {
   }
 
   /** A failed push as a clear HTTP error. */
-  private pushError(error: unknown, branch: string): Error {
+  private pushError(error: unknown, branch: string, lease = false): Error {
     if (!(error instanceof GitError)) {
       return error instanceof Error ? error : new Error(String(error));
+    }
+    if (lease && /stale info|\[rejected\]/i.test(error.stderr)) {
+      return new ConflictException(
+        `The remote branch ${branch} changed since the session clone last fetched it; fetch it and look at the new commits first`,
+      );
     }
     if (/non-fast-forward|fetch first|\[rejected\]/i.test(error.stderr)) {
       return new ConflictException(

@@ -174,6 +174,13 @@ interface Triggers {
   /** GitHub reports at least one check for the head commit. */
   checked: boolean;
   headSha: string | null;
+  /**
+   * GitHub reports merge conflicts with the base branch for the head
+   * commit, and no run was started for them yet.
+   */
+  conflict: boolean;
+  /** GitHub reports merge conflicts (run started for them or not). */
+  conflicting: boolean;
   /** At the attempt limit: feedback left out, the review time kept. */
   limited?: boolean;
 }
@@ -872,7 +879,13 @@ export class PrAutomationService
     const triggers = await this.triggers(pull, repository);
     let merge: AutomergeOutcome | null = null;
     if (pull.automerge) {
-      if (
+      if (triggers.conflicting) {
+        // GitHub would refuse the merge: the branch is rebased first.
+        this.setWaiting(
+          pull.id,
+          triggers.passed ? `merge conflicts with ${pull.baseBranch}` : null,
+        );
+      } else if (
         triggers.passed &&
         triggers.headSha &&
         triggers.failed.length === 0 &&
@@ -896,6 +909,7 @@ export class PrAutomationService
     const idleRound =
       triggers.failed.length === 0 &&
       triggers.feedback.length === 0 &&
+      !triggers.conflict &&
       !triggers.ready;
     if (
       merge?.kind === 'threads' &&
@@ -915,7 +929,11 @@ export class PrAutomationService
     }
     const threads = merge?.kind === 'threads' ? merge : null;
     if (current.autofixAttempts >= current.autofixMaxAttempts) {
-      if (triggers.failed.length > 0 || triggers.feedback.length > 0) {
+      if (
+        triggers.failed.length > 0 ||
+        triggers.feedback.length > 0 ||
+        triggers.conflict
+      ) {
         this.giveUp(current, triggers);
       } else if (threads) {
         this.giveUp(current, triggers, 'unresolved review threads');
@@ -928,7 +946,13 @@ export class PrAutomationService
       await this.startRun(
         current,
         repository,
-        { ...triggers, failed: [], feedback: [], limited: true },
+        {
+          ...triggers,
+          failed: [],
+          feedback: [],
+          conflict: false,
+          limited: true,
+        },
         threads,
       );
       return;
@@ -1304,7 +1328,10 @@ export class PrAutomationService
       green &&
       (verdict.approved ||
         (pull.automerge && checked && !verdict.changesRequested));
-    const ready = passed && headSha !== pull.autofixReadySha;
+    // A commit with merge conflicts is not ready: it has to be rebased.
+    const conflicting = pull.mergeConflict === true && headSha !== null;
+    const conflict = conflicting && headSha !== pull.autofixConflictSha;
+    const ready = passed && !conflicting && headSha !== pull.autofixReadySha;
     const key = `${pull.id}:${headSha}`;
     this.forgetWaiting(pull.id, key);
     if (pending.length === 0) {
@@ -1312,8 +1339,9 @@ export class PrAutomationService
     } else if (failures.length > 0 || feedback.length > 0) {
       const since = this.waitingSince.get(key) ?? Date.now();
       this.waitingSince.set(key, since);
-      if (Date.now() - since < this.timing.ciSettleMs) {
-        // One run for all checks of the commit: wait for the others.
+      if (Date.now() - since < this.timing.ciSettleMs && !conflict) {
+        // One run for all checks of the commit: wait for the others (merge
+        // conflicts do not wait: the rebase makes a new head commit).
         this.schedule(pull.id, this.timing.ciRecheckMs);
         return {
           failed: [],
@@ -1324,6 +1352,8 @@ export class PrAutomationService
           approved: verdict.approved,
           checked,
           headSha,
+          conflict,
+          conflicting,
         };
       }
     }
@@ -1336,6 +1366,8 @@ export class PrAutomationService
       approved: verdict.approved,
       checked,
       headSha,
+      conflict,
+      conflicting,
     };
   }
 
@@ -1423,9 +1455,11 @@ export class PrAutomationService
     this.records.updatePullRequest(pull.id, { autofixGaveUpAt: new Date() });
     const reason =
       because ??
-      (triggers.failed.length > 0
-        ? `${triggers.failed.length} check(s) failed again`
-        : 'new reviews or comments');
+      (triggers.conflict
+        ? `merge conflicts with ${pull.baseBranch}`
+        : triggers.failed.length > 0
+          ? `${triggers.failed.length} check(s) failed again`
+          : 'new reviews or comments');
     const updated = this.records.pullRequest(pull.id) ?? pull;
     this.sessions.recordEvent(pull.sessionId, {
       type: 'notice',
@@ -1482,13 +1516,20 @@ export class PrAutomationService
       this.deferred.add(pull.id);
       return;
     }
-    const trigger: AutofixTrigger = triggers.ready
-      ? 'ready'
-      : triggers.failed.length > 0 && triggers.feedback.length > 0
+    // Failed checks and feedback; with merge conflicts they come along.
+    const also: Exclude<AutofixTrigger, 'ready' | 'conflict'> | null =
+      triggers.failed.length > 0 && triggers.feedback.length > 0
         ? 'ci+review'
         : triggers.failed.length > 0
           ? 'ci'
-          : 'review';
+          : triggers.feedback.length > 0
+            ? 'review'
+            : null;
+    const trigger: AutofixTrigger = triggers.conflict
+      ? 'conflict'
+      : triggers.ready
+        ? 'ready'
+        : (also ?? 'review');
     // Unresolved threads go along with a ready message of automerge.
     const threads =
       trigger === 'ready' && current.automerge && !triggers.limited
@@ -1550,6 +1591,10 @@ export class PrAutomationService
             headSha: triggers.headSha,
             branch,
             automerge: current.automerge,
+            conflict:
+              trigger === 'conflict'
+                ? { base: current.baseBranch, also }
+                : undefined,
           });
     const untrusted =
       triggers.failed.length > 0 || feedback.length > 0 || threads.length > 0
@@ -1570,6 +1615,9 @@ export class PrAutomationService
       autofixLastTrigger: trigger,
       ...(triggers.failed.length > 0
         ? { autofixCiHandledSha: triggers.headSha }
+        : {}),
+      ...(trigger === 'conflict'
+        ? { autofixConflictSha: triggers.headSha }
         : {}),
       ...(trigger === 'ready' ? { autofixReadySha: triggers.headSha } : {}),
       ...(newest && !triggers.limited
@@ -1593,6 +1641,7 @@ export class PrAutomationService
       this.records.updatePullRequest(pull.id, {
         autofixAttempts: current.autofixAttempts,
         autofixCiHandledSha: current.autofixCiHandledSha,
+        autofixConflictSha: current.autofixConflictSha,
         autofixReadySha: current.autofixReadySha,
         autofixReviewsAfter: current.autofixReviewsAfter,
       });
@@ -1722,13 +1771,15 @@ export class PrAutomationService
     }
     const pushing = parsed.steps.some((step) => step.kind === 'push');
     const local = parsed.steps.filter((step) => step.kind !== 'push');
+    // A plain `git push --force-with-lease` (conflict runs only, see below).
+    const lease = pushing && pushes.length === 1 && pushes[0].leaseOnly;
     if (
       pushing &&
       (pushes.length !== 1 ||
         pushes.some(
           (push) =>
-            !push.sessionBranchOnly ||
-            push.force ||
+            !(push.sessionBranchOnly || push.leaseOnly) ||
+            (push.force && !push.leaseOnly) ||
             push.deletes ||
             push.everything ||
             (push.remote !== null && push.remote !== 'origin'),
@@ -1737,6 +1788,15 @@ export class PrAutomationService
       return null;
     }
     let targets = autofixClones;
+    if (lease) {
+      // Forcing only for pull requests whose conflict run goes on.
+      targets = autofixClones.filter(
+        (directory) => this.conflictRunPull(session, directory) !== null,
+      );
+      if (targets.length === 0) {
+        return null;
+      }
+    }
     if (parsed.location) {
       // Relative to where the process runs (after switch_directory the old
       // directory until it restarts).
@@ -1744,7 +1804,7 @@ export class PrAutomationService
       for (const path of parsed.location) {
         location = isAbsolute(path) ? resolve(path) : resolve(location, path);
       }
-      const target = autofixClones.find(
+      const target = targets.find(
         (directory) =>
           location === directory.path ||
           location.startsWith(directory.path + sep),
@@ -1783,7 +1843,7 @@ export class PrAutomationService
           return null;
         }
       }
-    } else if (await this.pushNeedsApproval(targets)) {
+    } else if (await this.pushNeedsApproval(session, targets, lease)) {
       return null;
     }
     const output: string[] = [];
@@ -1805,7 +1865,7 @@ export class PrAutomationService
       summary.push(step.kind === 'add' ? 'Staged' : 'Committed');
     }
     if (pushing && ok) {
-      const pushed = await this.pushForAutofix(sessionId, targets);
+      const pushed = await this.pushForAutofix(session, targets, lease);
       output.push(...pushed.output);
       summary.push(...pushed.summary);
       ok = pushed.ok;
@@ -1824,9 +1884,49 @@ export class PrAutomationService
     };
   }
 
+  /**
+   * The open pull request with autofix of a clone's branch whose conflict
+   * run goes on (from its message until the end of its turn), or `null`.
+   */
+  private conflictRunPull(
+    session: SessionRecord,
+    directory: SessionDirectoryRecord,
+  ): PullRequestRecord | null {
+    return (
+      session.pullRequests.find(
+        (pull) =>
+          pull.repositoryId === directory.repositoryId &&
+          pull.headBranch === directory.branch &&
+          pull.state === 'open' &&
+          pull.autofix &&
+          pull.autofixRunning &&
+          pull.autofixLastTrigger === 'conflict',
+      ) ?? null
+    );
+  }
+
+  /**
+   * Where the commits to push begin: the remote branch, for a force push
+   * after a rebase the base branch it was rebased onto (the clone's
+   * `origin/<base>`), else the clone's base commit.
+   */
+  private async pushBase(
+    session: SessionRecord,
+    directory: SessionDirectoryRecord & { branch: string },
+    lease: boolean,
+  ): Promise<string | null> {
+    const pull = lease ? this.conflictRunPull(session, directory) : null;
+    const base = pull
+      ? await this.git.remoteBranchCommit(directory.path, pull.baseBranch)
+      : await this.git.remoteBranchCommit(directory.path, directory.branch);
+    return base ?? directory.baseCommit;
+  }
+
   /** Whether new commits of the clones change workflow files. */
   private async pushNeedsApproval(
+    session: SessionRecord,
     targets: (SessionDirectoryRecord & { branch: string })[],
+    lease: boolean,
   ): Promise<boolean> {
     for (const directory of targets) {
       const head = await this.git.localBranchCommit(
@@ -1843,7 +1943,7 @@ export class PrAutomationService
         (await this.git.changesWorkflows(
           directory.path,
           head,
-          remote ?? directory.baseCommit,
+          await this.pushBase(session, directory, lease),
         ))
       ) {
         return true;
@@ -1852,18 +1952,24 @@ export class PrAutomationService
     return false;
   }
 
-  /** Pushes the session branches like the Push button. */
+  /**
+   * Pushes the session branches like the Push button; with `lease` (a
+   * conflict run's `git push --force-with-lease`) as a force push over the
+   * commit the clone last saw on GitHub, and only when the branch contains
+   * the clone's `origin/<base>` (it was rebased onto the base branch).
+   */
   private async pushForAutofix(
-    sessionId: string,
+    session: SessionRecord,
     targets: (SessionDirectoryRecord & {
       branch: string;
       repositoryId: string;
     })[],
+    lease: boolean,
   ): Promise<{ ok: boolean; output: string[]; summary: string[] }> {
     const output: string[] = [];
     const summary: string[] = [];
     let ok = true;
-    if (await this.pushNeedsApproval(targets)) {
+    if (await this.pushNeedsApproval(session, targets, lease)) {
       return {
         ok: false,
         output: [
@@ -1873,6 +1979,7 @@ export class PrAutomationService
       };
     }
     for (const directory of targets) {
+      const name = `${directory.branch} of ${directory.repositoryName}`;
       const head = await this.git.localBranchCommit(
         directory.path,
         directory.branch,
@@ -1887,23 +1994,47 @@ export class PrAutomationService
         );
         continue;
       }
+      let leaseOn: string | undefined;
+      if (lease) {
+        const pull = this.conflictRunPull(session, directory);
+        const base = pull
+          ? await this.git.remoteBranchCommit(directory.path, pull.baseBranch)
+          : null;
+        const problem = !pull
+          ? 'no conflict run goes on for its pull request'
+          : !remote
+            ? `the clone does not know ${directory.branch} on GitHub (git fetch origin ${directory.branch} first)`
+            : !base
+              ? `the clone has no origin/${pull.baseBranch} (git fetch origin ${pull.baseBranch} first)`
+              : !(await this.git.isAncestor(directory.path, base, head))
+                ? `${directory.branch} does not contain origin/${pull.baseBranch}: rebase onto it first`
+                : null;
+        if (problem || !remote) {
+          ok = false;
+          output.push(`Not force-pushed ${name}: ${problem}.`);
+          summary.push(`not force-pushed ${directory.repositoryName}`);
+          continue;
+        }
+        leaseOn = remote;
+      }
       try {
         const commit = await this.sessionGit.push(
-          sessionId,
+          session.id,
           directory.repositoryId,
           directory.branch,
+          leaseOn ? { lease: leaseOn } : {},
         );
         output.push(
-          `Pushed ${directory.branch} of ${directory.repositoryName} to GitHub at ${commit.slice(0, 7)} (no force).`,
+          leaseOn
+            ? `Force-pushed ${name} to GitHub at ${commit.slice(0, 7)}, with a lease on ${leaseOn.slice(0, 7)}.`
+            : `Pushed ${name} to GitHub at ${commit.slice(0, 7)} (no force).`,
         );
         summary.push(
-          `pushed ${directory.branch} of ${directory.repositoryName} at ${commit.slice(0, 7)}`,
+          `${leaseOn ? 'force-pushed (with lease)' : 'pushed'} ${name} at ${commit.slice(0, 7)}`,
         );
       } catch (error) {
         ok = false;
-        output.push(
-          `Push of ${directory.branch} of ${directory.repositoryName} failed: ${errorText(error)}`,
-        );
+        output.push(`Push of ${name} failed: ${errorText(error)}`);
         summary.push(`push of ${directory.repositoryName} failed`);
       }
     }

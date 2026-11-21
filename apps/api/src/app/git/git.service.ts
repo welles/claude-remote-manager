@@ -623,7 +623,9 @@ export class GitService {
   }
 
   /**
-   * Pushes the session branch of a clone to the remote (no force) and sets
+   * Pushes the session branch of a clone to the remote (no force; with
+   * `lease`, a force push that GitHub takes only while the branch there is
+   * still at that commit, like `--force-with-lease`) and sets
    * it as the clone's upstream, so a later `git push` there needs no
    * arguments. The session's commits are brought into the mirror first, as
    * a bundle the session user writes from the clone; the push itself runs
@@ -637,10 +639,15 @@ export class GitService {
     branch: string;
     baseCommit: string | null;
     auth: (changesWorkflows: boolean) => Promise<GitAuth | null>;
+    /** Force, but only over this commit of the remote branch. */
+    lease?: string;
   }): Promise<string> {
     const { mirrorPath, clonePath, branch, baseCommit } = options;
     if (!isValidBranchName(branch)) {
       throw new Error(`"${branch}" is not a valid branch name`);
+    }
+    if (options.lease !== undefined && !/^[0-9a-f]{40}$/.test(options.lease)) {
+      throw new Error(`"${options.lease}" is not a commit to lease`);
     }
     const commit = await this.localBranchCommit(clonePath, branch);
     if (!commit) {
@@ -668,7 +675,15 @@ export class GitService {
         const auth = await options.auth(workflows);
         await this.git(
           mirrorPath,
-          ['push', '--quiet', 'origin', `${commit}:refs/heads/${branch}`],
+          [
+            'push',
+            '--quiet',
+            ...(options.lease
+              ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`]
+              : []),
+            'origin',
+            `${commit}:refs/heads/${branch}`,
+          ],
           { timeoutMs: GIT_NETWORK_TIMEOUT_MS, env: auth?.env },
         );
       } finally {
@@ -892,6 +907,25 @@ export class GitService {
   }
 
   /** Whether `commit` is reachable from a remote-tracking branch of the clone. */
+  /** Whether `ancestor` is `commit` or one of its ancestors (in a clone). */
+  async isAncestor(
+    path: string,
+    ancestor: string,
+    commit: string,
+  ): Promise<boolean> {
+    try {
+      await this.inClone(path, [
+        'merge-base',
+        '--is-ancestor',
+        ancestor,
+        commit,
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async isOnRemote(path: string, commit: string): Promise<boolean> {
     try {
       const output = await this.inClone(path, [

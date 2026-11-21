@@ -72,6 +72,7 @@ const push = (overrides: Partial<GitPushAnalysis>): GitPushAnalysis => ({
   deletes: false,
   everything: false,
   sessionBranchOnly: true,
+  leaseOnly: false,
   warnings: [],
   ...overrides,
 });

@@ -108,12 +108,14 @@ export type PullRequestPatch = Partial<
     Pick<
       PullRequestRow,
       | 'headSha'
+      | 'mergeConflict'
       | 'autofix'
       | 'autoclose'
       | 'autofixMaxAttempts'
       | 'autofixAttempts'
       | 'autofixGaveUpAt'
       | 'autofixCiHandledSha'
+      | 'autofixConflictSha'
       | 'autofixReadySha'
       | 'autofixReviewsAfter'
       | 'autofixLastRunAt'

@@ -6,7 +6,10 @@
  *   continues the session with that content (as untrusted context);
  *   Claude may then push exactly the session branch without asking (the
  *   app pushes it, without force); once the head commit passed all
- *   checks and is approved, the session is told so (no attempt);
+ *   checks and is approved, the session is told so (no attempt); when
+ *   GitHub reports merge conflicts with the base branch, the session is
+ *   asked to rebase onto it and may push the session branch with
+ *   `--force-with-lease` without asking (the app pushes it, with a lease);
  * - autoclose: when the pull request is merged or closed and the session
  *   has no open pull request left, the session ends and its clones are
  *   removed, except clones with work that is not on GitHub;
@@ -19,9 +22,16 @@
 
 /**
  * What started an autofix run; `ready`: the session was told that the
- * pull request passed all checks and is approved (no attempt).
+ * pull request passed all checks and is approved (no attempt); `conflict`:
+ * the pull request has merge conflicts with its base branch (failed checks
+ * and feedback may come along).
  */
-export type AutofixTrigger = 'ci' | 'review' | 'ci+review' | 'ready';
+export type AutofixTrigger =
+  | 'ci'
+  | 'review'
+  | 'ci+review'
+  | 'conflict'
+  | 'ready';
 
 export interface PullRequestAutomationDto {
   autofix: boolean;
