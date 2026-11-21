@@ -3385,4 +3385,83 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       await waitFor(() => harness.github.requests.length > requests);
     });
   });
+  describe('after the usage limit', () => {
+    /** Claude Code ends the turn because the usage limit rejected it. */
+    const hitLimit = () =>
+      harness.runner.last.emit(
+        {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          error: 'rate_limit',
+          message: {
+            id: 'limit',
+            content: [{ type: 'text', text: "You've hit your 5-hour limit" }],
+          },
+        },
+        resultMessage(20, 0, {
+          is_error: true,
+          result: "You've hit your 5-hour limit",
+        }),
+      );
+
+    /** An Autofix run for a failed check, stopped by the usage limit. */
+    const stoppedRun = async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      harness.github.checkRuns.set(fakePull(pull.number).headSha, [
+        {
+          id: 11,
+          name: 'test',
+          status: 'completed',
+          conclusion: 'failure',
+          app: 'github-actions',
+        },
+      ]);
+      enableAutofix(session.id, pull);
+      await automation.check(pull.id);
+      expect(record(pull).autofixRunning).toBe(true);
+      hitLimit();
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'limit',
+      );
+      await waitFor(() => !record(pull).autofixRunning);
+      return { session, pull };
+    };
+
+    const continued = () =>
+      harness.runner.runs
+        .flatMap((run) => run.sent)
+        .filter((message) => message.text.startsWith('The usage limit'));
+
+    it('continues the Autofix run as one, also after the limit stopped it again', async () => {
+      const { session, pull } = await stoppedRun();
+      // Claude Code starts a turn by itself, which hits the limit again.
+      harness.runner.last.emit({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { id: 's', content: [{ type: 'text', text: 'x' }] },
+      });
+      await waitFor(() => harness.service.get(session.id).status === 'running');
+      hitLimit();
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'limit',
+      );
+
+      await harness.service.resumeAfterLimit(session.id);
+      expect(continued()).toHaveLength(1);
+      expect(harness.service.inAutofixRun(session.id)).toBe(true);
+      expect(record(pull)).toMatchObject({
+        autofixRunning: true,
+        autofixAttempts: 1,
+      });
+    });
+
+    it('continues as an ordinary turn when autofix was turned off meanwhile', async () => {
+      const { session, pull } = await stoppedRun();
+      await automation.update(session.id, pull.id, { autofix: false });
+      await harness.service.resumeAfterLimit(session.id);
+      expect(continued()).toHaveLength(1);
+      expect(harness.service.inAutofixRun(session.id)).toBe(false);
+      expect(record(pull).autofixRunning).toBe(false);
+    });
+  });
 });

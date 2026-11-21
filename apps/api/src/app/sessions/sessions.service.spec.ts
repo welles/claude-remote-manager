@@ -2887,7 +2887,7 @@ describe('SessionsService', () => {
       });
     });
 
-    it('continues an Autofix run as part of it', async () => {
+    it('ends an Autofix run with the limit; only the PR automation continues it as one', async () => {
       const session = await startSession();
       runner.last.emit(resultMessage(1, 0));
       await flush();
@@ -2904,7 +2904,7 @@ describe('SessionsService', () => {
       expect(service.acceptsAppMessage(session.id)).toBe(false);
       await service.resumeAfterLimit(session.id);
       expect(continuation()).toHaveLength(1);
-      expect(service.inAutofixRun(session.id)).toBe(true);
+      expect(service.inAutofixRun(session.id)).toBe(false);
     });
 
     it('keeps waiting across a restart; held messages end with the server', async () => {
@@ -3008,33 +3008,6 @@ describe('SessionsService', () => {
         status: 'running',
         limitResumesAt: null,
       });
-    });
-
-    it('keeps the Autofix run when the limit stops a turn again during the wait', async () => {
-      const session = await startSession();
-      runner.last.emit(resultMessage(1, 0));
-      await flush();
-      await service.sendMessage(session.id, {
-        id: MSG_2,
-        text: 'Fix the failing checks',
-        origin: 'app',
-        autofixRun: true,
-      });
-      hitLimit(Date.now() + 3_600_000);
-      await flush();
-      // Claude Code starts a turn by itself, which hits the limit again.
-      runner.last.emit({
-        type: 'assistant',
-        parent_tool_use_id: null,
-        message: { id: 's', content: [{ type: 'text', text: 'x' }] },
-      });
-      await flush();
-      expect(service.get(session.id).status).toBe('running');
-      hitLimit(Date.now() + 3_600_000);
-      await flush();
-      expect(service.get(session.id).waitingFor).toBe('limit');
-      await service.resumeAfterLimit(session.id);
-      expect(service.inAutofixRun(session.id)).toBe(true);
     });
 
     it('looks again later when the limits cannot be read and the reset is unknown', async () => {

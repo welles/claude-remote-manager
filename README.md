@@ -966,7 +966,9 @@ notification (`turn_finished`) reads "Usage limit: …" with how long until it c
   wait); they go to Claude then, in the running process or a new one that starts with the first
   of them. Without them the app tells Claude that the limit stopped its last turn and has reset,
   to continue where it left off and to check background tasks of that turn first (they may have
-  ended with it). An Autofix run continues as one (no further attempt is counted); with held
+  ended with it). An Autofix run continues as one (no further attempt is counted;
+  it shows as going on again, and Stop Autofix works) if autofix is still on for its pull request
+  and it is open, else as an ordinary turn; with held
   messages it is not continued as such: the user's messages go instead.
 - **The user decides otherwise:** the session view shows a banner with "Continue now"
   (`limit.resume` frame, `POST /api/sessions/:id/limit-wait/resume`) and "Don't continue"
