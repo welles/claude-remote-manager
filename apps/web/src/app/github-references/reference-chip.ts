@@ -42,6 +42,7 @@ const canHover = () =>
  */
 @Component({
   selector: 'app-reference-chip',
+  host: { class: 'inline max-w-full' },
   // The overlay functions, not the CDK's overlay directives or @defer: the
   // app shell (menu) has them already, the others would grow the first
   // load. The preview is imported when it is first opened.
@@ -49,7 +50,8 @@ const canHover = () =>
   template: `
     <button
       type="button"
-      class="ref-chip state-{{ state() }}"
+      class="ref-chip my-px max-w-[22em] align-bottom max-[480px]:max-w-[15em]"
+      [class.border-dashed]="state() === 'failed'"
       #origin
       (click)="toggle()"
       (mouseenter)="hover(true)"
@@ -59,77 +61,21 @@ const canHover = () =>
       [title]="label()"
       data-testid="reference-chip"
     >
-      <span class="dot" aria-hidden="true"></span>
-      <span class="token">{{ token() }}</span>
+      <span class="state-dot tone-{{ state() }}" aria-hidden="true"></span>
+      <span class="flex-none font-medium" data-testid="reference-token">{{
+        token()
+      }}</span>
       @if (chip().title) {
-        <span class="title">{{ chip().title }}</span>
+        <span class="min-w-0 truncate">{{ chip().title }}</span>
       } @else if (chip().status === 'failed') {
-        <span class="title">{{ stateText() }}</span>
+        <span class="min-w-0 truncate">{{ stateText() }}</span>
       }
       @if (extras()) {
-        <span class="extras">+{{ extras() }}</span>
+        <span class="flex-none type-body-small text-on-surface-variant"
+          >+{{ extras() }}</span
+        >
       }
     </button>
-  `,
-  styles: `
-    :host {
-      display: inline;
-      max-width: 100%;
-    }
-    .ref-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      max-width: 22em;
-      margin: 1px 0;
-      padding: 1px 8px;
-      vertical-align: bottom;
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-medium);
-      background: var(--mat-sys-surface-container-high);
-      color: var(--mat-sys-on-surface);
-      font: var(--mat-sys-body-medium);
-      cursor: pointer;
-    }
-    @media (max-width: 480px) {
-      .ref-chip {
-        max-width: 15em;
-      }
-    }
-    .dot {
-      flex-shrink: 0;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--app-gh-draft);
-    }
-    .state-open .dot {
-      background: var(--app-gh-open);
-    }
-    .state-merged .dot {
-      background: var(--app-gh-merged);
-    }
-    .state-closed .dot {
-      background: var(--app-gh-closed);
-    }
-    .state-failed {
-      border-style: dashed;
-    }
-    .token {
-      flex-shrink: 0;
-      font-weight: 500;
-    }
-    .title {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .extras {
-      flex-shrink: 0;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
   `,
 })
 export class ReferenceChip {

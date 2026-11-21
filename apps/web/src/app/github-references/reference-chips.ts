@@ -15,7 +15,10 @@ import { repositoryName, type ReferenceOptions } from './references';
   imports: [ReferenceChip],
   template: `
     @if (references().entries().length > 0) {
-      <div class="chips" data-testid="draft-references">
+      <div
+        class="mb-1 flex flex-wrap gap-x-1.5 gap-y-1"
+        data-testid="draft-references"
+      >
         @for (entry of references().entries(); track entry.key) {
           @if (entry.kind === 'chip') {
             <app-reference-chip
@@ -28,22 +31,20 @@ import { repositoryName, type ReferenceOptions } from './references';
             />
           } @else {
             <div
-              class="ambiguous"
+              class="flex max-w-full flex-wrap items-center gap-x-1.5 gap-y-1 rounded-md border border-dashed border-tertiary px-1.5 py-0.5"
               role="group"
               [attr.aria-label]="
                 '#' + entry.number + ' is in several repositories'
               "
               data-testid="ambiguous-reference"
             >
-              <span class="question">#{{ entry.number }} in:</span>
+              <span class="type-body-small text-tertiary"
+                >#{{ entry.number }} in:</span
+              >
               @for (candidate of entry.candidates; track candidate.repository) {
                 <button
                   type="button"
-                  class="candidate state-{{
-                    candidate.detail.draft && candidate.detail.state === 'open'
-                      ? 'draft'
-                      : candidate.detail.state
-                  }}"
+                  class="ref-chip max-w-[18em] min-h-7 pointer-coarse:min-h-10"
                   [title]="
                     candidate.repository +
                     '#' +
@@ -73,90 +74,31 @@ import { repositoryName, type ReferenceOptions } from './references';
                   "
                   data-testid="reference-candidate"
                 >
-                  <span class="dot" aria-hidden="true"></span>
-                  <span class="token"
+                  <span
+                    class="state-dot tone-{{
+                      candidate.detail.draft &&
+                      candidate.detail.state === 'open'
+                        ? 'draft'
+                        : candidate.detail.state
+                    }}"
+                    aria-hidden="true"
+                  ></span>
+                  <span class="flex-none font-medium"
                     >{{ name(candidate.repository) }}#{{ entry.number }}</span
                   >
-                  <span class="title">{{ candidate.detail.title }}</span>
-                  <span class="state">{{ stateOf(candidate.detail) }}</span>
+                  <span class="min-w-0 truncate">{{
+                    candidate.detail.title
+                  }}</span>
+                  <span
+                    class="flex-none type-body-small text-on-surface-variant"
+                    >{{ stateOf(candidate.detail) }}</span
+                  >
                 </button>
               }
             </div>
           }
         }
       </div>
-    }
-  `,
-  styles: `
-    .chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px 6px;
-      margin-bottom: 4px;
-    }
-    .ambiguous {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 4px 6px;
-      max-width: 100%;
-      padding: 2px 6px;
-      border: 1px dashed var(--mat-sys-tertiary);
-      border-radius: var(--mat-sys-corner-medium);
-    }
-    .question {
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-tertiary);
-    }
-    .candidate {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      max-width: 18em;
-      min-height: 28px;
-      padding: 1px 8px;
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-medium);
-      background: var(--mat-sys-surface-container-high);
-      color: var(--mat-sys-on-surface);
-      font: var(--mat-sys-body-medium);
-      cursor: pointer;
-    }
-    .dot {
-      flex-shrink: 0;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--app-gh-draft);
-    }
-    .state-open .dot {
-      background: var(--app-gh-open);
-    }
-    .state-merged .dot {
-      background: var(--app-gh-merged);
-    }
-    .state-closed .dot {
-      background: var(--app-gh-closed);
-    }
-    .token {
-      flex-shrink: 0;
-      font-weight: 500;
-    }
-    .title {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .state {
-      flex-shrink: 0;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    @media (pointer: coarse) {
-      .candidate {
-        min-height: 40px;
-      }
     }
   `,
 })

@@ -13,19 +13,22 @@ import type { ConversationItem } from './conversation';
  */
 @Component({
   selector: 'app-queued-messages',
+  host: { class: 'block' },
   imports: [AppIcon, MatButtonModule],
   template: `
-    <div class="header">
+    <div class="flex items-center gap-1">
       <button
         type="button"
-        class="summary"
+        class="flex min-h-8 min-w-0 flex-1 cursor-pointer items-center gap-1.5 border-0 bg-transparent px-1 text-left type-body-small text-on-surface-variant [&_app-icon]:ml-auto [&_app-icon]:[--app-icon-size:16px]"
         [attr.aria-expanded]="expanded()"
         aria-controls="queued-list"
         (click)="expanded.set(!expanded())"
         data-testid="queued-toggle"
       >
-        <span class="count">{{ messages().length }} queued</span>
-        <span class="hint" data-testid="queued-hint">{{
+        <span class="flex-none font-semibold text-primary"
+          >{{ messages().length }} queued</span
+        >
+        <span class="min-w-0 truncate" data-testid="queued-hint">{{
           anySending()
             ? '· sending now…'
             : heldForLimit()
@@ -52,13 +55,16 @@ import type { ConversationItem } from './conversation';
     </div>
     <ul
       id="queued-list"
-      class="queued"
+      class="card-list mt-0 mb-1 list-none p-0 [&[hidden]]:hidden"
       [hidden]="!expanded()"
       data-testid="queued"
     >
       @for (item of messages(); track item.key) {
-        <li class="queued-message" data-testid="queued-message">
-          <span class="queued-text" [title]="item.text">{{
+        <li
+          class="flex items-center gap-2 pl-3 type-body-medium"
+          data-testid="queued-message"
+        >
+          <span class="min-w-0 flex-1 truncate" [title]="item.text">{{
             item.attachments.length > 0
               ? (item.attachments.length === 1
                   ? '[1 image] '
@@ -95,7 +101,6 @@ import type { ConversationItem } from './conversation';
       }
     </ul>
   `,
-  styleUrl: './queued-messages.scss',
 })
 export class QueuedMessages {
   readonly messages =

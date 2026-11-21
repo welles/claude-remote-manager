@@ -8,18 +8,37 @@ import type { AttachmentDrafts } from './attachment-drafts';
   imports: [MatButtonModule],
   template: `
     @if (drafts().images().length > 0) {
-      <ul class="images" data-testid="draft-images">
+      <ul
+        class="mt-0 mb-2 flex list-none flex-wrap gap-2 p-0"
+        data-testid="draft-images"
+      >
         @for (image of drafts().images(); track image.key) {
-          <li class="image state-{{ image.state }}" data-testid="draft-image">
-            <img [src]="image.preview" [alt]="image.name" />
+          @let pending = image.state !== 'ready';
+          <li
+            class="relative size-16 overflow-hidden rounded-sm bg-surface-container"
+            data-testid="draft-image"
+          >
+            <img
+              class="size-full object-cover"
+              [class.opacity-40]="pending"
+              [src]="image.preview"
+              [alt]="image.name"
+            />
             @if (image.state === 'uploading') {
-              <span class="label">Uploading…</span>
+              <span
+                class="absolute inset-x-0 bottom-0 bg-surface text-center type-label-small"
+                >Uploading…</span
+              >
             } @else if (image.state === 'failed') {
-              <span class="label" [title]="image.error ?? ''">Failed</span>
+              <span
+                class="absolute inset-x-0 bottom-0 bg-surface text-center type-label-small text-error"
+                [title]="image.error ?? ''"
+                >Failed</span
+              >
             }
             <button
               type="button"
-              class="remove"
+              class="absolute top-0.5 right-0.5 size-6 cursor-pointer rounded-full border-0 bg-surface-container-highest text-[16px]/none text-on-surface"
               (click)="drafts().remove(image.key)"
               [attr.aria-label]="'Remove ' + image.name"
               data-testid="remove-image"
@@ -31,63 +50,12 @@ import type { AttachmentDrafts } from './attachment-drafts';
       </ul>
     }
     @if (drafts().notice(); as notice) {
-      <p class="notice" data-testid="image-notice">{{ notice }}</p>
-    }
-  `,
-  styles: `
-    .images {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 0 0 8px;
-      padding: 0;
-      list-style: none;
-    }
-    .image {
-      position: relative;
-      width: 64px;
-      height: 64px;
-      border-radius: var(--mat-sys-corner-small);
-      overflow: hidden;
-      background: var(--mat-sys-surface-container);
-    }
-    img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .state-uploading img,
-    .state-failed img {
-      opacity: 0.4;
-    }
-    .label {
-      position: absolute;
-      inset: auto 0 0 0;
-      font: var(--mat-sys-label-small);
-      text-align: center;
-      background: var(--mat-sys-surface);
-    }
-    .state-failed .label {
-      color: var(--mat-sys-error);
-    }
-    .remove {
-      position: absolute;
-      top: 2px;
-      right: 2px;
-      width: 24px;
-      height: 24px;
-      border: none;
-      border-radius: 50%;
-      font-size: 16px;
-      line-height: 1;
-      cursor: pointer;
-      color: var(--mat-sys-on-surface);
-      background: var(--mat-sys-surface-container-highest);
-    }
-    .notice {
-      margin: 0 0 8px;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-error);
+      <p
+        class="mt-0 mb-2 type-body-small text-error"
+        data-testid="image-notice"
+      >
+        {{ notice }}
+      </p>
     }
   `,
 })
