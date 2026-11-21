@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `limit_wait` text;

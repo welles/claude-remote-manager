@@ -131,10 +131,35 @@
       <app-queued-messages
         [messages]="queued()"
         [enabled]="connected()"
+        [heldForLimit]="limitWait() !== null"
         (remove)="unqueue($event)"
         [sending]="sendingNow()"
         (sendNow)="sendQueuedNow($event)"
       />
+      } @if (limitWait(); as wait) {
+      <app-banner data-testid="limit-wait">
+        The usage limit stopped the last turn. Claude continues by itself once
+        it has reset{{ wait.resumes ? ' (around ' + wait.resumes + ')' : '' }};
+        messages you send meanwhile wait until then.
+        <div banner-actions>
+          <button
+            matButton
+            (click)="resumeAfterLimit()"
+            [disabled]="!connected()"
+            data-testid="limit-resume"
+          >
+            Continue now
+          </button>
+          <button
+            matButton
+            (click)="cancelLimitWait()"
+            [disabled]="!connected()"
+            data-testid="limit-cancel"
+          >
+            Don't continue
+          </button>
+        </div>
+      </app-banner>
       } @if (heldBack()) {
       <app-banner kind="attention" data-testid="held-back">
         A setup script failed, so the first message waits: send it anyway, run

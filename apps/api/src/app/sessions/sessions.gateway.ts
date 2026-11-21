@@ -186,6 +186,12 @@ export class SessionsGateway
       case 'setup.rerun':
         await this.sessions.rerunSetup(message.sessionId);
         return;
+      case 'limit.resume':
+        await this.sessions.resumeAfterLimit(message.sessionId);
+        return;
+      case 'limit.cancel':
+        await this.sessions.cancelLimitWait(message.sessionId);
+        return;
       case 'permission.respond':
         await this.sessions.respondToPermission(
           message.sessionId,

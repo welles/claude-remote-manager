@@ -38,3 +38,23 @@ describe('statusLabel', () => {
     ).toBe('CI of PR #12');
   });
 });
+
+describe('usage limit', () => {
+  it('says when a session the usage limit stopped continues', () => {
+    expect(statusLabel({ status: 'waiting', waitingFor: 'limit' })).toBe(
+      'Usage limit',
+    );
+    const resumes = new Date();
+    resumes.setHours(1, 31, 0, 0);
+    expect(
+      needLabel({
+        status: 'waiting',
+        waitingFor: 'limit',
+        limitResumesAt: resumes.toISOString(),
+      }),
+    ).toMatch(/^Usage limit · (\w+ )?01:31$/);
+    expect(needLabel({ status: 'waiting', waitingFor: 'limit' })).toBe(
+      'Usage limit',
+    );
+  });
+});

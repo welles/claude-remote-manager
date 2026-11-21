@@ -738,6 +738,27 @@ export const PRESENCE_INTERVAL_MS = 30_000;
 /** A `presence` frame counts for this long. */
 export const PRESENCE_TIMEOUT_MS = 75_000;
 
+/**
+ * A session the usage limit stopped (`waitingFor: 'limit'`): continue it
+ * now instead of when the limit resets (queued messages go to Claude, or
+ * the app's continuation if there are none).
+ */
+export interface ResumeAfterLimitMessage {
+  type: 'limit.resume';
+  sessionId: string;
+  requestId?: string;
+}
+
+/**
+ * A session the usage limit stopped: do not continue it by itself; it
+ * waits for the next message (queued messages are withdrawn).
+ */
+export interface CancelLimitWaitMessage {
+  type: 'limit.cancel';
+  sessionId: string;
+  requestId?: string;
+}
+
 export type ClientMessage =
   | SubscribeMessage
   | PresenceMessage
@@ -747,6 +768,8 @@ export type ClientMessage =
   | EndSessionMessage
   | SendPendingMessage
   | RerunSetupMessage
+  | ResumeAfterLimitMessage
+  | CancelLimitWaitMessage
   | PermissionResponseMessage
   | UnqueueMessage
   | SendQueuedNowMessage

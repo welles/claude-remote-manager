@@ -177,4 +177,60 @@ describe('LimitsService', () => {
     service.refreshIfStale(Date.now() + LIMITS_STALE_MS + 1000);
     expect(source).toHaveBeenCalledTimes(2);
   });
+  it('says until when the exhausted windows reset', () => {
+    const at = now.getTime();
+    // Rejected in the stream: exhausted until its reset.
+    service.updateFromRateLimitEvent(
+      {
+        status: 'rejected',
+        rateLimitType: 'five_hour',
+        resetsAt: Date.parse('2026-03-01T14:00:00Z') / 1000,
+      },
+      now,
+    );
+    expect(service.exhaustedUntil([], at)?.toISOString()).toBe(
+      '2026-03-01T14:00:00.000Z',
+    );
+    // A later usage answer without status counts by its utilization.
+    service.updateFromPlanUsage(
+      planUsage({
+        five_hour: { utilization: 30, resets_at: '2026-03-01T14:00:00Z' },
+        seven_day: { utilization: 100, resets_at: '2026-03-04T00:00:00Z' },
+        seven_day_opus: { utilization: 100, resets_at: '2026-03-06T00:00:00Z' },
+      }),
+      now,
+    );
+    expect(service.exhaustedUntil([], at)?.toISOString()).toBe(
+      '2026-03-04T00:00:00.000Z',
+    );
+    // Other windows count only when asked for.
+    expect(service.exhaustedUntil(['seven_day_opus'], at)?.toISOString()).toBe(
+      '2026-03-06T00:00:00.000Z',
+    );
+    // Resets that lie behind do not count.
+    expect(
+      service.exhaustedUntil([], Date.parse('2026-03-07T00:00:00Z')),
+    ).toBeNull();
+  });
+
+  it('reads the plan usage now, once for callers at the same time', async () => {
+    expect(await service.readNow()).toBe(false);
+    let calls = 0;
+    service.setPlanUsageSource(async () => {
+      calls++;
+      return planUsage({
+        five_hour: { utilization: 100, resets_at: '2026-03-01T14:00:00Z' },
+      });
+    });
+    expect(await Promise.all([service.readNow(), service.readNow()])).toEqual([
+      true,
+      true,
+    ]);
+    expect(calls).toBe(1);
+    expect(service.get().windows[0]).toMatchObject({ utilization: 100 });
+    service.setPlanUsageSource(async () => {
+      throw new Error('probe failed');
+    });
+    expect(await service.readNow()).toBe(false);
+  });
 });

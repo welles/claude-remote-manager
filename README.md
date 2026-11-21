@@ -332,7 +332,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   without `message` in between; `waitingReason` is then `CI of #12`, a message or an app
   message can still be sent, the process may still be closed for idleness, and such sessions
   are polled for the checks of those pull requests like viewed ones; "finished" is notified
-  once per turn, not when such a wait began without a turn), `finished`
+  once per turn, not when such a wait began without a turn); `limit`, the subscription's usage limit
+  (5-hour or weekly window) ended the last turn (Claude Code's `rate_limit` error): the session
+  continues by itself once the limit has reset, see [Usage limit](#usage-limit)), `finished`
   (ended with "End session", `POST /api/sessions/:id/end` or the `session.end` frame) and
   `failed` (a clone could not be created, or the process could not start or ended with an
   error during a turn). A message to a finished or failed session resumes it, unless its
@@ -940,6 +942,38 @@ colours, the rest as "Other", a legend, values of a bar on hover, focus or tap) 
 group with all four token counts and the cost. The cost is labelled theoretical everywhere:
 what the requests would have cost at API prices, as the Agent SDK estimates it, not what the
 subscription costs. The session view shows the session's totals the same way.
+
+### Usage limit
+
+When the subscription's usage limit (the 5-hour window or a weekly one) rejects a request,
+Claude Code ends the turn with a synthetic assistant message whose `error` is `rate_limit`
+("You've hit your 5-hour limit · resets 1:30am"); a `rate_limit_event` with `status: rejected`
+names the window and its reset (`resetsAt`). The app then stops the session for the limit
+instead of leaving it `Ready`: `sessions.limit_wait` (JSON: when, the window, when to continue,
+whether that time is the known reset, whether the turn was an Autofix run) is set, the session
+is `waiting` with `waitingFor: 'limit'` and `limitResumesAt`, a notice says so, and the turn's
+notification (`turn_finished`) reads "Usage limit: …" with how long until it continues.
+
+- **When it continues:** at the reset plus a minute. It reads the plan usage first (the probe
+  process, as for the limits display): a window of the session still at 100 % (5-hour, weekly,
+  or the one that was rejected) means waiting for its new reset; otherwise it continues. A
+  reset that is not known (no `rate_limit_event`) is looked at after 5 minutes, after a
+  continuation that hit the limit again, or when the limits cannot be read, after 30 minutes.
+  Long waits are split into timers of at most an hour; the wait is stored, so it survives a
+  restart (looked at 10 seconds after the start).
+- **How it continues:** the messages the user sent meanwhile were queued (as during a turn:
+  "sent when the usage limit resets", removable, "send now" sends them right away and ends the
+  wait); they go to Claude then, in the running process or a new one that starts with the first
+  of them. Without them the app tells Claude that the limit stopped its last turn and has reset,
+  to continue where it left off and to check background tasks of that turn first (they may have
+  ended with it). An Autofix run continues as one (no further attempt is counted).
+- **The user decides otherwise:** the session view shows a banner with "Continue now"
+  (`limit.resume` frame, `POST /api/sessions/:id/limit-wait/resume`) and "Don't continue"
+  (`limit.cancel`, `DELETE /api/sessions/:id/limit-wait`: the session waits for the next
+  message, held messages are withdrawn). Ending or archiving the session ends the wait too; a
+  turn that gets through meanwhile (one Claude Code starts by itself) ends it as well.
+- **Meanwhile:** the PR automation starts no run (`acceptsAppMessage` is false); held messages
+  live in memory and are withdrawn when the server stops.
 
 ## Previews of dev servers
 

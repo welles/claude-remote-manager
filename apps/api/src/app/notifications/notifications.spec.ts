@@ -432,6 +432,46 @@ describe('notifications', () => {
     expect(push.payloads('show')).toHaveLength(1);
   });
 
+  it('reports a turn the usage limit stopped, with when it continues', async () => {
+    await device();
+    const session = await createSession();
+    app.runner.last.emit(
+      {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600,
+        },
+      },
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'rate_limit',
+        message: {
+          id: 'm-limit',
+          content: [{ type: 'text', text: "You've hit your 5-hour limit" }],
+        },
+      },
+      resultMessage(1, 0, {
+        is_error: true,
+        result: "You've hit your 5-hour limit",
+      }),
+    );
+    await flush();
+    await flush();
+    await service.settled();
+    expect(push.payloads('show')).toMatchObject([
+      {
+        tag: `turn-${session.id}`,
+        title: 'Usage limit: Fix the login',
+        body: expect.stringMatching(
+          /continues by itself once the limit has reset \(in about 2 h( 1 min)?\)\./,
+        ),
+      },
+    ]);
+  });
+
   it('notifies a finished turn only once background work is over', async () => {
     await device();
     const session = await createSession();

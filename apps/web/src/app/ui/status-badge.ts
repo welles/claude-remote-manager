@@ -18,7 +18,8 @@ import { statusLabel } from '../sessions/format';
  * - `idle`: ready for the next message, the user's turn (primary colour);
  * - `failed`: crashed or could not start;
  * - `running`: preparing, working on a turn, or waiting for background
- *   tasks or CI (it goes on by itself), muted;
+ *   tasks, CI or the reset of the usage limit (it goes on by itself),
+ *   muted;
  * - `done`: ended or archived.
  */
 export type StatusKind = 'attention' | 'running' | 'failed' | 'idle' | 'done';
@@ -34,7 +35,10 @@ export function statusKind(
   if (session.archivedAt) {
     return 'done';
   }
-  if (session.status === 'waiting' && session.waitingFor === 'background') {
+  if (
+    session.status === 'waiting' &&
+    (session.waitingFor === 'background' || session.waitingFor === 'limit')
+  ) {
     return 'running';
   }
   switch (session.status) {

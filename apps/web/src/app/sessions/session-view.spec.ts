@@ -713,6 +713,56 @@ describe('SessionView', () => {
     ).toBe(true);
   });
 
+  it('shows when a session the usage limit stopped continues, and lets the user decide', async () => {
+    const { harness, socket, element } = await open();
+    const resumes = new Date();
+    resumes.setHours(23, 58, 0, 0);
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto({
+        status: 'waiting',
+        waitingFor: 'limit',
+        limitResumesAt: resumes.toISOString(),
+      }),
+      events: [
+        event({ type: 'user.message', id: 'u1', text: 'Reply with pong' }),
+        event({ type: 'message.queued', id: 'q1', text: 'Later' }),
+      ],
+    });
+    await harness.fixture.whenStable();
+
+    expect(words(element.querySelector('[data-testid="limit-wait"]'))).toMatch(
+      /once it has reset \(around (\w+ )?23:58\)/,
+    );
+    expect(words(element.querySelector('[data-testid="queued-hint"]'))).toBe(
+      '· sent when the usage limit resets',
+    );
+    const click = (testId: string) =>
+      (
+        element.querySelector(`[data-testid="${testId}"]`) as HTMLButtonElement
+      ).click();
+    click('limit-resume');
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'limit.resume',
+      sessionId: 's1',
+    });
+    click('limit-cancel');
+    expect(socket.sent.at(-1)).toMatchObject({
+      type: 'limit.cancel',
+      sessionId: 's1',
+    });
+
+    socket.receive({
+      type: 'session.updated',
+      session: sessionDto({ status: 'running', waitingFor: null }),
+    });
+    await harness.fixture.whenStable();
+    expect(element.querySelector('[data-testid="limit-wait"]')).toBeNull();
+  });
+
   it('offers the decisions when a setup script failed and the first message waits', async () => {
     const { harness, socket, element } = await open();
     socket.receive({

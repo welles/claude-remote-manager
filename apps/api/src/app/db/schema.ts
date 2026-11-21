@@ -192,7 +192,32 @@ export const sessions = sqliteTable('sessions', {
    * pull request); `null`: the first directory.
    */
   workingDirectory: integer('working_directory'),
+  /**
+   * Set while the subscription's usage limit stopped the session: the app
+   * continues it once the limit has reset (see `LimitWait`).
+   */
+  limitWait: text('limit_wait', { mode: 'json' }).$type<LimitWait>(),
 });
+
+/**
+ * A session the usage limit stopped (`sessions.limit_wait`); times as ISO
+ * 8601.
+ */
+export interface LimitWait {
+  /** When the limit ended the turn. */
+  since: string;
+  /** The exhausted window (`five_hour`, `seven_day`, …), when known. */
+  window: string | null;
+  /**
+   * When the app looks again and continues if the limit has reset: the
+   * reset plus a margin, or a guess while the reset is unknown.
+   */
+  resumeAt: string;
+  /** `resumeAt` comes from the limit's known reset (not a guess). */
+  resetKnown: boolean;
+  /** The stopped turn was an Autofix run: it continues as one. */
+  autofix: boolean;
+}
 
 /**
  * Sessions deleted for good, so that their usage stays attributable: the

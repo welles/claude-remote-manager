@@ -31,6 +31,7 @@ import {
   repositories,
   sessionDirectories,
   sessions,
+  type LimitWait,
   type PullRequestRow,
   type SessionRow,
 } from '../db/schema';
@@ -164,6 +165,8 @@ export interface SessionRecord {
    * `sessions.working_directory`); `null`: the first directory.
    */
   workingDirectory: number | null;
+  /** Set while the usage limit stopped the session (see `LimitWait`). */
+  limitWait: LimitWait | null;
 }
 
 export type NewSessionDirectory = Pick<
@@ -206,6 +209,7 @@ export type SessionPatch = Partial<
     | 'archivedAt'
     | 'environmentSetupStatus'
     | 'workingDirectory'
+    | 'limitWait'
   >
 >;
 
@@ -398,6 +402,17 @@ export class SessionRepository {
         .run();
       tx.delete(sessions).where(eq(sessions.id, id)).run();
     });
+  }
+
+  /** Sessions the usage limit stopped (see `LimitWait`). */
+  listLimitWaits(): SessionRecord[] {
+    return this.withDirectories(
+      this.db
+        .select()
+        .from(sessions)
+        .where(isNotNull(sessions.limitWait))
+        .all(),
+    );
   }
 
   listByStatus(status: SessionStatus): SessionRecord[] {

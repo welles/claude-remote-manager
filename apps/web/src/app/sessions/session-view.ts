@@ -1,4 +1,4 @@
-import { AppDatePipe } from '../ui/dates';
+import { AppDatePipe, formatClock } from '../ui/dates';
 import { AppBanner } from '../ui/banner';
 import { AppIcon } from '../ui/icon';
 import { AppPageBar } from '../ui/page-bar';
@@ -263,6 +263,22 @@ export class SessionView implements OnInit {
   protected readonly preparing = computed(
     () => this.session()?.status === 'preparing',
   );
+  /**
+   * When the session continues after the usage limit stopped it, while it
+   * waits for that (`waitingFor: 'limit'`); `resumes` is `null` when not
+   * known.
+   */
+  protected readonly limitWait = computed(() => {
+    const session = this.session();
+    if (session?.status !== 'waiting' || session.waitingFor !== 'limit') {
+      return null;
+    }
+    return {
+      resumes: session.limitResumesAt
+        ? formatClock(session.limitResumesAt, Date.now())
+        : null,
+    };
+  });
   /** The first message waits for a decision after a failed setup script. */
   protected readonly heldBack = computed(() => {
     const session = this.session();
@@ -281,7 +297,7 @@ export class SessionView implements OnInit {
         ? this.removedDirectories()
           ? 'The session cannot be continued: its directories were removed'
           : 'Unarchive the session to continue it'
-        : this.running()
+        : this.running() || this.limitWait() !== null
           ? 'Queue a message'
           : 'Message',
   );
@@ -624,7 +640,19 @@ export class SessionView implements OnInit {
     this.sendAction('setup.rerun');
   }
 
-  private sendAction(type: 'pending.send' | 'setup.rerun'): void {
+  /** Continues the session now instead of when the usage limit resets. */
+  protected resumeAfterLimit(): void {
+    this.sendAction('limit.resume');
+  }
+
+  /** Does not continue the session by itself after the usage limit. */
+  protected cancelLimitWait(): void {
+    this.sendAction('limit.cancel');
+  }
+
+  private sendAction(
+    type: 'pending.send' | 'setup.rerun' | 'limit.resume' | 'limit.cancel',
+  ): void {
     const requestId = newId();
     if (this.socket.send({ type, sessionId: this.sessionId(), requestId })) {
       this.pending.add(requestId);

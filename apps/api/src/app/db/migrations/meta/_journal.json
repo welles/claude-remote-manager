@@ -148,6 +148,13 @@
       "when": 1795206749354,
       "tag": "0020_record_old_closes",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1795258418768,
+      "tag": "0021_limit_wait",
+      "breakpoints": true
     }
   ]
 }
