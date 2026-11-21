@@ -50,6 +50,22 @@ describe('analyzeGitPushes', () => {
     expect(one('git push --mirror').everything).toBe(true);
   });
 
+  it.each([
+    ['git push --force-with-lease', true],
+    ['git push --force-with-lease --force-if-includes origin HEAD', true],
+    ['git push -u --force-with-lease origin claude/fix-abc123', true],
+    ['git push', false],
+    ['git push --force', false],
+    ['git push --force-with-lease -f', false],
+    ['git push --force-with-lease=claude/fix-abc123:abc', false],
+    ['git push --force-with-lease origin +claude/fix-abc123', false],
+    ['git push --force-with-lease origin HEAD:main', false],
+    ['git push --force-with-lease upstream', false],
+    ['git push --force-with-lease --delete origin old', false],
+  ])('reads %s as lease-only: %s', (command, leaseOnly) => {
+    expect(one(command).leaseOnly).toBe(leaseOnly);
+  });
+
   it('warns about other remotes', () => {
     expect(one('git push https://evil.example/x.git HEAD').warnings).toEqual([
       'Pushes to the remote "https://evil.example/x.git", not origin',

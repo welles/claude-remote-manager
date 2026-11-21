@@ -2096,6 +2096,112 @@ describe('PrAutomationService', () => {
       await automation.check(pull.id);
       expect(harness.github.merges).toHaveLength(1);
     });
+
+    it('does not merge a commit with merge conflicts, but asks for a rebase', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutomerge(session.id, pull);
+      green(pull);
+      fakePull(pull.number).mergeable = false;
+      fakePull(pull.number).mergeableState = 'dirty';
+
+      await automation.check(pull.id);
+
+      expect(harness.github.merges).toHaveLength(0);
+      expect(readyMessages()).toHaveLength(0);
+      expect(appMessages()).toHaveLength(1);
+      expect(appMessages()[0].text).toContain('merge conflicts');
+      expect(
+        harness.service.get(session.id).pullRequests[0].automation.automerge
+          .waiting,
+      ).toBe('merge conflicts with main');
+    });
+  });
+
+  describe('merge conflicts', () => {
+    const conflicting = (pull: PullRequestDto) => {
+      const fake = fakePull(pull.number);
+      fake.mergeable = false;
+      fake.mergeableState = 'dirty';
+      return fake.headSha;
+    };
+
+    it('starts one rebase run per head commit, which counts as an attempt', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      // Not computed yet: nothing to do.
+      fakePull(pull.number).mergeable = null;
+      fakePull(pull.number).mergeableState = 'unknown';
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(0);
+      expect(record(pull).mergeConflict).toBeNull();
+
+      const head = conflicting(pull);
+      await automation.check(pull.id);
+
+      const messages = appMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0].text).toContain(
+        'needs a fix because it has merge conflicts with its base branch main.',
+      );
+      expect(messages[0].text).toContain('git rebase origin/main');
+      expect(messages[0].text).toContain('git push --force-with-lease');
+      expect(messages[0].text).not.toContain('@');
+      // Nothing from GitHub comes along.
+      expect(messages[0].context).toBeUndefined();
+      expect(record(pull)).toMatchObject({
+        mergeConflict: true,
+        autofixAttempts: 1,
+        autofixLastTrigger: 'conflict',
+        autofixConflictSha: head,
+        autofixRunning: true,
+      });
+
+      harness.runner.last.emit(resultMessage(20, 0.02));
+      await waitFor(() => !record(pull).autofixRunning);
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(1);
+    });
+
+    it('takes failed checks along as context, and gives up at the limit', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      automation.update(session.id, pull.id, { maxAttempts: 1 });
+      const head = conflicting(pull);
+      harness.github.checkRuns.set(head, [
+        {
+          id: 21,
+          name: 'test',
+          status: 'completed',
+          conclusion: 'failure',
+          app: 'other',
+        },
+      ]);
+
+      await automation.check(pull.id);
+
+      const [message] = appMessages();
+      expect(message.text).toContain(
+        'merge conflicts with its base branch main, and CI checks of its current head commit failed',
+      );
+      expect(message.context?.text).toContain('name="test"');
+      expect(record(pull)).toMatchObject({
+        autofixLastTrigger: 'conflict',
+        autofixCiHandledSha: head,
+      });
+
+      harness.runner.last.emit(resultMessage(20, 0.02));
+      await waitFor(() => !record(pull).autofixRunning);
+      // A new head commit that still conflicts: the limit is reached.
+      fakePull(pull.number).headSha = sha('d');
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(1);
+      expect(notifications.gaveUp).toHaveLength(1);
+      expect(
+        harness
+          .eventsOfType(session.id, 'notice')
+          .some((event) => event.text.includes('(merge conflicts with main)')),
+      ).toBe(true);
+    });
   });
 
   describe('git during autofix', () => {
@@ -2314,6 +2420,103 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       await commitFile(clone, 'fix.txt', 'fixed');
       void ask('git add -A && git commit -m x && git push');
       await waitFor(() => harness.approver.requests.length === 1);
+    });
+
+    describe('force push with lease in a conflict run', () => {
+      const startConflictRun = async (pull: PullRequestDto) => {
+        fakePull(pull.number).mergeable = false;
+        fakePull(pull.number).mergeableState = 'dirty';
+        await automation.check(pull.id);
+        expect(record(pull)).toMatchObject({
+          autofixRunning: true,
+          autofixLastTrigger: 'conflict',
+        });
+        harness.approver.requests.length = 0;
+      };
+
+      it('pushes a branch rebased onto the base branch itself, with a lease', async () => {
+        const { session, pull, clone } = await sessionWithPullRequest();
+        enableAutofix(session.id, pull);
+        const branch = `claude/${session.slug}`;
+        const before = await git(origin, 'rev-parse', `refs/heads/${branch}`);
+        await commitFile(origin, 'main.txt', 'main moved');
+        await startConflictRun(pull);
+        await git(clone, 'fetch', '--quiet', 'origin', 'main');
+        await commitFile(clone, 'more.txt', 'more');
+
+        // Not rebased yet: the branch lacks origin/main.
+        let output = report(await ask('git push --force-with-lease'));
+        expect(output.fails).toBe(true);
+        expect(output.text).toContain('does not contain origin/main');
+        expect(await git(origin, 'rev-parse', `refs/heads/${branch}`)).toBe(
+          before,
+        );
+
+        await git(clone, 'rebase', '--quiet', 'origin/main');
+        const rebased = await git(clone, 'rev-parse', 'HEAD');
+        output = report(await ask(`git -C ${clone} push --force-with-lease`));
+
+        expect(output.fails).toBe(false);
+        expect(output.text).toContain(
+          `Force-pushed ${branch} of alice/app to GitHub at ${rebased.slice(0, 7)}, with a lease on ${before.slice(0, 7)}.`,
+        );
+        expect(harness.approver.requests).toHaveLength(0);
+        expect(await git(origin, 'rev-parse', `refs/heads/${branch}`)).toBe(
+          rebased,
+        );
+        expect(byApp(session.id).at(-1)).toMatchObject({
+          outcome: 'succeeded',
+          summary: expect.stringContaining('force-pushed (with lease)'),
+        });
+      });
+
+      it('refuses when the branch on GitHub moved since the clone saw it', async () => {
+        const { session, pull, clone } = await sessionWithPullRequest();
+        enableAutofix(session.id, pull);
+        const branch = `claude/${session.slug}`;
+        await startConflictRun(pull);
+        // Someone else pushes to the branch.
+        await git(origin, 'checkout', '--quiet', branch);
+        const theirs = await commitFile(origin, 'theirs.txt', 'theirs');
+        await git(origin, 'checkout', '--quiet', 'main');
+        await git(clone, 'commit', '--quiet', '--amend', '-m', 'Rewritten');
+
+        const output = report(await ask('git push --force-with-lease'));
+
+        expect(output.fails).toBe(true);
+        expect(output.text).toContain('changed since the session clone');
+        expect(await git(origin, 'rev-parse', `refs/heads/${branch}`)).toBe(
+          theirs,
+        );
+      });
+
+      it.each([
+        ['--force', 'git push --force'],
+        ['a lease with a value', 'git push --force-with-lease=main:abc'],
+        ['-f with the lease', 'git push --force-with-lease -f'],
+        ['a + refspec', 'git push --force-with-lease origin +HEAD'],
+      ])('asks the user for %s', async (_, command) => {
+        const { session, pull, clone } = await sessionWithPullRequest();
+        enableAutofix(session.id, pull);
+        await startConflictRun(pull);
+        await git(clone, 'commit', '--quiet', '--amend', '-m', 'Rewritten');
+
+        void ask(command);
+
+        await waitFor(() => harness.approver.requests.length > 0);
+        expect(byApp(session.id)).toHaveLength(0);
+      });
+
+      it('asks the user outside a conflict run', async () => {
+        const { session, pull, clone } = await sessionWithPullRequest();
+        enableAutofix(session.id, pull);
+        await git(clone, 'commit', '--quiet', '--amend', '-m', 'Rewritten');
+
+        void ask('git push --force-with-lease');
+
+        await waitFor(() => harness.approver.requests.length === 1);
+        expect(byApp(session.id)).toHaveLength(0);
+      });
     });
   });
 

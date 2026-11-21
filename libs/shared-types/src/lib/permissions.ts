@@ -41,6 +41,12 @@ export interface GitPushAnalysis {
    * delete. `false` when anything else is pushed or it is unclear.
    */
   sessionBranchOnly: boolean;
+  /**
+   * Like `sessionBranchOnly`, except that it forces, but only with a plain
+   * `--force-with-lease` (optionally with `--force-if-includes`): no `-f`,
+   * `--force`, `+` refspec or lease with an explicit value.
+   */
+  leaseOnly: boolean;
   /** Plain-language warnings for the dialog; empty for a plain push. */
   warnings: string[];
 }

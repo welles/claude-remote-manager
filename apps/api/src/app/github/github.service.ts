@@ -110,6 +110,11 @@ export interface PullRequestInfo {
   createdAt: Date;
   closedAt: Date | null;
   mergedAt: Date | null;
+  /**
+   * GitHub reports merge conflicts with the base branch (`mergeable_state`
+   * `dirty`); `null` while GitHub has not computed it (or did not say).
+   */
+  mergeConflict: boolean | null;
 }
 
 export interface CreatePullRequestInput {
@@ -152,6 +157,9 @@ interface RawPullRequest {
   created_at: string;
   head: { ref: string; sha?: string };
   base: { ref: string };
+  /** Only in the answer for a single pull request. */
+  mergeable?: boolean | null;
+  mergeable_state?: string;
 }
 
 interface RawInstallation {
@@ -341,6 +349,7 @@ function toPullRequest(raw: RawPullRequest): PullRequestInfo {
     createdAt: new Date(raw.created_at),
     closedAt: raw.closed_at ? new Date(raw.closed_at) : null,
     mergedAt: raw.merged_at ? new Date(raw.merged_at) : null,
+    mergeConflict: mergeConflict(raw),
   };
 }
 
@@ -1103,4 +1112,19 @@ export class GitHubService implements OnApplicationBootstrap {
       );
     return { repositories, counts, errors, fetchedAt: new Date(this.now()) };
   }
+}
+
+/**
+ * Whether GitHub reports merge conflicts: `mergeable` is `null` while it
+ * computes it, and `false` with the state `dirty` means conflicts (other
+ * states such as `blocked` or `unstable` are about checks and rules).
+ */
+function mergeConflict(raw: RawPullRequest): boolean | null {
+  if (raw.state !== 'open' || raw.mergeable === undefined) {
+    return null;
+  }
+  if (raw.mergeable === null || raw.mergeable_state === 'unknown') {
+    return null;
+  }
+  return raw.mergeable === false && raw.mergeable_state === 'dirty';
 }

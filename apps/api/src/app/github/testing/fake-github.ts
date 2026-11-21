@@ -56,6 +56,12 @@ export interface FakePullRequest {
   createdAt: string;
   /** Head commit (40 hex digits). */
   headSha: string;
+  /**
+   * `mergeable` and `mergeable_state` of the single pull request (default:
+   * mergeable, `clean`).
+   */
+  mergeable?: boolean | null;
+  mergeableState?: string;
 }
 
 /** An issue or pull request for references (`#12`). */
@@ -1281,7 +1287,11 @@ export class FakeGitHub {
             entry.number === Number(match?.[3]),
         );
         return pull
-          ? json(200, this.rawPull(pull))
+          ? json(200, {
+              ...this.rawPull(pull),
+              mergeable: pull.mergeable === undefined ? true : pull.mergeable,
+              mergeable_state: pull.mergeableState ?? 'clean',
+            })
           : json(404, { message: 'Not Found' });
       }
       if (method === 'GET') {

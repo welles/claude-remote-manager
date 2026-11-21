@@ -118,6 +118,8 @@ function analyze(
   checkedOut: readonly string[],
 ): GitPushAnalysis {
   let force = false;
+  // Forcing other than with a plain --force-with-lease.
+  let hardForce = false;
   let deletes = false;
   let everything = false;
   let unclear = false;
@@ -135,6 +137,9 @@ function analyze(
     const name = arg.split('=')[0];
     if (FORCE_OPTIONS.has(name)) {
       force = true;
+      hardForce ||= !(
+        arg === '--force-with-lease' || arg === '--force-if-includes'
+      );
     } else if (DELETE_OPTIONS.has(name)) {
       deletes = true;
     } else if (EVERYTHING_OPTIONS.has(name)) {
@@ -142,6 +147,7 @@ function analyze(
     } else if (/^-[a-zA-Z]{2,}$/.test(arg)) {
       // Combined short options, e.g. -uf.
       force ||= arg.includes('f');
+      hardForce ||= arg.includes('f');
       deletes ||= arg.includes('d');
     } else if (VALUE_OPTIONS.has(arg)) {
       i++;
@@ -168,6 +174,7 @@ function analyze(
           };
         });
   force ||= targets.some((target) => target.forced);
+  hardForce ||= targets.some((target) => target.forced);
   deletes ||= targets.some((target) => target.deletes);
   const sessions = new Set(sessionBranches);
   // HEAD (or no refspec) pushes the checked-out branch: the session branch
@@ -210,6 +217,8 @@ function analyze(
     deletes,
     everything,
     sessionBranchOnly: warnings.length === 0,
+    // The force warning is then the only one.
+    leaseOnly: force && !hardForce && warnings.length === 1,
     warnings,
   };
 }

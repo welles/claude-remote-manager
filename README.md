@@ -27,7 +27,8 @@ branches are pushed and pull requests created by button, or by Claude (as the se
 permission mode allows, up to `bypassPermissions`); usage is recorded per request. Sessions notify the user over Web Push and ntfy
 (approvals with Allow and Deny right in the notification), and the web app is an installable
 PWA with an offline shell, badge, shortcuts and a share target. Per open pull request,
-autofix continues the session when CI fails or reviewers with write access comment,
+autofix continues the session when CI fails, reviewers with write access comment or the pull
+request has merge conflicts (Claude rebases it onto the base branch and force-pushes with a lease),
 automerge merges once CI is green, nobody requests changes and no review thread is open
 (no approval needed; Claude can pause it for the owner's decision, or merge it itself with
 `merge_pull_request`; Claude turns the switches on when asked, with `set_pr_automation`), and
@@ -1816,6 +1817,13 @@ off by default, with the attempt count and limit, "Reset count", what started th
 - **Autofix**: a failed CI check of the pull request's current head commit, or new review
   feedback from someone with write access to the repository, continues the session with what
   failed or what the reviewers wrote. Claude fixes it, commits and pushes the session branch.
+  When GitHub reports merge conflicts with the base branch (`mergeable_state` `dirty`, read
+  with the pull request), a run asks Claude to rebase onto the latest `origin/<base>`, resolve
+  the conflicts and push with `git push --force-with-lease` (see
+  [git during autofix](#git-during-autofix)); once per head commit, counted as an attempt,
+  with failed checks and feedback of the commit along as context. A commit with merge
+  conflicts is never "ready": automerge waits ("merge conflicts with main") instead of
+  trying a merge GitHub would refuse.
 - **Autoclose**: when the pull request is merged or closed and the session has no open pull
   request left, the session ends, its dev servers stop (`DevServers.stopSession`: its
   previews and the processes behind them) and its clones are removed, except clones with
@@ -2026,6 +2034,16 @@ out itself instead of a shell, step by step, stopping at the first failure like 
   other branches and repositories, force, tags and deletions. When new commits change
   `.github/workflows`, the commit is made but the push is not: Claude is told so, and a
   `git push` of its own then asks the owner (workflows can reach the repository's secrets).
+- **Force push in a conflict run.** While a run for merge conflicts goes on (from its message
+  to the end of its turn), `git push --force-with-lease` (plain, optionally with
+  `--force-if-includes`; no `-f`/`--force`, `+` refspec or lease value) of the session branch
+  is accepted too, only for the clones of pull requests in such a run. The app pushes it
+  itself with `--force-with-lease=refs/heads/<branch>:<commit>`, the commit being the clone's
+  `origin/<branch>` (what Claude last saw on GitHub), and only when the branch contains the
+  clone's `origin/<base>` (it was rebased onto the base branch); new workflow changes are
+  counted from `origin/<base>`. Outside such a run any force push asks as the permission mode
+  says. The rebase itself (`git fetch`, `git rebase`, `git rebase --continue`) follows the
+  permission mode like every other command.
 
 **Hooks and configuration.** A commit would normally run the clone's hooks, and `git add` can
 run clean filters, fsmonitor or signing programs named in git configuration. These are code
