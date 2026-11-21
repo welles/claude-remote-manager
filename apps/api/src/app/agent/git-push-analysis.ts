@@ -120,6 +120,7 @@ function analyze(
   let force = false;
   // Forcing other than with a plain --force-with-lease.
   let hardForce = false;
+  let withLease = false;
   let deletes = false;
   let everything = false;
   let unclear = false;
@@ -137,6 +138,7 @@ function analyze(
     const name = arg.split('=')[0];
     if (FORCE_OPTIONS.has(name)) {
       force = true;
+      withLease ||= arg === '--force-with-lease';
       hardForce ||= !(
         arg === '--force-with-lease' || arg === '--force-if-includes'
       );
@@ -218,7 +220,7 @@ function analyze(
     everything,
     sessionBranchOnly: warnings.length === 0,
     // The force warning is then the only one.
-    leaseOnly: force && !hardForce && warnings.length === 1,
+    leaseOnly: withLease && !hardForce && warnings.length === 1,
     warnings,
   };
 }
