@@ -17,7 +17,7 @@
 <div class="overflow-x-auto rounded-sm bg-surface-container-low">
   @if (layout() === 'split') {
   <table
-    class="min-w-full border-collapse type-code [&_.add]:bg-diff-add-line [&_.del]:bg-diff-del-line [&_td]:px-1.5 [&_td]:py-0 [&_td]:align-top"
+    class="min-w-full border-collapse type-code [&_.add]:bg-diff-add-line [&_.del]:bg-diff-del-line [&_.note]:text-on-surface-variant [&_td]:px-1.5 [&_td]:py-0 [&_td]:align-top"
     data-testid="diff-split"
   >
     @for (row of split().slice(0, shown()); track $index) { @if (row.kind ===
@@ -46,7 +46,7 @@
   </table>
   } @else {
   <table
-    class="min-w-full border-collapse type-code [&_.add]:bg-diff-add-line [&_.del]:bg-diff-del-line [&_td]:px-1.5 [&_td]:py-0 [&_td]:align-top"
+    class="min-w-full border-collapse type-code [&_.add]:bg-diff-add-line [&_.del]:bg-diff-del-line [&_.note]:text-on-surface-variant [&_td]:px-1.5 [&_td]:py-0 [&_td]:align-top"
     data-testid="diff-unified"
   >
     @for (row of unified().slice(0, shown()); track $index) { @if (row.kind ===
