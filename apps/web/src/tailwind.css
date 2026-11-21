@@ -609,3 +609,19 @@
   border-radius: var(--mat-sys-corner-small);
   background: var(--mat-sys-surface-container-low);
 }
+
+/*
+ * Label and value side by side (`dl` of `dt`/`dd` pairs): short facts such
+ * as the server's version. `field-list` stacks them instead.
+ */
+@utility fact-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+
+  & > dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+}
