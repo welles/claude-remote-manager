@@ -121,13 +121,6 @@
       transform: translateY(-8px);
     }
   }
-
-  @keyframes panel-in {
-    from {
-      transform: translateX(24px);
-      opacity: 0;
-    }
-  }
 }
 
 /*
@@ -774,6 +767,15 @@
  * `--sheet-width`. On a fixed host with a scrim behind it; `sheet-head`
  * is its header with the title and the icon buttons.
  */
+/* Outside the theme: `overlay-sheet` uses it directly, and Tailwind
+   emits theme keyframes only for used `animate-*` classes. */
+@keyframes panel-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
 @utility overlay-sheet {
   position: absolute;
   inset: 0 0 0 auto;
