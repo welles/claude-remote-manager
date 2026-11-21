@@ -297,6 +297,7 @@
           ? 'bg-surface-container-highest'
           : 'bg-error-container text-on-error-container [&_.hint-text]:text-inherit'
       "
+      [attr.data-danger]="plainPushes() ? null : ''"
       data-testid="git-pushes"
     >
       @for (push of r.gitPushes; track $index) {

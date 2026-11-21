@@ -176,7 +176,7 @@
 <p class="notice hint-text wrap-anywhere" data-testid="settings-changed">{{ item.text }}</p>
 } @case ('notice') {
 <!-- prettier-ignore -->
-<p class="notice hint-text wrap-anywhere" [class.text-error!]="item.level === 'warning'">{{ item.text }}</p>
+<p class="notice hint-text wrap-anywhere" [class.text-error]="item.level === 'warning'">{{ item.text }}</p>
 } @case ('error') {
 <p class="m-0 flex gap-1.5 type-body-small text-error [--app-icon-size:16px]">
   <app-icon name="alert" /><span>{{ item.text }}</span>
@@ -340,7 +340,7 @@
   @if (item.diff; as change) {
   <app-file-diff-card
     class="-mt-1"
-    [class.ml-3]="item.nested"
+    [class]="item.nested ? 'ml-3 border-l-2 border-outline-variant pl-2.5' : ''"
     [diff]="change.diff"
     [label]="sessionPath(change.diff.path)"
     data-testid="tool-diff"
@@ -348,20 +348,22 @@
   } @for (file of item.shown; track file.id) {
   <app-shown-file-card
     class="-mt-1"
-    [class.ml-3]="item.nested"
+    [class]="item.nested ? 'ml-3 border-l-2 border-outline-variant pl-2.5' : ''"
     [file]="file"
     (open)="openFile.emit($event)"
   />
   } @for (preview of item.previews; track preview.id) {
   <app-preview-card
     class="-mt-1"
-    [class.ml-3]="item.nested"
+    [class]="item.nested ? 'ml-3 border-l-2 border-outline-variant pl-2.5' : ''"
     [preview]="current(preview)"
     (embed)="embed.emit($event)"
   />
   } @if (item.permission; as permission) { @if (permission.request.plan &&
   permission.resolved) {
-  <details [class.ml-3]="item.nested">
+  <details
+    [class]="item.nested ? 'ml-3 border-l-2 border-outline-variant pl-2.5' : ''"
+  >
     <summary class="cursor-pointer type-body-small text-on-surface-variant">
       Plan
     </summary>
@@ -377,8 +379,13 @@
   @if (item.permission?.resolved) {
   <p
     class="hint-text wrap-anywhere"
-    [class]="inGroup ? '' : '-mt-1.5 pl-2.5' + (item.nested ? ' ml-3' : '')"
-    [class.text-error!]="item.permission.resolved.decision === 'deny'"
+    [class]="
+      (inGroup ? 'pl-2.5' : '-mt-1.5 pl-2.5') +
+      (item.nested
+        ? ' border-l-2 border-outline-variant' + (inGroup ? '' : ' ml-3')
+        : '')
+    "
+    [class.text-error]="item.permission.resolved.decision === 'deny'"
     data-testid="permission-line"
   >
     {{ resolutionText(item.permission) }}

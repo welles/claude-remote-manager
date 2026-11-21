@@ -571,17 +571,18 @@
   gap: 4px;
   margin: 0;
 
-  & dt {
+  /* Only the list's own pairs: values may be rendered Markdown. */
+  & > div > dt {
     font: var(--mat-sys-label-medium);
     letter-spacing: var(--mat-sys-label-medium-tracking);
     color: var(--mat-sys-on-surface-variant);
   }
 
-  & dd {
+  & > div > dd {
     margin: 0;
   }
 
-  & pre {
+  & > div > dd:not(.markdown) > pre {
     overflow-x: auto;
     margin: 2px 0 0;
     padding: 6px;
