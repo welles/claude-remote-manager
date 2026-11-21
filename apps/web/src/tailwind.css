@@ -359,8 +359,8 @@
   }
 }
 
-/* A hint: small, muted text without margins (under fields, in panels). */
-@utility hint {
+/* A hint (`hint-text`): small, muted text without margins (under fields, in panels). */
+@utility hint-text {
   margin: 0;
   font: var(--mat-sys-body-small);
   letter-spacing: var(--mat-sys-body-small-tracking);

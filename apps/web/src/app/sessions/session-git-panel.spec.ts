@@ -472,7 +472,7 @@ describe('SessionGitPanel', () => {
   it('lists pull requests of a repository whose clones were all removed in a group of their own', async () => {
     const base = githubSession();
     const [app, tool] = base.directories;
-    const { all } = await render(
+    const { fixture, all } = await render(
       sessionDto({
         directories: [
           {
@@ -497,6 +497,11 @@ describe('SessionGitPanel', () => {
     expect(all('retired-pull-requests')[0]).toContain(
       'claude/reply-with-pong-abc123',
     );
+    // Its state is the same badge as for the clones that are left.
+    const state = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="retired-pull-requests"] [data-testid="pull-request-state"]',
+    );
+    expect([...(state?.classList ?? [])]).toEqual(['badge', 'tone-merged']);
   });
 
   it('pushes by button and shows the outcome', async () => {
