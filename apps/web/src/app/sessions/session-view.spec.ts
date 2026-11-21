@@ -726,6 +726,7 @@ describe('SessionView', () => {
         status: 'waiting',
         waitingFor: 'limit',
         limitResumesAt: resumes.toISOString(),
+        limitResetKnown: true,
       }),
       events: [
         event({ type: 'user.message', id: 'u1', text: 'Reply with pong' }),

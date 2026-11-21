@@ -197,11 +197,12 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
       this.watched.delete(id);
     }
     if (
-      (previous === 'waiting/message' ||
-        previous === 'waiting/background' ||
-        previous === 'waiting/limit') &&
-      state !== 'waiting/message' &&
-      state !== 'waiting/background'
+      ((previous === 'waiting/message' || previous === 'waiting/background') &&
+        state !== 'waiting/message' &&
+        state !== 'waiting/background') ||
+      // The report of the usage limit is over once the session continues
+      // or will not continue by itself any more.
+      previous === 'waiting/limit'
     ) {
       // Waiting for CI or background work without a turn leaves the report
       // of the finished turn (its result is still news) until the next turn
@@ -293,9 +294,14 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
   }
 
   private notifyLimit(session: SessionDto): void {
-    const resumes = session.limitResumesAt
-      ? ` (in about ${durationText(Date.parse(session.limitResumesAt) - this.now())})`
-      : '';
+    const left = session.limitResumesAt
+      ? durationText(Date.parse(session.limitResumesAt) - this.now())
+      : null;
+    const resumes = !left
+      ? ''
+      : session.limitResetKnown
+        ? ` (in about ${left})`
+        : ` (the app looks again in about ${left})`;
     this.notifications.notify(
       this.base(session, 'turn_finished', notificationKeys.turn(session.id), {
         title: `Usage limit: ${shorten(session.title || 'Untitled session', 60)}`,

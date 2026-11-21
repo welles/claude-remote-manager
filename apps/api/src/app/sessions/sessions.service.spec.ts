@@ -2791,7 +2791,7 @@ describe('SessionsService', () => {
     });
 
     it('continues by itself once the limit has reset', async () => {
-      service.limitUnknownRecheckMs = 10;
+      service.limitUnknownRecheckMs = 200;
       usage(10, Date.now() + 5 * 3_600_000);
       const session = await startSession();
       hitLimit(null);
@@ -2923,6 +2923,138 @@ describe('SessionsService', () => {
         status: 'waiting',
         waitingFor: 'limit',
       });
+    });
+
+    it('ignores the limit errors of subagents and of stopped or earlier turns', async () => {
+      const session = await startSession();
+      const limitMessage = (extra: Record<string, unknown>) => ({
+        type: 'assistant',
+        error: 'rate_limit',
+        message: {
+          id: 'sub',
+          content: [{ type: 'text', text: "You've hit your limit" }],
+        },
+        ...extra,
+      });
+      // A background subagent's message, then the turn ends normally.
+      runner.last.emit(
+        limitMessage({ parent_tool_use_id: null, agent_id: 'a1' }),
+        limitMessage({ parent_tool_use_id: 'tool-1' }),
+        resultMessage(1, 0),
+      );
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('message');
+
+      // Stopped right after the limit message: no wait.
+      await service.send(session.id, { id: MSG_2, text: 'Again' });
+      await service.interrupt(session.id);
+      runner.last.emit(
+        limitMessage({ parent_tool_use_id: null }),
+        resultMessage(1, 0, { subtype: 'error_during_execution', errors: [] }),
+      );
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('message');
+
+      // The process ends between the limit message and the result: the
+      // next process starts afresh.
+      await service.send(session.id, { id: MSG_3, text: 'Once more' });
+      runner.last.emit(limitMessage({ parent_tool_use_id: null }));
+      await flush();
+      runner.last.crash(new Error('gone'));
+      await flush();
+      await service.send(session.id, {
+        id: '4d3f6e4a-0b5c-4f8d-9e3a-2c9f7a5b4d32',
+        text: 'Hello?',
+      });
+      await waitFor(() => runner.runs.length === 2);
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('message');
+    });
+
+    it('ends the wait when a turn of Claude Code gets through, not when it fails otherwise', async () => {
+      const session = await startSession();
+      hitLimit(Date.now() + 3_600_000);
+      await flush();
+      await service.send(session.id, { id: MSG_2, text: 'Held' });
+
+      // A background task reports back: Claude Code starts a turn that
+      // fails for another reason.
+      runner.last.emit(
+        {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          error: 'overloaded',
+          message: { id: 'o', content: [{ type: 'text', text: 'Overloaded' }] },
+        },
+        resultMessage(1, 0, { is_error: true, result: 'Overloaded' }),
+      );
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('limit');
+      expect(runner.last.sent).toHaveLength(1);
+
+      // The next one gets through: the held message goes now.
+      runner.last.emit(
+        {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          message: { id: 'r', content: [{ type: 'text', text: 'Done.' }] },
+        },
+        resultMessage(2, 0),
+      );
+      await flush();
+      expect(runner.last.sent.at(-1)).toEqual({ id: MSG_2, text: 'Held' });
+      expect(service.get(session.id)).toMatchObject({
+        status: 'running',
+        limitResumesAt: null,
+      });
+    });
+
+    it('keeps the Autofix run when the limit stops a turn again during the wait', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      await service.sendMessage(session.id, {
+        id: MSG_2,
+        text: 'Fix the failing checks',
+        origin: 'app',
+        autofixRun: true,
+      });
+      hitLimit(Date.now() + 3_600_000);
+      await flush();
+      // Claude Code starts a turn by itself, which hits the limit again.
+      runner.last.emit({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: { id: 's', content: [{ type: 'text', text: 'x' }] },
+      });
+      await flush();
+      expect(service.get(session.id).status).toBe('running');
+      hitLimit(Date.now() + 3_600_000);
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('limit');
+      await service.resumeAfterLimit(session.id);
+      expect(service.inAutofixRun(session.id)).toBe(true);
+    });
+
+    it('looks again later when the limits cannot be read and the reset is unknown', async () => {
+      service.limitUnknownRecheckMs = 10;
+      limits.setPlanUsageSource(async () => {
+        throw new Error('probe failed');
+      });
+      const session = await startSession();
+      hitLimit(null);
+      await flush();
+      await waitFor(
+        () =>
+          Date.parse(service.get(session.id).limitResumesAt ?? '') >
+          Date.now() + service.limitRetryRecheckMs - 60_000,
+      );
+      expect(service.get(session.id)).toMatchObject({
+        waitingFor: 'limit',
+        limitResetKnown: false,
+      });
+      expect(continuation()).toEqual([]);
     });
 
     it('ends the wait with the session', async () => {

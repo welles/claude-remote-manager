@@ -139,7 +139,7 @@
       } @if (limitWait(); as wait) {
       <app-banner data-testid="limit-wait">
         The usage limit stopped the last turn. Claude continues by itself once
-        it has reset{{ wait.resumes ? ' (around ' + wait.resumes + ')' : '' }};
+        it has reset{{ wait.resumes ? ' (' + wait.resumes + ')' : '' }};
         messages you send meanwhile wait until then.
         <div banner-actions>
           <button

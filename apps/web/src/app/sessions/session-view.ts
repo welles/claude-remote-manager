@@ -273,9 +273,14 @@ export class SessionView implements OnInit {
     if (session?.status !== 'waiting' || session.waitingFor !== 'limit') {
       return null;
     }
+    const at = session.limitResumesAt
+      ? formatClock(session.limitResumesAt, Date.now())
+      : null;
     return {
-      resumes: session.limitResumesAt
-        ? formatClock(session.limitResumesAt, Date.now())
+      resumes: at
+        ? session.limitResetKnown
+          ? `around ${at}`
+          : `the app looks again at ${at}`
         : null,
     };
   });

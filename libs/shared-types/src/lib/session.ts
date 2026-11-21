@@ -53,8 +53,8 @@ export type SessionStatus =
  * - `limit`: the subscription's usage limit (5-hour or weekly window)
  *   ended the last turn; the app continues the session by itself once the
  *   limit has reset (`limitResumesAt`). Messages sent meanwhile are queued
- *   and go to Claude then (or right away with "send now"); Stop cancels
- *   the automatic continuation.
+ *   and go to Claude then (or right away with "send now"); "Don't
+ *   continue" (`limit.cancel`) cancels the automatic continuation.
  *
  * What Claude says with `set_waiting_state` comes first: `user` makes a
  * session with background tasks `message`, `work` one without them
@@ -372,6 +372,12 @@ export interface SessionDto {
    * from older servers.
    */
   limitResumesAt?: string | null;
+  /**
+   * With `waitingFor: 'limit'`: `limitResumesAt` is the limit's known
+   * reset (plus the margin), not only when the app looks again. Absent
+   * from older servers.
+   */
+  limitResetKnown?: boolean;
   /**
    * Readable unique name, used for the session's directories and branches;
    * `null` for sessions created before session clones existed.
