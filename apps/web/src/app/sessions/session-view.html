@@ -260,7 +260,7 @@
           [text]="needLabel(s)"
           data-testid="details-status"
         />
-        <span class="hint"
+        <span class="hint-text"
           >updated {{ s.updatedAt | appDate: 'relative' }}</span
         >
       </div>
@@ -332,7 +332,9 @@
           <mat-option
             [value]="mode"
             [title]="modeInfo[mode].description"
-            [class.text-tertiary]="dangerousModes.includes(mode)"
+            [style.--mat-option-label-text-color]="
+              dangerousModes.includes(mode) ? 'var(--mat-sys-tertiary)' : null
+            "
             >{{ modeInfo[mode].label }}</mat-option
           >
           }
@@ -355,7 +357,7 @@
         class="mt-1 mb-0 flex flex-wrap items-baseline gap-2 wrap-anywhere"
         data-testid="session-environment"
       >
-        <span class="hint">Environment</span>
+        <span class="hint-text">Environment</span>
         <a
           routerLink="/environments"
           [queryParams]="{ id: environment.id }"
@@ -384,7 +386,7 @@
         {{ formatTokens(totalTokens(s.usage)) }} tokens · {{
         formatCost(s.usage.costUsd) }} theoretical API cost
       </p>
-      <p class="hint">
+      <p class="hint-text">
         In {{ formatTokens(s.usage.inputTokens) }} · Out {{
         formatTokens(s.usage.outputTokens) }} · Cache write {{
         formatTokens(s.usage.cacheCreationInputTokens) }} · Cache read {{
@@ -399,7 +401,7 @@
     }
     <section class="panel-section" id="details-manage">
       <h3 class="app-section-label">Session</h3>
-      <div class="flex flex-wrap gap-2 [--app-icon-size:16px]">
+      <div class="flex flex-wrap gap-2 [&_app-icon]:[--app-icon-size:16px]">
         @if (s.status !== 'finished' && !s.archivedAt) {
         <button
           matButton

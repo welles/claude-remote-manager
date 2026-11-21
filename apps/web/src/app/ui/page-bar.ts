@@ -42,7 +42,9 @@ import { AppIcon } from './icon';
         </p>
       }
     </div>
-    <div class="flex flex-none items-center gap-1"><ng-content /></div>
+    <div class="flex flex-none items-center gap-1 empty:hidden">
+      <ng-content />
+    </div>
   `,
 })
 export class AppPageBar {
