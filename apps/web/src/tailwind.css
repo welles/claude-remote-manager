@@ -141,11 +141,6 @@
   letter-spacing: var(--mat-sys-label-medium-tracking);
 }
 
-/* Code in tools, diffs, commands and paths (monospace). */
-@utility type-code {
-  font: var(--app-font-code);
-}
-
 @utility type-label-small {
   font-size: var(--mat-sys-label-small-size);
   line-height: var(--mat-sys-label-small-line-height);
@@ -364,6 +359,17 @@
   }
 }
 
+/*
+ * Code in tools, diffs, commands and paths: the app's monospace face at
+ * 13/18 px (`--app-font-code`). Single properties like the type roles.
+ */
+@utility type-code {
+  font-family: var(--app-font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  font-weight: var(--tw-font-weight, 400);
+}
+
 /* A hint (`hint-text`): small, muted text without margins (under fields, in panels). */
 @utility hint-text {
   margin: 0;
@@ -416,7 +422,8 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    min-height: 36px;
+    /* A touch target, like the issue and pull request rows always were. */
+    min-height: 44px;
     box-sizing: border-box;
     padding: 4px 12px;
     cursor: pointer;

@@ -50,7 +50,7 @@ const canHover = () =>
   template: `
     <button
       type="button"
-      class="ref-chip my-px max-w-[22em] align-bottom max-[480px]:max-w-[15em]"
+      class="ref-chip my-px max-w-[22em] align-bottom max-[481px]:max-w-[15em]"
       [class.border-dashed]="state() === 'failed'"
       #origin
       (click)="toggle()"
