@@ -657,6 +657,32 @@ export class GitHubService implements OnApplicationBootstrap {
     return toPullRequest(response.data);
   }
 
+  /** The commit a branch of the repository points at on GitHub. */
+  async branchCommit(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    branch: string,
+  ): Promise<string> {
+    const { token } = await this.repositoryToken(installationId, repositoryId, {
+      contents: 'read',
+    });
+    const response = await this.http.request<{
+      object?: { sha?: string };
+    }>({
+      path: `/repos/${repoPath(fullName)}/git/ref/heads/${branch
+        .split('/')
+        .map(encodeURIComponent)
+        .join('/')}`,
+      token,
+    });
+    const sha = response.data?.object?.sha;
+    if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) {
+      throw new Error(`GitHub named no commit for the branch ${branch}`);
+    }
+    return sha;
+  }
+
   /**
    * Pull requests (open, closed and merged) whose head is `branch` of the
    * repository itself (not of a fork), newest first, at most 100.
@@ -1116,15 +1142,22 @@ export class GitHubService implements OnApplicationBootstrap {
 
 /**
  * Whether GitHub reports merge conflicts: `mergeable` is `null` while it
- * computes it, and `false` with the state `dirty` means conflicts (other
- * states such as `blocked` or `unstable` are about checks and rules).
+ * computes it, and `false` when the test merge with the base branch failed
+ * (`mergeable_state` is then `dirty`, or `draft` for a draft); checks and
+ * branch rules show as `blocked` or `unstable` with `mergeable: true`.
  */
-function mergeConflict(raw: RawPullRequest): boolean | null {
-  if (raw.state !== 'open' || raw.mergeable === undefined) {
+export function mergeConflict(raw: {
+  state: string;
+  mergeable?: boolean | null;
+  mergeable_state?: string;
+}): boolean | null {
+  if (
+    raw.state !== 'open' ||
+    raw.mergeable === undefined ||
+    raw.mergeable === null ||
+    raw.mergeable_state === 'unknown'
+  ) {
     return null;
   }
-  if (raw.mergeable === null || raw.mergeable_state === 'unknown') {
-    return null;
-  }
-  return raw.mergeable === false && raw.mergeable_state === 'dirty';
+  return raw.mergeable === false;
 }

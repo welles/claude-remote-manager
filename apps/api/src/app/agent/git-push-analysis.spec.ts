@@ -62,6 +62,7 @@ describe('analyzeGitPushes', () => {
     ['git push --force-with-lease origin HEAD:main', false],
     ['git push --force-with-lease upstream', false],
     ['git push --force-with-lease --delete origin old', false],
+    ['git push --force-if-includes', false],
   ])('reads %s as lease-only: %s', (command, leaseOnly) => {
     expect(one(command).leaseOnly).toBe(leaseOnly);
   });

@@ -384,6 +384,24 @@ export class SessionGitService {
   }
 
   /**
+   * The commit the base branch of a pull request points at on GitHub (read
+   * now, not from a clone, whose refs the session can change).
+   */
+  async baseBranchCommit(pullRequestId: number): Promise<string> {
+    const pull = this.sessions.pullRequest(pullRequestId);
+    const repository = pull ? this.repositories.get(pull.repositoryId) : null;
+    if (!pull || !repository || !isGitHubRepository(repository)) {
+      throw new ConflictException('The pull request is not on GitHub');
+    }
+    return this.github.branchCommit(
+      repository.githubInstallationId,
+      repository.githubRepositoryId,
+      `${repository.owner}/${repository.name}`,
+      pull.baseBranch,
+    );
+  }
+
+  /**
    * Reads one pull request from GitHub and stores its state (title, state,
    * head commit, ...). Reports a merge or close to {@link closed$}. Returns
    * the stored pull request, or `null` when it cannot be read from GitHub
@@ -420,11 +438,9 @@ export class SessionGitService {
         draft: info.draft,
         baseBranch: info.baseBranch,
         headSha: info.headSha,
-        // Kept while GitHub computes it again for the same head commit (the
-        // base branch moved); unknown for a new head commit.
-        ...(info.mergeConflict !== null || info.headSha !== pull.headSha
-          ? { mergeConflict: info.mergeConflict }
-          : {}),
+        // As GitHub says now: `null` while it computes it (the automation
+        // looks again shortly), never an older answer.
+        mergeConflict: info.mergeConflict,
         closedAt: info.closedAt,
         mergedAt: info.mergedAt,
         syncedAt: new Date(),

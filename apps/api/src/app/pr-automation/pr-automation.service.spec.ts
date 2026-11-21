@@ -95,6 +95,7 @@ describe('PrAutomationService', () => {
         idleRecheckMs: 5,
         ciSettleMs: 60_000,
         ciRecheckMs: 60_000,
+        mergeableRecheckMs: 5,
       },
       harness.sessions,
       harness.repositoryRecords,
@@ -2162,6 +2163,25 @@ describe('PrAutomationService', () => {
       expect(appMessages()).toHaveLength(1);
     });
 
+    it('looks again soon while GitHub computes mergeability, and counts conflicts of a draft', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      enableAutofix(session.id, pull);
+      const fake = fakePull(pull.number);
+      fake.mergeable = null;
+      fake.mergeableState = 'unknown';
+      await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(0);
+      // GitHub is done: a draft with conflicts reports the state draft.
+      fake.mergeable = false;
+      fake.mergeableState = 'draft';
+
+      await waitFor(() => appMessages().length === 1);
+      expect(record(pull)).toMatchObject({
+        mergeConflict: true,
+        autofixLastTrigger: 'conflict',
+      });
+    });
+
     it('takes failed checks along as context, and gives up at the limit', async () => {
       const { session, pull } = await sessionWithPullRequest();
       enableAutofix(session.id, pull);
@@ -2447,7 +2467,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
         // Not rebased yet: the branch lacks origin/main.
         let output = report(await ask('git push --force-with-lease'));
         expect(output.fails).toBe(true);
-        expect(output.text).toContain('does not contain origin/main');
+        expect(output.text).toContain(
+          'does not contain the latest main of GitHub',
+        );
         expect(await git(origin, 'rev-parse', `refs/heads/${branch}`)).toBe(
           before,
         );
@@ -2468,6 +2490,65 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
           outcome: 'succeeded',
           summary: expect.stringContaining('force-pushed (with lease)'),
         });
+      });
+
+      it('stages, commits and force-pushes in one command', async () => {
+        const { session, pull, clone } = await sessionWithPullRequest();
+        enableAutofix(session.id, pull);
+        const branch = `claude/${session.slug}`;
+        await commitFile(origin, 'main.txt', 'main moved');
+        await startConflictRun(pull);
+        await git(clone, 'fetch', '--quiet', 'origin', 'main');
+        await git(clone, 'rebase', '--quiet', 'origin/main');
+        await writeFile(join(clone, 'fix.txt'), 'fixed');
+
+        const output = report(
+          await ask(
+            'git add -A && git commit -m "Fix" && git push --force-with-lease',
+          ),
+        );
+
+        expect(output.fails).toBe(false);
+        expect(await git(origin, 'log', '-1', '--format=%s', branch)).toBe(
+          'Fix',
+        );
+      });
+
+      it('asks when the rebased branch changes workflow files, also in a merge commit', async () => {
+        const { session, pull, clone } = await sessionWithPullRequest();
+        enableAutofix(session.id, pull);
+        await commitFile(origin, 'main.txt', 'main moved');
+        await startConflictRun(pull);
+        await git(clone, 'fetch', '--quiet', 'origin', 'main');
+        await git(clone, 'merge', '--quiet', '--no-commit', 'origin/main');
+        await mkdir(join(clone, '.github', 'workflows'), { recursive: true });
+        await writeFile(
+          join(clone, '.github', 'workflows', 'ci.yml'),
+          'on: push\n',
+        );
+        await git(clone, 'add', '-A');
+        await git(clone, 'commit', '--quiet', '-m', 'Merge main');
+        // Even a forged origin/main does not hide it.
+        await git(clone, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+
+        void ask('git push --force-with-lease');
+
+        await waitFor(() => harness.approver.requests.length === 1);
+        expect(byApp(session.id)).toHaveLength(0);
+      });
+
+      it('asks once the turn of the conflict run is over', async () => {
+        const { session, pull, clone } = await sessionWithPullRequest();
+        enableAutofix(session.id, pull);
+        await startConflictRun(pull);
+        harness.runner.last.emit(resultMessage(20, 0.02));
+        await waitFor(() => !record(pull).autofixRunning);
+        await git(clone, 'commit', '--quiet', '--amend', '-m', 'Rewritten');
+
+        void ask('git push --force-with-lease');
+
+        await waitFor(() => harness.approver.requests.length === 1);
+        expect(byApp(session.id)).toHaveLength(0);
       });
 
       it('refuses when the branch on GitHub moved since the clone saw it', async () => {
@@ -2495,6 +2576,11 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
         ['a lease with a value', 'git push --force-with-lease=main:abc'],
         ['-f with the lease', 'git push --force-with-lease -f'],
         ['a + refspec', 'git push --force-with-lease origin +HEAD'],
+        ['--force-if-includes alone', 'git push --force-if-includes'],
+        [
+          'another branch by name',
+          'git push --force-with-lease origin claude/other-branch',
+        ],
       ])('asks the user for %s', async (_, command) => {
         const { session, pull, clone } = await sessionWithPullRequest();
         enableAutofix(session.id, pull);

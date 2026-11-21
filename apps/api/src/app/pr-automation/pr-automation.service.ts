@@ -90,6 +90,13 @@ export const IDLE_RECHECK_MS = 3_000;
 export const CI_SETTLE_MS = 30 * 60_000;
 /** While other checks still run, failures are looked at again this often. */
 export const CI_RECHECK_MS = 2 * 60_000;
+/**
+ * GitHub computes whether a pull request merges cleanly only when asked
+ * (and sends no event when it is done): looked at again this soon, at most
+ * {@link MAX_MERGEABLE_RECHECKS} times per head commit.
+ */
+export const MERGEABLE_RECHECK_MS = 10_000;
+const MAX_MERGEABLE_RECHECKS = 3;
 /** Logs fetched per run (the first failed GitHub Actions jobs). */
 const MAX_LOGS = 5;
 
@@ -99,6 +106,8 @@ export interface PrAutomationTiming {
   idleRecheckMs: number;
   ciSettleMs: number;
   ciRecheckMs: number;
+  /** Default {@link MERGEABLE_RECHECK_MS}. */
+  mergeableRecheckMs?: number;
 }
 
 /** Timing from the configuration (tests pass their own). */
@@ -247,6 +256,8 @@ export class PrAutomationService
   private readonly waitingSince = new Map<string, number>();
   /** Merges retried per `pullRequestId:sha` after a passing refusal. */
   private readonly mergeRetries = new Map<string, number>();
+  /** Looks again after GitHub had not computed mergeability, per head commit. */
+  private readonly mergeableRechecks = new Map<string, number>();
   /** Bots whose reviews and comments count (lower case). */
   private readonly trustedBots: ReadonlySet<string>;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -862,6 +873,18 @@ export class PrAutomationService
     if (!pull || pull.state !== 'open' || !pull.autofix) {
       return;
     }
+    if (pull.mergeConflict === null && pull.headSha) {
+      // Asking made GitHub compute it: look again soon.
+      const key = `${pull.id}:${pull.headSha}`;
+      const count = this.mergeableRechecks.get(key) ?? 0;
+      if (count < MAX_MERGEABLE_RECHECKS) {
+        this.mergeableRechecks.set(key, count + 1);
+        this.schedule(
+          pull.id,
+          this.timing.mergeableRecheckMs ?? MERGEABLE_RECHECK_MS,
+        );
+      }
+    }
     const session = this.records.get(pull.sessionId);
     if (!session) {
       return;
@@ -1373,7 +1396,11 @@ export class PrAutomationService
 
   /** Drops what waited for other commits of a pull request than `keep`. */
   private forgetWaiting(pullRequestId: number, keep?: string): void {
-    for (const map of [this.waitingSince, this.mergeRetries]) {
+    for (const map of [
+      this.waitingSince,
+      this.mergeRetries,
+      this.mergeableRechecks,
+    ]) {
       for (const key of map.keys()) {
         if (key.startsWith(`${pullRequestId}:`) && key !== keep) {
           map.delete(key);
@@ -1790,8 +1817,14 @@ export class PrAutomationService
     let targets = autofixClones;
     if (lease) {
       // Forcing only for pull requests whose conflict run goes on.
+      // Only the branch of the clone it pushes (HEAD or its name).
+      const named = pushes[0].targets.map((target) => target.branch);
       targets = autofixClones.filter(
-        (directory) => this.conflictRunPull(session, directory) !== null,
+        (directory) =>
+          this.conflictRunPull(session, directory) !== null &&
+          named.every(
+            (branch) => branch === 'HEAD' || branch === directory.branch,
+          ),
       );
       if (targets.length === 0) {
         return null;
@@ -1892,6 +1925,10 @@ export class PrAutomationService
     session: SessionRecord,
     directory: SessionDirectoryRecord,
   ): PullRequestRecord | null {
+    if (!this.sessions.inAutofixRun(session.id)) {
+      // The live marker of the run, not only what the database says.
+      return null;
+    }
     return (
       session.pullRequests.find(
         (pull) =>
@@ -1906,23 +1943,35 @@ export class PrAutomationService
   }
 
   /**
-   * Where the commits to push begin: the remote branch, for a force push
-   * after a rebase the base branch it was rebased onto (the clone's
-   * `origin/<base>`), else the clone's base commit.
+   * For a force push after a rebase: the pull request in its conflict run
+   * and the commit of its base branch on GitHub (read now; `null` when it
+   * cannot be read). Not the clone's `origin/<base>`: the session can set
+   * its refs to anything.
    */
-  private async pushBase(
+  private async leaseBase(
     session: SessionRecord,
-    directory: SessionDirectoryRecord & { branch: string },
-    lease: boolean,
-  ): Promise<string | null> {
-    const pull = lease ? this.conflictRunPull(session, directory) : null;
-    const base = pull
-      ? await this.git.remoteBranchCommit(directory.path, pull.baseBranch)
-      : await this.git.remoteBranchCommit(directory.path, directory.branch);
-    return base ?? directory.baseCommit;
+    directory: SessionDirectoryRecord,
+  ): Promise<{ pull: PullRequestRecord | null; base: string | null }> {
+    const pull = this.conflictRunPull(session, directory);
+    if (!pull) {
+      return { pull, base: null };
+    }
+    try {
+      return { pull, base: await this.sessionGit.baseBranchCommit(pull.id) };
+    } catch (error) {
+      this.logger.warn(
+        `Could not read ${pull.baseBranch} of ${pull.repositoryName}: ${errorText(error)}`,
+      );
+      return { pull, base: null };
+    }
   }
 
-  /** Whether new commits of the clones change workflow files. */
+  /**
+   * Whether new commits of the clones change workflow files. After a rebase
+   * (`lease`) the branch's workflow files are compared with those of the
+   * base branch on GitHub (as trees, so a merge commit counts too); when
+   * that cannot be read, the push asks.
+   */
   private async pushNeedsApproval(
     session: SessionRecord,
     targets: (SessionDirectoryRecord & { branch: string })[],
@@ -1937,14 +1986,24 @@ export class PrAutomationService
         directory.path,
         directory.branch,
       );
-      if (
-        head &&
-        head !== remote &&
-        (await this.git.changesWorkflows(
+      if (!head || head === remote) {
+        continue;
+      }
+      if (lease) {
+        const { base } = await this.leaseBase(session, directory);
+        const differ = base
+          ? await this.git.workflowsDiffer(directory.path, base, head)
+          : true;
+        // Unknown (the clone lacks the base commit): the push refuses it.
+        if (differ === true) {
+          return true;
+        }
+      } else if (
+        await this.git.changesWorkflows(
           directory.path,
           head,
-          await this.pushBase(session, directory, lease),
-        ))
+          remote ?? directory.baseCommit,
+        )
       ) {
         return true;
       }
@@ -1956,7 +2015,7 @@ export class PrAutomationService
    * Pushes the session branches like the Push button; with `lease` (a
    * conflict run's `git push --force-with-lease`) as a force push over the
    * commit the clone last saw on GitHub, and only when the branch contains
-   * the clone's `origin/<base>` (it was rebased onto the base branch).
+   * the commit of the base branch on GitHub (it was rebased onto it).
    */
   private async pushForAutofix(
     session: SessionRecord,
@@ -1996,18 +2055,15 @@ export class PrAutomationService
       }
       let leaseOn: string | undefined;
       if (lease) {
-        const pull = this.conflictRunPull(session, directory);
-        const base = pull
-          ? await this.git.remoteBranchCommit(directory.path, pull.baseBranch)
-          : null;
+        const { pull, base } = await this.leaseBase(session, directory);
         const problem = !pull
           ? 'no conflict run goes on for its pull request'
           : !remote
             ? `the clone does not know ${directory.branch} on GitHub (git fetch origin ${directory.branch} first)`
             : !base
-              ? `the clone has no origin/${pull.baseBranch} (git fetch origin ${pull.baseBranch} first)`
+              ? `${pull.baseBranch} could not be read from GitHub`
               : !(await this.git.isAncestor(directory.path, base, head))
-                ? `${directory.branch} does not contain origin/${pull.baseBranch}: rebase onto it first`
+                ? `${directory.branch} does not contain the latest ${pull.baseBranch} of GitHub (${base.slice(0, 7)}): git fetch origin ${pull.baseBranch} and rebase onto origin/${pull.baseBranch} first`
                 : null;
         if (problem || !remote) {
           ok = false;

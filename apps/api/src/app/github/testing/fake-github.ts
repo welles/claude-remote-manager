@@ -1253,6 +1253,32 @@ export class FakeGitHub {
           ? json(200, { id: found.installation.id })
           : json(404, { message: 'Not Found' });
     }
+    if (
+      method === 'GET' &&
+      (match = /^\/repos\/([^/]+)\/([^/]+)\/git\/ref\/heads\/(.+)$/.exec(path))
+    ) {
+      const found = this.repositoryByName(
+        decodeURIComponent(match[1]),
+        decodeURIComponent(match[2]),
+      );
+      if (!found) {
+        return json(404, { message: 'Not Found' });
+      }
+      if (!this.allows(auth, found.repository, 'contents', 'read')) {
+        return json(403, { message: 'Resource not accessible by integration' });
+      }
+      const branch = match[3].split('/').map(decodeURIComponent).join('/');
+      let commit: string;
+      try {
+        commit = this.headSha(found.repository, branch);
+      } catch {
+        return json(404, { message: 'Not Found' });
+      }
+      return json(200, {
+        ref: `refs/heads/${branch}`,
+        object: { type: 'commit', sha: commit },
+      });
+    }
     if ((match = /^\/repos\/([^/]+)\/([^/]+)\/pulls(?:\/(\d+))?$/.exec(path))) {
       const found = this.repositoryByName(
         decodeURIComponent(match[1]),

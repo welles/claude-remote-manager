@@ -907,6 +907,31 @@ export class GitService {
   }
 
   /** Whether `commit` is reachable from a remote-tracking branch of the clone. */
+  /**
+   * Whether the files under `.github/workflows` differ between two commits
+   * of a clone (their trees, whatever lies between); `null` when a commit
+   * is missing.
+   */
+  async workflowsDiffer(
+    path: string,
+    from: string,
+    to: string,
+  ): Promise<boolean | null> {
+    try {
+      const output = await this.inClone(path, [
+        'diff',
+        '--name-only',
+        from,
+        to,
+        '--',
+        '.github/workflows',
+      ]);
+      return output.trim().length > 0;
+    } catch {
+      return null;
+    }
+  }
+
   /** Whether `ancestor` is `commit` or one of its ancestors (in a clone). */
   async isAncestor(
     path: string,

@@ -1817,8 +1817,9 @@ off by default, with the attempt count and limit, "Reset count", what started th
 - **Autofix**: a failed CI check of the pull request's current head commit, or new review
   feedback from someone with write access to the repository, continues the session with what
   failed or what the reviewers wrote. Claude fixes it, commits and pushes the session branch.
-  When GitHub reports merge conflicts with the base branch (`mergeable_state` `dirty`, read
-  with the pull request), a run asks Claude to rebase onto the latest `origin/<base>`, resolve
+  When GitHub reports merge conflicts with the base branch (`mergeable: false`, read with the
+  pull request; while GitHub computes it, the app looks again after 10 seconds, up to three
+  times per head commit), a run asks Claude to rebase onto the latest `origin/<base>`, resolve
   the conflicts and push with `git push --force-with-lease` (see
   [git during autofix](#git-during-autofix)); once per head commit, counted as an attempt,
   with failed checks and feedback of the commit along as context. A commit with merge
@@ -2040,8 +2041,10 @@ out itself instead of a shell, step by step, stopping at the first failure like 
   is accepted too, only for the clones of pull requests in such a run. The app pushes it
   itself with `--force-with-lease=refs/heads/<branch>:<commit>`, the commit being the clone's
   `origin/<branch>` (what Claude last saw on GitHub), and only when the branch contains the
-  clone's `origin/<base>` (it was rebased onto the base branch); new workflow changes are
-  counted from `origin/<base>`. Outside such a run any force push asks as the permission mode
+  base branch's commit as GitHub reports it right then (not the clone's `origin/<base>`, which
+  the session can set); when its workflow files differ from that commit's (compared as trees,
+  so merge commits count too), the push asks. Only while the run's turn really goes on, only
+  with `--force-with-lease` itself, and only for the clone's branch (`HEAD` or its name). Outside such a run any force push asks as the permission mode
   says. The rebase itself (`git fetch`, `git rebase`, `git rebase --continue`) follows the
   permission mode like every other command.
 

@@ -2,7 +2,7 @@ import type { Logger } from '@nestjs/common';
 import { GitHubAppCredentials } from './github-app-credentials';
 import { GitHubRateLimitError } from './github-errors';
 import { GitHubHttp } from './github-http';
-import { GitHubService, githubFullName } from './github.service';
+import { GitHubService, githubFullName, mergeConflict } from './github.service';
 import { InstallationTokens } from './installation-tokens';
 import { FakeGitHub } from './testing/fake-github';
 
@@ -395,5 +395,20 @@ describe('GitHubService', () => {
     expect(githubFullName('git@github.com:acme/app.git')).toBeNull();
     expect(githubFullName('https://gitlab.com/acme/app.git')).toBeNull();
     expect(githubFullName(null)).toBeNull();
+  });
+});
+
+describe('mergeConflict', () => {
+  it.each([
+    [{ state: 'open', mergeable: false, mergeable_state: 'dirty' }, true],
+    [{ state: 'open', mergeable: false, mergeable_state: 'draft' }, true],
+    [{ state: 'open', mergeable: true, mergeable_state: 'blocked' }, false],
+    [{ state: 'open', mergeable: true, mergeable_state: 'behind' }, false],
+    [{ state: 'open', mergeable: null, mergeable_state: 'unknown' }, null],
+    [{ state: 'open', mergeable: false, mergeable_state: 'unknown' }, null],
+    [{ state: 'open' }, null],
+    [{ state: 'closed', mergeable: false, mergeable_state: 'dirty' }, null],
+  ])('reads %o as %s', (raw, expected) => {
+    expect(mergeConflict(raw)).toBe(expected);
   });
 });
