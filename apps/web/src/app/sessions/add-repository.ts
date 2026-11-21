@@ -42,6 +42,7 @@ export type AdditionSource = 'registered' | 'github' | 'url' | 'project';
  */
 @Component({
   selector: 'app-add-repository',
+  host: { class: 'block' },
   imports: [
     AppIcon,
     FormsModule,
@@ -52,7 +53,6 @@ export type AdditionSource = 'registered' | 'github' | 'url' | 'project';
     MatSelectModule,
   ],
   templateUrl: './add-repository.html',
-  styleUrl: './add-repository.scss',
 })
 export class AddRepository {
   private readonly sessionsApi = inject(SessionsApi);

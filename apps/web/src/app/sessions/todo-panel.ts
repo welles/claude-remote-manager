@@ -4,24 +4,44 @@ import type { Todo } from './todos';
 /** Claude's task list with the state of each task. */
 @Component({
   selector: 'app-todo-panel',
+  host: { class: 'block' },
   template: `
-    <details class="todos" open data-testid="todos">
-      <summary>Tasks {{ done() }}/{{ todos().length }}</summary>
-      <ul>
+    <details class="type-body-medium" open data-testid="todos">
+      <summary class="app-section-label m-0 cursor-pointer">
+        Tasks {{ done() }}/{{ todos().length }}
+      </summary>
+      <ul class="my-1 list-none p-0">
         @for (todo of todos(); track todo.id) {
-          <li class="todo todo-{{ todo.status }}" data-testid="todo">
-            <span class="todo-mark" aria-hidden="true">{{
-              todo.status === 'completed'
-                ? '✓'
-                : todo.status === 'in_progress'
-                  ? '▶'
-                  : '○'
-            }}</span>
-            <span class="todo-text">{{
-              todo.status === 'in_progress' && todo.activeForm
-                ? todo.activeForm
-                : todo.content
-            }}</span>
+          @let status = todo.status;
+          <li
+            class="flex gap-2 py-0.5 wrap-anywhere"
+            [class]="status === 'in_progress' ? 'font-medium text-primary' : ''"
+            data-testid="todo"
+          >
+            <span
+              class="w-[1em] flex-none text-center"
+              [class.text-on-surface-variant]="status !== 'in_progress'"
+              aria-hidden="true"
+              >{{
+                todo.status === 'completed'
+                  ? '✓'
+                  : todo.status === 'in_progress'
+                    ? '▶'
+                    : '○'
+              }}</span
+            >
+            <span
+              [class]="
+                status === 'completed'
+                  ? 'text-on-surface-variant line-through'
+                  : ''
+              "
+              >{{
+                todo.status === 'in_progress' && todo.activeForm
+                  ? todo.activeForm
+                  : todo.content
+              }}</span
+            >
             <span class="visually-hidden"
               >({{ todo.status.replace('_', ' ') }})</span
             >
@@ -30,7 +50,6 @@ import type { Todo } from './todos';
       </ul>
     </details>
   `,
-  styleUrl: './todo-panel.scss',
 })
 export class TodoPanel {
   readonly todos = input.required<Todo[]>();

@@ -1,9 +1,14 @@
-<details class="directories" data-testid="directories">
-  <summary>{{ summary() }}</summary>
-  <ul>
+<details class="type-body-small" data-testid="directories">
+  <summary class="cursor-pointer text-on-surface-variant wrap-anywhere">
+    {{ summary() }}
+  </summary>
+  <ul class="mt-1 list-none p-0">
     @for (directory of directories(); track directory.path) {
-    <li class="directory" data-testid="directory">
-      <span class="directory-name">
+    <li
+      class="flex flex-col gap-0.5 border-t border-outline-variant py-1.5"
+      data-testid="directory"
+    >
+      <span class="flex flex-wrap items-center gap-x-2 gap-y-1 wrap-anywhere">
         <strong>{{ directoryName(directory) }}</strong>
         <span class="badge"
           >{{ directory.role === 'main' ? 'working directory' : 'additional'
@@ -33,7 +38,7 @@
         }
       </span>
       @if (directory.branch) {
-      <span class="directory-branch">
+      <span class="text-on-surface-variant wrap-anywhere">
         <code>{{ directory.branch }}</code>
         @if (directory.baseBranch) { from
         <code>{{ directory.baseBranch }}</code>
@@ -42,7 +47,9 @@
         }
       </span>
       }
-      <code class="directory-path">{{ directory.path }}</code>
+      <code class="text-on-surface-variant wrap-anywhere"
+        >{{ directory.path }}</code
+      >
     </li>
     }
   </ul>

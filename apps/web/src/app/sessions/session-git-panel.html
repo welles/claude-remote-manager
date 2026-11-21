@@ -1,10 +1,13 @@
 @if (keptClones().length > 0) {
-<section class="kept" data-testid="kept-clones">
+<section
+  class="mt-2 rounded-sm bg-error-container px-3 py-1 text-on-error-container"
+  data-testid="kept-clones"
+>
   @for (clone of keptClones(); track clone.key) {
-  <p>
-    Autoclose kept the clone of <strong>{{ clone.name }}</strong>@if
-    (clone.showBranch) { on <code>{{ clone.branch }}</code>}: it has work that
-    is not on GitHub.
+  <p class="my-1">
+    Autoclose kept the clone of
+    <strong>{{ clone.name }}</strong>@if (clone.showBranch) { on
+    <code>{{ clone.branch }}</code>}: it has work that is not on GitHub.
     <button
       matButton
       type="button"
@@ -18,25 +21,33 @@
   <app-discard-clone-dialog #discardDialog [sessionId]="session().id" />
 </section>
 } @if (clones().length > 0 || retiredPullRequests().length > 0) {
-<section class="git" data-testid="git-panel">
+<section class="flex flex-col gap-2" data-testid="git-panel">
   @for (clone of clones(); track clone.key) {
-  <div class="clone" data-testid="git-clone">
-    <div class="clone-head">
-      <strong>{{ clone.name }}</strong>
+  <div
+    class="flex flex-col gap-1.5 rounded-sm border border-outline-variant px-3 py-2.5"
+    data-testid="git-clone"
+  >
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+      <strong class="order-[-2] basis-full type-title-small wrap-anywhere"
+        >{{ clone.name }}</strong
+      >
       @if (clone.showBranch) {
-      <code class="branch" data-testid="clone-branch">{{ clone.branch }}</code>
+      <code data-testid="clone-branch">{{ clone.branch }}</code>
       } @if (clones().length > 1 && clone.directory.role === 'main') {
-      <span class="working" data-testid="clone-working-directory"
+      <span
+        class="type-body-small text-on-surface-variant"
+        data-testid="clone-working-directory"
         >working directory</span
       >
       } @if (clone.directory.pushedCommit; as pushed) {
-      <span class="pushed" data-testid="pushed"
+      <span
+        class="order-[-1] -mt-1 basis-full type-body-small text-on-surface-variant"
+        data-testid="pushed"
         >pushed <code>{{ pushed.slice(0, 7) }}</code> @if
         (clone.directory.pushedAt) { {{ clone.directory.pushedAt | appDate }}
         }</span
       >
       }
-      <span class="spacer"></span>
       <button
         matButton
         type="button"
@@ -60,7 +71,7 @@
     </div>
     @if (composing() === clone.key) {
     <form
-      class="pr-form"
+      class="flex flex-col gap-2 py-2"
       (ngSubmit)="createPullRequest(clone)"
       data-testid="pr-form"
     >
@@ -84,7 +95,7 @@
           data-testid="pr-body"
         ></textarea>
       </mat-form-field>
-      <div class="pr-row">
+      <div class="flex flex-wrap items-center gap-2">
         <mat-form-field appearance="outline" subscriptSizing="dynamic">
           <mat-label>Base branch</mat-label>
           <input
@@ -96,7 +107,7 @@
         </mat-form-field>
         <mat-checkbox name="draft" [(ngModel)]="draft">Draft</mat-checkbox>
       </div>
-      <div class="pr-row">
+      <div class="flex flex-wrap items-center gap-2">
         <button
           matButton="filled"
           type="submit"
@@ -112,35 +123,47 @@
       </div>
     </form>
     } @if (messages()[clone.key]; as message) {
-    <p class="message" [class.error]="message.error" data-testid="git-message">
+    <p
+      class="my-1 type-body-small"
+      [class.text-error]="message.error"
+      data-testid="git-message"
+    >
       {{ message.text }}
     </p>
     } @if (clone.pullRequests.length > 0) {
-    <ul class="pulls">
+    <ul
+      class="m-0 flex list-none flex-col gap-1 border-t border-outline-variant p-0 pt-1.5"
+    >
       @for (pull of clone.pullRequests; track pull.id) {
-      <li data-testid="pull-request">
+      <li
+        class="flex min-w-0 flex-wrap items-baseline gap-2"
+        data-testid="pull-request"
+      >
         @let isDraft = pull.draft && pull.state === 'open';
         <span
           class="badge tone-{{ isDraft ? 'draft' : pull.state }}"
           data-testid="pull-request-state"
           >{{ isDraft ? 'Draft' : stateLabels[pull.state] }}</span
         >
-        <a [href]="pull.url" target="_blank" rel="noopener"
+        <a
+          class="min-w-0 flex-[1_1_0] wrap-anywhere"
+          [href]="pull.url"
+          target="_blank"
+          rel="noopener"
           >#{{ pull.number }} {{ pull.title }}</a
         >
         @if (pull.headBranch !== clone.directory.branch && clone.showBranch) {
-        <code class="pull-branch" data-testid="pull-request-branch"
-          >{{ pull.headBranch }}</code
-        >
+        <code data-testid="pull-request-branch">{{ pull.headBranch }}</code>
         }
-        <span class="by"
+        <span
+          class="basis-full type-body-small text-on-surface-variant empty:hidden"
           >{{ pull.createdBy === 'claude' ? 'by Claude' : '' }}</span
         >
         @if (pull.state === 'open') { @if (pull.checks; as checks) {
-        <app-pull-request-checks class="pull-checks" [checks]="checks" />
+        <app-pull-request-checks class="basis-full" [checks]="checks" />
         }
         <app-pull-request-automation
-          class="pull-automation"
+          class="basis-full"
           [sessionId]="session().id"
           [pull]="pull"
         />
@@ -151,27 +174,42 @@
     }
   </div>
   } @for (group of retiredPullRequests(); track group.key) {
-  <div class="clone" data-testid="retired-pull-requests">
-    <div class="clone-head">
-      <strong>{{ group.name }}</strong>
-      <span class="working">clones removed after their pull requests</span>
+  <div
+    class="flex flex-col gap-1.5 rounded-sm border border-outline-variant px-3 py-2.5"
+    data-testid="retired-pull-requests"
+  >
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+      <strong class="order-[-2] basis-full type-title-small wrap-anywhere"
+        >{{ group.name }}</strong
+      >
+      <span class="type-body-small text-on-surface-variant"
+        >clones removed after their pull requests</span
+      >
     </div>
-    <ul class="pulls">
+    <ul
+      class="m-0 flex list-none flex-col gap-1 border-t border-outline-variant p-0 pt-1.5"
+    >
       @for (pull of group.pullRequests; track pull.id) {
-      <li data-testid="pull-request">
+      <li
+        class="flex min-w-0 flex-wrap items-baseline gap-2"
+        data-testid="pull-request"
+      >
         @let isDraft = pull.draft && pull.state === 'open';
         <span
-          class="state state-{{ isDraft ? 'draft' : pull.state }}"
+          class="badge tone-{{ isDraft ? 'draft' : pull.state }}"
           data-testid="pull-request-state"
           >{{ isDraft ? 'Draft' : stateLabels[pull.state] }}</span
         >
-        <a [href]="pull.url" target="_blank" rel="noopener"
+        <a
+          class="min-w-0 flex-[1_1_0] wrap-anywhere"
+          [href]="pull.url"
+          target="_blank"
+          rel="noopener"
           >#{{ pull.number }} {{ pull.title }}</a
         >
-        <code class="pull-branch" data-testid="pull-request-branch"
-          >{{ pull.headBranch }}</code
-        >
-        <span class="by"
+        <code data-testid="pull-request-branch">{{ pull.headBranch }}</code>
+        <span
+          class="basis-full type-body-small text-on-surface-variant empty:hidden"
           >{{ pull.createdBy === 'claude' ? 'by Claude' : '' }}</span
         >
       </li>
