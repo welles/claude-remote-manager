@@ -100,7 +100,7 @@
   class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,520px),1fr))] items-start gap-3"
 >
   @for (repository of repositories(); track repository.id) {
-  <mat-card appearance="outlined" class="repository" data-testid="repository">
+  <mat-card appearance="outlined" data-testid="repository">
     <mat-card-content>
       <div class="flex items-center justify-between gap-2">
         <h2 class="m-0 type-title-medium wrap-anywhere">
@@ -286,7 +286,7 @@
           <span class="app-section-label m-0 mr-2">Setup script</span>
           @if (repository.setupScript) {
           <pre
-            class="order-3 m-0 basis-full rounded-sm bg-surface-container p-2 type-code whitespace-pre-wrap wrap-anywhere"
+            class="order-3 m-0 basis-full rounded-sm bg-surface-container p-2 whitespace-pre-wrap wrap-anywhere"
             data-testid="setup-script"
           >
 {{ repository.setupScript }}</pre
