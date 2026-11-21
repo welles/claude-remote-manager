@@ -1,8 +1,8 @@
-<div class="composer" (dragover)="onDragOver($event)" (drop)="onDrop($event)">
+<div class="relative" (dragover)="onDragOver($event)" (drop)="onDrop($event)">
   @if (suggesting()) {
   <ul
     id="mention-list"
-    class="mentions"
+    class="suggest-list [&>li]:justify-between"
     role="listbox"
     aria-label="Files"
     data-testid="mentions"
@@ -10,14 +10,15 @@
     @for (file of suggestions(); track file.mention; let i = $index) {
     <li
       role="option"
-      [class.active]="i === active()"
       [attr.aria-selected]="i === active()"
       (mousedown)="$event.preventDefault(); choose(file)"
       data-testid="mention"
     >
-      <span class="mention-path">{{ file.path }}</span>
+      <span class="min-w-0 type-code wrap-anywhere">{{ file.path }}</span>
       @if (showRepository() && file.repository) {
-      <span class="mention-repository">{{ file.repository }}</span>
+      <span class="flex-none type-body-small text-on-surface-variant"
+        >{{ file.repository }}</span
+      >
       }
     </li>
     }
@@ -25,7 +26,7 @@
   } @if (suggestingCommands()) {
   <ul
     id="command-list"
-    class="mentions commands"
+    class="suggest-list [&>li]:flex-col [&>li]:items-start [&>li]:gap-0.5"
     role="listbox"
     aria-label="Commands"
     data-testid="commands"
@@ -34,19 +35,23 @@
     <li
       role="option"
       [id]="'command-' + i"
-      [class.active]="i === active()"
       [attr.aria-selected]="i === active()"
       (mousedown)="$event.preventDefault(); chooseCommand(command)"
       data-testid="command"
     >
-      <span class="command-name">
+      <span
+        class="flex flex-wrap gap-x-[1ch] type-code"
+        data-testid="command-name"
+      >
         <span>/{{ command.name }}</span>
         @if (command.argumentHint) {
-        <span class="command-hint">{{ command.argumentHint }}</span>
+        <span class="text-on-surface-variant">{{ command.argumentHint }}</span>
         }
       </span>
       @if (command.description) {
-      <span class="command-description">{{ command.description }}</span>
+      <span class="line-clamp-2 type-body-small text-on-surface-variant"
+        >{{ command.description }}</span
+      >
       }
     </li>
     }
@@ -64,10 +69,13 @@
     (repositoryChosen)="chooseReferenceRepository($event)"
   />
   <app-draft-images [drafts]="images" />
-  <div class="composer-row">
+  <!-- One row: attach, the text (growing up to 8 lines), stop, send. -->
+  <div
+    class="flex items-end gap-0.5 rounded-md border border-outline-variant bg-surface-container p-[3px] focus-within:border-outline"
+  >
     <button
       type="button"
-      class="icon-btn attach"
+      class="icon-btn"
       (click)="picker.click()"
       title="Attach images (or paste or drop them)"
       data-testid="attach-image"
@@ -85,8 +93,10 @@
       (change)="onPick($event)"
       data-testid="image-picker"
     />
+    <!-- Claude Code's suggested next message is the placeholder, in italics
+         as in the terminal. -->
     <textarea
-      class="input"
+      class="box-border min-h-10 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1.5 py-[9px] [font-family:inherit] type-body-large text-on-surface outline-none placeholder:text-on-surface-variant data-suggestion:placeholder:italic"
       [value]="draft()"
       [placeholder]="offering() ? suggestion() : label()"
       [attr.aria-label]="label()"
@@ -115,9 +125,10 @@
       data-testid="message-input"
     ></textarea>
     @if (offering()) {
+    <!-- Measures the suggestion as the placeholder shows it. -->
     <textarea
       #mirror
-      class="input mirror"
+      class="pointer-events-none invisible absolute box-border min-h-10 min-w-0 flex-none resize-none overflow-hidden border-0 bg-transparent px-1.5 py-[9px] [font-family:inherit] type-body-large italic outline-none"
       aria-hidden="true"
       tabindex="-1"
       rows="1"
@@ -129,7 +140,7 @@
     >
     <button
       type="button"
-      class="icon-btn take"
+      class="icon-btn"
       (mousedown)="$event.preventDefault()"
       (click)="takeSuggestion()"
       title="Edit the suggestion (Tab)"
@@ -142,7 +153,7 @@
     } @if (running()) {
     <button
       type="button"
-      class="icon-btn stop"
+      class="icon-btn text-error!"
       (click)="interrupt.emit()"
       title="Stop Claude"
       data-testid="interrupt"
@@ -152,8 +163,8 @@
     }
     <button
       type="button"
-      class="icon-btn send"
-      [class.ready]="canSend()"
+      class="icon-btn"
+      [class]="canSend() ? 'bg-primary! text-on-primary!' : ''"
       (click)="submit()"
       [disabled]="!canSend()"
       title="Send (Ctrl+Enter)"

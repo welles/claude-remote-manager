@@ -76,7 +76,9 @@ describe('GitHub references in the web app', () => {
     ]);
     const tokens = () =>
       [
-        ...(fixture.nativeElement as HTMLElement).querySelectorAll('.token'),
+        ...(fixture.nativeElement as HTMLElement).querySelectorAll(
+          '[data-testid="reference-token"]',
+        ),
       ].map((token) => token.textContent);
     await fixture.whenStable();
     expect(tokens()).toEqual(['#12', 'acme/lib#3']);

@@ -91,7 +91,6 @@ export interface ComposedMessage {
   selector: 'app-message-composer',
   imports: [AppIcon, DraftImages, ReferenceChips, ReferenceSuggestions],
   templateUrl: './message-composer.html',
-  styleUrl: './message-composer.scss',
 })
 export class MessageComposer {
   /** Text in the input box (bound to the textarea's value). */

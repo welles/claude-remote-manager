@@ -141,6 +141,11 @@
   letter-spacing: var(--mat-sys-label-medium-tracking);
 }
 
+/* Code in tools, diffs, commands and paths (monospace). */
+@utility type-code {
+  font: var(--app-font-code);
+}
+
 @utility type-label-small {
   font-size: var(--mat-sys-label-small-size);
   line-height: var(--mat-sys-label-small-line-height);
@@ -385,4 +390,72 @@
   &:empty {
     display: none;
   }
+}
+
+/*
+ * Suggestions above (or with `suggest-below` below) an input: files,
+ * commands, issues and pull requests. Rows are the list items, the chosen
+ * one has `aria-selected="true"`.
+ */
+@utility suggest-list {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  max-height: 40vh;
+  overflow-y: auto;
+  margin: 0 0 4px;
+  padding: 4px 0;
+  list-style: none;
+  border-radius: var(--mat-sys-corner-small);
+  background: var(--mat-sys-surface-container-high);
+  box-shadow: var(--mat-sys-level2);
+
+  & > li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    box-sizing: border-box;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+
+  & > li[aria-selected='true'] {
+    background: var(--mat-sys-secondary-container);
+  }
+}
+
+@utility suggest-below {
+  top: 100%;
+  bottom: auto;
+  margin: 4px 0 0;
+}
+
+/* A GitHub state as a dot: add the state's tone (`tone-open`, …). */
+@utility state-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone-bg, var(--app-gh-draft));
+}
+
+/*
+ * An issue or pull request in text or above the input (`#12 Title`):
+ * a rounded inline button with a state dot.
+ */
+@utility ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--mat-sys-corner-medium);
+  background: var(--mat-sys-surface-container-high);
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+  letter-spacing: var(--mat-sys-body-medium-tracking);
+  cursor: pointer;
 }

@@ -8,8 +8,8 @@ import type { ReferenceAutocomplete } from './reference-autocomplete';
   template: `
     @if (autocomplete().open()) {
       <ul
-        class="suggestions"
-        [class.below]="below()"
+        class="suggest-list"
+        [class.suggest-below]="below()"
         role="listbox"
         aria-label="Issues and pull requests"
         data-testid="reference-suggestions"
@@ -21,104 +21,37 @@ import type { ReferenceAutocomplete } from './reference-autocomplete';
         ) {
           <li
             role="option"
-            [class.active]="i === autocomplete().active()"
             [attr.aria-selected]="i === autocomplete().active()"
             (mousedown)="$event.preventDefault(); chosen.emit(item)"
             data-testid="reference-suggestion"
           >
             <span
-              class="dot state-{{
+              class="state-dot tone-{{
                 item.draft && item.state === 'open' ? 'draft' : item.state
               }}"
               [title]="item.state"
             ></span>
-            <span class="number">#{{ item.number }}</span>
-            <span class="title">{{ item.title }}</span>
+            <span class="flex-none font-medium">#{{ item.number }}</span>
+            <span class="min-w-0 flex-1 truncate">{{ item.title }}</span>
             @if (showRepository()) {
-              <span class="repository">{{ item.repository }}</span>
+              <span class="flex-none type-body-small text-on-surface-variant">{{
+                item.repository
+              }}</span>
             }
-            <span class="kind">{{
+            <span class="flex-none type-body-small text-on-surface-variant">{{
               item.kind === 'pull_request' ? 'PR' : 'Issue'
             }}</span>
           </li>
         }
         @for (error of autocomplete().errors(); track error) {
-          <li class="error" data-testid="reference-search-error">
+          <li
+            class="cursor-default! type-body-small text-error"
+            data-testid="reference-search-error"
+          >
             {{ error }}
           </li>
         }
       </ul>
-    }
-  `,
-  styles: `
-    .suggestions {
-      position: absolute;
-      bottom: 100%;
-      left: 0;
-      right: 0;
-      z-index: 2;
-      max-height: 40vh;
-      overflow-y: auto;
-      margin: 0 0 4px;
-      padding: 4px 0;
-      list-style: none;
-      border-radius: var(--mat-sys-corner-small);
-      background: var(--mat-sys-surface-container-high);
-      box-shadow: var(--mat-sys-level2);
-    }
-    .below {
-      top: 100%;
-      bottom: auto;
-      margin: 4px 0 0;
-    }
-    li {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 36px;
-      padding: 4px 12px;
-      cursor: pointer;
-    }
-    .active {
-      background: var(--mat-sys-secondary-container);
-    }
-    .dot {
-      flex-shrink: 0;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--app-gh-draft);
-    }
-    .state-open {
-      background: var(--app-gh-open);
-    }
-    .state-merged {
-      background: var(--app-gh-merged);
-    }
-    .state-closed {
-      background: var(--app-gh-closed);
-    }
-    .number {
-      flex-shrink: 0;
-      font-weight: 500;
-    }
-    .title {
-      flex: 1;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .repository,
-    .kind {
-      flex-shrink: 0;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .error {
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-error);
-      cursor: default;
     }
   `,
 })

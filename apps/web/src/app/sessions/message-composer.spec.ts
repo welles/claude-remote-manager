@@ -317,9 +317,11 @@ describe('MessageComposer', () => {
     });
     await fixture.whenStable();
     const names = () =>
-      [...element.querySelectorAll('[data-testid="command"] .command-name')].map(
-        (option) => words(option),
-      );
+      [
+        ...element.querySelectorAll(
+          '[data-testid="command"] [data-testid="command-name"]',
+        ),
+      ].map((option) => words(option));
     // Starting with what was typed first, then containing it.
     expect(names()).toEqual(['/review <pr>', '/pre-review']);
     expect(textarea.getAttribute('aria-controls')).toBe('command-list');
