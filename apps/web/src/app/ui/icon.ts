@@ -133,29 +133,18 @@ export type IconName = keyof typeof ICONS;
  */
 @Component({
   selector: 'app-icon',
+  host: { class: 'inline-flex size-[var(--app-icon-size,20px)] flex-none' },
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  template: `<svg
+    class="size-full fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:var(--app-icon-stroke,1.8)]"
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+    focusable="false"
+  >
     @for (d of paths(); track $index) {
       <path [attr.d]="d" />
     }
   </svg>`,
-  styles: `
-    :host {
-      display: inline-flex;
-      flex: none;
-      width: var(--app-icon-size, 20px);
-      height: var(--app-icon-size, 20px);
-    }
-    svg {
-      width: 100%;
-      height: 100%;
-      fill: none;
-      stroke: currentColor;
-      stroke-width: var(--app-icon-stroke, 1.8);
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-  `,
 })
 export class AppIcon {
   readonly name = input.required<IconName>();
