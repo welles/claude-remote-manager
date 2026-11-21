@@ -139,7 +139,12 @@ import {
   STORED_EVENT_TYPES,
   type EventAnchor,
 } from './session-event.repository';
-import { buildHistory, SessionLog, type LogSnapshot } from './session-log';
+import {
+  buildHistory,
+  openQueuedMessages,
+  SessionLog,
+  type LogSnapshot,
+} from './session-log';
 import { changedFile, proposedDiff, withInputDiffs } from '../diffs/tool-diffs';
 import {
   FileAccessError,
@@ -504,6 +509,7 @@ export const QUEUE_WITHDRAWN = {
   ended: 'The session was ended.',
   failed: 'Claude Code ended with an error.',
   restart: 'The server stopped.',
+  lost: 'The message was no longer in the queue.',
 } as const;
 
 /** Notice when the first message is held back after failed setup scripts. */
@@ -1094,13 +1100,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Removes a queued message before it goes to Claude. Fails with 409 when
-   * it is not queued (anymore): it was sent already or withdrawn.
+   * it is not queued (anymore): it was sent already or withdrawn. One the
+   * log still shows as queued that is not in the queue is closed instead.
    */
   async unqueue(sessionId: string, messageId: string): Promise<void> {
     this.requireRecord(sessionId);
     const live = this.live.get(sessionId);
     const index = live?.queue.findIndex((queued) => queued.id === messageId);
     if (!live || index === undefined || index < 0) {
+      if (live && this.closeStaleQueued(live, messageId)) {
+        return;
+      }
       throw new ConflictException(
         'The message is not queued: it was sent to Claude already or withdrawn',
       );
@@ -1135,6 +1145,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       ? (live?.queue.findIndex((queued) => queued.id === messageId) ?? -1)
       : (live?.queue.length ?? 0) - 1;
     if (!live?.run || index < 0) {
+      if (
+        live &&
+        index < 0 &&
+        this.closeStaleQueued(live, messageId ?? undefined)
+      ) {
+        throw new ConflictException(
+          'The message was no longer queued: send it again if it did not reach Claude',
+        );
+      }
       throw new ConflictException(
         messageId
           ? 'The message is not queued: it was sent to Claude already or withdrawn'
@@ -1776,6 +1795,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         uuid: entries.at(-1)?.uuid ?? null,
         userId: lastUser?.uuid ?? null,
       };
+      this.closeStaleQueued(live);
       live.context = live.log.findLast('context.usage')?.context ?? null;
       return !failed;
     }
@@ -2089,6 +2109,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       live.subscribers === 0 &&
       !live.run &&
       !live.starting &&
+      // Queued messages wait for the next process (reopenAfterTurn).
+      live.queue.length === 0 &&
       !this.shuttingDown &&
       this.live.get(live.id) === live
     ) {
@@ -2187,7 +2209,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const events = live.mapper.map(message);
     if (
       (message.type === 'assistant' || message.type === 'user') &&
-      message.uuid
+      message.uuid &&
+      // A subagent's messages are not in the session's transcript: an
+      // anchor there would place the events at the end of the turn, after
+      // later ones (see buildHistory).
+      message.parent_tool_use_id === null &&
+      !(message.type === 'assistant' && message.agent_id)
     ) {
       // Stored events that follow belong after this transcript entry.
       live.anchor = { ...live.anchor, uuid: message.uuid };
@@ -2394,6 +2421,45 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Closes messages the log shows as queued that are not in the queue
+   * (anymore), so that none stays shown as queued for good; `only`: just
+   * that one. One that reached Claude counts as sent, any other as
+   * withdrawn. Returns whether it closed any.
+   */
+  private closeStaleQueued(live: LiveSession, only?: string): boolean {
+    const stale = openQueuedMessages(live.log.events).filter(
+      (id) =>
+        (only === undefined || id === only) &&
+        !live.sending.has(id) &&
+        !live.queue.some((queued) => queued.id === id),
+    );
+    // Not stored for a log that is not the session's (historyEvents).
+    const own = this.live.get(live.id) === live;
+    for (const id of stale) {
+      const sent = live.log.events.some(
+        (event) => event.type === 'user.message' && event.id === id,
+      );
+      const event: SessionEventInput = {
+        type: 'message.dequeued',
+        id,
+        outcome: sent ? 'sent' : 'withdrawn',
+        reason: sent ? null : QUEUE_WITHDRAWN.lost,
+      };
+      if (own) {
+        this.append(live, event);
+      } else {
+        live.log.append(event);
+      }
+    }
+    if (stale.length > 0) {
+      this.logger.warn(
+        `Closed ${stale.length} message(s) of ${live.id} shown as queued that were not queued`,
+      );
+    }
+    return stale.length > 0;
+  }
+
+  /**
    * After a crash: approval requests and queued messages that were open
    * when the server stopped are closed (their process is gone).
    */
@@ -2416,15 +2482,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         sessionAllow: null,
       });
     }
-    const queued = new Map<string, true>();
-    for (const { event } of stored) {
-      if (event.type === 'message.queued') {
-        queued.set(event.id, true);
-      } else if (event.type === 'message.dequeued') {
-        queued.delete(event.id);
-      }
-    }
-    for (const id of queued.keys()) {
+    for (const id of openQueuedMessages(stored.map(({ event }) => event))) {
       add({
         type: 'message.dequeued',
         id,

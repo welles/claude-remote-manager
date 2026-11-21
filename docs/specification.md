@@ -109,6 +109,7 @@ Das Angular-Frontend nutzt als installierbare PWA zusätzlich:
 - **Bilder anhängen:** Screenshots einfügen, per Drag-and-drop oder Upload an den Prompt hängen.
 - **Nachrichten einreihen:** Während Claude arbeitet, lassen sich weitere Nachrichten schreiben; sie werden eingereiht und nach dem aktuellen Schritt verarbeitet.
   - **Umsetzung (entschieden):** In der Liste der eingereihten Nachrichten gibt es „Send now“ für alle und einen Senden-Knopf je Nachricht: Der laufende Turn wird unterbrochen (wie mit Stop, aber die Warteschlange bleibt erhalten) und danach gehen alle eingereihten Nachrichten bzw. nur die gewählte sofort an Claude; die übrigen bleiben eingereiht, bis dieser neue Turn endet.
+  - **Umsetzung (entschieden):** Eine Nachricht, die im Verlauf als eingereiht erscheint, aber in keiner Warteschlange mehr liegt, räumt die App selbst auf: beim Laden des Verlaufs und beim Entfernen; erreichte sie Claude, gilt sie als gesendet, sonst als nicht gesendet („The message was no longer in the queue.“).
 - **To-do-Liste und Kontext:** Claudes Aufgabenliste wird live angezeigt, ebenso die Auslastung des Kontextfensters.
 - **Setup-Skripte pro Repo:** Pro Repository ein konfigurierbares Skript (z. B. `npm install`), das nach dem Anlegen eines Sitzungsklons läuft.
 - **Sitzungen verwalten:** Umbenennen, archivieren, durchsuchen.

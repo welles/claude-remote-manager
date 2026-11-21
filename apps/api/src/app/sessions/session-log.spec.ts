@@ -192,6 +192,38 @@ describe('buildHistory', () => {
     expect(texts(items)).toEqual(['q2', 'r2']);
   });
 
+  it('never places a dequeued message before it was queued', () => {
+    const at = new Date('2026-01-01T00:00:00Z');
+    const items = buildHistory(
+      [user('u1', 'q1'), assistant('a1', 'r1'), user('m2', 'q2')],
+      [
+        // Anchored to a subagent's message, which is not in the transcript.
+        {
+          event: { type: 'message.queued', id: 'm2', text: 'q2' },
+          anchor: { uuid: 'subagent', userId: 'u1' },
+          createdAt: at,
+        },
+        {
+          event: {
+            type: 'message.dequeued',
+            id: 'm2',
+            outcome: 'sent',
+            reason: null,
+          },
+          anchor: { uuid: 'a1', userId: 'u1' },
+          createdAt: at,
+        },
+      ],
+    );
+    expect(texts(items)).toEqual([
+      'q1',
+      'r1',
+      'message.queued',
+      'message.dequeued',
+      'q2',
+    ]);
+  });
+
   it('keeps stored events without a transcript', () => {
     expect(
       texts(buildHistory([], [stored('failed to start', 'x', 'x')])),
