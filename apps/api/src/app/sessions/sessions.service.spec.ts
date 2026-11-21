@@ -2001,6 +2001,54 @@ describe('SessionsService', () => {
       );
     });
 
+    it('closes a message shown as queued that is in no queue when the user sends it now', async () => {
+      const session = await startSession();
+      service.recordEvent(session.id, {
+        type: 'message.queued',
+        id: MSG_2,
+        text: 'stuck',
+      });
+      await expect(service.sendQueuedNow(session.id, MSG_2)).rejects.toThrow(
+        'Not queued anymore',
+      );
+      expect(lastEvent('message.dequeued')).toMatchObject({
+        id: MSG_2,
+        outcome: 'withdrawn',
+      });
+      expect(runner.last.sent).toHaveLength(1);
+    });
+
+    it('anchors a queued message to the main conversation, not to agents', async () => {
+      const session = await startSession();
+      runner.last.emit(
+        {
+          type: 'assistant',
+          uuid: 'main-1',
+          parent_tool_use_id: null,
+          message: { id: 'm1', content: [] },
+        },
+        {
+          type: 'assistant',
+          uuid: 'subagent-1',
+          parent_tool_use_id: 'toolu_task',
+          message: { id: 'm2', content: [] },
+        },
+        {
+          type: 'user',
+          uuid: 'teammate-1',
+          parent_tool_use_id: null,
+          agent_id: 'teammate',
+          message: { role: 'user', content: [] },
+        },
+      );
+      await flush();
+      await service.send(session.id, { id: MSG_2, text: 'Meanwhile' });
+      const queued = new SessionEventRepository(db)
+        .list(session.id)
+        .find(({ event }) => event.type === 'message.queued');
+      expect(queued?.anchor.uuid).toBe('main-1');
+    });
+
     it('withdraws queued messages when the user stops the turn', async () => {
       const session = await startSession();
       await service.send(session.id, { id: MSG_2, text: 'Later' });
