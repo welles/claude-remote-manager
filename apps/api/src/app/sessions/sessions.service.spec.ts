@@ -1080,6 +1080,34 @@ describe('SessionsService', () => {
       expect(fresh.get(session.id).status).toBe('waiting');
     });
 
+    it('closes a message shown as queued that is in no queue when the history loads', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      // Left open by an earlier version, the session not running.
+      new SessionEventRepository(db).add(
+        session.id,
+        { type: 'message.queued', id: MSG_2, text: 'lost' },
+        { uuid: null, userId: null },
+      );
+      const fresh = await createService();
+      const history = await fresh.subscribe(session.id);
+      expect(
+        history.events.filter((event) => event.type === 'message.dequeued'),
+      ).toEqual([
+        expect.objectContaining({
+          id: MSG_2,
+          outcome: 'withdrawn',
+          reason: QUEUE_WITHDRAWN.lost,
+        }),
+      ]);
+      // Stored: closed for good.
+      const again = await (await createService()).subscribe(session.id);
+      expect(
+        again.events.filter((event) => event.type === 'message.dequeued'),
+      ).toHaveLength(1);
+    });
+
     it('cancels requests on shutdown', async () => {
       const session = await startSession();
       const decision = ask('Bash', { command: 'ls /' });
@@ -1953,6 +1981,24 @@ describe('SessionsService', () => {
       await flush();
       expect(runner.last.sent).toHaveLength(1);
       expect(service.get(session.id).status).toBe('waiting');
+    });
+
+    it('lets the user remove a message shown as queued that is in no queue', async () => {
+      const session = await startSession();
+      service.recordEvent(session.id, {
+        type: 'message.queued',
+        id: MSG_2,
+        text: 'stuck',
+      });
+      await service.unqueue(session.id, MSG_2);
+      expect(lastEvent('message.dequeued')).toMatchObject({
+        id: MSG_2,
+        outcome: 'withdrawn',
+        reason: QUEUE_WITHDRAWN.lost,
+      });
+      await expect(service.unqueue(session.id, MSG_2)).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it('withdraws queued messages when the user stops the turn', async () => {

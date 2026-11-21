@@ -198,5 +198,51 @@ export function buildHistory(
     addStored(endOfTurn.get(turn));
   }
   addStored(last);
-  return items;
+  return dequeuedAfterQueued(items);
+}
+
+/** IDs of the messages these events leave queued (not dequeued), in order. */
+export function openQueuedMessages(
+  events: Iterable<SessionEventInput>,
+): string[] {
+  const open = new Set<string>();
+  for (const event of events) {
+    if (event.type === 'message.queued') {
+      open.add(event.id);
+    } else if (event.type === 'message.dequeued') {
+      open.delete(event.id);
+    }
+  }
+  return [...open];
+}
+
+/**
+ * Moves each `message.dequeued` that was placed before its
+ * `message.queued` right after it. Their anchors can put them in the wrong
+ * order (the queued one's entry is not in the transcript, e.g. a
+ * subagent's message), which would leave the message shown as queued.
+ */
+function dequeuedAfterQueued(items: HistoryItem[]): HistoryItem[] {
+  // Queued messages not placed yet.
+  const queued = new Set(
+    items.flatMap(({ event }) =>
+      event.type === 'message.queued' ? [event.id] : [],
+    ),
+  );
+  const held = new Map<string, HistoryItem[]>();
+  const result: HistoryItem[] = [];
+  for (const item of items) {
+    const { event } = item;
+    if (event.type === 'message.dequeued' && queued.has(event.id)) {
+      held.set(event.id, [...(held.get(event.id) ?? []), item]);
+      continue;
+    }
+    result.push(item);
+    if (event.type === 'message.queued') {
+      queued.delete(event.id);
+      result.push(...(held.get(event.id) ?? []));
+      held.delete(event.id);
+    }
+  }
+  return result;
 }
