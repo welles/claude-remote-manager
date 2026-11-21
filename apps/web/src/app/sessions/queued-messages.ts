@@ -19,7 +19,7 @@ import type { ConversationItem } from './conversation';
     <div class="flex items-center gap-1">
       <button
         type="button"
-        class="flex min-h-8 min-w-0 flex-1 cursor-pointer items-center gap-1.5 border-0 bg-transparent px-1 text-left type-body-small text-on-surface-variant [&_app-icon]:ml-auto [&_app-icon]:[--app-icon-size:16px]"
+        class="flex min-h-8 min-w-0 flex-1 cursor-pointer items-center gap-1.5 border-0 bg-transparent px-1 py-0 text-left [font-family:inherit] type-body-small text-on-surface-variant [&_app-icon]:ml-auto [&_app-icon]:[--app-icon-size:16px]"
         [attr.aria-expanded]="expanded()"
         aria-controls="queued-list"
         (click)="expanded.set(!expanded())"
@@ -55,7 +55,7 @@ import type { ConversationItem } from './conversation';
     </div>
     <ul
       id="queued-list"
-      class="card-list mt-0 mb-1 list-none p-0 [&[hidden]]:hidden"
+      class="card-list mt-0 mb-1 list-none p-0 [&_button:focus-visible]:outline-offset-[-2px] [&[hidden]]:hidden"
       [hidden]="!expanded()"
       data-testid="queued"
     >
