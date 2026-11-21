@@ -1,5 +1,6 @@
 import {
   ChangeDetectionStrategy,
+  booleanAttribute,
   Component,
   ElementRef,
   Injector,
@@ -29,13 +30,23 @@ let nextId = 0;
   template: `
     <dialog
       #dialog
-      class="dialog"
+      class="m-[8vh_auto_auto] box-border max-h-[90dvh] max-w-none rounded-lg border border-outline-variant bg-surface-container-high p-0 text-on-surface shadow-3 open:flex open:flex-col backdrop:bg-scrim max-sm:m-[auto_0_0] max-sm:max-h-[92dvh] max-sm:w-full max-sm:rounded-t-xl max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:motion-safe:open:animate-sheet-in sm:motion-safe:open:animate-dialog-in"
+      [class]="
+        wide()
+          ? 'sm:w-[min(640px,calc(100vw-32px))]'
+          : 'sm:w-[min(560px,calc(100vw-32px))]'
+      "
       [attr.aria-labelledby]="titleId"
       [attr.data-testid]="testId()"
       (close)="closed.emit()"
     >
-      <header class="head">
-        <h2 class="title" [id]="titleId">{{ heading() }}</h2>
+      <header class="flex min-h-12 items-center gap-2 pt-2 pr-2 pl-4">
+        <h2
+          class="m-0 min-w-0 flex-1 type-headline-small wrap-anywhere"
+          [id]="titleId"
+        >
+          {{ heading() }}
+        </h2>
         <button
           type="button"
           class="icon-btn"
@@ -45,102 +56,23 @@ let nextId = 0;
           <app-icon name="close" />
         </button>
       </header>
-      <div class="body"><ng-content /></div>
-      <ng-content select="[dialog-actions]" />
+      <div
+        class="min-h-0 flex-auto overflow-y-auto overscroll-contain px-4 pt-2 pb-3"
+      >
+        <ng-content />
+      </div>
+      <div
+        class="flex flex-wrap justify-end gap-2 border-t border-outline-variant px-4 py-3 empty:hidden [&>*]:contents"
+      >
+        <ng-content select="[dialog-actions]" />
+      </div>
     </dialog>
-  `,
-  styles: `
-    .dialog {
-      width: min(560px, calc(100vw - 32px));
-      max-width: none;
-      max-height: 90dvh;
-      margin: 8vh auto auto;
-      box-sizing: border-box;
-      padding: 0;
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-large);
-      background: var(--mat-sys-surface-container-high);
-      color: var(--mat-sys-on-surface);
-      box-shadow: var(--mat-sys-level3);
-    }
-    .dialog[open] {
-      display: flex;
-      flex-direction: column;
-    }
-    :host(.wide) .dialog {
-      width: min(640px, calc(100vw - 32px));
-    }
-    .dialog::backdrop {
-      background: var(--app-scrim);
-    }
-    .head {
-      display: flex;
-      align-items: center;
-      gap: var(--app-space-2);
-      padding: var(--app-space-2) var(--app-space-2) 0 var(--app-space-4);
-      min-height: 48px;
-    }
-    .title {
-      flex: 1;
-      min-width: 0;
-      margin: 0;
-      font: var(--mat-sys-headline-small);
-      overflow-wrap: anywhere;
-    }
-    .body {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      padding: var(--app-space-2) var(--app-space-4) var(--app-space-3);
-    }
-    :host ::ng-deep [dialog-actions] {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      gap: var(--app-space-2);
-      padding: var(--app-space-3) var(--app-space-4);
-      border-top: 1px solid var(--mat-sys-outline-variant);
-    }
-    @media (max-width: 599px) {
-      .dialog {
-        width: 100%;
-        max-height: 92dvh;
-        margin: auto 0 0;
-        border-width: 1px 0 0;
-        border-radius: var(--mat-sys-corner-extra-large-top);
-        padding-bottom: env(safe-area-inset-bottom);
-      }
-      :host(.wide) .dialog {
-        width: 100%;
-      }
-    }
-    @media (prefers-reduced-motion: no-preference) {
-      .dialog[open] {
-        animation: enter var(--app-motion) var(--app-ease);
-      }
-      @media (max-width: 599px) {
-        .dialog[open] {
-          animation-name: sheet;
-        }
-      }
-    }
-    @keyframes enter {
-      from {
-        opacity: 0;
-        transform: translateY(8px);
-      }
-    }
-    @keyframes sheet {
-      from {
-        transform: translateY(40px);
-        opacity: 0.6;
-      }
-    }
   `,
 })
 export class AppDialog {
   readonly heading = input.required<string>();
+  /** 640 px wide instead of 560 px (from 600 px). */
+  readonly wide = input(false, { transform: booleanAttribute });
   /** `data-testid` of the `<dialog>` element. */
   readonly testId = input<string | null>(null);
   /** CSS selector of the element to focus when opened, e.g. the input. */

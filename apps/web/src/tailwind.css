@@ -34,6 +34,7 @@
   --color-secondary-container: var(--mat-sys-secondary-container);
   --color-on-secondary-container: var(--mat-sys-on-secondary-container);
   --color-tertiary: var(--mat-sys-tertiary);
+  --color-on-tertiary: var(--mat-sys-on-tertiary);
   --color-tertiary-container: var(--mat-sys-tertiary-container);
   --color-on-tertiary-container: var(--mat-sys-on-tertiary-container);
   --color-error: var(--mat-sys-error);
@@ -64,6 +65,8 @@
   --color-chart-5: var(--app-chart-5);
   --color-chart-6: var(--app-chart-6);
   --color-scrim: var(--app-scrim);
+  --color-inverse-surface: var(--mat-sys-inverse-surface);
+  --color-inverse-on-surface: var(--mat-sys-inverse-on-surface);
   --color-transparent: transparent;
   --color-current: currentColor;
 
@@ -90,6 +93,34 @@
 
   /* A panel sliding in from the right (side panel, file viewer). */
   --animate-panel-in: panel-in var(--app-motion) var(--app-ease);
+
+  /* A dialog appearing, and on phones a bottom sheet rising. */
+  --animate-dialog-in: dialog-in var(--app-motion) var(--app-ease);
+  --animate-sheet-in: sheet-in var(--app-motion) var(--app-ease);
+
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+
+  @keyframes sheet-in {
+    from {
+      transform: translateY(40px);
+      opacity: 0.6;
+    }
+  }
+
+  /* A toast dropping in from above. */
+  --animate-toast-in: toast-in var(--app-motion) var(--app-ease);
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  }
 
   @keyframes panel-in {
     from {
@@ -735,4 +766,40 @@
   & > input::placeholder {
     color: var(--mat-sys-on-surface-variant);
   }
+}
+
+/*
+ * A sheet over the page at the right edge, the whole screen below 840 px
+ * (file viewer, preview of a dev server): set its width with
+ * `--sheet-width`. On a fixed host with a scrim behind it; `sheet-head`
+ * is its header with the title and the icon buttons.
+ */
+@utility overlay-sheet {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  min-height: 0;
+  background: var(--mat-sys-surface);
+  color: var(--mat-sys-on-surface);
+  box-shadow: var(--mat-sys-level3);
+
+  @media (width >= 840px) {
+    width: var(--sheet-width, min(960px, 72vw));
+    border-left: 1px solid var(--mat-sys-outline-variant);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: panel-in var(--app-motion) var(--app-ease);
+  }
+}
+
+@utility sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--app-bar-height);
+  padding: env(safe-area-inset-top) 4px 0 16px;
+  border-bottom: 1px solid var(--mat-sys-outline-variant);
 }

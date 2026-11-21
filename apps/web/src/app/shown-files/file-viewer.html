@@ -7,12 +7,8 @@
   tabindex="-1"
 ></div>
 <!-- A side sheet like the session details; the whole screen on phones. -->
-<div
-  class="absolute inset-y-0 right-0 flex min-h-0 w-screen flex-col bg-surface text-on-surface shadow-3 motion-safe:animate-panel-in md:w-[min(960px,72vw)] md:border-l md:border-outline-variant"
->
-  <header
-    class="flex min-h-(--app-bar-height) items-center gap-0.5 border-b border-outline-variant pt-[env(safe-area-inset-top)] pr-1 pl-4"
-  >
+<div class="overlay-sheet">
+  <header class="sheet-head">
     <div class="min-w-0 flex-1">
       <h2 class="m-0 truncate type-title-medium">{{ f.name }}</h2>
       <p class="m-0 truncate type-body-small text-on-surface-variant">

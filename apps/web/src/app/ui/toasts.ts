@@ -84,8 +84,12 @@ export class Toasts {
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [AppIcon, NgTemplateOutlet],
   template: `
-    <div class="region">
-      <div role="alert" class="group">
+    <!-- Below the page bar (and the app's banners above it), above the
+         bars and panels (not above the file viewer and preview frame). -->
+    <div
+      class="pointer-events-none fixed inset-x-0 top-[calc(var(--app-top-inset,0px)+var(--app-bar-height)+8px)] z-20 flex flex-col items-center gap-2 pr-[max(16px,env(safe-area-inset-right))] pl-[max(16px,env(safe-area-inset-left))]"
+    >
+      <div role="alert" class="contents">
         @for (toast of errors(); track toast.id) {
           <ng-container
             [ngTemplateOutlet]="item"
@@ -93,7 +97,7 @@ export class Toasts {
           />
         }
       </div>
-      <div role="status" class="group">
+      <div role="status" class="contents">
         @for (toast of infos(); track toast.id) {
           <ng-container
             [ngTemplateOutlet]="item"
@@ -104,8 +108,12 @@ export class Toasts {
     </div>
     <ng-template #item let-toast>
       <div
-        class="toast"
-        [class.error]="toast.kind === 'error'"
+        class="pointer-events-auto box-border flex w-[min(480px,100%)] items-start gap-2 rounded-sm py-1 pr-1 pl-3 type-body-medium wrap-anywhere shadow-3 [--app-icon-size:18px] motion-safe:animate-toast-in"
+        [class]="
+          toast.kind === 'error'
+            ? 'bg-error-container text-on-error-container'
+            : 'bg-inverse-surface text-inverse-on-surface'
+        "
         (mouseenter)="toasts.pause(toast.id)"
         (mouseleave)="toasts.resume(toast.id)"
         (focusin)="toasts.pause(toast.id)"
@@ -113,13 +121,13 @@ export class Toasts {
         data-testid="toast"
       >
         <app-icon
-          class="mark"
+          class="mt-[11px] flex-none"
           [name]="toast.kind === 'error' ? 'alert' : 'check'"
         />
-        <div class="text">
-          <strong class="title">{{ toast.title }}</strong>
+        <div class="flex min-w-0 flex-1 flex-col gap-0.5 py-2">
+          <strong>{{ toast.title }}</strong>
           @for (line of toast.lines; track $index) {
-            <span class="line">{{ line }}</span>
+            <span class="type-body-small">{{ line }}</span>
           }
         </div>
         <button
@@ -133,75 +141,6 @@ export class Toasts {
         </button>
       </div>
     </ng-template>
-  `,
-  styles: `
-    /* Below the page bar (and the app's banners above it), above the
-       bars and panels (not above the file viewer and preview frame). */
-    .region {
-      position: fixed;
-      inset: calc(
-          var(--app-top-inset, 0px) + var(--app-bar-height) + var(--app-space-2)
-        )
-        0 auto;
-      z-index: 20;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: var(--app-space-2);
-      padding: 0 max(var(--app-space-4), env(safe-area-inset-right)) 0
-        max(var(--app-space-4), env(safe-area-inset-left));
-      pointer-events: none;
-    }
-    .group {
-      display: contents;
-    }
-    .toast {
-      display: flex;
-      align-items: flex-start;
-      gap: var(--app-space-2);
-      width: min(480px, 100%);
-      box-sizing: border-box;
-      padding: var(--app-space-1) var(--app-space-1) var(--app-space-1)
-        var(--app-space-3);
-      border-radius: var(--mat-sys-corner-small);
-      background: var(--mat-sys-inverse-surface);
-      color: var(--mat-sys-inverse-on-surface);
-      box-shadow: var(--mat-sys-level3);
-      font: var(--mat-sys-body-medium);
-      pointer-events: auto;
-      overflow-wrap: anywhere;
-      --app-icon-size: 18px;
-    }
-    .toast.error {
-      background: var(--mat-sys-error-container);
-      color: var(--mat-sys-on-error-container);
-    }
-    .mark {
-      flex: none;
-      margin-top: 11px;
-    }
-    .text {
-      display: flex;
-      flex: 1;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 0;
-      padding: var(--app-space-2) 0;
-    }
-    .line {
-      font: var(--mat-sys-body-small);
-    }
-    @media (prefers-reduced-motion: no-preference) {
-      .toast {
-        animation: enter var(--app-motion) var(--app-ease);
-      }
-    }
-    @keyframes enter {
-      from {
-        opacity: 0;
-        transform: translateY(-8px);
-      }
-    }
   `,
 })
 export class AppToasts {

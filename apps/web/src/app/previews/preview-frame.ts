@@ -34,16 +34,16 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
   template: `
     @let p = preview();
     <div
-      class="backdrop"
+      class="absolute inset-0 bg-scrim"
       (click)="closed.emit()"
       (keydown.enter)="closed.emit()"
       tabindex="-1"
     ></div>
-    <div class="sheet">
-      <header class="head">
-        <div class="title">
-          <h2>{{ p.name }}</h2>
-          <p class="meta">
+    <div class="overlay-sheet [--sheet-width:min(1200px,80vw)]">
+      <header class="sheet-head">
+        <div class="min-w-0 flex-1">
+          <h2 class="m-0 truncate type-title-medium">{{ p.name }}</h2>
+          <p class="hint-text">
             {{ stateLabel() }} · port {{ p.port }}
             @if (p.problem) {
               · {{ p.problem }}
@@ -86,15 +86,15 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
           <app-icon name="close" /><span class="visually-hidden">Close</span>
         </button>
       </header>
-      <div class="body">
+      <div class="flex min-h-0 flex-1 flex-col">
         @if (p.state === 'stopped') {
-          <p class="note" data-testid="preview-stopped">
+          <p class="hint-text p-4" data-testid="preview-stopped">
             This preview was stopped.
           </p>
         } @else if (frameUrl(); as frame) {
           @if (!reloading()) {
             <iframe
-              class="frame"
+              class="w-full flex-1 border-0 bg-[#fff]"
               [src]="frame"
               sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
               referrerpolicy="no-referrer"
@@ -103,7 +103,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
               data-testid="preview-frame"
             ></iframe>
           }
-          <p class="hint">
+          <p class="hint-text border-t border-outline-variant px-4 py-1">
             Nothing shows? Behind Cloudflare Access, open the preview in a new
             tab once to sign in to it.
           </p>
@@ -111,84 +111,8 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
       </div>
     </div>
   `,
-  styles: `
-    :host {
-      position: fixed;
-      inset: 0;
-      z-index: 1000;
-    }
-    .backdrop {
-      position: absolute;
-      inset: 0;
-      background: var(--app-scrim);
-    }
-    .sheet {
-      position: absolute;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: min(1200px, 80vw);
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      border-left: 1px solid var(--mat-sys-outline-variant);
-      background: var(--mat-sys-surface);
-      color: var(--mat-sys-on-surface);
-      box-shadow: var(--mat-sys-level3);
-    }
-    @media (max-width: 839px) {
-      .sheet {
-        width: 100vw;
-        border-left: 0;
-      }
-    }
-    .head {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-      min-height: var(--app-bar-height);
-      padding: env(safe-area-inset-top) 4px 0 16px;
-      border-bottom: 1px solid var(--mat-sys-outline-variant);
-    }
-    .title {
-      flex: 1;
-      min-width: 0;
-    }
-    h2 {
-      margin: 0;
-      font: var(--mat-sys-title-medium);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .meta,
-    .hint,
-    .note {
-      margin: 0;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .note {
-      padding: 16px;
-    }
-    .hint {
-      padding: 4px 16px;
-      border-top: 1px solid var(--mat-sys-outline-variant);
-    }
-    .body {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-    }
-    .frame {
-      flex: 1;
-      width: 100%;
-      border: 0;
-      background: #fff;
-    }
-  `,
   host: {
+    class: 'fixed inset-0 z-1000',
     role: 'dialog',
     'aria-modal': 'true',
     '[attr.aria-label]': 'preview().name',
