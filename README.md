@@ -966,12 +966,17 @@ notification (`turn_finished`) reads "Usage limit: …" with how long until it c
   wait); they go to Claude then, in the running process or a new one that starts with the first
   of them. Without them the app tells Claude that the limit stopped its last turn and has reset,
   to continue where it left off and to check background tasks of that turn first (they may have
-  ended with it). An Autofix run continues as one (no further attempt is counted).
+  ended with it). An Autofix run continues as one (no further attempt is counted); with held
+  messages it is not continued as such: the user's messages go instead.
 - **The user decides otherwise:** the session view shows a banner with "Continue now"
   (`limit.resume` frame, `POST /api/sessions/:id/limit-wait/resume`) and "Don't continue"
   (`limit.cancel`, `DELETE /api/sessions/:id/limit-wait`: the session waits for the next
   message, held messages are withdrawn). Ending or archiving the session ends the wait too; a
-  turn that gets through meanwhile (one Claude Code starts by itself) ends it as well.
+  turn that gets through meanwhile (one Claude Code starts by itself) ends it as well; one that
+  fails otherwise or is stopped leaves the wait and its held messages. Claude Code's `rate_limit`
+  errors of subagents (also background ones) do not count; a repository added during the turn
+  the limit ended restarts the process once it is free, and Claude is told about it with the
+  next message.
 - **Meanwhile:** the PR automation starts no run (`acceptsAppMessage` is false); held messages
   live in memory and are withdrawn when the server stops.
 

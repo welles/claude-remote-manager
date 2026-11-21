@@ -1229,6 +1229,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       : (live?.queue.length ?? 0) - 1;
     if (live && index >= 0 && this.requireRecord(sessionId).limitWait) {
       // Held for the reset of the usage limit: the user tries now.
+      this.requireUsable(this.requireRecord(sessionId));
       const ended = await this.endLimitWait(live);
       live.limitRetries = 0;
       if (ended && this.requireRecord(sessionId).status === 'waiting') {
@@ -1688,15 +1689,19 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /** Sets or clears the archived mark and publishes the session. */
   setArchived(sessionId: string, archivedAt: Date | null): SessionDto {
+    const live = this.live.get(sessionId);
     if (archivedAt) {
+      // Not continued after the usage limit any more.
       this.dropLimitWait(sessionId);
-      const live = this.live.get(sessionId);
       if (live) {
         this.withdrawQueue(live, QUEUE_WITHDRAWN.ended);
       }
     }
     const updated = this.toDto(this.sessions.update(sessionId, { archivedAt }));
     this.updates.next(updated);
+    if (archivedAt && live) {
+      this.releaseIfUnused(live);
+    }
     return updated;
   }
 
@@ -2045,6 +2050,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.restartPending = false;
     live.contextResults = 0;
     live.reportedMode = null;
+    live.limitHit = false;
+    live.rejectedWindow = null;
     // A changed secret is masked from this process on.
     live.mask = undefined;
     try {
@@ -2177,6 +2184,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.clearClaudeWait(live);
     live.reportedMode = null;
     this.clearIdleTimer(live);
+    live.limitHit = false;
+    live.rejectedWindow = null;
     live.log.clearDrafts();
     // Only the process's own drafts: setup scripts (of a repository being
     // added) run on and keep their held-back output.
@@ -2312,7 +2321,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       message.type === 'assistant' &&
       message.error === 'rate_limit' &&
-      message.parent_tool_use_id === null
+      message.parent_tool_use_id === null &&
+      !message.agent_id &&
+      this.requireRecord(live.id).status === 'running'
     ) {
       // The usage limit rejected the turn's request: Claude Code ends the
       // turn with this (synthetic) message.
@@ -2422,13 +2433,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.stopForLimit(live, rejectedWindow);
       return;
     }
-    if (!limited) {
+    const clean =
+      !interrupted && result.subtype === 'success' && !result.is_error;
+    if (clean) {
       live.limitRetries = 0;
       if (record.limitWait) {
         // A turn Claude Code started by itself got through: the limit has
         // reset already.
         this.dropLimitWait(live.id);
       }
+    }
+    // A turn Claude Code started by itself during the wait that did not
+    // get through (another error, Stop): the wait and its held messages
+    // stay.
+    const stillWaiting = this.requireRecord(live.id).limitWait !== null;
+    if (stillWaiting) {
+      this.holdReopen(live);
     }
     if (
       live.autofixTurn?.delivered &&
@@ -2451,7 +2471,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // Queued messages go to Claude now (Claude Code may take them as one
     // turn). Stop withdrew the queue: what is queued now was sent after
     // it. Sent right away: only those, the others wait for this turn's end.
-    const flushed = run ? this.flushQueue(live, run, sendNow) : 0;
+    const flushed =
+      run && !stillWaiting ? this.flushQueue(live, run, sendNow) : 0;
     const queued = flushed > 0 || (result.queued_turn_count ?? 0) > 0;
     if (queued || interrupted || result.is_error) {
       // What Claude said comes after this turn does not: another turn
@@ -4458,10 +4479,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         'The session is not waiting for the usage limit to reset',
       );
     }
-    const live = this.liveSession(sessionId);
-    await this.ensureHistory(live, record);
-    live.limitRetries = 0;
+    // Ended first: a timer firing meanwhile does not continue it.
     this.dropLimitWait(sessionId);
+    const live = this.liveSession(sessionId);
+    live.limitRetries = 0;
+    await this.ensureHistory(live, record);
     this.withdrawQueue(live, LIMIT_WAIT_CANCELLED);
     this.releaseIfUnused(live);
   }
@@ -4472,14 +4494,20 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * messages held, and continues by itself then.
    */
   private stopForLimit(live: LiveSession, window: string | null): void {
-    // The Autofix run goes on after the reset.
-    const autofix = live.autofixTurn?.delivered === true;
-    live.autofixTurn = null;
+    const previous = this.requireRecord(live.id).limitWait;
+    // The Autofix run goes on after the reset (also when a turn Claude Code
+    // started by itself during the wait hit the limit again). An Autofix
+    // message still held keeps its mark.
+    const delivered = live.autofixTurn?.delivered === true;
+    const autofix = delivered || previous?.autofix === true;
+    if (delivered) {
+      live.autofixTurn = null;
+    }
     const now = Date.now();
     const until = this.limits.exhaustedUntil(window ? [window] : [], now);
     const wait: LimitWait = {
       since: new Date(now).toISOString(),
-      window,
+      window: window ?? previous?.window ?? null,
       resumeAt: new Date(
         until
           ? until.getTime() + this.limitResumeMarginMs
@@ -4489,6 +4517,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       autofix,
     };
     this.sessions.update(live.id, { limitWait: wait });
+    this.holdReopen(live);
     this.append(live, { type: 'notice', level: 'warning', text: LIMIT_NOTICE });
     this.clearClaudeWait(live);
     if (!this.setStatus(live, 'waiting')) {
@@ -4499,6 +4528,28 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const run = live.run;
     if (run) {
       void this.refreshContext(live, run, { force: true });
+    }
+  }
+
+  /**
+   * A repository was added during the turn the limit ended (see
+   * {@link LiveSession.reopen}): instead of continuing in a new process
+   * right away, the process restarts once it is free, and what Claude was
+   * to be told goes with the next message, whenever that is.
+   */
+  private holdReopen(live: LiveSession): void {
+    const reopen = live.reopen;
+    if (!reopen) {
+      return;
+    }
+    live.reopen = null;
+    live.restartPending = true;
+    if (reopen.continueWith) {
+      const note = this.directoryNotes.get(live.id);
+      this.directoryNotes.set(
+        live.id,
+        note ? `${note}\n- ${reopen.continueWith}` : reopen.continueWith,
+      );
     }
   }
 
@@ -4606,13 +4657,33 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (!wait) {
       return;
     }
+    live.limitRetries = auto ? retries + 1 : 0;
+    if (live.queue.length === 0) {
+      // A message the user is sending right now goes first (as it is, no
+      // longer held); the continuation only without one.
+      for (let order = live.order; ; order = live.order) {
+        await order;
+        if (order === live.order) {
+          break;
+        }
+      }
+    }
     const record = this.requireRecord(live.id);
-    if (record.status !== 'waiting' || record.archivedAt) {
+    if (record.status !== 'waiting' || record.limitWait) {
       return;
     }
-    live.limitRetries = auto ? retries + 1 : 0;
+    try {
+      this.requireUsable(record);
+    } catch (error) {
+      this.withdrawQueue(live, errorMessage(error));
+      this.releaseIfUnused(live);
+      throw error;
+    }
     if (live.queue.length > 0) {
       this.deliverHeld(live, 'all');
+      return;
+    }
+    if (this.isSendingMessage(live)) {
       return;
     }
     await this.sendMessage(live.id, {
@@ -4622,12 +4693,25 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /** A message the user sent is still being prepared. */
+  private isSendingMessage(live: LiveSession): boolean {
+    return live.sending.size > 0;
+  }
+
   /**
    * Ends the limit wait once the session's process is free (not starting
-   * or closing); returns the wait, `null` if there was none (any more).
+   * or closing) and no clone is being removed; returns the wait, `null` if
+   * there was none (any more).
    */
   private async endLimitWait(live: LiveSession): Promise<LimitWait | null> {
     await this.ensureHistory(live, this.requireRecord(live.id));
+    for (
+      let hold = this.messageHolds.get(live.id);
+      hold;
+      hold = this.messageHolds.get(live.id)
+    ) {
+      await hold;
+    }
     if (live.starting) {
       await live.starting;
     }
@@ -4656,9 +4740,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Sends held messages (`all`, or those in `only`): into the running
-   * process, else a new process starts with the first of them and the
-   * others follow when its turn ends.
+   * Sends held messages (`all`, or those in `only`; the first one when
+   * none of those is held any more): into the running process, else a new
+   * process starts with the first of them and the others follow when its
+   * turn ends.
    */
   private deliverHeld(live: LiveSession, only: Set<string> | 'all'): void {
     const run = live.run;
@@ -4669,9 +4754,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const next =
-      only === 'all'
-        ? live.queue[0]
-        : live.queue.find((queued) => only.has(queued.id));
+      (only === 'all'
+        ? undefined
+        : live.queue.find((queued) => only.has(queued.id))) ?? live.queue[0];
     if (!next) {
       return;
     }
@@ -5352,6 +5437,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         record.limitWait && record.status === 'waiting'
           ? record.limitWait.resumeAt
           : null,
+      limitResetKnown:
+        record.limitWait?.resetKnown === true && record.status === 'waiting',
       slug: record.slug,
       pendingMessage: record.pendingMessage?.text ?? null,
       directories: record.directories.map(
