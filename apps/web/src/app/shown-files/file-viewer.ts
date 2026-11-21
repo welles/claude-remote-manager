@@ -30,8 +30,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   selector: 'app-file-viewer',
   imports: [AppIcon, MarkdownPipe, MatProgressBarModule],
   templateUrl: './file-viewer.html',
-  styleUrl: './file-viewer.scss',
   host: {
+    class: 'fixed inset-0 z-1000',
     role: 'dialog',
     'aria-modal': 'true',
     '[attr.aria-label]': 'file().name',

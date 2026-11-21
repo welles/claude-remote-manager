@@ -30,8 +30,8 @@ const STATUS_LABELS: Record<FileDiff['status'], string> = {
         statusLabel()
       }}</span>
       <span
-        ><span class="text-(--app-diff-add-fg)">+{{ d.additions }}</span>
-        <span class="text-(--app-diff-del-fg)">−{{ d.deletions }}</span></span
+        ><span class="text-diff-add">+{{ d.additions }}</span>
+        <span class="text-diff-del">−{{ d.deletions }}</span></span
       >
     </div>
     @if (d.approximate) {

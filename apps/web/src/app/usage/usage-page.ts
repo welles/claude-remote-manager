@@ -49,10 +49,9 @@ function browserTimeZone(): string {
  */
 @Component({
   selector: 'app-usage-page',
-  host: { class: 'app-page' },
+  host: { class: 'app-page [--app-page-max:1320px]' },
   imports: [AppPageBar, MatProgressBarModule, RouterLink],
   templateUrl: './usage-page.html',
-  styleUrl: './usage-page.scss',
 })
 export class UsagePage implements OnInit {
   private readonly http = inject(HttpClient);

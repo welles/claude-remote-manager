@@ -32,10 +32,9 @@ interface OpenedFile {
  */
 @Component({
   selector: 'app-session-files-page',
-  host: { class: 'app-page' },
+  host: { class: 'app-page [--app-page-max:1100px]' },
   imports: [AppIcon, AppPageBar, FileViewer],
   templateUrl: './session-files-page.html',
-  styleUrl: './session-files-page.scss',
 })
 export class SessionFilesPage {
   private readonly api = inject(SessionsApi);

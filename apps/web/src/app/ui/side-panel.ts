@@ -67,19 +67,6 @@ import { AppIcon } from './icon';
     </div>
     <ng-content select="[panel-edge]" />
   `,
-  styles: `
-    @media (prefers-reduced-motion: no-preference) {
-      :host(.entering) {
-        animation: enter var(--app-motion) var(--app-ease);
-      }
-    }
-    @keyframes enter {
-      from {
-        transform: translateX(24px);
-        opacity: 0;
-      }
-    }
-  `,
 })
 export class AppSidePanel {
   readonly heading = input.required<string>();
@@ -93,7 +80,7 @@ export class AppSidePanel {
   protected readonly hostClass = computed(() =>
     this.docked()
       ? 'flex sticky top-[var(--app-top-inset,0px)] z-4 h-[calc(100dvh-var(--app-top-inset,0px))] border-l border-outline-variant'
-      : (this.open() ? 'entering flex' : 'hidden') +
+      : (this.open() ? 'flex motion-safe:animate-panel-in' : 'hidden') +
         ' fixed inset-0 z-6 sm:left-auto sm:w-(--app-panel-width,min(480px,100vw)) sm:border-l sm:border-outline-variant sm:shadow-3',
   );
   readonly titleId = `side-panel-${Math.random().toString(36).slice(2, 9)}`;

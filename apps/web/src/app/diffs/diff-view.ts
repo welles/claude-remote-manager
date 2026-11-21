@@ -12,7 +12,7 @@ import { splitRows, unifiedRows, type DiffLayout } from './diff-rows';
   selector: 'app-diff-view',
   imports: [MatButtonModule],
   templateUrl: './diff-view.html',
-  styleUrl: './diff-view.scss',
+  host: { class: 'block' },
 })
 export class DiffView {
   readonly diff = input.required<FileDiff>();

@@ -1,9 +1,9 @@
 <app-page-bar heading="Usage" />
-<p class="note" data-testid="period-note">
+<p class="m-0 text-on-surface-variant" data-testid="period-note">
   Days, weeks (Monday to Sunday) and months in {{ timeZone }}.
 </p>
 
-<div class="controls">
+<div class="flex flex-wrap gap-x-5 gap-y-2">
   <div class="inline-flex flex-wrap gap-1" role="group" aria-label="Period">
     <button
       type="button"
@@ -87,47 +87,67 @@
 @if (loading()) {
 <mat-progress-bar mode="indeterminate" />
 } @if (error(); as text) {
-<p class="error" role="alert">{{ text }}</p>
+<p class="text-error" role="alert">{{ text }}</p>
 } @if (statistics(); as statistics) {
-<div class="tiles">
-  <div class="tile" data-testid="total-cost">
-    <span class="tile-label">Theoretical API cost</span>
-    <span class="tile-value">{{ formatCost(statistics.totals.costUsd) }}</span>
+<div class="flex flex-wrap gap-3">
+  <div
+    class="flex min-w-[140px] flex-col rounded-md border border-outline-variant bg-surface-container-low px-3 py-2"
+    data-testid="total-cost"
+  >
+    <span class="type-label-medium text-on-surface-variant"
+      >Theoretical API cost</span
+    >
+    <span class="type-headline-small tabular-nums"
+      >{{ formatCost(statistics.totals.costUsd) }}</span
+    >
   </div>
-  <div class="tile">
-    <span class="tile-label">Tokens</span>
-    <span class="tile-value"
+  <div
+    class="flex min-w-[140px] flex-col rounded-md border border-outline-variant bg-surface-container-low px-3 py-2"
+  >
+    <span class="type-label-medium text-on-surface-variant">Tokens</span>
+    <span class="type-headline-small tabular-nums"
       >{{ formatTokens(totalTokens(statistics.totals)) }}</span
     >
   </div>
-  <div class="tile">
-    <span class="tile-label">Requests</span>
-    <span class="tile-value">{{ statistics.requests }}</span>
+  <div
+    class="flex min-w-[140px] flex-col rounded-md border border-outline-variant bg-surface-container-low px-3 py-2"
+  >
+    <span class="type-label-medium text-on-surface-variant">Requests</span>
+    <span class="type-headline-small tabular-nums"
+      >{{ statistics.requests }}</span
+    >
   </div>
 </div>
-<p class="period">{{ periodLabel(statistics) }}</p>
+<p class="m-0 text-on-surface-variant">{{ periodLabel(statistics) }}</p>
 
 @if (statistics.series.length === 0) {
-<p class="empty" data-testid="usage-empty">No usage in this period.</p>
+<p class="m-0 text-on-surface-variant" data-testid="usage-empty">
+  No usage in this period.
+</p>
 } @else { @if (chart(); as chart) {
-<figure class="chart viz" (mouseleave)="hovered.set(null)">
-  <div class="tooltip" aria-live="polite">
+<figure class="m-0" (mouseleave)="hovered.set(null)">
+  <div class="min-h-[3em] type-body-small" aria-live="polite">
     @if (tooltip(); as tip) {
     <strong>{{ tip.label }}</strong>
     @if (granularity() === 'week') { (week) }: {{ tip.total }}
-    <ul>
+    <ul class="m-0 mt-0.5 flex list-none flex-wrap gap-x-3 p-0">
       @for (row of tip.rows; track row.label) {
       <li>
-        <span class="swatch slot-{{ row.slot }}"></span>{{ row.label }}: {{
-        row.value }}
+        <span
+          class="mr-1.5 inline-block size-2.5 rounded-xs bg-chart-{{ row.slot }}"
+        ></span
+        >{{ row.label }}: {{ row.value }}
       </li>
       }
     </ul>
     } @else {
-    <span class="hint">Point at a bar (or focus it) for its values.</span>
+    <span class="text-on-surface-variant"
+      >Point at a bar (or focus it) for its values.</span
+    >
     }
   </div>
   <svg
+    class="block h-auto w-full"
     [attr.viewBox]="'0 0 ' + width() + ' ' + height"
     role="img"
     [attr.aria-label]="'Usage per ' + granularity() + ', stacked by ' + groupBy()"
@@ -135,14 +155,14 @@
   >
     @for (tick of chart.ticks; track tick.value) {
     <line
-      class="grid"
+      class="stroke-outline-variant stroke-1 opacity-60"
       [attr.x1]="plot.left"
       [attr.x2]="width() - plot.right"
       [attr.y1]="tick.y"
       [attr.y2]="tick.y"
     />
     <text
-      class="axis"
+      class="fill-on-surface-variant type-label-small"
       [attr.x]="plot.left - 6"
       [attr.y]="tick.y + 4"
       text-anchor="end"
@@ -151,8 +171,7 @@
     </text>
     } @for (bar of chart.bars; track bar.bucket) {
     <g
-      class="bar"
-      [class.active]="hovered() === bar.index"
+      class="group outline-none"
       tabindex="0"
       (mouseenter)="hovered.set(bar.index)"
       (click)="hovered.set(bar.index)"
@@ -161,7 +180,11 @@
       data-testid="usage-bar"
     >
       <rect
-        class="hit"
+        [class]="
+          hovered() === bar.index
+            ? 'fill-surface-container-high'
+            : 'fill-transparent group-focus-visible:fill-surface-container-high'
+        "
         [attr.x]="plot.left + chart.slot * bar.index"
         [attr.y]="plot.top"
         [attr.width]="chart.slot"
@@ -169,7 +192,7 @@
       />
       @for (segment of bar.segments; track segment.key) {
       <rect
-        class="segment slot-{{ segment.slot }}"
+        class="segment fill-chart-{{ segment.slot }}"
         [attr.x]="bar.x"
         [attr.y]="segment.y"
         [attr.width]="chart.barWidth"
@@ -178,7 +201,7 @@
       />
       } @if (bar.label) {
       <text
-        class="axis"
+        class="fill-on-surface-variant type-label-small"
         [attr.x]="bar.x + chart.barWidth / 2"
         [attr.y]="height - 8"
         text-anchor="middle"
@@ -189,7 +212,7 @@
     </g>
     }
     <line
-      class="baseline"
+      class="stroke-outline stroke-1"
       [attr.x1]="plot.left"
       [attr.x2]="width() - plot.right"
       [attr.y1]="chart.baseline"
@@ -197,11 +220,17 @@
     />
   </svg>
   <figcaption>
-    <ul class="legend" data-testid="usage-legend">
+    <ul
+      class="m-0 mt-2 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 type-body-small"
+      data-testid="usage-legend"
+    >
       @for (entry of series(); track entry.key) {
-      <li>
-        <span class="swatch slot-{{ entry.slot }}"></span>{{ entry.label }}
-        <span class="muted">{{ format(entry.total) }}</span>
+      <li class="wrap-anywhere">
+        <span
+          class="mr-1.5 inline-block size-2.5 rounded-xs bg-chart-{{ entry.slot }}"
+        ></span
+        >{{ entry.label }}
+        <span class="text-on-surface-variant">{{ format(entry.total) }}</span>
       </li>
       }
     </ul>
@@ -209,48 +238,61 @@
 </figure>
 }
 
-<table class="table" data-testid="usage-table">
-  <caption>
+<table
+  class="w-full border-collapse type-body-small [&_a]:[color:inherit] [&_td,&_th]:border-b [&_td,&_th]:border-outline-variant [&_td,&_th]:px-1 [&_td,&_th]:py-1.5 [&_td,&_th]:wrap-anywhere"
+  data-testid="usage-table"
+>
+  <caption class="mb-1 text-left type-title-small">
     Totals by {{ groupBy() }}
   </caption>
   <thead>
     <tr>
-      <th scope="col">
+      <th scope="col" class="text-left">
         {{ groupBy() === 'session' ? 'Session' : groupBy() === 'model' ? 'Model'
         : 'Repositories' }}
       </th>
-      <th scope="col" class="number">Input</th>
-      <th scope="col" class="number">Output</th>
-      <th scope="col" class="number wide">Cache write</th>
-      <th scope="col" class="number wide">Cache read</th>
-      <th scope="col" class="number">Cost</th>
+      <th scope="col" class="text-right whitespace-nowrap">Input</th>
+      <th scope="col" class="text-right whitespace-nowrap">Output</th>
+      <th scope="col" class="text-right whitespace-nowrap max-sm:hidden">
+        Cache write
+      </th>
+      <th scope="col" class="text-right whitespace-nowrap max-sm:hidden">
+        Cache read
+      </th>
+      <th scope="col" class="text-right whitespace-nowrap">Cost</th>
     </tr>
   </thead>
   <tbody>
     @for (row of statistics.series; track row.key) {
     <tr>
-      <th scope="row">
+      <th scope="row" class="text-left font-normal">
         @if (row.sessionId) {
         <a [routerLink]="['/sessions', row.sessionId]">{{ row.label }}</a>
         } @else { {{ row.label }} } @if (row.state) {
         <span class="badge ml-1.5">{{ row.state }}</span>
         }
       </th>
-      <td class="number">{{ formatTokens(row.totals.inputTokens) }}</td>
-      <td class="number">{{ formatTokens(row.totals.outputTokens) }}</td>
-      <td class="number wide">
+      <td class="text-right whitespace-nowrap">
+        {{ formatTokens(row.totals.inputTokens) }}
+      </td>
+      <td class="text-right whitespace-nowrap">
+        {{ formatTokens(row.totals.outputTokens) }}
+      </td>
+      <td class="text-right whitespace-nowrap max-sm:hidden">
         {{ formatTokens(row.totals.cacheCreationInputTokens) }}
       </td>
-      <td class="number wide">
+      <td class="text-right whitespace-nowrap max-sm:hidden">
         {{ formatTokens(row.totals.cacheReadInputTokens) }}
       </td>
-      <td class="number">{{ formatCost(row.totals.costUsd) }}</td>
+      <td class="text-right whitespace-nowrap">
+        {{ formatCost(row.totals.costUsd) }}
+      </td>
     </tr>
     }
   </tbody>
 </table>
 @if (groupBy() === 'repository') {
-<p class="note">
+<p class="m-0 text-on-surface-variant">
   A session with several repositories counts once, under all of them together,
   so the rows add up to the total.
 </p>

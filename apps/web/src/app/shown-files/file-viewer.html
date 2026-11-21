@@ -1,16 +1,23 @@
 @let f = file();
 <!-- Escape closes it too (see the host's keydown handler). -->
 <div
-  class="backdrop"
+  class="absolute inset-0 bg-scrim"
   (click)="closed.emit()"
   (keydown.enter)="closed.emit()"
   tabindex="-1"
 ></div>
-<div class="sheet">
-  <header class="head">
-    <div class="title">
-      <h2>{{ f.name }}</h2>
-      <p class="meta">{{ size() }} · <span class="path">{{ f.path }}</span></p>
+<!-- A side sheet like the session details; the whole screen on phones. -->
+<div
+  class="absolute inset-y-0 right-0 flex min-h-0 w-screen flex-col bg-surface text-on-surface shadow-3 motion-safe:animate-panel-in md:w-[min(960px,72vw)] md:border-l md:border-outline-variant"
+>
+  <header
+    class="flex min-h-(--app-bar-height) items-center gap-0.5 border-b border-outline-variant pt-[env(safe-area-inset-top)] pr-1 pl-4"
+  >
+    <div class="min-w-0 flex-1">
+      <h2 class="m-0 truncate type-title-medium">{{ f.name }}</h2>
+      <p class="m-0 truncate type-body-small text-on-surface-variant">
+        {{ size() }} · <span class="font-mono">{{ f.path }}</span>
+      </p>
     </div>
     @if (actionLabel(); as label) {
     <button
@@ -54,27 +61,40 @@
       <app-icon name="close" /><span class="visually-hidden">Close</span>
     </button>
   </header>
-  @if (f.caption || !f.snapshot) {
-  <div class="notes">
+  @if (f.caption || (!f.snapshot && !contentUrl())) {
+  <div
+    class="border-b border-outline-variant bg-surface-container-low px-4 py-2"
+  >
     @if (f.caption) {
-    <p class="caption">{{ f.caption }}</p>
+    <p class="hint-text">{{ f.caption }}</p>
     } @if (!f.snapshot && !contentUrl()) {
-    <p class="note" data-testid="live-note">
+    <p class="hint-text" data-testid="live-note">
       Too large to keep a copy: this is the file as it is now.
     </p>
     }
   </div>
   }
-  <div class="body" [class.framed]="f.kind === 'html' || f.kind === 'pdf'">
+  <div
+    class="min-h-0 flex-1"
+    [class]="
+      f.kind === 'html' || f.kind === 'pdf'
+        ? 'flex overflow-hidden'
+        : 'overflow-auto p-4'
+    "
+  >
     @if (loading()) {
     <mat-progress-bar mode="indeterminate" />
     } @if (error(); as message) {
-    <p class="error">{{ message }}</p>
+    <p class="text-error">{{ message }}</p>
     } @switch (f.kind) { @case ('image') {
-    <img class="image" [src]="url()" [alt]="f.caption ?? f.name" />
+    <img
+      class="mx-auto block max-w-full"
+      [src]="url()"
+      [alt]="f.caption ?? f.name"
+    />
     } @case ('html') { @if (frameUrl(); as frame) {
     <iframe
-      class="frame"
+      class="w-full flex-1 border-0 bg-[#fff]"
       [src]="frame"
       sandbox="allow-scripts"
       referrerpolicy="no-referrer"
@@ -83,29 +103,29 @@
     ></iframe>
     } } @case ('pdf') { @if (frameUrl(); as frame) {
     <iframe
-      class="frame"
+      class="w-full flex-1 border-0 bg-[#fff]"
       [src]="frame"
       [title]="f.name"
       data-testid="pdf-frame"
     ></iframe>
     } } @case ('markdown') { @if (tooLarge()) {
-    <p class="note">Too large to show here. Download it instead.</p>
+    <p class="hint-text">Too large to show here. Download it instead.</p>
     } @else if (text(); as markdown) {
     <div
-      class="markdown"
+      class="markdown wrap-anywhere"
       [innerHTML]="markdown | markdown"
       data-testid="markdown"
     ></div>
     } } @case ('text') { @if (tooLarge()) {
-    <p class="note">Too large to show here. Download it instead.</p>
+    <p class="hint-text">Too large to show here. Download it instead.</p>
     } @else if (highlighted(); as html) {
     <!-- prettier-ignore -->
-    <pre class="code"><code class="hljs" [innerHTML]="html" data-testid="code"></code></pre>
+    <pre class="m-0 type-code whitespace-pre code-highlight"><code class="hljs" [innerHTML]="html" data-testid="code"></code></pre>
     } @else if (text(); as plain) {
     <!-- prettier-ignore -->
-    <pre class="code"><code>{{ plain }}</code></pre>
+    <pre class="m-0 type-code whitespace-pre"><code>{{ plain }}</code></pre>
     } } @default {
-    <p class="note" data-testid="binary">
+    <p class="hint-text" data-testid="binary">
       This file cannot be shown here. Download it to open it.
     </p>
     } }
