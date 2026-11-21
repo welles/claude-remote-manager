@@ -39,7 +39,7 @@ describe('DiffView', () => {
         ],
       }),
     );
-    expect(cells(element, 'td.code')).toEqual([
+    expect(cells(element, '[data-testid="diff-code"]')).toEqual([
       '-<b>old</b>',
       '+<script>alert(1)</script>',
     ]);
@@ -51,8 +51,10 @@ describe('DiffView', () => {
   it('lays out old and new side by side', async () => {
     const element = await render(fileDiff(), 'split');
     expect(element.querySelector('[data-testid="diff-split"]')).not.toBeNull();
-    expect(cells(element, 'td.code.del')).toEqual(['const b = 2;']);
-    expect(cells(element, 'td.code.add')).toEqual([
+    expect(cells(element, '[data-testid="diff-code"].del')).toEqual([
+      'const b = 2;',
+    ]);
+    expect(cells(element, '[data-testid="diff-code"].add')).toEqual([
       'const b = 3;',
       'const c = 4;',
     ]);

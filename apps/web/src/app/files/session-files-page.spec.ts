@@ -56,9 +56,11 @@ describe('SessionFilesPage', () => {
     });
     await fixture.whenStable();
     const names = () =>
-      [...element.querySelectorAll('[data-testid="file-row"] .name')].map(
-        (name) => name.textContent?.trim(),
-      );
+      [
+        ...element.querySelectorAll(
+          '[data-testid="file-row"] [data-testid="file-name"]',
+        ),
+      ].map((name) => name.textContent?.trim());
     expect(names()).toEqual(['src', 'README.md']);
     expect(
       element.querySelector('[data-testid="changed-count"]')?.textContent,

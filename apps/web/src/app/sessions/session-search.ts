@@ -71,12 +71,9 @@ export function snippetParts(
   ],
   host: { class: 'block' },
   template: `
-    <label
-      class="flex h-10 cursor-text items-center gap-2 rounded-sm border border-outline-variant bg-surface-container px-3 text-on-surface-variant focus-within:border-primary"
-    >
+    <label class="search-field">
       <app-icon name="search" />
       <input
-        class="h-full min-w-0 flex-1 border-0 bg-transparent [font-family:inherit] type-body-large text-on-surface outline-none placeholder:text-on-surface-variant"
         type="search"
         [maxlength]="maxLength"
         [ngModel]="query()"

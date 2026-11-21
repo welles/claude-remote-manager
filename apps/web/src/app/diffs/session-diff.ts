@@ -22,6 +22,16 @@ const STATUS_LETTERS: Record<SessionDiffFile['status'], string> = {
   type_changed: 'T',
 };
 
+/** The colour of a status letter. */
+const STATUS_TONES: Record<SessionDiffFile['status'], string> = {
+  added: 'text-diff-add',
+  modified: '',
+  deleted: 'text-diff-del',
+  renamed: 'text-secondary',
+  copied: 'text-secondary',
+  type_changed: '',
+};
+
 /** Key of a file within the session diff. */
 const fileKey = (repository: RepositoryDiff, file: SessionDiffFile) =>
   `${repository.repositoryId}\u0000${repository.branch ?? ''}\u0000${file.oldPath ?? ''}\u0000${file.path}`;
@@ -37,7 +47,7 @@ const fileKey = (repository: RepositoryDiff, file: SessionDiffFile) =>
   selector: 'app-session-diff',
   imports: [DiffView, MatButtonModule, AppIcon, MatProgressBarModule],
   templateUrl: './session-diff.html',
-  styleUrl: './session-diff.scss',
+  host: { class: 'flex min-w-0 flex-col gap-3' },
 })
 export class SessionDiff implements OnInit {
   private readonly api = inject(SessionsApi);
@@ -54,6 +64,7 @@ export class SessionDiff implements OnInit {
   /** Files being loaded, or that failed to load (message). */
   protected readonly fileState = signal(new Map<string, string | null>());
   protected readonly letters = STATUS_LETTERS;
+  protected readonly letterTones = STATUS_TONES;
   protected readonly fileKey = fileKey;
 
   ngOnInit(): void {

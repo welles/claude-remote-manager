@@ -8,7 +8,7 @@ import { SessionDiff } from './session-diff';
 /** The whole-session diff as its own page (`/sessions/:id/changes`). */
 @Component({
   selector: 'app-session-changes-page',
-  host: { class: 'app-page' },
+  host: { class: 'app-page [--app-page-max:1320px]' },
   imports: [AppPageBar, SessionDiff],
   template: `
     <app-page-bar
@@ -18,11 +18,6 @@ import { SessionDiff } from './session-diff';
     />
     @for (sessionId of [id()]; track sessionId) {
       <app-session-diff [sessionId]="sessionId" />
-    }
-  `,
-  styles: `
-    :host {
-      --app-page-max: 1320px;
     }
   `,
 })

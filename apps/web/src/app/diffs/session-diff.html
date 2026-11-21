@@ -1,4 +1,4 @@
-<div class="toolbar">
+<div class="flex flex-wrap items-center gap-2">
   <div
     class="inline-flex flex-wrap gap-1"
     role="group"
@@ -37,13 +37,13 @@
 @if (loading()) {
 <mat-progress-bar mode="indeterminate" />
 } @if (error(); as message) {
-<p class="error" data-testid="diff-error">{{ message }}</p>
+<p class="text-error" data-testid="diff-error">{{ message }}</p>
 } @if (diff(); as d) { @for (repository of d.repositories; track
 repository.path; let r = $index) {
 <section class="repository" data-testid="repository-diff">
   <header>
-    <h2>{{ repository.repository }}</h2>
-    <p class="meta">
+    <h2 class="m-0 type-title-medium">{{ repository.repository }}</h2>
+    <p class="my-1 text-on-surface-variant wrap-anywhere">
       @if (repository.branch) {
       <code>{{ repository.branch }}</code> } @if (repository.comparison; as
       comparison) { @if (comparison.basis === 'merge_base') {
@@ -60,13 +60,16 @@ repository.path; let r = $index) {
       <span data-testid="repository-summary"
         >{{ repository.fileCount }} {{ repository.fileCount === 1 ? 'file' :
         'files' }} changed,
-        <span class="added">+{{ repository.additions }}</span>
-        <span class="removed">−{{ repository.deletions }}</span></span
+        <span class="text-diff-add">+{{ repository.additions }}</span>
+        <span class="text-diff-del">−{{ repository.deletions }}</span></span
       >
       }
     </p>
     @if (repository.comparison?.fallbackReason; as reason) {
-    <p class="meta" data-testid="comparison-fallback">
+    <p
+      class="my-1 text-on-surface-variant wrap-anywhere"
+      data-testid="comparison-fallback"
+    >
       {{ reason }} Changes brought in from
       <code>{{ repository.baseBranch ?? 'the base branch' }}</code> may show as
       the session's.
@@ -74,61 +77,75 @@ repository.path; let r = $index) {
     }
   </header>
   @if (repository.state !== 'ok') {
-  <p class="error">{{ repository.message }}</p>
+  <p class="text-error">{{ repository.message }}</p>
   } @else if (repository.files.length === 0) {
-  <p class="empty">No changes.</p>
+  <p class="my-1 text-on-surface-variant wrap-anywhere">No changes.</p>
   } @else {
-  <ul class="files" data-testid="file-list">
+  <ul class="my-2 list-none p-0" data-testid="file-list">
     @for (file of repository.files; track $index; let f = $index) {
-    <li>
+    <li class="flex items-baseline gap-2 py-0.5">
       <span
-        class="letter letter-{{ file.status }}"
+        class="w-[1.5ch] font-mono text-[12px]/none font-semibold {{ letterTones[file.status] }}"
         [title]="file.status.replace('_', ' ')"
         >{{ letters[file.status] }}</span
       >
       <a
-        class="file-link"
+        class="min-w-0 flex-1 wrap-anywhere whitespace-pre-wrap"
         [href]="'#' + anchor(r, f)"
         (click)="jump($event, anchor(r, f))"
-        >@if (file.oldPath) {<span class="old-path">{{ file.oldPath }} → </span
+        >@if (file.oldPath) {<span class="text-on-surface-variant"
+          >{{ file.oldPath }} → </span
         >}{{ file.path }}</a
       >
-      <span class="counts">
+      <span class="whitespace-nowrap type-body-small">
         @if (file.binary) { binary } @else {
-        <span class="added">+{{ file.additions }}</span>
-        <span class="removed">−{{ file.deletions }}</span>
+        <span class="text-diff-add">+{{ file.additions }}</span>
+        <span class="text-diff-del">−{{ file.deletions }}</span>
         }
       </span>
     </li>
     }
   </ul>
   @if (repository.fileCount > repository.files.length) {
-  <p class="limit" data-testid="files-limited">
+  <p
+    class="my-1 text-on-surface-variant wrap-anywhere"
+    data-testid="files-limited"
+  >
     Showing {{ repository.files.length }} of {{ repository.fileCount }} changed
     files.
   </p>
   } @for (file of repository.files; track $index; let f = $index) { @let
   shownFile = shown(repository, file);
-  <details class="file" open [id]="anchor(r, f)" data-testid="file-diff">
-    <summary>
-      <span class="letter letter-{{ file.status }}"
+  <details
+    class="my-2 border-t border-outline-variant pt-1"
+    open
+    [id]="anchor(r, f)"
+    data-testid="file-diff"
+  >
+    <summary class="flex items-baseline gap-2 py-0.5 cursor-pointer">
+      <span
+        class="w-[1.5ch] font-mono text-[12px]/none font-semibold {{ letterTones[file.status] }}"
         >{{ letters[file.status] }}</span
       >
-      <code class="path"
-        >@if (file.oldPath) {<span class="old-path">{{ file.oldPath }} → </span
+      <code class="min-w-0 flex-1 wrap-anywhere whitespace-pre-wrap"
+        >@if (file.oldPath) {<span class="text-on-surface-variant"
+          >{{ file.oldPath }} → </span
         >}{{ file.path }}</code
       >
       @if (!file.binary) {
-      <span class="counts"
-        ><span class="added">+{{ file.additions }}</span>
-        <span class="removed">−{{ file.deletions }}</span></span
+      <span class="whitespace-nowrap type-body-small"
+        ><span class="text-diff-add">+{{ file.additions }}</span>
+        <span class="text-diff-del">−{{ file.deletions }}</span></span
       >
       }
     </summary>
     @if (shownFile.content === 'included') {
     <app-diff-view [diff]="shownFile" [layout]="layout()" />
     } @else {
-    <p class="limit" data-testid="file-left-out">
+    <p
+      class="my-1 text-on-surface-variant wrap-anywhere"
+      data-testid="file-left-out"
+    >
       {{ shownFile.content === 'too_large' ? 'This file has too many changed
       lines to show here.' : 'Left out: the diff reached its size limit.' }}
       @let state = fileState().get(fileKey(repository, file)); @if (state ===
@@ -141,7 +158,7 @@ repository.path; let r = $index) {
         Show this file
       </button>
       } @else if (state === null) { Loading… } @else {
-      <span class="error">{{ state }}</span>
+      <span class="text-error">{{ state }}</span>
       }
     </p>
     }
@@ -149,5 +166,7 @@ repository.path; let r = $index) {
   } }
 </section>
 } @empty {
-<p class="empty">This session has no repositories.</p>
+<p class="my-1 text-on-surface-variant wrap-anywhere">
+  This session has no repositories.
+</p>
 } }

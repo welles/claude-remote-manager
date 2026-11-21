@@ -11,6 +11,8 @@
 
 /* Tones are also built from state names (`tone-{{ state }}`). */
 @source inline('tone-{ready,attention,error,error-line,open,merged,closed,draft}');
+/* Chart series are built from slot numbers (`fill-chart-{{ slot }}`). */
+@source inline('{fill,bg}-chart-{0,1,2,3,4,5,6}');
 
 @theme inline {
   --*: initial;
@@ -48,6 +50,20 @@
   --color-on-surface-variant: var(--mat-sys-on-surface-variant);
   --color-outline: var(--mat-sys-outline);
   --color-outline-variant: var(--mat-sys-outline-variant);
+  /* Diffs: added and removed text, and their line backgrounds. */
+  --color-diff-add: var(--app-diff-add-fg);
+  --color-diff-del: var(--app-diff-del-fg);
+  --color-diff-add-line: var(--app-diff-add-bg);
+  --color-diff-del-line: var(--app-diff-del-bg);
+  /* Chart series (`fill-chart-1`, `bg-chart-1` for its legend swatch). */
+  --color-chart-0: var(--app-chart-0);
+  --color-chart-1: var(--app-chart-1);
+  --color-chart-2: var(--app-chart-2);
+  --color-chart-3: var(--app-chart-3);
+  --color-chart-4: var(--app-chart-4);
+  --color-chart-5: var(--app-chart-5);
+  --color-chart-6: var(--app-chart-6);
+  --color-scrim: var(--app-scrim);
   --color-transparent: transparent;
   --color-current: currentColor;
 
@@ -71,6 +87,16 @@
   --ease-standard: var(--app-ease);
   --default-transition-duration: var(--app-motion-fast);
   --default-transition-timing-function: var(--app-ease);
+
+  /* A panel sliding in from the right (side panel, file viewer). */
+  --animate-panel-in: panel-in var(--app-motion) var(--app-ease);
+
+  @keyframes panel-in {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
+  }
 }
 
 /*
@@ -623,5 +649,90 @@
   & > dd {
     margin: 0;
     overflow-wrap: anywhere;
+  }
+}
+
+/*
+ * Code highlighted by highlight.js (its `hljs-*` token classes), in the
+ * theme's colours: on the element around the highlighted code.
+ */
+@utility code-highlight {
+  & .hljs-keyword,
+  & .hljs-built_in,
+  & .hljs-selector-tag,
+  & .hljs-literal {
+    color: var(--mat-sys-primary);
+  }
+
+  & .hljs-string,
+  & .hljs-regexp,
+  & .hljs-addition {
+    color: var(--app-success);
+  }
+
+  & .hljs-number,
+  & .hljs-attr,
+  & .hljs-attribute,
+  & .hljs-variable,
+  & .hljs-template-variable {
+    color: var(--mat-sys-secondary);
+  }
+
+  & .hljs-comment,
+  & .hljs-quote,
+  & .hljs-meta {
+    color: var(--mat-sys-on-surface-variant);
+    font-style: italic;
+  }
+
+  & .hljs-title,
+  & .hljs-section,
+  & .hljs-name,
+  & .hljs-type {
+    color: var(--mat-sys-primary);
+    font-weight: 600;
+  }
+
+  & .hljs-deletion {
+    color: var(--mat-sys-error);
+  }
+}
+
+/*
+ * A search or filter field: a label with a search icon and the input
+ * (session search, file filter).
+ */
+@utility search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--mat-sys-corner-small);
+  background: var(--mat-sys-surface-container);
+  color: var(--mat-sys-on-surface-variant);
+  cursor: text;
+
+  &:focus-within {
+    border-color: var(--mat-sys-primary);
+  }
+
+  & > input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--mat-sys-on-surface);
+    font-family: inherit;
+    font-size: var(--mat-sys-body-large-size);
+    line-height: var(--mat-sys-body-large-line-height);
+    letter-spacing: var(--mat-sys-body-large-tracking);
+  }
+
+  & > input::placeholder {
+    color: var(--mat-sys-on-surface-variant);
   }
 }
