@@ -121,17 +121,19 @@ const unavailable = (branch: RemoteBranch) =>
       @if (open()) {
         <div>
           @if (mode() === 'archive') {
-            <p>
+            <p class="my-1">
               Archiving ends the session and hides it from the list. Its history
               stays readable and searchable, and you can unarchive it later.
               Choose what happens to its directories now:
             </p>
           } @else {
-            <p>Choose what happens to each directory of the session:</p>
+            <p class="my-1">
+              Choose what happens to each directory of the session:
+            </p>
           }
           @if (preview(); as preview) {
             @if (blockedReason(); as reason) {
-              <p class="warning" role="alert">{{ reason }}.</p>
+              <p class="my-1 text-error" role="alert">{{ reason }}.</p>
             }
             @if (hasClones()) {
               <a
@@ -142,19 +144,30 @@ const unavailable = (branch: RemoteBranch) =>
               >
             }
             @for (directory of preview.directories; track directory.position) {
-              <fieldset class="directory" data-testid="cleanup-directory">
-                <legend>
+              <fieldset
+                class="mx-0 my-3 min-w-0 rounded-md border border-outline-variant px-3 py-2 [&>legend+*]:clear-left"
+                data-testid="cleanup-directory"
+              >
+                <legend class="float-left mb-1 w-full p-0 wrap-anywhere">
                   <strong>{{ directory.name }}</strong>
                   @if (directory.branch) {
-                    <span class="muted"> · {{ directory.branch }}</span>
+                    <span
+                      class="type-body-small text-on-surface-variant wrap-anywhere"
+                    >
+                      · {{ directory.branch }}</span
+                    >
                   }
                 </legend>
-                <p class="muted path">{{ directory.path }}</p>
+                <p
+                  class="my-1 type-body-small text-on-surface-variant wrap-anywhere"
+                >
+                  {{ directory.path }}
+                </p>
                 @if (directory.error) {
-                  <p class="warning">{{ directory.error }}</p>
+                  <p class="my-1 text-error">{{ directory.error }}</p>
                 }
                 <mat-radio-group
-                  class="choices"
+                  class="flex flex-col"
                   [value]="choice(directory)"
                   (change)="choose(directory, $event.value)"
                   [name]="'choice-' + directory.position"
@@ -172,7 +185,7 @@ const unavailable = (branch: RemoteBranch) =>
                 @if (choice(directory) !== 'keep') {
                   @if (loss) {
                     @if (!loss.clean) {
-                      <p class="warning">
+                      <p class="my-1 text-error">
                         {{
                           choice(directory) === 'discard'
                             ? 'Removing it loses:'
@@ -193,31 +206,47 @@ const unavailable = (branch: RemoteBranch) =>
                       >
                     }
                   } @else {
-                    <p class="warning">
+                    <p class="my-1 text-error">
                       What it holds is unknown, so it is kept.
                     </p>
                   }
                 }
               </fieldset>
             } @empty {
-              <p class="muted">The session has no directories left.</p>
+              <p
+                class="my-1 type-body-small text-on-surface-variant wrap-anywhere"
+              >
+                The session has no directories left.
+              </p>
             }
             @if (preview.remoteBranches.length > 0) {
-              <h3 class="section">Branches on the remote</h3>
+              <h3 class="mt-4 mb-0 type-title-small">Branches on the remote</h3>
               @for (branch of preview.remoteBranches; track branch.position) {
-                <fieldset class="directory" data-testid="remote-branch">
-                  <legend>
+                <fieldset
+                  class="mx-0 my-3 min-w-0 rounded-md border border-outline-variant px-3 py-2 [&>legend+*]:clear-left"
+                  data-testid="remote-branch"
+                >
+                  <legend class="float-left mb-1 w-full p-0 wrap-anywhere">
                     <strong>{{ branch.name }}</strong>
-                    <span class="muted"> · {{ branch.branch }}</span>
+                    <span
+                      class="type-body-small text-on-surface-variant wrap-anywhere"
+                    >
+                      · {{ branch.branch }}</span
+                    >
                   </legend>
                   <p
-                    [class.warning]="!branch.safe"
+                    class="my-1"
+                    [class.text-error]="!branch.safe"
                     [id]="'remote-branch-state-' + branch.position"
                   >
                     {{ remoteBranchState(branch) }}
                   </p>
                   @if (pushes(branch.position)) {
-                    <p class="muted">It is pushed in this cleanup; kept.</p>
+                    <p
+                      class="my-1 type-body-small text-on-surface-variant wrap-anywhere"
+                    >
+                      It is pushed in this cleanup; kept.
+                    </p>
                   }
                   <mat-checkbox
                     [checked]="deletesBranch(branch)"
@@ -242,7 +271,7 @@ const unavailable = (branch: RemoteBranch) =>
               }
             }
             @if (removes()) {
-              <p class="note" data-testid="no-resume-note">
+              <p class="my-1 font-medium" data-testid="no-resume-note">
                 Afterwards the session can still be read, but not continued.
               </p>
             }
@@ -250,7 +279,7 @@ const unavailable = (branch: RemoteBranch) =>
             <mat-progress-bar mode="indeterminate" />
           }
           @if (error(); as text) {
-            <p class="warning" role="alert">{{ text }}</p>
+            <p class="my-1 text-error" role="alert">{{ text }}</p>
           }
           @if (busy()) {
             <mat-progress-bar mode="indeterminate" />
@@ -273,50 +302,6 @@ const unavailable = (branch: RemoteBranch) =>
         </div>
       }
     </app-dialog>
-  `,
-  styles: `
-    .directory {
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-medium);
-      margin: 12px 0;
-      padding: 8px 12px;
-      min-width: 0;
-    }
-    /* A floated legend is a normal block inside the border, so a long
-       name can wrap without the border line running through it. */
-    legend {
-      float: left;
-      width: 100%;
-      margin: 0 0 4px;
-      padding: 0;
-      overflow-wrap: anywhere;
-    }
-    legend + * {
-      clear: left;
-    }
-    .choices {
-      display: flex;
-      flex-direction: column;
-    }
-    .path,
-    .muted {
-      color: var(--mat-sys-on-surface-variant);
-      font: var(--mat-sys-body-small);
-      overflow-wrap: anywhere;
-    }
-    p {
-      margin: 4px 0;
-    }
-    .warning {
-      color: var(--mat-sys-error);
-    }
-    .note {
-      font-weight: 500;
-    }
-    .section {
-      font: var(--mat-sys-title-small);
-      margin: 16px 0 0;
-    }
   `,
 })
 export class CleanupDialog {

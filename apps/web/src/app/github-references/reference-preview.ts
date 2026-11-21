@@ -17,18 +17,20 @@ import {
   selector: 'app-reference-preview',
   imports: [MarkdownPipe],
   template: `
-    <p class="meta">
+    <p class="mt-0 mb-1.5 type-body-small text-on-surface-variant">
       <span class="badge tone-{{ state() }}">{{ state() }}</span>
       {{ kindLabel() }} {{ chip().repository }}#{{ chip().number }}
     </p>
     @if (chip().title) {
-      <p class="title">{{ chip().title }}</p>
+      <p class="mt-0 mb-1.5 type-title-small">{{ chip().title }}</p>
     }
     @if (chip().error; as error) {
-      <p class="error" data-testid="reference-error">{{ error }}</p>
+      <p class="mt-0 mb-1.5 text-error" data-testid="reference-error">
+        {{ error }}
+      </p>
     }
     @if (detail(); as detail) {
-      <p class="facts">
+      <p class="mt-0 mb-1.5 type-body-small text-on-surface-variant">
         @if (detail.author) {
           by &#64;{{ detail.author }}
         }
@@ -44,20 +46,24 @@ import {
       </p>
       @if (detail.body.trim()) {
         <div
-          class="body markdown"
+          class="markdown mb-1.5 max-h-[30vh] overflow-auto type-body-small"
           [innerHTML]="
             detail.body + (detail.bodyTruncated ? '\\n\\n…' : '') | markdown
           "
         ></div>
       } @else {
-        <p class="facts">No description.</p>
+        <p class="mt-0 mb-1.5 type-body-small text-on-surface-variant">
+          No description.
+        </p>
       }
     } @else if (loading()) {
-      <p class="facts">Loading…</p>
+      <p class="mt-0 mb-1.5 type-body-small text-on-surface-variant">
+        Loading…
+      </p>
     }
     @if (editable()) {
       @if (chip().status !== 'failed') {
-        <label class="option">
+        <label class="flex min-h-8 items-center gap-1.5">
           <input
             type="checkbox"
             [checked]="chip().comments"
@@ -67,7 +73,7 @@ import {
           Give Claude the comments
         </label>
         @if (chip().kind === 'pull_request') {
-          <label class="option">
+          <label class="flex min-h-8 items-center gap-1.5">
             <input
               type="checkbox"
               [checked]="chip().diff"
@@ -79,15 +85,18 @@ import {
         }
       }
     } @else if (chip().status === 'resolved') {
-      <p class="facts" data-testid="reference-included">
+      <p
+        class="mt-0 mb-1.5 type-body-small text-on-surface-variant"
+        data-testid="reference-included"
+      >
         Claude got: {{ included() }}
       </p>
       @for (note of chip().notes; track note) {
-        <p class="note">{{ note }}</p>
+        <p class="mt-0 mb-1.5 type-body-small text-secondary">{{ note }}</p>
       }
     }
     <a
-      class="link"
+      class="mt-1 inline-block py-1"
       [href]="chip().url"
       target="_blank"
       rel="noopener noreferrer"
@@ -95,57 +104,11 @@ import {
       >Open on GitHub ↗</a
     >
   `,
-  host: { role: 'dialog' },
-  styles: `
-    :host {
-      display: block;
-      width: min(360px, calc(100vw - 32px));
-      max-height: 60vh;
-      overflow: auto;
-      padding: 12px;
-      border-radius: var(--mat-sys-corner-small);
-      background: var(--mat-sys-surface-container-high);
-      color: var(--mat-sys-on-surface);
-      box-shadow: var(--mat-sys-level2);
-      white-space: normal;
-    }
-    p {
-      margin: 0 0 6px;
-    }
-    .meta,
-    .facts,
-    .note {
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .note {
-      color: var(--mat-sys-secondary);
-    }
-    .title {
-      font: var(--mat-sys-title-small);
-    }
-    .error {
-      color: var(--mat-sys-error);
-    }
-    .body {
-      max-height: 30vh;
-      overflow: auto;
-      overflow-wrap: anywhere;
-      margin-bottom: 6px;
-      font: var(--mat-sys-body-small);
-    }
-    .option {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      min-height: 32px;
-    }
-    .link {
-      display: inline-block;
-      margin-top: 4px;
-      padding: 4px 0;
-    }
-  `,
+  host: {
+    class:
+      'block max-h-[60vh] w-[min(360px,calc(100vw-32px))] overflow-auto rounded-sm bg-surface-container-high p-3 whitespace-normal text-on-surface shadow-2',
+    role: 'dialog',
+  },
 })
 export class ReferencePreview {
   readonly chip = input.required<ReferenceChipModel>();

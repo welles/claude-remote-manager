@@ -45,10 +45,10 @@ import { Toasts } from '../ui/toasts';
         <div>
           @if (preview(); as preview) {
             @if (preview.blocked) {
-              <p class="warning" role="alert">{{ preview.blocked }}.</p>
+              <p class="text-error" role="alert">{{ preview.blocked }}.</p>
             }
             <p>This cannot be undone. Deleted:</p>
-            <ul>
+            <ul class="pl-5 wrap-anywhere">
               <li>
                 the conversation{{
                   preview.transcript ? " (Claude Code's transcript)" : ''
@@ -78,8 +78,10 @@ import { Toasts } from '../ui/toasts';
             @for (directory of preview.directories; track directory.position) {
               @if (directory.loss; as loss) {
                 @if (!loss.clean) {
-                  <section class="loss" data-testid="delete-loss">
-                    <h3>{{ directory.name }} holds work that is lost:</h3>
+                  <section data-testid="delete-loss">
+                    <h3 class="mt-3 mb-1 type-title-small wrap-anywhere">
+                      {{ directory.name }} holds work that is lost:
+                    </h3>
                     <app-loss-details
                       [loss]="loss"
                       [scratch]="directory.kind === 'scratch'"
@@ -87,14 +89,14 @@ import { Toasts } from '../ui/toasts';
                   </section>
                 }
               } @else {
-                <p class="warning">
+                <p class="text-error">
                   What {{ directory.name }} holds could not be read{{
                     directory.error ? ': ' + directory.error : ''
                   }}.
                 </p>
               }
             }
-            <p class="muted">{{ keptText(preview) }}</p>
+            <p class="text-on-surface-variant">{{ keptText(preview) }}</p>
             @if (dirty()) {
               <mat-checkbox
                 [(ngModel)]="acceptLoss"
@@ -106,7 +108,7 @@ import { Toasts } from '../ui/toasts';
             <mat-progress-bar mode="indeterminate" />
           }
           @if (error(); as text) {
-            <p class="warning" role="alert">{{ text }}</p>
+            <p class="text-error" role="alert">{{ text }}</p>
           }
         </div>
       }
@@ -131,23 +133,6 @@ import { Toasts } from '../ui/toasts';
         </div>
       }
     </app-dialog>
-  `,
-  styles: `
-    h3 {
-      font: var(--mat-sys-title-small);
-      margin: 12px 0 4px;
-      overflow-wrap: anywhere;
-    }
-    ul {
-      padding-left: 20px;
-      overflow-wrap: anywhere;
-    }
-    .muted {
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .warning {
-      color: var(--mat-sys-error);
-    }
   `,
 })
 export class DeleteSessionDialog {

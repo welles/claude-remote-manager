@@ -65,16 +65,6 @@
     }
   }
 
-  // Text for screen readers only.
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
   // A page in the shell: centred column, its app bar (`app-page-bar`)
   // first. Pages set `--app-page-max` for their width.
   .app-page {
@@ -96,49 +86,6 @@
     margin-inline-end: 6px;
   }
 
-  // A small text centred on a hairline (turn footers).
-  .app-divider {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font: var(--mat-sys-label-small);
-    font-weight: 500;
-    color: var(--mat-sys-on-surface-variant);
-
-    &::before,
-    &::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: var(--mat-sys-outline-variant);
-    }
-  }
-
-  // A pulsing dot for work in progress (still with reduced motion).
-  .app-pulse {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--app-status-running);
-
-    @media (prefers-reduced-motion: no-preference) {
-      animation: app-pulse 1.6s var(--app-ease) infinite;
-    }
-  }
-
-  @keyframes app-pulse {
-    50% {
-      opacity: 0.35;
-    }
-  }
-
-  // Monospace inline text: paths, branches, repositories, commands.
-  .mono {
-    font-family: var(--app-font-mono);
-    font-size: 0.92em;
-  }
-
   // Uppercase micro-label above a group (list sections, panel sections).
   .app-section-label {
     margin: var(--app-space-4) 0 var(--app-space-2);
@@ -155,15 +102,6 @@
     --mat-button-text-label-text-color: var(--mat-sys-error);
     --mat-button-text-state-layer-color: var(--mat-sys-error);
     --mat-menu-item-label-text-color: var(--mat-sys-error);
-  }
-
-  // Inline error and empty texts.
-  .app-error {
-    color: var(--mat-sys-error);
-  }
-
-  .app-muted {
-    color: var(--mat-sys-on-surface-variant);
   }
 }
 

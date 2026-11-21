@@ -5,6 +5,7 @@ import { attachmentUrl } from './attachments-api';
 /** The images of a sent message, as thumbnails that open the image. */
 @Component({
   selector: 'app-message-images',
+  host: { class: 'flex flex-wrap gap-1.5' },
   template: `
     @for (attachment of attachments(); track attachment.id) {
       <a
@@ -13,25 +14,11 @@ import { attachmentUrl } from './attachments-api';
         rel="noopener"
         data-testid="message-image"
         ><img
+          class="block max-h-[120px] max-w-[160px] rounded-sm bg-surface-container object-contain"
           [src]="url(attachment.id)"
           [alt]="attachment.name ?? 'Attached image'"
           loading="lazy"
       /></a>
-    }
-  `,
-  styles: `
-    :host {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    img {
-      display: block;
-      max-width: 160px;
-      max-height: 120px;
-      border-radius: var(--mat-sys-corner-small);
-      object-fit: contain;
-      background: var(--mat-sys-surface-container);
     }
   `,
 })

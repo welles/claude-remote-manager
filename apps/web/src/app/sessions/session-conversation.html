@@ -218,7 +218,9 @@
   [ngTemplateOutletContext]="{ $implicit: item }"
 />
 } @case ('turn') {
-<p class="app-divider">
+<p
+  class="flex items-center gap-2 type-label-small font-medium text-on-surface-variant before:h-px before:flex-1 before:bg-outline-variant after:h-px after:flex-1 after:bg-outline-variant"
+>
   <span
     >@if (item.interrupted) { Interrupted · } {{ item.durationMs / 1000 |
     number: '1.1-1' }} s · {{ formatTokens(totalTokens(item.usage)) }} tokens ·
@@ -227,11 +229,17 @@
 </p>
 } } } @if (running() && pendingRequests() === 0) {
 <p class="m-0 flex items-center gap-2 type-body-small text-on-surface-variant">
-  <span class="app-pulse"></span>Claude is working…
+  <span
+    class="state-dot inline-block [--tone-bg:var(--app-status-running)] motion-safe:animate-pulse-soft"
+  ></span
+  >Claude is working…
 </p>
 } @else if (preparing()) {
 <p class="m-0 flex items-center gap-2 type-body-small text-on-surface-variant">
-  <span class="app-pulse"></span>Preparing the session…
+  <span
+    class="state-dot inline-block [--tone-bg:var(--app-status-running)] motion-safe:animate-pulse-soft"
+  ></span
+  >Preparing the session…
 </p>
 } @if (session(); as s) { @if (s.status === 'failed' && resumable()) {
 <app-banner data-testid="failed-banner">

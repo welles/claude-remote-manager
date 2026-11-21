@@ -73,13 +73,9 @@ export const STATUS_KIND_CLASS: Record<StatusKind, string> = {
  */
 @Component({
   selector: 'app-status-badge',
+  host: { class: 'inline-flex' },
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `<span [class]="kindClass()">{{ label() }}</span>`,
-  styles: `
-    :host {
-      display: inline-flex;
-    }
-  `,
 })
 export class StatusBadge {
   readonly session =
@@ -103,48 +99,27 @@ export class StatusBadge {
 @Component({
   selector: 'app-status-dot',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { '[class]': '"dot-" + kind()', 'aria-hidden': 'true' },
+  host: {
+    class: 'state-dot inline-block',
+    '[class]': 'dotClass()',
+    'aria-hidden': 'true',
+  },
   template: '',
-  styles: `
-    :host {
-      display: inline-block;
-      flex: none;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--app-status-idle);
-    }
-    :host(.dot-attention) {
-      background: var(--app-status-attention);
-      box-shadow: 0 0 0 3px var(--app-status-attention-container);
-    }
-    :host(.dot-idle) {
-      background: var(--app-status-ready);
-      box-shadow: 0 0 0 3px var(--app-status-ready-container);
-    }
-    :host(.dot-running) {
-      background: var(--app-status-idle);
-      opacity: 0.6;
-    }
-    :host(.dot-failed) {
-      background: var(--app-status-failed);
-    }
-    :host(.dot-done) {
-      background: transparent;
-      box-shadow: inset 0 0 0 1.5px var(--app-status-done);
-    }
-    @media (prefers-reduced-motion: no-preference) {
-      :host(.dot-running) {
-        animation: pulse 2.4s var(--app-ease) infinite;
-      }
-    }
-    @keyframes pulse {
-      50% {
-        opacity: 0.25;
-      }
-    }
-  `,
 })
 export class StatusDot {
   readonly kind = input.required<StatusKind>();
+  // `dot-<kind>` names the state for tests and tools.
+  protected readonly dotClass = computed(
+    () => `dot-${this.kind()} ${DOT_CLASS[this.kind()]}`,
+  );
 }
+
+const DOT_CLASS: Record<StatusKind, string> = {
+  attention:
+    '[--tone-bg:var(--app-status-attention)] shadow-[0_0_0_3px_var(--app-status-attention-container)]',
+  idle: '[--tone-bg:var(--app-status-ready)] shadow-[0_0_0_3px_var(--app-status-ready-container)]',
+  running:
+    '[--tone-bg:var(--app-status-idle)] opacity-60 motion-safe:animate-pulse-soft',
+  failed: '[--tone-bg:var(--app-status-failed)]',
+  done: '[--tone-bg:transparent] shadow-[inset_0_0_0_1.5px_var(--app-status-done)]',
+};

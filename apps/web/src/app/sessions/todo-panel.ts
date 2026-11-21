@@ -42,9 +42,7 @@ import type { Todo } from './todos';
                   : todo.content
               }}</span
             >
-            <span class="visually-hidden"
-              >({{ todo.status.replace('_', ' ') }})</span
-            >
+            <span class="sr-only">({{ todo.status.replace('_', ' ') }})</span>
           </li>
         }
       </ul>

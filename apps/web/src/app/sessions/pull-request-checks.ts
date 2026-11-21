@@ -150,8 +150,7 @@ export class PullRequestChecks {
     success: 'text-success',
     neutral: 'text-success',
     failure: 'text-error',
-    pending:
-      'text-tertiary motion-safe:animate-[app-pulse_1.6s_ease-in-out_infinite]',
+    pending: 'text-tertiary motion-safe:animate-pulse-soft',
     skipped: '',
     cancelled: '',
   };

@@ -112,6 +112,15 @@
     }
   }
 
+  /* Work in progress: a soft pulse (running dots, pending checks). */
+  --animate-pulse-soft: pulse-soft 1.6s var(--app-ease) infinite;
+
+  @keyframes pulse-soft {
+    50% {
+      opacity: 0.35;
+    }
+  }
+
   /* A toast dropping in from above. */
   --animate-toast-in: toast-in var(--app-motion) var(--app-ease);
 

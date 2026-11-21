@@ -8,10 +8,11 @@ import { formatBytes } from './format';
  */
 @Component({
   selector: 'app-loss-details',
+  host: { class: 'block' },
   template: `
     @let loss = this.loss();
     @if (loss.clean) {
-      <p class="clean" data-testid="loss-clean">
+      <p class="my-1" data-testid="loss-clean">
         Nothing would be lost{{
           scratch()
             ? ': the directory is empty'
@@ -20,12 +21,15 @@ import { formatBytes } from './format';
       </p>
     } @else {
       @if (loss.fileCount > 0) {
-        <h4>
+        <h4 class="mt-2 mb-1 type-title-small">
           {{ loss.fileCount }}
           {{ scratch() ? 'file' : 'uncommitted file'
           }}{{ loss.fileCount === 1 ? '' : 's' }}
         </h4>
-        <ul data-testid="loss-files">
+        <ul
+          class="m-0 max-h-[140px] overflow-auto pl-5 wrap-anywhere"
+          data-testid="loss-files"
+        >
           @for (file of loss.files; track file) {
             <li>
               <code>{{ file }}</code>
@@ -37,17 +41,22 @@ import { formatBytes } from './format';
         </ul>
       }
       @if (loss.unpushedCount > 0) {
-        <h4>
+        <h4 class="mt-2 mb-1 type-title-small">
           {{ loss.unpushedCount }} commit{{
             loss.unpushedCount === 1 ? '' : 's'
           }}
           not on the remote
         </h4>
-        <ul data-testid="loss-commits">
+        <ul
+          class="m-0 max-h-[140px] overflow-auto pl-5 wrap-anywhere"
+          data-testid="loss-commits"
+        >
           @for (commit of loss.unpushedCommits; track commit.sha) {
             <li>
               <code>{{ commit.sha.slice(0, 7) }}</code> {{ commit.subject }}
-              <span class="muted">({{ commit.branch }})</span>
+              <span class="type-body-small text-on-surface-variant"
+                >({{ commit.branch }})</span
+              >
             </li>
           }
           @if (loss.unpushedCount > loss.unpushedCommits.length) {
@@ -58,37 +67,16 @@ import { formatBytes } from './format';
         </ul>
       }
       @if (loss.stashes > 0) {
-        <h4 data-testid="loss-stashes">
+        <h4 class="mt-2 mb-1 type-title-small" data-testid="loss-stashes">
           {{ loss.stashes }} stash
           {{ loss.stashes === 1 ? 'entry' : 'entries' }}
         </h4>
       }
     }
     @if (loss.bytes !== null) {
-      <p class="muted">{{ formatBytes(loss.bytes) }} on disk</p>
-    }
-  `,
-  styles: `
-    :host {
-      display: block;
-    }
-    h4 {
-      font: var(--mat-sys-title-small);
-      margin: 8px 0 4px;
-    }
-    ul {
-      margin: 0;
-      padding-left: 20px;
-      max-height: 140px;
-      overflow: auto;
-      overflow-wrap: anywhere;
-    }
-    p {
-      margin: 4px 0;
-    }
-    .muted {
-      color: var(--mat-sys-on-surface-variant);
-      font: var(--mat-sys-body-small);
+      <p class="my-1 type-body-small text-on-surface-variant">
+        {{ formatBytes(loss.bytes) }} on disk
+      </p>
     }
   `,
 })

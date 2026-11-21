@@ -8,9 +8,9 @@ import { PreviewCard } from './preview-card';
   imports: [PreviewCard],
   template: `
     @if (previews().length > 0) {
-      <section class="previews" data-testid="session-previews">
-        <h3 class="app-section-label">Previews</h3>
-        <p class="kept" data-testid="previews-keep-running">
+      <section class="flex flex-col gap-1.5" data-testid="session-previews">
+        <h3 class="app-section-label m-0">Previews</h3>
+        <p class="hint-text mb-1" data-testid="previews-keep-running">
           The session does not go idle while it has previews: Claude Code and
           the dev servers it started keep running until you stop the previews or
           end the session.
@@ -19,21 +19,6 @@ import { PreviewCard } from './preview-card';
           <app-preview-card [preview]="preview" (embed)="embed.emit($event)" />
         }
       </section>
-    }
-  `,
-  styles: `
-    .previews {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .app-section-label {
-      margin: 0;
-    }
-    .kept {
-      margin: 0 0 4px;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
     }
   `,
 })

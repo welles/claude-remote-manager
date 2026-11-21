@@ -2,7 +2,7 @@
 <!-- Needs the user: the attention colour, like every "needs you" state.
      Long requests scroll inside the content; header and buttons stay. -->
 <section
-  class="card-enter box-border flex max-h-[min(62dvh,640px)] flex-col gap-2 rounded-md border border-tertiary bg-[linear-gradient(var(--app-status-attention-container),var(--mat-sys-surface-container-low)_64px)] px-3 pt-2.5 pb-3 wrap-anywhere"
+  class="box-border motion-safe:animate-dialog-in flex max-h-[min(62dvh,640px)] flex-col gap-2 rounded-md border border-tertiary bg-[linear-gradient(var(--app-status-attention-container),var(--mat-sys-surface-container-low)_64px)] px-3 pt-2.5 pb-3 wrap-anywhere"
   role="region"
   [attr.aria-label]="heading()"
   data-testid="permission-card"
