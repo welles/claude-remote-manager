@@ -215,8 +215,11 @@ export interface LimitWait {
   resumeAt: string;
   /** `resumeAt` comes from the limit's known reset (not a guess). */
   resetKnown: boolean;
-  /** The stopped turn was an Autofix run: it continues as one. */
-  autofix: boolean;
+  /**
+   * Pull requests (IDs) whose Autofix run the limit stopped: it continues
+   * as one if autofix is still on for them and they are open.
+   */
+  autofixPullRequests: number[];
 }
 
 /**

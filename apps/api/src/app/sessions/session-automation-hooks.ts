@@ -58,6 +58,21 @@ export class SessionAutomationHooks {
       ) => Promise<string | null>)
     | null = null;
 
+  /**
+   * Continues an Autofix run the usage limit stopped, for the pull requests
+   * `pullRequestIds` of the session: if autofix is still on for one of them
+   * and it is open, `send` sends the continuation as part of the run and
+   * the run shows as going on again; returns `false` (without sending)
+   * otherwise.
+   */
+  continueAutofix:
+    | ((
+        sessionId: string,
+        pullRequestIds: number[],
+        send: () => Promise<void>,
+      ) => Promise<boolean>)
+    | null = null;
+
   /** The owner sent the session a message (not the app). */
   ownerMessage: ((sessionId: string) => void) | null = null;
 

@@ -281,6 +281,8 @@ export class PrAutomationService
       this.setAutomationByClaude(sessionId, repositoryId, number, switches);
     this.hooks.mayMergeUnasked = (sessionId, repositoryId, number) =>
       this.mayMergeUnasked(sessionId, repositoryId, number);
+    this.hooks.continueAutofix = (sessionId, pullRequestIds, send) =>
+      this.continueAutofix(sessionId, pullRequestIds, send);
     this.subscriptions.push(
       this.sessionGit.closed$.subscribe((pull) => {
         void this.handleClosed(pull.id).catch((error: unknown) =>
@@ -333,6 +335,7 @@ export class PrAutomationService
     this.hooks.ownerMessage = null;
     this.hooks.setAutomation = null;
     this.hooks.mayMergeUnasked = null;
+    this.hooks.continueAutofix = null;
   }
 
   // --- Switches ------------------------------------------------------------
@@ -600,6 +603,40 @@ export class PrAutomationService
         this.schedule(pull.id, this.timing.idleRecheckMs);
       }
     }
+  }
+
+  /**
+   * Continues an Autofix run the usage limit stopped (see
+   * `SessionAutomationHooks.continueAutofix`): only for pull requests that
+   * are still open with autofix on; no further attempt is counted.
+   */
+  private async continueAutofix(
+    sessionId: string,
+    pullRequestIds: number[],
+    send: () => Promise<void>,
+  ): Promise<boolean> {
+    const pulls = this.requireSession(sessionId).pullRequests.filter(
+      (pull) =>
+        pullRequestIds.includes(pull.id) &&
+        pull.state === 'open' &&
+        pull.autofix,
+    );
+    if (pulls.length === 0) {
+      return false;
+    }
+    await send();
+    // Going on again until the turn ends, as after `runAutofix`.
+    const after = this.sessions.get(sessionId);
+    if (
+      after.status === 'running' ||
+      (after.status === 'waiting' && after.waitingFor === 'permission')
+    ) {
+      for (const pull of pulls) {
+        this.records.updatePullRequest(pull.id, { autofixRunning: true });
+      }
+    }
+    this.sessions.publishUpdate(sessionId);
+    return true;
   }
 
   /**

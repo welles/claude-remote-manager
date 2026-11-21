@@ -4494,12 +4494,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * messages held, and continues by itself then.
    */
   private stopForLimit(live: LiveSession, window: string | null): void {
-    const previous = this.requireRecord(live.id).limitWait;
+    const record = this.requireRecord(live.id);
+    const previous = record.limitWait;
     // The Autofix run goes on after the reset (also when a turn Claude Code
     // started by itself during the wait hit the limit again). An Autofix
     // message still held keeps its mark.
     const delivered = live.autofixTurn?.delivered === true;
-    const autofix = delivered || previous?.autofix === true;
+    const autofixPullRequests = [
+      ...new Set([
+        ...(previous?.autofixPullRequests ?? []),
+        ...(delivered
+          ? record.pullRequests
+              .filter((pull) => pull.autofixRunning)
+              .map((pull) => pull.id)
+          : []),
+      ]),
+    ];
     if (delivered) {
       live.autofixTurn = null;
     }
@@ -4514,7 +4524,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           : now + this.limitRecheckMs(live),
       ).toISOString(),
       resetKnown: until !== null,
-      autofix,
+      autofixPullRequests,
     };
     this.sessions.update(live.id, { limitWait: wait });
     this.holdReopen(live);
@@ -4686,11 +4696,25 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (this.isSendingMessage(live)) {
       return;
     }
-    await this.sendMessage(live.id, {
-      text: LIMIT_CONTINUE_TEXT,
-      origin: 'app',
-      autofixRun: wait.autofix,
-    });
+    const send = (autofixRun: boolean) =>
+      this.sendMessage(live.id, {
+        text: LIMIT_CONTINUE_TEXT,
+        origin: 'app',
+        autofixRun,
+      });
+    const continueAutofix = this.automation?.continueAutofix;
+    if (
+      wait.autofixPullRequests.length > 0 &&
+      continueAutofix &&
+      (await continueAutofix(live.id, wait.autofixPullRequests, () =>
+        send(true),
+      ))
+    ) {
+      return;
+    }
+    // Autofix was turned off or its pull requests closed meanwhile: an
+    // ordinary continuation.
+    await send(false);
   }
 
   /** A message the user sent is still being prepared. */
