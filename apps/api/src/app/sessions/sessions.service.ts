@@ -3525,6 +3525,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     live.claudeWait.timer = null;
     this.clearClaudeWait(live);
+    this.claudeWaitEnded(live);
+  }
+
+  /**
+   * Claude's word that it goes on by itself is gone and no turn follows:
+   * a waiting session waits for a message again (idle timer, status).
+   */
+  private claudeWaitEnded(live: LiveSession): void {
     if (
       this.live.get(live.id) !== live ||
       this.sessions.get(live.id)?.status !== 'waiting' ||
@@ -4172,6 +4180,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const live = this.live.get(sessionId);
     if (live) {
       this.clearClaudeWait(live);
+    }
+  }
+
+  /**
+   * The wake after {@link releaseClaudeWait} could not be sent: the session
+   * waits for a message again, as when Claude's wait runs out.
+   */
+  wakeFailed(sessionId: string): void {
+    const live = this.live.get(sessionId);
+    if (live && !live.claudeWait) {
+      this.claudeWaitEnded(live);
     }
   }
 

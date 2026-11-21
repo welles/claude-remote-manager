@@ -2641,6 +2641,13 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
         .find((event) => event.text.includes('could not be woken'));
       expect(notice?.level).toBe('warning');
       expect(notice?.text).toContain('A directory is being added');
+      // It waits for the user again, no longer for Claude: the status is
+      // published (subscribers see it), as when Claude's wait runs out.
+      await waitFor(
+        () =>
+          harness.eventsOfType(session.id, 'session.status').at(-1)
+            ?.waitingFor === 'message',
+      );
     });
 
     it('does not wake Claude when autoclose ends the session', async () => {
