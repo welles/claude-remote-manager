@@ -69,6 +69,9 @@ const BODY_LENGTH = 200;
  *   background tasks Claude started and the CI of its pull requests ended
  *   too (and once per turn: not when waiting for CI began without one);
  *   withdrawn when the next turn starts or the session ends;
+ * - a turn the subscription's usage limit stopped (`turn_finished`, as
+ *   its report: the session continues by itself after the reset);
+ *   withdrawn when the next turn starts or the session ends;
  * - a running turn without any event for `SESSION_STALL_MINUTES`
  *   (`stalled`), once per stall; withdrawn when activity resumes or the
  *   turn ends; reported again only after activity resumed and stalled anew;
@@ -194,7 +197,9 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
       this.watched.delete(id);
     }
     if (
-      (previous === 'waiting/message' || previous === 'waiting/background') &&
+      (previous === 'waiting/message' ||
+        previous === 'waiting/background' ||
+        previous === 'waiting/limit') &&
       state !== 'waiting/message' &&
       state !== 'waiting/background'
     ) {
@@ -229,6 +234,9 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
       watched.turnOpen = false;
     } else if (previous === '') {
       // First seen (e.g. an update of an old session): no transition.
+    } else if (state === 'waiting/limit') {
+      watched.turnOpen = false;
+      this.notifyLimit(session);
     } else if (state === 'failed/') {
       this.notifications.notify(
         this.base(session, 'failed', notificationKeys.failed(id), {
@@ -280,6 +288,18 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
       this.base(session, 'turn_finished', notificationKeys.turn(session.id), {
         title: `Finished: ${shorten(session.title || 'Untitled session', 60)}`,
         body: `${text}\n${sessionContext(session)}`,
+      }),
+    );
+  }
+
+  private notifyLimit(session: SessionDto): void {
+    const resumes = session.limitResumesAt
+      ? ` (in about ${durationText(Date.parse(session.limitResumesAt) - this.now())})`
+      : '';
+    this.notifications.notify(
+      this.base(session, 'turn_finished', notificationKeys.turn(session.id), {
+        title: `Usage limit: ${shorten(session.title || 'Untitled session', 60)}`,
+        body: `The usage limit stopped the turn. The session continues by itself once the limit has reset${resumes}.\n${sessionContext(session)}`,
       }),
     );
   }
@@ -336,4 +356,22 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Notification handling failed: ${String(error)}`);
     }
   }
+}
+
+/**
+ * A duration such as `2 h 5 min`, `3 d 4 h` or `1 min` (relative, so the
+ * server's time zone does not matter).
+ */
+export function durationText(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const rest = minutes % 60;
+  if (days > 0) {
+    return hours > 0 ? `${days} d ${hours} h` : `${days} d`;
+  }
+  if (hours > 0) {
+    return rest > 0 ? `${hours} h ${rest} min` : `${hours} h`;
+  }
+  return `${rest} min`;
 }

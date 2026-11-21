@@ -4,6 +4,7 @@ import {
   type SessionStatus,
   type UsageTotals,
 } from '@claude-remote-manager/shared-types';
+import { formatClock } from '../ui/dates';
 
 export const STATUS_LABELS: Record<SessionStatus, string> = {
   preparing: 'Preparing',
@@ -16,7 +17,8 @@ export const STATUS_LABELS: Record<SessionStatus, string> = {
 /**
  * Status label that says what a waiting session waits for: `Ready` for
  * the next message, `Background` while Claude's background tasks still
- * run (Claude goes on by itself).
+ * run (Claude goes on by itself), `Usage limit` while it waits for the
+ * usage limit to reset.
  */
 export function statusLabel(
   session: Pick<SessionDto, 'status' | 'waitingFor'>,
@@ -29,6 +31,8 @@ export function statusLabel(
         return 'Setup failed';
       case 'background':
         return 'Background';
+      case 'limit':
+        return 'Usage limit';
       default:
         return 'Ready';
     }
@@ -40,7 +44,9 @@ export function statusLabel(
  * What a session needs or waits for, as specific as known: `Approve
  * command`, `2 questions`, `Plan ready`, `Setup failed`, what Claude said
  * it waits for (`CI of PR #12`) or the CI of its pull requests the session
- * waits for (`CI of #12`), `2 background tasks`; else the status label.
+ * waits for (`CI of #12`), `2 background tasks`, when the session
+ * continues after the usage limit (`Usage limit · 01:31`); else the status
+ * label.
  */
 export function needLabel(
   session: Pick<
@@ -50,8 +56,16 @@ export function needLabel(
     | 'pendingRequests'
     | 'backgroundTasks'
     | 'waitingReason'
+    | 'limitResumesAt'
   >,
 ): string {
+  if (
+    session.status === 'waiting' &&
+    session.waitingFor === 'limit' &&
+    session.limitResumesAt
+  ) {
+    return `Usage limit · ${formatClock(session.limitResumesAt)}`;
+  }
   if (
     session.status === 'waiting' &&
     session.waitingFor === 'background' &&

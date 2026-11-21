@@ -29,6 +29,9 @@ import { SlashCommandsService } from './slash-commands.service';
 import { SessionRepository } from './session.repository';
 import {
   BACKGROUND_TASKS_ENDED,
+  LIMIT_CONTINUE_TEXT,
+  LIMIT_NOTICE,
+  LIMIT_WAIT_CANCELLED,
   QUEUE_WITHDRAWN,
   RESTART_NOTICE,
   SessionsService,
@@ -2705,6 +2708,231 @@ describe('SessionsService', () => {
       });
       expect(lastEvent('notice')).toMatchObject({
         text: BACKGROUND_TASKS_ENDED,
+      });
+    });
+  });
+
+  describe('usage limit', () => {
+    const FIVE_HOURS = 'five_hour';
+
+    /** What Claude Code sends when the usage limit rejects the turn. */
+    const hitLimit = (resetsAtMs: number | null) => {
+      runner.last.emit(
+        ...(resetsAtMs === null
+          ? []
+          : [
+              {
+                type: 'rate_limit_event',
+                rate_limit_info: {
+                  status: 'rejected',
+                  resetsAt: Math.floor(resetsAtMs / 1000),
+                  rateLimitType: FIVE_HOURS,
+                },
+              },
+            ]),
+        {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          error: 'rate_limit',
+          message: {
+            id: 'limit',
+            content: [{ type: 'text', text: "You've hit your 5-hour limit" }],
+          },
+        },
+        resultMessage(1, 0, {
+          is_error: true,
+          result: "You've hit your 5-hour limit",
+        }),
+      );
+    };
+
+    /** The plan usage the probe reads: the 5-hour window at `percent`. */
+    const usage = (percent: number, resetsAtMs: number) => {
+      limits.setPlanUsageSource(
+        async () =>
+          ({
+            subscription_type: 'max',
+            rate_limits_available: true,
+            rate_limits: {
+              five_hour: {
+                utilization: percent,
+                resets_at: new Date(resetsAtMs).toISOString(),
+              },
+              seven_day: null,
+              seven_day_opus: null,
+              seven_day_sonnet: null,
+              seven_day_oauth_apps: null,
+            },
+          }) as never,
+      );
+    };
+
+    const continuation = () =>
+      runner.runs
+        .flatMap((run) => run.sent)
+        .filter((message) => message.text === LIMIT_CONTINUE_TEXT);
+
+    it('waits for the reset the limit reported and holds messages meanwhile', async () => {
+      const session = await startSession();
+      const reset = Date.now() + 3_600_000;
+      hitLimit(reset);
+      await flush();
+      const dto = service.get(session.id);
+      expect(dto).toMatchObject({ status: 'waiting', waitingFor: 'limit' });
+      expect(Date.parse(dto.limitResumesAt ?? '')).toBe(
+        Math.floor(reset / 1000) * 1000 + service.limitResumeMarginMs,
+      );
+      expect(lastEvent('notice')?.text).toBe(LIMIT_NOTICE);
+
+      await service.send(session.id, { id: MSG_2, text: 'Also this' });
+      expect(lastEvent('message.queued')).toMatchObject({ id: MSG_2 });
+      expect(runner.last.sent).toHaveLength(1);
+      expect(service.get(session.id).waitingFor).toBe('limit');
+    });
+
+    it('continues by itself once the limit has reset', async () => {
+      service.limitUnknownRecheckMs = 10;
+      usage(10, Date.now() + 5 * 3_600_000);
+      const session = await startSession();
+      hitLimit(null);
+      await flush();
+      expect(service.get(session.id).waitingFor).toBe('limit');
+      await waitFor(() => continuation().length === 1);
+      expect(service.get(session.id)).toMatchObject({
+        status: 'running',
+        limitResumesAt: null,
+      });
+      expect(runner.runs).toHaveLength(1);
+    });
+
+    it('waits for the new reset when the limit is still exhausted', async () => {
+      service.limitUnknownRecheckMs = 10;
+      const reset = Date.now() + 2 * 3_600_000;
+      usage(100, reset);
+      const session = await startSession();
+      hitLimit(null);
+      await flush();
+      await waitFor(
+        () =>
+          Date.parse(service.get(session.id).limitResumesAt ?? '') >
+          Date.now() + 3_600_000,
+      );
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'limit',
+        limitResumesAt: new Date(
+          reset + service.limitResumeMarginMs,
+        ).toISOString(),
+      });
+      expect(continuation()).toEqual([]);
+    });
+
+    it('sends the held messages instead of the continuation, in a new process if needed', async () => {
+      service.limitUnknownRecheckMs = 200;
+      usage(10, Date.now() + 5 * 3_600_000);
+      const session = await startSession();
+      hitLimit(null);
+      await flush();
+      runner.last.close();
+      await flush();
+      await service.send(session.id, { id: MSG_2, text: 'First' });
+      await service.send(session.id, { id: MSG_3, text: 'Second' });
+      await waitFor(() => runner.runs.length === 2);
+      expect(runner.last.sent).toEqual([{ id: MSG_2, text: 'First' }]);
+      runner.last.emit(resultMessage(2, 0));
+      await flush();
+      expect(runner.last.sent.slice(1)).toEqual([
+        { id: MSG_3, text: 'Second' },
+      ]);
+      expect(continuation()).toEqual([]);
+    });
+
+    it('continues now or not at all when the user says so', async () => {
+      const session = await startSession();
+      hitLimit(Date.now() + 3_600_000);
+      await flush();
+      await service.send(session.id, { id: MSG_2, text: 'Held' });
+      await service.cancelLimitWait(session.id);
+      expect(lastEvent('message.dequeued')).toMatchObject({
+        id: MSG_2,
+        outcome: 'withdrawn',
+        reason: LIMIT_WAIT_CANCELLED,
+      });
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'message',
+      });
+      await expect(service.resumeAfterLimit(session.id)).rejects.toThrow(
+        ConflictException,
+      );
+
+      await service.send(session.id, { id: MSG_3, text: 'Go on' });
+      hitLimit(Date.now() + 3_600_000);
+      await flush();
+      await service.resumeAfterLimit(session.id);
+      expect(continuation()).toHaveLength(1);
+      expect(service.get(session.id).status).toBe('running');
+    });
+
+    it('sends a held message right away on request', async () => {
+      const session = await startSession();
+      hitLimit(Date.now() + 3_600_000);
+      await flush();
+      await service.send(session.id, { id: MSG_2, text: 'Try now' });
+      await service.sendQueuedNow(session.id, MSG_2);
+      expect(runner.last.sent.at(-1)).toEqual({ id: MSG_2, text: 'Try now' });
+      expect(service.get(session.id)).toMatchObject({
+        status: 'running',
+        limitResumesAt: null,
+      });
+    });
+
+    it('continues an Autofix run as part of it', async () => {
+      const session = await startSession();
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      await service.sendMessage(session.id, {
+        id: MSG_2,
+        text: 'Fix the failing checks',
+        origin: 'app',
+        autofixRun: true,
+      });
+      expect(service.inAutofixRun(session.id)).toBe(true);
+      hitLimit(Date.now() + 3_600_000);
+      await flush();
+      expect(service.inAutofixRun(session.id)).toBe(false);
+      expect(service.acceptsAppMessage(session.id)).toBe(false);
+      await service.resumeAfterLimit(session.id);
+      expect(continuation()).toHaveLength(1);
+      expect(service.inAutofixRun(session.id)).toBe(true);
+    });
+
+    it('keeps waiting across a restart; held messages end with the server', async () => {
+      const session = await startSession();
+      hitLimit(Date.now() + 3_600_000);
+      await flush();
+      await service.send(session.id, { id: MSG_2, text: 'Held' });
+      await service.onModuleDestroy();
+      expect(lastEvent('message.dequeued')).toMatchObject({
+        id: MSG_2,
+        outcome: 'withdrawn',
+        reason: QUEUE_WITHDRAWN.restart,
+      });
+      service = await createService();
+      expect(service.get(session.id)).toMatchObject({
+        status: 'waiting',
+        waitingFor: 'limit',
+      });
+    });
+
+    it('ends the wait with the session', async () => {
+      const session = await startSession();
+      hitLimit(Date.now() + 3_600_000);
+      await flush();
+      await service.end(session.id);
+      expect(service.get(session.id)).toMatchObject({
+        status: 'finished',
+        limitResumesAt: null,
       });
     });
   });

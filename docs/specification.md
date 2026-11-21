@@ -143,6 +143,16 @@ Die Oberfläche zeigt jederzeit, wie viel Spielraum noch bleibt. Drei Werte sind
 
 Session- und Wochenlimit gelten für das ganze Konto und sind deshalb global sichtbar (z. B. in der Kopfzeile bzw. Sitzungsliste), nicht nur innerhalb einer Sitzung. Die Werte stammen aus den Limit-Informationen, die Claude Code bzw. das Agent SDK liefert, und werden bei jeder Anfrage aktualisiert.
 
+### Fortsetzen nach dem Abo-Limit
+
+Beendet das Session- oder Wochenlimit des Abos einen Turn, erkennt die App das und setzt die Sitzung nach dem Zurücksetzen des Limits von selbst fort.
+
+- **Umsetzung (entschieden, 2026-11-21):** Gilt immer, für alle Sitzungen, für das 5-Stunden- wie für das Wochenlimit. Mehrere unterbrochene Sitzungen laufen nach dem Zurücksetzen alle sofort weiter (keine Staffelung). Nachrichten, die der Nutzer währenddessen schickt, werden bis zum Zurücksetzen zurückgehalten (in der Warteschlange, entfernbar, „Jetzt senden“ schickt sie sofort) und gehen dann statt der Fortsetzungs-Nachricht der App an Claude.
+- **Autofix (Annahme, noch nicht bestätigt):** Ein unterbrochener Autofix-Lauf geht als Autofix weiter, ohne weiteren Versuch zu zählen.
+- **Erkennung:** Claude Codes Fehler `rate_limit` beendet den Turn; das zugehörige Limit-Ereignis nennt Fenster und Zeitpunkt des Zurücksetzens. Die Sitzung zeigt „Usage limit · 01:31“ und ein Banner mit „Continue now“ und „Don't continue“; die Benachrichtigung zum Turn sagt, wann es weitergeht.
+- **Zurückgesetzt?** Eine Minute nach dem Zurücksetzen liest die App die Limits neu; ist ein Fenster noch erschöpft, wartet sie auf dessen neues Zurücksetzen. Ist der Zeitpunkt unbekannt, sieht sie nach 5 Minuten nach (nach einem erneut gescheiterten Fortsetzen oder wenn die Limits nicht lesbar sind, nach 30 Minuten). Der Wartezustand übersteht Neustarts; zurückgehaltene Nachrichten nicht (sie werden wie die Warteschlange beim Stopp des Servers zurückgezogen).
+- **Fortsetzungs-Nachricht:** Ohne zurückgehaltene Nachrichten sagt die App Claude, dass das Limit den letzten Turn beendet hat und zurückgesetzt ist, es dort weitermachen soll und Hintergrund-Tasks dieses Turns erst prüfen soll.
+
 ## Dateien zeigen
 
 Claude kann dem Nutzer von sich aus eine Datei zeigen, etwa einen erzeugten Screenshot, ein Bild, einen Bericht oder eine HTML-Seite. Gemeint ist ausdrücklich kein allgemeiner Dateibrowser, sondern dass Claude eine bestimmte Datei gezielt vorlegt.

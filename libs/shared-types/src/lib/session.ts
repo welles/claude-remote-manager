@@ -50,6 +50,11 @@ export type SessionStatus =
  *   something (`waitingReason`, see the tool `set_waiting_state`); or the
  *   app goes on with what the CI of one of the session's open pull requests
  *   brings (`waitingReason` `CI of #12`). A message can be sent meanwhile.
+ * - `limit`: the subscription's usage limit (5-hour or weekly window)
+ *   ended the last turn; the app continues the session by itself once the
+ *   limit has reset (`limitResumesAt`). Messages sent meanwhile are queued
+ *   and go to Claude then (or right away with "send now"); Stop cancels
+ *   the automatic continuation.
  *
  * What Claude says with `set_waiting_state` comes first: `user` makes a
  * session with background tasks `message`, `work` one without them
@@ -60,7 +65,8 @@ export type SessionWaitingFor =
   | 'message'
   | 'permission'
   | 'setup'
-  | 'background';
+  | 'background'
+  | 'limit';
 
 /**
  * Whether a session is blocked on the user: it waits for an answer to an
@@ -359,6 +365,13 @@ export interface SessionDto {
    * for; `null` otherwise. Absent from older servers.
    */
   waitingReason?: string | null;
+  /**
+   * With `waitingFor: 'limit'`: when the app continues the session (ISO
+   * 8601): the limit's reset plus a short margin, or, while the reset is
+   * not known, when it asks for the limits again. `null` otherwise; absent
+   * from older servers.
+   */
+  limitResumesAt?: string | null;
   /**
    * Readable unique name, used for the session's directories and branches;
    * `null` for sessions created before session clones existed.

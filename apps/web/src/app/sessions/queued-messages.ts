@@ -4,7 +4,8 @@ import { AppIcon } from '../ui/icon';
 import type { ConversationItem } from './conversation';
 
 /**
- * Messages waiting for the running turn to end, collapsed to one line
+ * Messages waiting for the running turn to end (or for the usage limit to
+ * reset), collapsed to one line
  * ("2 queued · sent when the turn ends") that expands to the list, where
  * each can be removed. "Send now" (all, or one in the list) stops the turn
  * and sends them right away; until the stopped turn ends, they show as
@@ -25,7 +26,11 @@ import type { ConversationItem } from './conversation';
       >
         <span class="count">{{ messages().length }} queued</span>
         <span class="hint" data-testid="queued-hint">{{
-          anySending() ? '· sending now…' : '· sent when the turn ends'
+          anySending()
+            ? '· sending now…'
+            : heldForLimit()
+              ? '· sent when the usage limit resets'
+              : '· sent when the turn ends'
         }}</span>
         <app-icon [name]="expanded() ? 'chevron-down' : 'chevron-right'" />
       </button>
@@ -35,7 +40,11 @@ import type { ConversationItem } from './conversation';
         class="flex-none"
         (click)="sendNow.emit(null)"
         [disabled]="!enabled() || allSending()"
-        title="Stop the turn and send the queued messages now"
+        [title]="
+          heldForLimit()
+            ? 'Send the queued messages now, before the usage limit resets'
+            : 'Stop the turn and send the queued messages now'
+        "
         data-testid="send-queued"
       >
         Send now
@@ -61,7 +70,11 @@ import type { ConversationItem } from './conversation';
             class="icon-btn"
             (click)="sendNow.emit(item.id)"
             [disabled]="!enabled() || sending().has(item.id)"
-            title="Stop the turn and send this message now"
+            [title]="
+              heldForLimit()
+                ? 'Send this message now, before the usage limit resets'
+                : 'Stop the turn and send this message now'
+            "
             [attr.aria-label]="'Send now: ' + item.text"
             data-testid="send-queued-message"
           >
@@ -88,6 +101,8 @@ export class QueuedMessages {
   readonly messages =
     input.required<Extract<ConversationItem, { kind: 'queued' }>[]>();
   readonly enabled = input(true);
+  /** Held until the usage limit resets (no turn runs). */
+  readonly heldForLimit = input(false);
   /** IDs of the messages being sent right away. */
   readonly sending = input<ReadonlySet<string>>(new Set());
   /** ID of the message to remove. */

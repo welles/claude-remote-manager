@@ -161,6 +161,7 @@ import {
   type SessionDirectoryRecord,
   type SessionRecord,
 } from './session.repository';
+import type { LimitWait } from '../db/schema';
 import { EnvironmentsService } from '../environments/environments.service';
 import {
   NO_MASKING,
@@ -473,6 +474,18 @@ interface LiveSession {
   modeRequests: number;
   /** The permission mode override last published (JSON). */
   publishedOverride: string;
+  /**
+   * Set during a turn when the subscription's usage limit rejected its
+   * request (Claude Code's `rate_limit` error): the turn ends with it.
+   */
+  limitHit: boolean;
+  /** The window a `rate_limit_event` of the turn reported as rejected. */
+  rejectedWindow: string | null;
+  /**
+   * Automatic continuations after the usage limit in a row whose turn hit
+   * the limit again (the app then looks less often).
+   */
+  limitRetries: number;
 }
 
 /** How long shutdown waits for Claude Code processes to exit. */
@@ -511,6 +524,40 @@ export const QUEUE_WITHDRAWN = {
   restart: 'The server stopped.',
   lost: 'The message was no longer in the queue.',
 } as const;
+
+/** Notice when the subscription's usage limit stopped a turn. */
+export const LIMIT_NOTICE =
+  'The usage limit of the Claude subscription stopped this turn. The session continues by itself once the limit has reset; messages sent meanwhile wait until then.';
+
+/** Why held messages were not sent: the user cancelled the continuation. */
+export const LIMIT_WAIT_CANCELLED =
+  'The automatic continuation after the usage limit was cancelled.';
+
+/**
+ * What the app tells Claude when it continues a session after the usage
+ * limit has reset (no queued message of the user).
+ */
+export const LIMIT_CONTINUE_TEXT =
+  'The usage limit of the Claude subscription stopped your last turn; it has reset now. Continue where you left off. ' +
+  'Background tasks of that turn (subagents, background commands) may have ended with it: check their state before you rely on their results.';
+
+/** Margin after a limit's reset before the session continues. */
+export const LIMIT_RESUME_MARGIN_MS = 60_000;
+
+/** When the limit's reset is unknown: how soon the app looks again. */
+export const LIMIT_UNKNOWN_RECHECK_MS = 5 * 60_000;
+
+/**
+ * As {@link LIMIT_UNKNOWN_RECHECK_MS}, after an automatic continuation hit
+ * the limit again, or when the limits could not be read.
+ */
+export const LIMIT_RETRY_RECHECK_MS = 30 * 60_000;
+
+/** Longest single timer of a limit wait; longer waits look in between. */
+const LIMIT_TIMER_MAX_MS = 60 * 60_000;
+
+/** Earliest check of a limit wait after the server started. */
+const LIMIT_STARTUP_DELAY_MS = 10_000;
 
 /** Notice when the first message is held back after failed setup scripts. */
 export function setupFailedNotice(repositories: string[]): string {
@@ -563,7 +610,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly deletions = new Subject<string>();
   /** CI the sessions wait for, by session and pull request ID. */
   private readonly ciWaits = new Map<string, Map<number, CiWait>>();
+  /** Timers of the sessions the usage limit stopped, by session. */
+  private readonly limitTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   private shuttingDown = false;
+  /** See {@link LIMIT_RESUME_MARGIN_MS}; tests shorten it. */
+  limitResumeMarginMs = LIMIT_RESUME_MARGIN_MS;
+  /** See {@link LIMIT_UNKNOWN_RECHECK_MS}; tests shorten it. */
+  limitUnknownRecheckMs = LIMIT_UNKNOWN_RECHECK_MS;
+  /** See {@link LIMIT_RETRY_RECHECK_MS}; tests shorten it. */
+  limitRetryRecheckMs = LIMIT_RETRY_RECHECK_MS;
   /** See {@link BACKGROUND_REPORT_GRACE_MS}; tests shorten it. */
   backgroundReportGraceMs = BACKGROUND_REPORT_GRACE_MS;
   /** See `CLAUDE_WAIT_LIMIT_MINUTES`; tests shorten it. */
@@ -713,6 +771,20 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (ids.length > 0) {
       this.logger.log(`${ids.length} running session(s) were interrupted`);
     }
+    for (const record of this.sessions.listLimitWaits()) {
+      if (record.status !== 'waiting' || record.archivedAt) {
+        this.sessions.update(record.id, { limitWait: null });
+        continue;
+      }
+      if (!ids.includes(record.id)) {
+        // Messages held for the reset ended with the last server process.
+        const anchor = { uuid: null, userId: null };
+        this.closeLeftovers(record.id, (event) =>
+          this.storedEvents.add(record.id, event, anchor),
+        );
+      }
+      this.scheduleLimitCheck(record.id, LIMIT_STARTUP_DELAY_MS);
+    }
   }
 
   /**
@@ -731,6 +803,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     this.ciWaits.clear();
+    for (const timer of this.limitTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.limitTimers.clear();
     const exits: Promise<void>[] = [];
     for (const live of this.live.values()) {
       this.clearIdleTimer(live);
@@ -743,6 +819,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         continue;
       }
       if (!live.run) {
+        // Messages held for the reset of the usage limit.
+        this.withdrawQueue(live, QUEUE_WITHDRAWN.restart);
         continue;
       }
       this.approver.cancelSession(live.id, 'restart');
@@ -1012,7 +1090,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         contextLength: context.text?.length ?? null,
         origin,
       };
-      if (live.run && this.requireRecord(sessionId).status === 'running') {
+      const current = this.requireRecord(sessionId);
+      if (
+        (live.run && current.status === 'running') ||
+        // The usage limit stopped the session: held until it resets.
+        (current.limitWait && current.status === 'waiting')
+      ) {
         live.queue.push({ ...message, agent });
         this.append(live, {
           type: 'message.queued',
@@ -1144,6 +1227,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const index = messageId
       ? (live?.queue.findIndex((queued) => queued.id === messageId) ?? -1)
       : (live?.queue.length ?? 0) - 1;
+    if (live && index >= 0 && this.requireRecord(sessionId).limitWait) {
+      // Held for the reset of the usage limit: the user tries now.
+      const ended = await this.endLimitWait(live);
+      live.limitRetries = 0;
+      if (ended && this.requireRecord(sessionId).status === 'waiting') {
+        this.deliverHeld(live, messageId ? new Set([messageId]) : 'all');
+      }
+      return;
+    }
     if (!live?.run || index < 0) {
       if (
         live &&
@@ -1392,10 +1484,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live?.starting) {
       await live.starting;
     }
+    this.dropLimitWait(sessionId);
+    if (live) {
+      // Also messages held for the reset of the usage limit.
+      this.withdrawQueue(live, QUEUE_WITHDRAWN.ended);
+    }
     if (live?.run) {
       live.closing = 'end';
       this.approver.cancelSession(sessionId, 'ended');
-      this.withdrawQueue(live, QUEUE_WITHDRAWN.ended);
       live.run.close();
     }
     if (this.requireRecord(sessionId).pendingMessage) {
@@ -1592,6 +1688,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /** Sets or clears the archived mark and publishes the session. */
   setArchived(sessionId: string, archivedAt: Date | null): SessionDto {
+    if (archivedAt) {
+      this.dropLimitWait(sessionId);
+      const live = this.live.get(sessionId);
+      if (live) {
+        this.withdrawQueue(live, QUEUE_WITHDRAWN.ended);
+      }
+    }
     const updated = this.toDto(this.sessions.update(sessionId, { archivedAt }));
     this.updates.next(updated);
     return updated;
@@ -1603,6 +1706,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    */
   forget(sessionId: string): void {
     this.slashCommands?.forget(sessionId);
+    this.clearLimitTimer(sessionId);
     const live = this.live.get(sessionId);
     if (live) {
       this.clearIdleTimer(live);
@@ -1705,6 +1809,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       reportedMode: null,
       modeRequests: 0,
       publishedOverride: 'null',
+      limitHit: false,
+      rejectedWindow: null,
+      limitRetries: 0,
     };
   }
 
@@ -2112,7 +2219,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       live.subscribers === 0 &&
       !live.run &&
       !live.starting &&
-      // Queued messages wait for the next process (reopenAfterTurn).
+      // Queued messages wait for the next process (reopenAfterTurn), or
+      // for the reset of the usage limit.
       live.queue.length === 0 &&
       !this.shuttingDown &&
       this.live.get(live.id) === live
@@ -2195,7 +2303,20 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     if (message.type === 'rate_limit_event') {
       this.limits.updateFromRateLimitEvent(message.rate_limit_info);
+      if (message.rate_limit_info.status === 'rejected') {
+        live.rejectedWindow =
+          message.rate_limit_info.rateLimitType ?? live.rejectedWindow;
+      }
       return;
+    }
+    if (
+      message.type === 'assistant' &&
+      message.error === 'rate_limit' &&
+      message.parent_tool_use_id === null
+    ) {
+      // The usage limit rejected the turn's request: Claude Code ends the
+      // turn with this (synthetic) message.
+      live.limitHit = true;
     }
     if (message.type === 'result') {
       this.handleResult(live, message);
@@ -2290,6 +2411,23 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           message:
             errors.join('\n') || `The turn ended early (${result.subtype}).`,
         });
+      }
+    }
+    const limited = live.limitHit && !interrupted;
+    const rejectedWindow = live.rejectedWindow;
+    live.limitHit = false;
+    live.rejectedWindow = null;
+    if (limited && (result.queued_turn_count ?? 0) === 0) {
+      // Queued messages stay held until the limit has reset.
+      this.stopForLimit(live, rejectedWindow);
+      return;
+    }
+    if (!limited) {
+      live.limitRetries = 0;
+      if (record.limitWait) {
+        // A turn Claude Code started by itself got through: the limit has
+        // reset already.
+        this.dropLimitWait(live.id);
       }
     }
     if (
@@ -4290,6 +4428,269 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  // --- The subscription's usage limit ------------------------------------
+
+  /**
+   * Continues a session the usage limit stopped now, instead of when the
+   * limit resets: its held messages go to Claude, else the app's
+   * continuation. 409 when it does not wait for the limit.
+   */
+  async resumeAfterLimit(sessionId: string): Promise<void> {
+    const record = this.requireRecord(sessionId);
+    if (!record.limitWait) {
+      throw new ConflictException(
+        'The session is not waiting for the usage limit to reset',
+      );
+    }
+    this.requireUsable(record);
+    await this.continueAfterLimit(this.liveSession(sessionId), false);
+  }
+
+  /**
+   * Does not continue a session the usage limit stopped by itself: it waits
+   * for the next message; held messages are withdrawn. 409 when it does
+   * not wait for the limit.
+   */
+  async cancelLimitWait(sessionId: string): Promise<void> {
+    const record = this.requireRecord(sessionId);
+    if (!record.limitWait) {
+      throw new ConflictException(
+        'The session is not waiting for the usage limit to reset',
+      );
+    }
+    const live = this.liveSession(sessionId);
+    await this.ensureHistory(live, record);
+    live.limitRetries = 0;
+    this.dropLimitWait(sessionId);
+    this.withdrawQueue(live, LIMIT_WAIT_CANCELLED);
+    this.releaseIfUnused(live);
+  }
+
+  /**
+   * The usage limit ended the turn (see {@link LiveSession.limitHit}): the
+   * session waits for its reset (`waitingFor: 'limit'`), with the queued
+   * messages held, and continues by itself then.
+   */
+  private stopForLimit(live: LiveSession, window: string | null): void {
+    // The Autofix run goes on after the reset.
+    const autofix = live.autofixTurn?.delivered === true;
+    live.autofixTurn = null;
+    const now = Date.now();
+    const until = this.limits.exhaustedUntil(window ? [window] : [], now);
+    const wait: LimitWait = {
+      since: new Date(now).toISOString(),
+      window,
+      resumeAt: new Date(
+        until
+          ? until.getTime() + this.limitResumeMarginMs
+          : now + this.limitRecheckMs(live),
+      ).toISOString(),
+      resetKnown: until !== null,
+      autofix,
+    };
+    this.sessions.update(live.id, { limitWait: wait });
+    this.append(live, { type: 'notice', level: 'warning', text: LIMIT_NOTICE });
+    this.clearClaudeWait(live);
+    if (!this.setStatus(live, 'waiting')) {
+      this.publishStatus(live);
+    }
+    live.suggestionOpen = false;
+    this.scheduleLimitCheck(live.id);
+    const run = live.run;
+    if (run) {
+      void this.refreshContext(live, run, { force: true });
+    }
+  }
+
+  /** How soon to look again while the limit's reset is unknown. */
+  private limitRecheckMs(live: LiveSession | undefined): number {
+    return live && live.limitRetries > 0
+      ? this.limitRetryRecheckMs
+      : this.limitUnknownRecheckMs;
+  }
+
+  /**
+   * Sets the timer of a limit wait: at `resumeAt` (not before
+   * `minDelayMs`), at most {@link LIMIT_TIMER_MAX_MS} ahead.
+   */
+  private scheduleLimitCheck(sessionId: string, minDelayMs = 0): void {
+    this.clearLimitTimer(sessionId);
+    const wait = this.sessions.get(sessionId)?.limitWait;
+    if (!wait || this.shuttingDown) {
+      return;
+    }
+    const due = Date.parse(wait.resumeAt);
+    const delay = Math.min(
+      Math.max(Number.isNaN(due) ? 0 : due - Date.now(), minDelayMs, 0),
+      LIMIT_TIMER_MAX_MS,
+    );
+    const timer = setTimeout(() => {
+      if (this.limitTimers.get(sessionId) !== timer) {
+        return;
+      }
+      this.limitTimers.delete(sessionId);
+      this.checkLimitWait(sessionId).catch((error: unknown) =>
+        this.logger.error(
+          `Continuing ${sessionId} after the usage limit failed: ${errorMessage(error)}`,
+        ),
+      );
+    }, delay);
+    timer.unref?.();
+    this.limitTimers.set(sessionId, timer);
+  }
+
+  private clearLimitTimer(sessionId: string): void {
+    const timer = this.limitTimers.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.limitTimers.delete(sessionId);
+    }
+  }
+
+  /**
+   * The timer of a limit wait fired: reads the limits anew and continues
+   * the session if they have reset, else waits for the (new) reset. When
+   * the limits cannot be read, a known reset counts; an unknown one is
+   * looked at again later.
+   */
+  private async checkLimitWait(sessionId: string): Promise<void> {
+    const wait = this.sessions.get(sessionId)?.limitWait;
+    if (!wait || this.shuttingDown) {
+      return;
+    }
+    if (Date.parse(wait.resumeAt) > Date.now()) {
+      // A long wait, split into shorter timers.
+      this.scheduleLimitCheck(sessionId);
+      return;
+    }
+    const read = await this.limits.readNow();
+    const current = this.sessions.get(sessionId)?.limitWait;
+    if (!current || current.since !== wait.since || this.shuttingDown) {
+      // Continued, cancelled or ended meanwhile.
+      return;
+    }
+    const now = Date.now();
+    const until = read
+      ? this.limits.exhaustedUntil(current.window ? [current.window] : [], now)
+      : null;
+    if (until || (!read && !current.resetKnown)) {
+      const updated = this.sessions.update(sessionId, {
+        limitWait: {
+          ...current,
+          resumeAt: new Date(
+            until
+              ? until.getTime() + this.limitResumeMarginMs
+              : now + this.limitRetryRecheckMs,
+          ).toISOString(),
+          resetKnown: until !== null,
+        },
+      });
+      this.updates.next(this.toDto(updated));
+      this.scheduleLimitCheck(sessionId);
+      return;
+    }
+    await this.continueAfterLimit(this.liveSession(sessionId), true);
+  }
+
+  /**
+   * Ends the limit wait and continues the session: the held messages go to
+   * Claude, else the app's continuation (an Autofix run's continuation is
+   * part of it). `auto`: the app's timer, not the user.
+   */
+  private async continueAfterLimit(
+    live: LiveSession,
+    auto: boolean,
+  ): Promise<void> {
+    const retries = live.limitRetries;
+    const wait = await this.endLimitWait(live);
+    if (!wait) {
+      return;
+    }
+    const record = this.requireRecord(live.id);
+    if (record.status !== 'waiting' || record.archivedAt) {
+      return;
+    }
+    live.limitRetries = auto ? retries + 1 : 0;
+    if (live.queue.length > 0) {
+      this.deliverHeld(live, 'all');
+      return;
+    }
+    await this.sendMessage(live.id, {
+      text: LIMIT_CONTINUE_TEXT,
+      origin: 'app',
+      autofixRun: wait.autofix,
+    });
+  }
+
+  /**
+   * Ends the limit wait once the session's process is free (not starting
+   * or closing); returns the wait, `null` if there was none (any more).
+   */
+  private async endLimitWait(live: LiveSession): Promise<LimitWait | null> {
+    await this.ensureHistory(live, this.requireRecord(live.id));
+    if (live.starting) {
+      await live.starting;
+    }
+    if (live.closing && live.consuming) {
+      await live.consuming;
+    }
+    const wait = this.requireRecord(live.id).limitWait;
+    if (!wait) {
+      return null;
+    }
+    this.dropLimitWait(live.id);
+    return wait;
+  }
+
+  /** Clears a limit wait (no message is sent or withdrawn). */
+  private dropLimitWait(sessionId: string): void {
+    this.clearLimitTimer(sessionId);
+    if (!this.sessions.get(sessionId)?.limitWait) {
+      return;
+    }
+    const updated = this.sessions.update(sessionId, { limitWait: null });
+    const live = this.live.get(sessionId);
+    if (!live || !this.publishStatus(live)) {
+      this.updates.next(this.toDto(updated));
+    }
+  }
+
+  /**
+   * Sends held messages (`all`, or those in `only`): into the running
+   * process, else a new process starts with the first of them and the
+   * others follow when its turn ends.
+   */
+  private deliverHeld(live: LiveSession, only: Set<string> | 'all'): void {
+    const run = live.run;
+    if (run) {
+      if (this.flushQueue(live, run, only === 'all' ? null : only) > 0) {
+        this.setStatus(live, 'running');
+      }
+      return;
+    }
+    const next =
+      only === 'all'
+        ? live.queue[0]
+        : live.queue.find((queued) => only.has(queued.id));
+    if (!next) {
+      return;
+    }
+    live.queue = live.queue.filter((queued) => queued !== next);
+    this.append(live, {
+      type: 'message.dequeued',
+      id: next.id,
+      outcome: 'sent',
+      reason: null,
+    });
+    this.appendUserMessage(live, next);
+    this.markDelivered(live, next.id);
+    this.setStatus(live, 'running');
+    this.startRun(live, this.requireRecord(live.id), {
+      id: next.id,
+      text: next.text,
+    });
+  }
+
   // --- CI of the session's pull requests ---------------------------------
 
   /**
@@ -4408,12 +4809,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (record.status === 'waiting') {
       return {
         status: 'waiting',
-        waitingFor: record.pendingMessage
-          ? 'setup'
-          : this.waitsForBackgroundById(record.id) ||
-              this.ciWaitLabel(record) !== null
-            ? 'background'
-            : 'message',
+        waitingFor: record.limitWait
+          ? 'limit'
+          : record.pendingMessage
+            ? 'setup'
+            : this.waitsForBackgroundById(record.id) ||
+                this.ciWaitLabel(record) !== null
+              ? 'background'
+              : 'message',
       };
     }
     return { status: record.status, waitingFor: null };
@@ -4945,6 +5348,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       pendingRequests: this.pendingSummary(record),
       backgroundTasks: this.backgroundTaskCount(record.id),
       waitingReason: this.waitingReason(record),
+      limitResumesAt:
+        record.limitWait && record.status === 'waiting'
+          ? record.limitWait.resumeAt
+          : null,
       slug: record.slug,
       pendingMessage: record.pendingMessage?.text ?? null,
       directories: record.directories.map(

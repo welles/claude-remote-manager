@@ -106,6 +106,25 @@ export class SessionsController {
     return this.sessions.rerunSetup(id);
   }
 
+  /**
+   * Continues a session the usage limit stopped now instead of when the
+   * limit resets.
+   */
+  @Post(':id/limit-wait/resume')
+  @HttpCode(200)
+  async resumeAfterLimit(@Param('id') id: string): Promise<SessionDto> {
+    await this.sessions.resumeAfterLimit(id);
+    return this.sessions.get(id);
+  }
+
+  /** Does not continue a session the usage limit stopped by itself. */
+  @Delete(':id/limit-wait')
+  @HttpCode(200)
+  async cancelLimitWait(@Param('id') id: string): Promise<SessionDto> {
+    await this.sessions.cancelLimitWait(id);
+    return this.sessions.get(id);
+  }
+
   @Post(':id/interrupt')
   @HttpCode(202)
   interrupt(@Param('id') id: string): Promise<void> {

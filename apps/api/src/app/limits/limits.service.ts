@@ -70,6 +70,7 @@ export class LimitsService {
   private planUsageSource: (() => Promise<SDKControlGetUsageResponse>) | null =
     null;
   private readonly changes = new Subject<AccountLimits>();
+  private reading: Promise<boolean> | null = null;
 
   /** Emits the complete state after every change. */
   readonly changes$ = this.changes.asObservable();
@@ -92,6 +93,56 @@ export class LimitsService {
     if (source && now - updated >= LIMITS_STALE_MS) {
       void this.refreshPlanUsage(source, now);
     }
+  }
+
+  /**
+   * Reads the plan usage now (through the probe process), sharing a read
+   * already in flight. Returns whether it worked; failures are logged.
+   */
+  readNow(now = Date.now()): Promise<boolean> {
+    const source = this.planUsageSource;
+    if (!source) {
+      return Promise.resolve(false);
+    }
+    this.reading ??= (async () => {
+      try {
+        this.lastPlanUsageRequest = now;
+        this.updateFromPlanUsage(await source());
+        return true;
+      } catch (error) {
+        this.logger.warn(`Plan usage request failed: ${String(error)}`);
+        return false;
+      } finally {
+        this.reading = null;
+      }
+    })();
+    return this.reading;
+  }
+
+  /**
+   * When the exhausted windows among `types` (and the 5-hour and weekly
+   * window) reset, by the latest known values: the latest reset of a window
+   * at 100 % (or whose requests were rejected) that lies ahead; `null` when
+   * none of them is known to be exhausted.
+   */
+  exhaustedUntil(types: readonly string[], now = Date.now()): Date | null {
+    let until: number | null = null;
+    for (const type of new Set(['five_hour', 'seven_day', ...types])) {
+      const window = this.windows.get(type);
+      const reset = window?.resetsAt ? Date.parse(window.resetsAt) : NaN;
+      if (!window || !(reset > now)) {
+        continue;
+      }
+      // A rejection from the stream is only current while no newer usage
+      // answer said otherwise (that one carries no status).
+      const exhausted =
+        (window.utilization !== null && window.utilization >= 100) ||
+        (window.source === 'stream' && window.status === 'rejected');
+      if (exhausted && (until === null || reset > until)) {
+        until = reset;
+      }
+    }
+    return until === null ? null : new Date(until);
   }
 
   get(): AccountLimits {
