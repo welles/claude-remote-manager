@@ -24,6 +24,7 @@ import { SessionsApi } from './sessions-api';
  */
 @Component({
   selector: 'app-addition-banners',
+  host: { class: 'flex flex-col gap-2 empty:hidden' },
   imports: [AppBanner, MatButtonModule],
   template: `
     @for (directory of blocked(); track directory.path) {
@@ -69,21 +70,9 @@ import { SessionsApi } from './sessions-api';
       </app-banner>
     }
     @if (error(); as message) {
-      <p class="app-error" data-testid="addition-error">{{ message }}</p>
-    }
-  `,
-  styles: `
-    :host {
-      display: flex;
-      flex-direction: column;
-      gap: var(--app-space-2);
-    }
-    :host(:empty) {
-      display: none;
-    }
-    .app-error {
-      margin: 0;
-      overflow-wrap: anywhere;
+      <p class="m-0 text-error wrap-anywhere" data-testid="addition-error">
+        {{ message }}
+      </p>
     }
   `,
 })

@@ -80,9 +80,7 @@
       title="Attach images (or paste or drop them)"
       data-testid="attach-image"
     >
-      <app-icon name="attach" /><span class="visually-hidden"
-        >Attach images</span
-      >
+      <app-icon name="attach" /><span class="sr-only">Attach images</span>
     </button>
     <input
       #picker
@@ -134,7 +132,7 @@
       rows="1"
       readonly
     ></textarea>
-    <span id="prompt-suggestion" class="visually-hidden"
+    <span id="prompt-suggestion" class="sr-only"
       >Suggested: {{ suggestion() }}. Tab puts it into the input{{
       suggestionFits() ? ', Send sends it' : '' }}.</span
     >
@@ -146,9 +144,7 @@
       title="Edit the suggestion (Tab)"
       data-testid="take-suggestion"
     >
-      <app-icon name="edit" /><span class="visually-hidden"
-        >Edit the suggestion</span
-      >
+      <app-icon name="edit" /><span class="sr-only">Edit the suggestion</span>
     </button>
     } @if (running()) {
     <button
@@ -158,7 +154,7 @@
       title="Stop Claude"
       data-testid="interrupt"
     >
-      <app-icon name="stop" /><span class="visually-hidden">Stop</span>
+      <app-icon name="stop" /><span class="sr-only">Stop</span>
     </button>
     }
     <button
@@ -170,7 +166,7 @@
       title="Send (Ctrl+Enter)"
       data-testid="send"
     >
-      <app-icon name="send" /><span class="visually-hidden">Send</span>
+      <app-icon name="send" /><span class="sr-only">Send</span>
     </button>
   </div>
 </div>

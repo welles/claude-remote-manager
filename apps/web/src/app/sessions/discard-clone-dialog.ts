@@ -46,13 +46,18 @@ export interface DiscardCloneTarget {
                 Nothing would be lost: everything in this clone is on GitHub.
               </p>
             } @else {
-              <p class="warning">
+              <p class="font-medium text-error">
                 This permanently deletes work that exists only in this clone. It
                 cannot be undone.
               </p>
               @if (loss.uncommittedCount > 0) {
-                <h3>{{ loss.uncommittedCount }} uncommitted file(s)</h3>
-                <ul data-testid="loss-files">
+                <h3 class="mt-3 mb-1 type-title-small">
+                  {{ loss.uncommittedCount }} uncommitted file(s)
+                </h3>
+                <ul
+                  class="m-0 max-h-[160px] overflow-auto pl-5 wrap-anywhere"
+                  data-testid="loss-files"
+                >
                   @for (file of loss.uncommittedFiles; track file) {
                     <li>
                       <code>{{ file }}</code>
@@ -68,13 +73,21 @@ export interface DiscardCloneTarget {
                 </ul>
               }
               @if (loss.unpushedCount > 0) {
-                <h3>{{ loss.unpushedCount }} commit(s) not on GitHub</h3>
-                <ul data-testid="loss-commits">
+                <h3 class="mt-3 mb-1 type-title-small">
+                  {{ loss.unpushedCount }} commit(s) not on GitHub
+                </h3>
+                <ul
+                  class="m-0 max-h-[160px] overflow-auto pl-5 wrap-anywhere"
+                  data-testid="loss-commits"
+                >
                   @for (commit of loss.unpushedCommits; track commit.sha) {
                     <li>
                       <code>{{ commit.sha.slice(0, 7) }}</code>
                       {{ commit.subject }}
-                      <span class="muted">({{ commit.branch }})</span>
+                      <span
+                        class="type-body-small text-on-surface-variant wrap-anywhere"
+                        >({{ commit.branch }})</span
+                      >
                     </li>
                   }
                   @if (loss.unpushedCount > loss.unpushedCommits.length) {
@@ -87,18 +100,23 @@ export interface DiscardCloneTarget {
                 </ul>
               }
               @if (loss.stashes > 0) {
-                <h3 data-testid="loss-stashes">
+                <h3
+                  class="mt-3 mb-1 type-title-small"
+                  data-testid="loss-stashes"
+                >
                   {{ loss.stashes }} stash
                   {{ loss.stashes === 1 ? 'entry' : 'entries' }}
                 </h3>
               }
             }
-            <p class="muted">{{ loss.path }}</p>
+            <p class="type-body-small text-on-surface-variant wrap-anywhere">
+              {{ loss.path }}
+            </p>
           } @else if (!error()) {
             <mat-progress-bar mode="indeterminate" />
           }
           @if (error(); as text) {
-            <p class="warning" role="alert">{{ text }}</p>
+            <p class="font-medium text-error" role="alert">{{ text }}</p>
           }
         </div>
       }
@@ -118,28 +136,6 @@ export interface DiscardCloneTarget {
         </div>
       }
     </app-dialog>
-  `,
-  styles: `
-    h3 {
-      font: var(--mat-sys-title-small);
-      margin: 12px 0 4px;
-    }
-    ul {
-      margin: 0;
-      padding-left: 20px;
-      max-height: 160px;
-      overflow: auto;
-      overflow-wrap: anywhere;
-    }
-    .muted {
-      color: var(--mat-sys-on-surface-variant);
-      font: var(--mat-sys-body-small);
-      overflow-wrap: anywhere;
-    }
-    .warning {
-      color: var(--mat-sys-error);
-      font-weight: 500;
-    }
   `,
 })
 export class DiscardCloneDialog {

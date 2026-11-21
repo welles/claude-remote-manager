@@ -65,19 +65,6 @@ export function answerOf(
     TextFieldModule,
   ],
   templateUrl: './permission-card.html',
-  styles: `
-    @media (prefers-reduced-motion: no-preference) {
-      .card-enter {
-        animation: card-enter var(--app-motion) var(--app-ease);
-      }
-    }
-    @keyframes card-enter {
-      from {
-        opacity: 0;
-        transform: translateY(8px);
-      }
-    }
-  `,
 })
 export class PermissionCard {
   readonly request = input.required<PermissionRequestEvent>();

@@ -43,6 +43,7 @@ export function sessionSubtitle(session: SessionDto): string {
  */
 @Component({
   selector: 'app-session-title',
+  host: { class: 'flex min-w-0 items-center gap-1' },
   imports: [
     AppDialog,
     AppIcon,
@@ -53,12 +54,16 @@ export function sessionSubtitle(session: SessionDto): string {
   ],
   template: `
     @let s = session();
-    <div class="titles">
-      <h1 class="title" data-testid="session-title">
+    <div class="min-w-0 flex-[0_1_auto]">
+      <h1 class="m-0 truncate type-title-medium" data-testid="session-title">
         {{ s.title || 'Untitled session' }}
       </h1>
       @if (subtitle()) {
-        <p class="subtitle">{{ subtitle() }}</p>
+        <p
+          class="m-0 truncate font-mono type-body-small text-on-surface-variant"
+        >
+          {{ subtitle() }}
+        </p>
       }
     </div>
     <button
@@ -77,8 +82,16 @@ export function sessionSubtitle(session: SessionDto): string {
       (closed)="renaming.set(false)"
     >
       @if (renaming()) {
-        <form class="rename" (ngSubmit)="save()" data-testid="rename-form">
-          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <form
+          class="flex flex-col gap-2"
+          (ngSubmit)="save()"
+          data-testid="rename-form"
+        >
+          <mat-form-field
+            class="w-full"
+            appearance="outline"
+            subscriptSizing="dynamic"
+          >
             <mat-label>Title</mat-label>
             <input
               matInput
@@ -89,14 +102,14 @@ export function sessionSubtitle(session: SessionDto): string {
               data-testid="rename-input"
             />
           </mat-form-field>
-          <p class="hint">
+          <p class="hint-text">
             Only the title changes:
             {{ branchNote(s) }}
             the directory names stay as they are. After saving, Claude no longer
             changes the title, also when you keep it as it is.
           </p>
           @if (error(); as text) {
-            <p class="error" role="alert">{{ text }}</p>
+            <p class="m-0 text-error" role="alert">{{ text }}</p>
           }
         </form>
       }
@@ -115,51 +128,6 @@ export function sessionSubtitle(session: SessionDto): string {
         </div>
       }
     </app-dialog>
-  `,
-  styles: `
-    :host {
-      display: flex;
-      align-items: center;
-      gap: var(--app-space-1);
-      min-width: 0;
-    }
-    .titles {
-      flex: 0 1 auto;
-      min-width: 0;
-    }
-    .title {
-      margin: 0;
-      font: var(--mat-sys-title-medium);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .subtitle {
-      margin: 0;
-      font: var(--mat-sys-body-small);
-      font-family: var(--app-font-mono);
-      color: var(--mat-sys-on-surface-variant);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .rename {
-      display: flex;
-      flex-direction: column;
-      gap: var(--app-space-2);
-    }
-    mat-form-field {
-      width: 100%;
-    }
-    .hint {
-      margin: 0;
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .error {
-      margin: 0;
-      color: var(--mat-sys-error);
-    }
   `,
 })
 export class SessionTitle {

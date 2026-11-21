@@ -34,7 +34,10 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
   imports: [AppDatePipe, AppIcon, MatButtonModule, MatSlideToggleModule],
   template: `
     @let automation = pull().automation;
-    <div class="automation" data-testid="pr-automation">
+    <div
+      class="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1"
+      data-testid="pr-automation"
+    >
       <mat-slide-toggle
         [checked]="automation.autofix"
         [disabled]="busy()"
@@ -58,14 +61,14 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
         >Automerge</mat-slide-toggle
       >
       <span
-        class="attempts"
-        [class.limit]="automation.gaveUp"
+        class="type-body-small"
+        [class]="automation.gaveUp ? 'text-error' : 'text-on-surface-variant'"
         data-testid="autofix-attempts"
         title="Autofix runs started for this pull request, and the limit"
       >
         Attempts {{ automation.attempts }} / {{ automation.maxAttempts }}
       </span>
-      <span class="limit-buttons">
+      <span class="-ml-2 inline-flex">
         <button
           type="button"
           class="icon-btn"
@@ -100,7 +103,10 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       }
     </div>
     @if (automation.running) {
-      <p class="note running" data-testid="autofix-running">
+      <p
+        class="my-0.5 type-body-small text-primary"
+        data-testid="autofix-running"
+      >
         Autofix run going on{{ trigger() ? ' for ' + trigger() : '' }}.
         <button
           matButton
@@ -113,12 +119,18 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
         </button>
       </p>
     } @else if (automation.gaveUp) {
-      <p class="note warn" data-testid="autofix-gave-up">
+      <p
+        class="my-0.5 type-body-small text-error"
+        data-testid="autofix-gave-up"
+      >
         Limit reached: autofix starts no further runs. Raise the limit or reset
         the count to continue.
       </p>
     } @else if (automation.lastRunAt) {
-      <p class="note" data-testid="autofix-last-run">
+      <p
+        class="my-0.5 type-body-small text-on-surface-variant"
+        data-testid="autofix-last-run"
+      >
         Last autofix run {{ automation.lastRunAt | appDate }} for
         {{ trigger() }}.
       </p>
@@ -126,21 +138,33 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
     @if (automation.automerge.enabled) {
       @let automerge = automation.automerge;
       @if (automerge.held; as held) {
-        <p class="note warn" data-testid="automerge-held">
+        <p
+          class="my-0.5 type-body-small text-error"
+          data-testid="automerge-held"
+        >
           Automerge paused: Claude asks for your decision ({{ held.reason }}).
           Your next message lets it continue.
         </p>
       } @else if (automerge.failure) {
-        <p class="note warn" data-testid="automerge-failure">
+        <p
+          class="my-0.5 type-body-small text-error"
+          data-testid="automerge-failure"
+        >
           GitHub refused the merge: {{ automerge.failure }}. Automerge tries
           again with the next commit, or turn it off and on.
         </p>
       } @else if (automerge.waiting) {
-        <p class="note" data-testid="automerge-waiting">
+        <p
+          class="my-0.5 type-body-small text-on-surface-variant"
+          data-testid="automerge-waiting"
+        >
           Automerge waits: {{ automerge.waiting }}.
         </p>
       } @else {
-        <p class="note" data-testid="automerge-info">
+        <p
+          class="my-0.5 type-body-small text-on-surface-variant"
+          data-testid="automerge-info"
+        >
           Automerge merges (rebase, else squash, else merge commit) once all
           checks pass, the head commit is approved and no review thread is
           unresolved.
@@ -148,35 +172,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
       }
     }
     @if (error(); as text) {
-      <p class="note warn" role="alert">{{ text }}</p>
-    }
-  `,
-  styles: `
-    .automation {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 4px 16px;
-      padding-top: 4px;
-    }
-    .attempts,
-    .note {
-      font: var(--mat-sys-body-small);
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .limit-buttons {
-      display: inline-flex;
-      margin-left: -8px;
-    }
-    .note {
-      margin: 2px 0;
-    }
-    .running {
-      color: var(--mat-sys-primary);
-    }
-    .warn,
-    .limit {
-      color: var(--mat-sys-error);
+      <p class="my-0.5 type-body-small text-error" role="alert">{{ text }}</p>
     }
   `,
 })

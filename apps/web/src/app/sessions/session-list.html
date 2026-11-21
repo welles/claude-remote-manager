@@ -92,7 +92,7 @@
 } @if (loading() && sessions().length === 0) {
 <mat-progress-bar mode="indeterminate" />
 } @else if (loadError(); as error) {
-<p class="app-error">{{ error }}</p>
+<p class="text-error">{{ error }}</p>
 } @else if (sessions().length === 0) {
 <p class="my-4 text-on-surface-variant">
   @if (archived()) { No archived sessions. } @else { No sessions yet.

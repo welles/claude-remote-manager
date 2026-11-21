@@ -4,9 +4,7 @@
     routerLink="/workspace"
     title="Workspace cleanup: leftover clones and scratch directories"
     data-testid="workspace-link"
-    ><app-icon name="clean" /><span class="visually-hidden"
-      >Workspace cleanup</span
-    ></a
+    ><app-icon name="clean" /><span class="sr-only">Workspace cleanup</span></a
   >
 </app-page-bar>
 
@@ -114,7 +112,7 @@
           title="Fetch from the remote"
           data-testid="fetch"
         >
-          <app-icon name="refresh" /><span class="visually-hidden">Fetch</span>
+          <app-icon name="refresh" /><span class="sr-only">Fetch</span>
         </button>
       </div>
       <div
@@ -122,7 +120,9 @@
       >
         @if (repository.activity) {
         <span class="inline-flex items-center gap-1.5" data-testid="activity">
-          <span class="app-pulse"></span>
+          <span
+            class="state-dot inline-block [--tone-bg:var(--app-status-running)] motion-safe:animate-pulse-soft"
+          ></span>
           {{ repository.activity === 'cloning' ? 'Cloning…' : 'Fetching…' }}
         </span>
         } @if (repository.defaultBranch) {
@@ -301,7 +301,7 @@
             title="Edit the setup script"
             data-testid="setup-edit"
           >
-            <app-icon name="edit" /><span class="visually-hidden">Edit</span>
+            <app-icon name="edit" /><span class="sr-only">Edit</span>
           </button>
         </div>
         }

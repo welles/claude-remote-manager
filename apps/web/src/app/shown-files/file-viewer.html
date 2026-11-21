@@ -23,7 +23,7 @@
       [title]="label"
       data-testid="viewer-action"
     >
-      <app-icon name="at" /><span class="visually-hidden">{{ label }}</span>
+      <app-icon name="at" /><span class="sr-only">{{ label }}</span>
     </button>
     }
     <a
@@ -31,9 +31,7 @@
       [href]="downloadUrl()"
       title="Download"
       data-testid="download"
-      ><app-icon name="download" /><span class="visually-hidden"
-        >Download</span
-      ></a
+      ><app-icon name="download" /><span class="sr-only">Download</span></a
     >
     @if (f.kind !== 'binary') {
     <a
@@ -42,9 +40,7 @@
       target="_blank"
       rel="noopener"
       title="Open in a new tab"
-      ><app-icon name="external" /><span class="visually-hidden"
-        >New tab</span
-      ></a
+      ><app-icon name="external" /><span class="sr-only">New tab</span></a
     >
     }
     <button
@@ -54,7 +50,7 @@
       title="Close"
       data-testid="close-viewer"
     >
-      <app-icon name="close" /><span class="visually-hidden">Close</span>
+      <app-icon name="close" /><span class="sr-only">Close</span>
     </button>
   </header>
   @if (f.caption || (!f.snapshot && !contentUrl())) {

@@ -112,8 +112,11 @@ const KEY_STEP = 16;
     '[attr.aria-valuetext]': 'width().clamp(width().value()) + " pixels"',
     'aria-keyshortcuts': 'ArrowLeft ArrowRight Home End Enter',
     title: 'Drag or use the arrow keys to resize; double-click or Enter resets',
-    '[class.edge-start]': 'edge() === "start"',
-    '[class.edge-end]': 'edge() === "end"',
+    // A line on the column's border while hovered (after a moment),
+    // dragged or focused.
+    class:
+      'absolute inset-y-0 z-4 w-[9px] cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-[3px] after:w-[3px] after:bg-primary after:opacity-0 hover:after:opacity-100 focus-visible:after:opacity-100 [&.dragging]:after:opacity-100 motion-safe:after:transition-opacity motion-safe:hover:after:delay-150',
+    '[class]': 'edge() === "end" ? "-right-[5px]" : "-left-[5px]"',
     '[class.dragging]': 'dragging()',
     '(pointerdown)': 'start($event)',
     '(pointermove)': 'move($event)',
@@ -124,48 +127,6 @@ const KEY_STEP = 16;
     '(keydown)': 'key($event)',
   },
   template: '',
-  styles: `
-    :host {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      z-index: 4;
-      width: 9px;
-      cursor: col-resize;
-      touch-action: none;
-      outline: none;
-    }
-    :host(.edge-end) {
-      right: -5px;
-    }
-    :host(.edge-start) {
-      left: -5px;
-    }
-    /* A line on the column's border while hovered, dragged or focused. */
-    :host::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      left: 3px;
-      width: 3px;
-      background: var(--mat-sys-primary);
-      opacity: 0;
-    }
-    :host(:hover)::after,
-    :host(.dragging)::after,
-    :host(:focus-visible)::after {
-      opacity: 1;
-    }
-    @media (prefers-reduced-motion: no-preference) {
-      :host::after {
-        transition: opacity var(--app-motion-fast) var(--app-ease);
-      }
-      :host(:hover)::after {
-        transition-delay: 150ms;
-      }
-    }
-  `,
 })
 export class PaneResizer {
   readonly width = input.required<PaneWidth>();

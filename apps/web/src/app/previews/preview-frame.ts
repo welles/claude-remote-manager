@@ -58,9 +58,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
             title="Reload"
             data-testid="preview-reload"
           >
-            <app-icon name="refresh" /><span class="visually-hidden"
-              >Reload</span
-            >
+            <app-icon name="refresh" /><span class="sr-only">Reload</span>
           </button>
           @if (href(); as link) {
             <a
@@ -70,7 +68,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
               rel="noopener noreferrer"
               referrerpolicy="no-referrer"
               title="Open in a new tab"
-              ><app-icon name="external" /><span class="visually-hidden"
+              ><app-icon name="external" /><span class="sr-only"
                 >New tab</span
               ></a
             >
@@ -83,7 +81,7 @@ import { PREVIEW_STATE_LABELS, previewHref } from './previews-api';
           title="Close"
           data-testid="close-preview"
         >
-          <app-icon name="close" /><span class="visually-hidden">Close</span>
+          <app-icon name="close" /><span class="sr-only">Close</span>
         </button>
       </header>
       <div class="flex min-h-0 flex-1 flex-col">
