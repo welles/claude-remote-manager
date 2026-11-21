@@ -67,7 +67,10 @@ function active(session: SessionDto): boolean {
  */
 @Component({
   selector: 'app-session-list',
-  host: { '[class.app-page]': '!pane()', '[class.pane]': 'pane()' },
+  host: {
+    '[class]':
+      "pane() ? 'flex flex-col gap-2 px-3 pb-4 [--app-gutter:12px]' : 'app-page gap-2 [--app-page-max:1320px] max-sm:pb-22'",
+  },
   imports: [
     AppDatePipe,
     AppIcon,
@@ -80,7 +83,6 @@ function active(session: SessionDto): boolean {
     StatusDot,
   ],
   templateUrl: './session-list.html',
-  styleUrl: './session-list.scss',
 })
 export class SessionList implements OnInit {
   private readonly api = inject(SessionsApi);
