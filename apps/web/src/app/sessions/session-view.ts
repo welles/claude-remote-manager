@@ -94,6 +94,7 @@ const MENTION_TOKEN = /^@(?:"[^"\n]{1,4096}"|[^\s"]{1,4096})$/;
 
 @Component({
   selector: 'app-session-view',
+  host: { class: 'block' },
   imports: [
     AddRepository,
     AdditionBanners,
@@ -128,7 +129,6 @@ const MENTION_TOKEN = /^@(?:"[^"\n]{1,4096}"|[^\s"]{1,4096})$/;
     TodoPanel,
   ],
   templateUrl: './session-view.html',
-  styleUrl: './session-view.scss',
 })
 export class SessionView implements OnInit {
   private readonly route = inject(ActivatedRoute);

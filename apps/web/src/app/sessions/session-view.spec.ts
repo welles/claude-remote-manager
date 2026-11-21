@@ -1487,7 +1487,7 @@ describe('SessionView', () => {
     expect(text('strip-settings')).toContain('Bypass (dangerous)');
     expect(chip().classList).toContain('tone-attention');
     const hint = element.querySelector('[data-testid="mode-hint"]');
-    expect(hint?.classList).toContain('mode-danger');
+    expect(hint?.classList).toContain('text-tertiary');
     expect(hint?.textContent).toContain('without asking');
 
     socket.receive({

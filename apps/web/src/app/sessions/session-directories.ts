@@ -82,8 +82,8 @@ export function relativePaths(
 /** The directories of a session (collapsed: repository names). */
 @Component({
   selector: 'app-session-directories',
+  host: { class: 'block' },
   templateUrl: './session-directories.html',
-  styleUrl: './session-directories.scss',
 })
 export class SessionDirectories {
   readonly directories = input.required<SessionDirectoryDto[]>();

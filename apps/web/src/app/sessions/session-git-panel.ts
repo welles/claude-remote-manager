@@ -63,7 +63,6 @@ export const PULL_REQUEST_STATE_LABELS: Record<
     TextFieldModule,
   ],
   templateUrl: './session-git-panel.html',
-  styleUrl: './session-git-panel.scss',
 })
 export class SessionGitPanel {
   private readonly api = inject(SessionsApi);

@@ -1,11 +1,18 @@
+<!-- Phone: app bar, strip, conversation, dock; details in an overlay panel.
+     From 1100 px the session list sits on the left, from 1360 px the details
+     are a permanent column on the right. Both columns can be resized; the
+     window limits them so the conversation keeps room. -->
 <div
-  class="layout"
+  class="grid grid-cols-[minmax(0,1fr)] items-start [--details-column:min(var(--details-width,340px),34vw)] [--list-column:min(var(--list-width,320px),30vw)] lg:grid-cols-[var(--list-column)_minmax(0,1fr)] xl:grid-cols-[var(--list-column)_minmax(0,1fr)_var(--details-column)]"
   [style.--list-width.px]="listWidth.value()"
   [style.--details-width.px]="detailsWidth.value()"
 >
   @if (wideList()) {
-  <aside class="list-pane" aria-label="All sessions">
-    <div class="list-scroll">
+  <aside
+    class="sticky top-[var(--app-top-inset,0px)] z-4 h-[calc(100dvh-var(--app-top-inset,0px))] border-r border-outline-variant"
+    aria-label="All sessions"
+  >
+    <div class="h-full overflow-y-auto overscroll-contain">
       <app-session-list [pane]="true" [activeId]="sessionId()" />
     </div>
     <app-pane-resizer
@@ -16,7 +23,10 @@
     />
   </aside>
   }
-  <div class="main" [attr.inert]="panelOpen() && !docked() ? '' : null">
+  <div
+    class="flex min-h-[calc(100dvh-var(--app-top-inset,0px))] min-w-0 flex-col px-(--app-gutter)"
+    [attr.inert]="panelOpen() && !docked() ? '' : null"
+  >
     <app-page-bar back="/" backLabel="Back to the sessions">
       @if (session(); as s) {
       <app-session-title
@@ -58,7 +68,7 @@
     </app-page-bar>
     @if (session(); as s) {
     <app-session-strip
-      class="strip"
+      class="sticky top-[calc(var(--app-top-inset,0px)+var(--app-bar-height))] z-3"
       [session]="s"
       [context]="context()"
       [todos]="todos()"
@@ -67,7 +77,9 @@
       (opened)="openPanel($event)"
     />
     }
-    <div class="banners">
+    <div
+      class="mx-auto box-border flex w-full max-w-[880px] flex-col gap-2 pt-3 empty:hidden"
+    >
       @if (session(); as s) { @if (s.archivedAt) {
       <app-banner data-testid="archived-banner">
         Archived {{ s.archivedAt | appDate }}: hidden from the session list,
@@ -101,6 +113,7 @@
     </div>
 
     <app-session-conversation
+      class="mx-auto box-border w-full max-w-[880px]"
       [items]="shownItems()"
       [session]="session()"
       [sessionId]="sessionId()"
@@ -114,7 +127,12 @@
       (edit)="edit($event)"
     />
 
-    <footer class="dock" #dock>
+    <!-- The dock: request, queue, decisions and the composer above the
+         page's bottom edge; over the conversation, under the app bar. -->
+    <footer
+      class="sticky bottom-0 z-2 -mx-(--app-gutter) flex flex-col gap-1.5 border-t border-outline-variant bg-surface px-(--app-gutter) pt-2 pb-[calc(8px+env(safe-area-inset-bottom))] *:mx-auto *:box-border *:w-full *:max-w-[880px]"
+      #dock
+    >
       @if (requests().length > 0) {
       <div class="approvals" data-testid="approvals">
         @for (request of requests().slice(0, 1); track request.requestId) {
@@ -198,7 +216,9 @@
         (changed)="session.set($event)"
       />
       } @if (error(); as message) {
-      <p class="error" data-testid="error">{{ message }}</p>
+      <p class="m-0 type-body-small text-error" data-testid="error">
+        {{ message }}
+      </p>
       } @if (offerArchive()) {
       <app-banner data-testid="archive-offer">
         @if (resumable()) { The session has ended. Archive it, or continue it
@@ -243,7 +263,6 @@
   </div>
 
   <app-side-panel
-    class="details"
     heading="Session details"
     [docked]="docked()"
     [(open)]="panelOpen"
@@ -260,13 +279,13 @@
     } @if (session(); as s) {
     <section class="panel-section" id="details-status">
       <h3 class="app-section-label">Status</h3>
-      <div class="facts">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
         <app-status-badge
           [session]="s"
           [text]="needLabel(s)"
           data-testid="details-status"
         />
-        <span class="muted"
+        <span class="hint"
           >updated {{ s.updatedAt | appDate: 'relative' }}</span
         >
       </div>
@@ -302,7 +321,11 @@
       />
     </section>
     }
-    <section class="panel-section app-compact" id="details-settings">
+    <!-- Room for the floating labels and between field and hint. -->
+    <section
+      class="panel-section app-compact gap-4 [&>.app-section-label]:-mb-1!"
+      id="details-settings"
+    >
       <h3 class="app-section-label">Settings</h3>
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
         <mat-label>Model</mat-label>
@@ -334,27 +357,30 @@
           <mat-option
             [value]="mode"
             [title]="modeInfo[mode].description"
-            [class.mode-danger]="dangerousModes.includes(mode)"
+            [class.text-tertiary]="dangerousModes.includes(mode)"
             >{{ modeInfo[mode].label }}</mat-option
           >
           }
         </mat-select>
         @if (s.permissionModeOverride; as override) {
-        <mat-hint class="mode-override" data-testid="mode-override"
+        <mat-hint class="text-tertiary" data-testid="mode-override"
           >In effect: {{ modeInfo[override.mode].label }}. {{
           overrideInfo[override.reason].description }}</mat-hint
         >
         } @else {
         <mat-hint
-          [class.mode-danger]="dangerousModes.includes(s.permissionMode)"
+          [class.text-tertiary]="dangerousModes.includes(s.permissionMode)"
           data-testid="mode-hint"
           >{{ modeInfo[s.permissionMode].description }}</mat-hint
         >
         }
       </mat-form-field>
       @if (s.environment; as environment) {
-      <p class="environment" data-testid="session-environment">
-        <span class="muted">Environment</span>
+      <p
+        class="mt-1 mb-0 flex flex-wrap items-baseline gap-2 wrap-anywhere"
+        data-testid="session-environment"
+      >
+        <span class="hint">Environment</span>
         <a
           routerLink="/environments"
           [queryParams]="{ id: environment.id }"
@@ -376,14 +402,14 @@
     <section class="panel-section" id="details-usage">
       <h3 class="app-section-label">Usage</h3>
       <p
-        class="usage"
+        class="m-0 type-body-medium"
         data-testid="usage"
         title="Input {{ s.usage.inputTokens }} · Output {{ s.usage.outputTokens }} · Cache write {{ s.usage.cacheCreationInputTokens }} · Cache read {{ s.usage.cacheReadInputTokens }}"
       >
         {{ formatTokens(totalTokens(s.usage)) }} tokens · {{
         formatCost(s.usage.costUsd) }} theoretical API cost
       </p>
-      <p class="muted small">
+      <p class="hint">
         In {{ formatTokens(s.usage.inputTokens) }} · Out {{
         formatTokens(s.usage.outputTokens) }} · Cache write {{
         formatTokens(s.usage.cacheCreationInputTokens) }} · Cache read {{
@@ -398,7 +424,7 @@
     }
     <section class="panel-section" id="details-manage">
       <h3 class="app-section-label">Session</h3>
-      <div class="manage">
+      <div class="flex flex-wrap gap-2 [--app-icon-size:16px]">
         @if (s.status !== 'finished' && !s.archivedAt) {
         <button
           matButton
@@ -438,7 +464,7 @@
         } @if (canDelete()) {
         <button
           matButton
-          class="app-danger delete"
+          class="app-danger ml-auto"
           type="button"
           (click)="deleteDialog()?.show()"
           data-testid="delete"
