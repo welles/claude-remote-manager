@@ -50,6 +50,7 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
  */
 @Component({
   selector: 'app-notification-settings',
+  host: { class: 'flex flex-col gap-2' },
   imports: [
     AppDatePipe,
     MatButtonModule,
@@ -57,7 +58,6 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
     MatProgressBarModule,
   ],
   templateUrl: './notification-settings.html',
-  styleUrl: './notification-settings.scss',
 })
 export class NotificationSettings implements OnInit {
   private readonly api = inject(NotificationsApi);

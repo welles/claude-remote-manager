@@ -1,33 +1,33 @@
 @if (loadError(); as error) {
-<p class="error">{{ error }}</p>
+<p class="text-error">{{ error }}</p>
 <button matButton type="button" (click)="load()">Retry</button>
 } @else if (status(); as status) {
 <section>
-  <h3 class="subheading">This device</h3>
+  <h3 class="app-section-label mt-3 mb-1">This device</h3>
   @if (status.webPush.problem) {
-  <p class="error" data-testid="webpush-problem">
+  <p class="text-error" data-testid="webpush-problem">
     Web Push is off on the server: {{ status.webPush.problem }}
   </p>
   } @else if (unsupported(); as reason) { @switch (reason) { @case
   ('ios_not_installed') {
-  <p class="hint" data-testid="ios-hint">
+  <p class="text-on-surface-variant" data-testid="ios-hint">
     On iPhone and iPad, notifications work only in the installed app: tap Share,
     then “Add to Home Screen”, open the app from the Home Screen and turn
     notifications on there.
   </p>
   } @case ('insecure') {
-  <p class="hint">
+  <p class="text-on-surface-variant">
     Notifications need the app to be opened over https (or on localhost).
   </p>
   } @default {
-  <p class="hint">This browser does not support Web Push.</p>
+  <p class="text-on-surface-variant">This browser does not support Web Push.</p>
   } } } @else {
-  <p class="hint">
+  <p class="text-on-surface-variant">
     Notifications on this device: approvals (with Allow and Deny buttons where
     the system shows them, not on iPhone and iPad) and what else is turned on
     below. A tap opens the session.
   </p>
-  <div class="row">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
     @if (endpoint()) {
     <span data-testid="device-on">On for this device.</span>
     <button
@@ -52,29 +52,38 @@
     }
   </div>
   } @if (deviceMessage(); as message) {
-  <p class="message" [class.error]="message.error" data-testid="device-message">
+  <p
+    class="mt-2 mb-0"
+    [class.text-error]="message.error"
+    data-testid="device-message"
+  >
     {{ message.text }}
   </p>
   }
 </section>
 
 <section>
-  <h3 class="subheading">Web Push devices</h3>
+  <h3 class="app-section-label mt-3 mb-1">Web Push devices</h3>
   @if (status.webPush.subscriptions.length === 0) {
-  <p class="hint">No device receives Web Push notifications.</p>
+  <p class="text-on-surface-variant">
+    No device receives Web Push notifications.
+  </p>
   }
-  <ul class="devices">
+  <ul class="mt-0 mb-2 flex list-none flex-col gap-1 p-0">
     @for (device of status.webPush.subscriptions; track device.id) {
-    <li data-testid="device">
+    <li
+      class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1"
+      data-testid="device"
+    >
       <span>
         <strong>{{ device.label }}</strong>
-        <span class="muted">
+        <span class="text-on-surface-variant">
           · {{ device.pushService }} · since {{ device.createdAt | appDate }}
           @if (device.lastSuccessAt) { · last sent {{ device.lastSuccessAt |
           appDate }} }</span
         >
         @if (device.lastError) {
-        <span class="error"> · {{ device.lastError }}</span>
+        <span class="text-error"> · {{ device.lastError }}</span>
         }
       </span>
       <button
@@ -88,7 +97,7 @@
     </li>
     }
   </ul>
-  <div class="row">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
     <button
       matButton
       type="button"
@@ -107,9 +116,9 @@
 </section>
 
 <section>
-  <h3 class="subheading">ntfy</h3>
+  <h3 class="app-section-label mt-3 mb-1">ntfy</h3>
   @if (status.ntfy.configured) {
-  <dl class="facts" data-testid="ntfy">
+  <dl class="fact-grid" data-testid="ntfy">
     <dt>Server</dt>
     <dd>{{ status.ntfy.server }}</dd>
     <dt>Topic</dt>
@@ -118,14 +127,14 @@
     <dd>{{ status.ntfy.tokenSet ? 'set' : 'missing' }}</dd>
   </dl>
   @if (status.ntfy.problem) {
-  <p class="error">{{ status.ntfy.problem }}</p>
+  <p class="text-error">{{ status.ntfy.problem }}</p>
   }
-  <p class="hint">
+  <p class="text-on-surface-variant">
     Set by the server's environment (<code>NTFY_URL</code>,
     <code>NTFY_TOPIC</code>, <code>NTFY_TOKEN_FILE</code>). ntfy has no Allow or
     Deny buttons.
   </p>
-  <div class="row">
+  <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
     <button
       matButton
       type="button"
@@ -141,12 +150,12 @@
     }
   </div>
   } @else {
-  <p class="hint" data-testid="ntfy-off">
+  <p class="text-on-surface-variant" data-testid="ntfy-off">
     Not configured. Set <code>NTFY_URL</code>, <code>NTFY_TOPIC</code> and the
     access token (<code>NTFY_TOKEN_FILE</code>) in the server's environment.
   </p>
   } @if (!status.publicUrl) {
-  <p class="hint">
+  <p class="text-on-surface-variant">
     <code>PUBLIC_URL</code> is not set: ntfy messages cannot link to the
     session.
   </p>
@@ -154,8 +163,10 @@
 </section>
 
 <section>
-  <h3 class="subheading">Events</h3>
-  <table class="events">
+  <h3 class="app-section-label mt-3 mb-1">Events</h3>
+  <table
+    class="w-full border-collapse [&_td]:border-t [&_td]:border-outline-variant [&_td]:p-1 [&_td]:text-center [&_td:first-child]:text-left [&_th]:px-1 [&_th]:py-0 [&_th]:text-center [&_th]:type-label-medium"
+  >
     <thead>
       <tr>
         <th></th>
@@ -168,8 +179,8 @@
       @for (type of eventTypes; track type) {
       <tr>
         <td>
-          <span class="event">{{ eventInfo[type].label }}</span>
-          <span class="muted description"
+          <span class="block font-medium">{{ eventInfo[type].label }}</span>
+          <span class="block type-body-small text-on-surface-variant"
             >{{ type === 'stalled' ? 'A running session has shown no activity
             for ' + status.stallMinutes + ' minutes (once per stall).' :
             eventInfo[type].description }}</span
@@ -189,7 +200,7 @@
       }
     </tbody>
   </table>
-  <p class="hint">
+  <p class="text-on-surface-variant">
     Nothing is sent about a session you have open in front of you.
   </p>
 </section>

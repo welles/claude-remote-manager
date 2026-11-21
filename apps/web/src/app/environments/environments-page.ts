@@ -26,7 +26,7 @@ import { EnvironmentsApi } from './environments-api';
  */
 @Component({
   selector: 'app-environments-page',
-  host: { class: 'app-page' },
+  host: { class: 'app-page [--app-page-max:860px]' },
   imports: [
     AppDialog,
     AppIcon,
@@ -37,7 +37,6 @@ import { EnvironmentsApi } from './environments-api';
     RouterLink,
   ],
   templateUrl: './environments-page.html',
-  styleUrl: './environments-page.scss',
 })
 export class EnvironmentsPage implements OnInit {
   private readonly api = inject(EnvironmentsApi);

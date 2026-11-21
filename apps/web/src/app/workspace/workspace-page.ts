@@ -29,7 +29,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
  */
 @Component({
   selector: 'app-workspace-page',
-  host: { class: 'app-page' },
+  host: { class: 'app-page gap-2' },
   imports: [
     AppIcon,
     AppPageBar,
@@ -42,7 +42,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
   ],
   template: `
     <app-page-bar heading="Workspace cleanup" back="/settings" />
-    <p class="muted">
+    <p class="m-0 text-on-surface-variant">
       Directories under the workspace's <code>sessions/</code> and
       <code>scratch/</code> that no session uses (left by a crash, a deleted
       database, or made by hand), and directories sessions expect that are gone.
@@ -52,33 +52,37 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
       <mat-progress-bar mode="indeterminate" />
     }
     @if (error(); as text) {
-      <p class="error" role="alert">{{ text }}</p>
+      <p class="m-0 text-error" role="alert">{{ text }}</p>
     }
     @if (data(); as data) {
       <h2 class="app-section-label">Directories without session</h2>
       @for (orphan of data.orphans; track orphan.path) {
-        <section class="entry" data-testid="orphan">
-          <div class="head">
+        <section
+          class="flex flex-col items-start gap-1 rounded-md border border-outline-variant bg-surface-container-low p-3"
+          data-testid="orphan"
+        >
+          <div class="flex flex-wrap gap-x-3 gap-y-1">
             <strong>{{ kindLabels[orphan.kind] }}</strong>
             @if (orphan.branch) {
-              <span class="muted">{{ orphan.branch }}</span>
+              <span class="text-on-surface-variant">{{ orphan.branch }}</span>
             }
           </div>
-          <code class="path">{{ orphan.path }}</code>
+          <code class="type-body-small wrap-anywhere">{{ orphan.path }}</code>
           @if (orphan.loss; as loss) {
             <app-loss-details
+              class="self-stretch"
               [loss]="loss"
               [scratch]="orphan.kind !== 'clone'"
             />
           } @else {
-            <p class="error">
+            <p class="m-0 text-error">
               What it holds could not be read{{
                 orphan.error ? ': ' + orphan.error : ''
               }}.
             </p>
           }
           @if (confirming() === orphan.path) {
-            <div class="confirm">
+            <div class="[&_p]:my-1">
               <p>Remove this directory for good? This cannot be undone.</p>
               @if (!orphan.loss?.clean) {
                 <mat-checkbox
@@ -87,7 +91,7 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
                   >I accept losing what it holds</mat-checkbox
                 >
               }
-              <div class="buttons">
+              <div class="flex gap-2">
                 <button
                   matButton="filled"
                   class="app-danger"
@@ -115,21 +119,27 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
           }
         </section>
       } @empty {
-        <p class="empty" data-testid="no-orphans">
+        <p
+          class="m-0 flex items-center gap-2 rounded-md border border-dashed border-outline-variant p-3 text-on-surface-variant [--app-icon-size:18px]"
+          data-testid="no-orphans"
+        >
           <app-icon name="check" />None: every directory belongs to a session.
         </p>
       }
       <h2 class="app-section-label">Directories that are gone</h2>
       @for (entry of data.missing; track entry.sessionId + entry.position) {
-        <section class="entry" data-testid="missing">
-          <div class="head">
+        <section
+          class="flex flex-col items-start gap-1 rounded-md border border-outline-variant bg-surface-container-low p-3"
+          data-testid="missing"
+        >
+          <div class="flex flex-wrap gap-x-3 gap-y-1">
             <strong>{{ entry.name }}</strong> of
             <a [routerLink]="['/sessions', entry.sessionId]">{{
               entry.sessionTitle || 'Untitled session'
             }}</a>
           </div>
-          <code class="path">{{ entry.path }}</code>
-          <p class="muted">
+          <code class="type-body-small wrap-anywhere">{{ entry.path }}</code>
+          <p class="m-0 text-on-surface-variant">
             The session cannot be continued without it. Marking it removed makes
             the session say so.
           </p>
@@ -144,63 +154,13 @@ const KIND_LABELS: Record<OrphanedDirectory['kind'], string> = {
           </button>
         </section>
       } @empty {
-        <p class="empty" data-testid="no-missing">
+        <p
+          class="m-0 flex items-center gap-2 rounded-md border border-dashed border-outline-variant p-3 text-on-surface-variant [--app-icon-size:18px]"
+          data-testid="no-missing"
+        >
           <app-icon name="check" />None: every session has its directories.
         </p>
       }
-    }
-  `,
-  styles: `
-    :host {
-      gap: var(--app-space-2);
-    }
-    .empty {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin: 0;
-      padding: 12px;
-      border: 1px dashed var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-medium);
-      color: var(--mat-sys-on-surface-variant);
-      --app-icon-size: 18px;
-    }
-    .entry {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 4px;
-      padding: 12px;
-      border: 1px solid var(--mat-sys-outline-variant);
-      border-radius: var(--mat-sys-corner-medium);
-      background: var(--mat-sys-surface-container-low);
-    }
-    .head {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px 12px;
-    }
-    .path {
-      overflow-wrap: anywhere;
-      font: var(--mat-sys-body-small);
-    }
-    app-loss-details {
-      align-self: stretch;
-    }
-    .muted {
-      margin: 0;
-      color: var(--mat-sys-on-surface-variant);
-    }
-    .error {
-      margin: 0;
-      color: var(--mat-sys-error);
-    }
-    .confirm p {
-      margin: 4px 0;
-    }
-    .buttons {
-      display: flex;
-      gap: 8px;
     }
   `,
 })

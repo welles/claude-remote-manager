@@ -1,31 +1,31 @@
-<app-page-bar heading="Settings" />
+<app-page-bar class="lg:col-span-full" heading="Settings" />
 
-<div class="column">
+<div class="flex min-w-0 flex-col gap-4">
   <mat-card appearance="outlined">
     <mat-card-header>
       <mat-card-title>Commit identity</mat-card-title>
     </mat-card-header>
     <mat-card-content>
-      <p class="hint">
+      <p class="text-on-surface-variant">
         Commits in session clones are made with this name and email, by Claude
         and by you. They are set with the server&#39;s environment variables
         <code>CRM_GIT_AUTHOR_NAME</code> and <code>CRM_GIT_AUTHOR_EMAIL</code>;
         a change applies to existing clones at the next start.
       </p>
       @if (error()) {
-      <p class="error" data-testid="settings-message">
+      <p class="text-error" data-testid="settings-message">
         The settings could not be loaded.
       </p>
       } @else if (settings(); as current) { @if (current.gitAuthorName !== null)
       {
-      <dl class="facts">
+      <dl class="fact-grid">
         <dt>Name</dt>
         <dd data-testid="author-name">{{ current.gitAuthorName }}</dd>
         <dt>Email</dt>
         <dd data-testid="author-email">{{ current.gitAuthorEmail }}</dd>
       </dl>
       } @else {
-      <p class="warning" data-testid="identity-missing">
+      <p class="text-error" data-testid="identity-missing">
         Not set: sessions with repositories cannot start until both variables
         are set and the server is restarted.
       </p>
@@ -40,7 +40,7 @@
     </mat-card-header>
     <mat-card-content>
       @if (githubError(); as error) {
-      <p class="error">{{ error }}</p>
+      <p class="text-error">{{ error }}</p>
       } @else if (github(); as status) { @if (!status.configured) {
       <p data-testid="github-not-configured">
         GitHub is not configured: {{ status.problem }}. Repositories can still
@@ -48,7 +48,7 @@
         projects work without it.
       </p>
       } @else {
-      <dl class="facts">
+      <dl class="fact-grid">
         <dt>App</dt>
         <dd data-testid="github-app">
           @if (status.appUrl) {
@@ -59,10 +59,10 @@
         </dd>
       </dl>
       @if (status.error) {
-      <p class="error" data-testid="github-error">{{ status.error }}</p>
+      <p class="text-error" data-testid="github-error">{{ status.error }}</p>
       } @if (status.setup; as setup) { @if (setup.permissions.length > 0 ||
       setup.events.length > 0) {
-      <div class="warning" data-testid="github-setup">
+      <div class="text-error" data-testid="github-setup">
         <p>
           The app's settings on GitHub lack what the app needs. Add it under
           “Permissions &amp; events” of the app; each installation then has to
@@ -83,15 +83,18 @@
         </ul>
       </div>
       } }
-      <h3 class="subheading">Installations</h3>
+      <h3 class="app-section-label mt-3 mb-1">Installations</h3>
       @if (status.installations.length === 0 && !status.error) {
       <p>The app is not installed on any account yet.</p>
       }
-      <ul class="installations">
+      <ul class="mt-0 mb-3 flex list-none flex-col gap-1.5 p-0">
         @for (installation of status.installations; track installation.id) {
-        <li data-testid="installation">
+        <li
+          class="flex flex-wrap items-baseline gap-x-2 gap-y-1"
+          data-testid="installation"
+        >
           <strong>{{ installation.account }}</strong>
-          <span class="muted"
+          <span class="text-on-surface-variant"
             >{{ installation.accountType === 'Organization' ? 'organization' :
             'account' }} · {{ installation.repositorySelection === 'all' ? 'all
             repositories' : 'selected repositories' }} @if
@@ -103,10 +106,10 @@
             >Configure</a
           >
           } @if (installation.error) {
-          <span class="error">{{ installation.error }}</span>
+          <span class="text-error">{{ installation.error }}</span>
           } @if (installation.missingPermissions.length > 0 ||
           installation.missingEvents.length > 0) {
-          <span class="warning" data-testid="installation-not-accepted"
+          <span class="text-error" data-testid="installation-not-accepted"
             >Has not accepted the app's new {{ acceptance(installation) }}:
             review the request in {{ installation.settingsUrl ? 'Configure' :
             "the installation's settings on GitHub" }}</span
@@ -142,11 +145,11 @@
       @if (health.isLoading()) {
       <mat-progress-bar mode="indeterminate" />
       } @else if (health.error()) {
-      <p class="error" data-testid="server-unreachable">
+      <p class="text-error" data-testid="server-unreachable">
         The server is not reachable.
       </p>
       } @else if (server(); as server) {
-      <dl class="facts">
+      <dl class="fact-grid">
         <dt>Status</dt>
         <dd data-testid="server-status">{{ server.status }}</dd>
         <dt>Version</dt>
@@ -169,18 +172,18 @@
     </mat-card-actions>
   </mat-card>
 
-  <section class="maintenance" aria-labelledby="sessions-title">
-    <h2 class="app-section-label" id="sessions-title">Sessions</h2>
-    <nav class="links">
+  <section aria-labelledby="sessions-title">
+    <h2 class="app-section-label mt-2" id="sessions-title">Sessions</h2>
+    <nav class="card-list">
       <a
-        class="link"
+        class="flex min-h-14 items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container"
         routerLink="/environments"
         data-testid="settings-environments"
       >
         <app-icon name="key" />
-        <span class="text">
-          <span class="name">Environments</span>
-          <span class="hint"
+        <span class="flex min-w-0 flex-1 flex-col">
+          <span class="type-title-small text-on-surface">Environments</span>
+          <span class="type-body-small"
             >Secrets, variables, files, instructions and presets for new
             sessions</span
           >
@@ -189,18 +192,20 @@
       </a>
     </nav>
   </section>
-  <section class="maintenance" aria-labelledby="maintenance-title">
-    <h2 class="app-section-label" id="maintenance-title">Maintenance</h2>
-    <nav class="links">
+  <section aria-labelledby="maintenance-title">
+    <h2 class="app-section-label mt-2" id="maintenance-title">Maintenance</h2>
+    <nav class="card-list">
       <a
-        class="link"
+        class="flex min-h-14 items-center gap-3 px-3 py-2 text-on-surface-variant hover:bg-surface-container"
         routerLink="/workspace"
         data-testid="maintenance-workspace"
       >
         <app-icon name="clean" />
-        <span class="text">
-          <span class="name">Workspace cleanup</span>
-          <span class="hint"
+        <span class="flex min-w-0 flex-1 flex-col">
+          <span class="type-title-small text-on-surface"
+            >Workspace cleanup</span
+          >
+          <span class="type-body-small"
             >Leftover clones and scratch directories without a session</span
           >
         </span>
@@ -209,8 +214,8 @@
     </nav>
   </section>
 </div>
-<div class="column">
-  <mat-card appearance="outlined" class="notifications">
+<div class="flex min-w-0 flex-col gap-4">
+  <mat-card appearance="outlined">
     <mat-card-header>
       <mat-card-title>Notifications</mat-card-title>
     </mat-card-header>

@@ -18,7 +18,7 @@
   (cancelled)="editing.set(null)"
 />
 } } @else {
-<p class="muted">
+<p class="text-on-surface-variant">
   An environment gives the sessions that choose it variables and files (secrets
   of any kind, such as API keys, tokens or credential files), additional
   information for Claude and a setup script, and fills in the new-session form.
@@ -27,20 +27,25 @@
 @if (loading()) {
 <mat-progress-bar mode="indeterminate" />
 } @if (error(); as text) {
-<p class="error" role="alert">{{ text }}</p>
+<p class="text-error wrap-anywhere" role="alert">{{ text }}</p>
 } @if (!loading() && !error() && environments().length === 0) {
-<p class="muted" data-testid="no-environments">No environments yet.</p>
+<p class="text-on-surface-variant" data-testid="no-environments">
+  No environments yet.
+</p>
 }
-<ul class="list">
+<ul class="m-0 list-none p-0">
   @for (environment of environments(); track environment.id) {
-  <li class="item" data-testid="environment">
+  <li
+    class="flex items-center gap-2 border-b border-outline-variant"
+    data-testid="environment"
+  >
     <button
       type="button"
-      class="open"
+      class="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 border-0 bg-transparent px-0 py-3 text-left text-inherit [font:inherit]"
       (click)="edit(environment.id)"
       data-testid="environment-open"
     >
-      <span class="name">
+      <span class="type-title-small wrap-anywhere">
         {{ environment.name }} @if (environment.isDefault) {
         <span
           class="badge tone-ready ml-1.5"
@@ -49,7 +54,7 @@
         >
         }
       </span>
-      <span class="muted details">
+      <span class="type-body-small text-on-surface-variant">
         {{ environment.variables.length }} variable{{
         environment.variables.length === 1 ? '' : 's' }} · {{
         environment.files.length }} file{{ environment.files.length === 1 ? '' :
@@ -84,7 +89,7 @@
   @if (deleting(); as environment) {
   <p>Its variables, files and secrets are deleted for good.</p>
   @if (environment.sessions.length > 0) {
-  <p class="error">
+  <p class="text-error wrap-anywhere">
     Used by these sessions; delete them first, archived ones too (their history
     holds the secrets, which are masked only while the environment exists):
   </p>
@@ -98,7 +103,11 @@
     }
   </ul>
   } @if (deleteError(); as text) {
-  <p class="error" role="alert" data-testid="environment-delete-error">
+  <p
+    class="text-error wrap-anywhere"
+    role="alert"
+    data-testid="environment-delete-error"
+  >
     {{ text }}
   </p>
   } }

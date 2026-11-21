@@ -43,7 +43,10 @@ export function displayVersion(health: HealthResponse): string {
  */
 @Component({
   selector: 'app-settings-page',
-  host: { class: 'app-page' },
+  host: {
+    class:
+      'app-page gap-4 [--app-page-max:1320px] lg:grid lg:grid-cols-2 lg:items-start',
+  },
   imports: [
     AppIcon,
     AppPageBar,
@@ -54,7 +57,6 @@ export function displayVersion(health: HealthResponse): string {
     NotificationSettings,
   ],
   templateUrl: './settings-page.html',
-  styleUrl: './settings-page.scss',
 })
 export class SettingsPage implements OnInit {
   private readonly settingsApi = inject(SettingsApi);

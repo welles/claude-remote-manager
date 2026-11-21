@@ -49,6 +49,7 @@ import { EnvironmentsApi } from './environments-api';
  */
 @Component({
   selector: 'app-environment-editor',
+  host: { class: 'block' },
   imports: [
     AppIcon,
     FormsModule,
@@ -60,7 +61,6 @@ import { EnvironmentsApi } from './environments-api';
     TextFieldModule,
   ],
   templateUrl: './environment-editor.html',
-  styleUrl: './environment-editor.scss',
 })
 export class EnvironmentEditor implements OnInit {
   private readonly api = inject(EnvironmentsApi);
