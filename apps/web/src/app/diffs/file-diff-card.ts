@@ -19,51 +19,27 @@ const STATUS_LABELS: Record<FileDiff['status'], string> = {
 @Component({
   selector: 'app-file-diff-card',
   imports: [DiffView],
+  host: { class: 'block' },
   template: `
     @let d = diff();
-    <div class="head">
-      <code class="path" [title]="d.path">{{ label() ?? d.path }}</code>
-      <span class="status">{{ statusLabel() }}</span>
-      <span class="counts"
-        ><span class="added">+{{ d.additions }}</span>
-        <span class="removed">−{{ d.deletions }}</span></span
+    <div class="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <code class="path wrap-anywhere" [title]="d.path">{{
+        label() ?? d.path
+      }}</code>
+      <span class="type-body-small text-on-surface-variant">{{
+        statusLabel()
+      }}</span>
+      <span
+        ><span class="text-(--app-diff-add-fg)">+{{ d.additions }}</span>
+        <span class="text-(--app-diff-del-fg)">−{{ d.deletions }}</span></span
       >
     </div>
     @if (d.approximate) {
-      <p class="hint" data-testid="diff-approximate">
+      <p class="hint-text mb-1" data-testid="diff-approximate">
         From the tool's input: line numbers count from the changed text.
       </p>
     }
     <app-diff-view [diff]="d" [layout]="layout()" [limit]="limit()" />
-  `,
-  styles: `
-    :host {
-      display: block;
-    }
-    .head {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      gap: 2px 8px;
-      margin-bottom: 4px;
-    }
-    .path {
-      overflow-wrap: anywhere;
-    }
-    .status,
-    .hint {
-      color: var(--mat-sys-on-surface-variant);
-      font: var(--mat-sys-body-small);
-    }
-    .hint {
-      margin: 0 0 4px;
-    }
-    .added {
-      color: var(--app-diff-add-fg);
-    }
-    .removed {
-      color: var(--app-diff-del-fg);
-    }
   `,
 })
 export class FileDiffCard {

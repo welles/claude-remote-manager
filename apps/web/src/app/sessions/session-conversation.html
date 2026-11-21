@@ -3,7 +3,7 @@
 } @for (item of entries(); track item.key) { @switch (item.kind) { @case
 ('user') {
 <!-- prettier-ignore -->
-<div class="user-message" [class.app-message]="item.origin === 'app'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="message-origin" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" [showRepository]="multiRepository()" /></div>
+<div class="user-message wrap-anywhere whitespace-pre-wrap" [class]="item.origin === 'app' ? 'self-stretch border-l-2 border-outline-variant py-0.5 pl-2.5 type-body-medium text-on-surface-variant' : 'max-w-[86%] self-end rounded-[10px_10px_2px_10px] bg-surface-container-high px-3 py-2 type-body-large'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="block type-label-small whitespace-normal" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" [showRepository]="multiRepository()" /></div>
 @if (item.contextLength) {
 <app-message-context
   [sessionId]="sessionId()"
@@ -12,50 +12,75 @@
 />
 } } @case ('assistant') {
 <div
-  class="assistant-text markdown"
+  class="assistant-text markdown type-body-large"
   [attr.data-anchor]="anchorOf(item.key)"
-  [class.nested]="item.nested"
-  [class.streaming]="item.streaming"
+  [class]="item.nested ? 'ml-3 border-l-2 border-outline-variant pl-2.5' : ''"
+  [class.streaming-caret]="item.streaming"
   [innerHTML]="item.text | markdown"
 ></div>
 } @case ('tool') { @if (questionCard(item); as card) {
+<!-- A question of Claude's with the user's answers: a card of its own, so
+     the answers can be read again. -->
 <section
-  class="question-card question-{{ card.tone }}"
-  [class.nested]="item.nested"
+  class="flex flex-col gap-2.5 rounded-sm border border-l-[3px] border-outline-variant bg-surface-container-low px-3 py-2.5 wrap-anywhere [--app-icon-size:16px]"
+  [class]="
+    (card.tone === 'open'
+      ? 'border-l-tertiary'
+      : card.tone === 'unanswered'
+        ? 'border-l-outline'
+        : 'border-l-primary') + (item.nested ? ' ml-3' : '')
+  "
   data-testid="question-card"
 >
-  <p class="question-state">
+  <p
+    class="m-0 flex items-center gap-1.5 type-label-medium text-on-surface-variant"
+  >
     <app-icon name="info" /><span>Claude asked · {{ card.state }}</span>
   </p>
   @for (entry of card.questions; track $index) {
-  <div class="qa" data-testid="question">
+  <div class="flex flex-col items-start gap-0.5" data-testid="question">
     @if (entry.header) {
-    <span class="qa-header">{{ entry.header }}</span>
+    <span class="badge">{{ entry.header }}</span>
     }
-    <p class="qa-question">{{ entry.question }}</p>
+    <p class="m-0 type-body-medium whitespace-pre-wrap">{{ entry.question }}</p>
     @if (entry.answer) {
-    <p class="qa-answer" data-testid="answer">
-      <app-icon name="check" /><span>{{ entry.answer }}</span>
+    <p
+      class="mt-0.5 mb-0 flex gap-1.5 type-body-large font-semibold whitespace-pre-wrap"
+      data-testid="answer"
+    >
+      <app-icon class="mt-[3px] flex-none text-primary" name="check" /><span
+        >{{ entry.answer }}</span
+      >
     </p>
     @if (entry.description) {
-    <p class="qa-description">{{ entry.description }}</p>
+    <p class="hint-text ml-[22px]">{{ entry.description }}</p>
     } }
   </div>
   } @for (entry of card.other; track entry.question) {
-  <div class="qa" data-testid="question">
-    <p class="qa-question">{{ entry.question }}</p>
-    <p class="qa-answer" data-testid="answer">
-      <app-icon name="check" /><span>{{ entry.answer }}</span>
+  <div class="flex flex-col items-start gap-0.5" data-testid="question">
+    <p class="m-0 type-body-medium whitespace-pre-wrap">{{ entry.question }}</p>
+    <p
+      class="mt-0.5 mb-0 flex gap-1.5 type-body-large font-semibold whitespace-pre-wrap"
+      data-testid="answer"
+    >
+      <app-icon class="mt-[3px] flex-none text-primary" name="check" /><span
+        >{{ entry.answer }}</span
+      >
     </p>
   </div>
   } @if (card.problem) {
-  <p class="tool-denied" data-testid="question-problem">{{ card.problem }}</p>
+  <p
+    class="mt-1.5 mb-0 text-error wrap-anywhere"
+    data-testid="question-problem"
+  >
+    {{ card.problem }}
+  </p>
   }
 </section>
 } @else {
 <ng-container
   [ngTemplateOutlet]="toolRow"
-  [ngTemplateOutletContext]="{ $implicit: item }"
+  [ngTemplateOutletContext]="{ $implicit: item, inGroup: false }"
 />
 <ng-container
   [ngTemplateOutlet]="permissionLine"
@@ -67,31 +92,42 @@
   [ngTemplateOutletContext]="{ $implicit: item }"
 />
 } @case ('tools') { @let group = groupState(item);
-<details class="tool-group tool-{{ group.tone }}" data-testid="tool-group">
+<!-- A run of tool calls is one row. -->
+<details
+  class="group/tools tool-row tool-{{ group.tone }}"
+  data-testid="tool-group"
+>
   <summary>
-    <app-icon class="tool-icon group-chevron" name="chevron-right" />
-    <span class="group-count">{{ item.tools.length }} tool calls</span>
-    <span class="group-detail" [class.group-current]="group.current"
+    <app-icon
+      class="transition-transform duration-120 ease-[ease] group-open/tools:rotate-90"
+      name="chevron-right"
+    />
+    <span class="font-medium whitespace-nowrap"
+      >{{ item.tools.length }} tool calls</span
+    >
+    <span
+      class="truncate opacity-80"
+      [class]="group.current ? 'type-code text-[12px]' : ''"
       >{{ group.current ?? group.counts }}</span
     >
     @if (group.state) {
-    <span class="tool-state">{{ group.state }}</span>
+    <span data-tool-state>{{ group.state }}</span>
     }
   </summary>
-  <div class="group-body">
+  <div class="group-body flex flex-col gap-0.5 pt-0.5 pr-0 pb-1.5 pl-[13px]">
     @for (inner of item.items; track inner.key) { @if (inner.kind === 'tool') {
     <ng-container
       [ngTemplateOutlet]="toolRow"
-      [ngTemplateOutletContext]="{ $implicit: inner }"
+      [ngTemplateOutletContext]="{ $implicit: inner, inGroup: true }"
     />
     <ng-container
       [ngTemplateOutlet]="permissionLine"
-      [ngTemplateOutletContext]="{ $implicit: inner }"
+      [ngTemplateOutletContext]="{ $implicit: inner, inGroup: true }"
     />
     } @else {
     <div
-      class="assistant-text markdown nested"
-      [class.streaming]="inner.streaming"
+      class="assistant-text markdown my-0.5 border-l-2 border-outline-variant pl-2.5 type-body-medium text-on-surface-variant"
+      [class.streaming-caret]="inner.streaming"
       [innerHTML]="inner.text | markdown"
     ></div>
     } }
@@ -103,8 +139,11 @@
   [ngTemplateOutletContext]="{ $implicit: tool }"
 />
 } } @case ('queued') { @if (item.state === 'withdrawn') {
-<div class="withdrawn" data-testid="withdrawn">
-  <span class="withdrawn-text"
+<div
+  class="flex max-w-[86%] flex-col items-end self-end rounded-[10px_10px_2px_10px] border border-dashed border-outline px-3 py-1.5 wrap-anywhere"
+  data-testid="withdrawn"
+>
+  <span class="whitespace-pre-wrap text-on-surface-variant"
     ><app-message-text
       [text]="item.text"
       [references]="item.references"
@@ -113,7 +152,7 @@
   @if (item.attachments.length > 0) {
   <app-message-images [attachments]="item.attachments" />
   }
-  <span class="withdrawn-reason"
+  <span class="type-body-small text-error"
     >Not sent{{ item.reason ? ': ' + item.reason : '' }}</span
   >
   <button matButton (click)="edit.emit(item)" data-testid="edit-withdrawn">
@@ -122,42 +161,47 @@
 </div>
 } } @case ('file') {
 <app-shown-file-card
-  class="shown"
+  class="-mt-1"
   [file]="item.file"
   (open)="openFile.emit($event)"
 />
 } @case ('preview') {
 <app-preview-card
-  class="shown"
+  class="-mt-1"
   [preview]="current(item.preview)"
   (embed)="embed.emit($event)"
 />
 } @case ('settings') {
-<p class="notice" data-testid="settings-changed">{{ item.text }}</p>
+<!-- prettier-ignore -->
+<p class="notice hint-text wrap-anywhere" data-testid="settings-changed">{{ item.text }}</p>
 } @case ('notice') {
-<p class="notice notice-{{ item.level }}">{{ item.text }}</p>
+<!-- prettier-ignore -->
+<p class="notice hint-text wrap-anywhere" [class.text-error!]="item.level === 'warning'">{{ item.text }}</p>
 } @case ('error') {
-<p class="error-message">
+<p class="m-0 flex gap-1.5 type-body-small text-error [--app-icon-size:16px]">
   <app-icon name="alert" /><span>{{ item.text }}</span>
 </p>
 } @case ('prep') {
 <details
-  class="tool prep"
+  class="tool-row"
   [class.tool-bad]="item.failed"
   [open]="item.failed"
   data-testid="prep"
 >
   <summary>
-    <app-icon
-      class="tool-icon"
-      [name]="item.failed ? 'alert' : item.done ? 'check' : 'clock'"
-    />
-    <span class="tool-name">{{ item.label }}</span>
-    <span class="tool-summary prep-summary">{{ item.summary }}</span>
+    <app-icon [name]="item.failed ? 'alert' : item.done ? 'check' : 'clock'" />
+    <span class="font-medium">{{ item.label }}</span>
+    <span class="truncate type-code text-[12px] opacity-80"
+      >{{ item.summary }}</span
+    >
   </summary>
-  <div class="tool-body">
+  <div class="px-1.5 pt-0 pb-2">
     @for (step of item.steps; track step.key) { @if (step.kind === 'progress') {
-    <p class="progress progress-{{ step.state }}" data-testid="progress">
+    <p
+      class="mt-1.5 mb-0 wrap-anywhere"
+      [class.text-error]="step.state === 'failed'"
+      data-testid="progress"
+    >
       {{ progressText(step) }}
     </p>
     } @else {
@@ -174,7 +218,7 @@
   [ngTemplateOutletContext]="{ $implicit: item }"
 />
 } @case ('turn') {
-<p class="turn app-divider">
+<p class="app-divider">
   <span
     >@if (item.interrupted) { Interrupted · } {{ item.durationMs / 1000 |
     number: '1.1-1' }} s · {{ formatTokens(totalTokens(item.usage)) }} tokens ·
@@ -182,9 +226,13 @@
   >
 </p>
 } } } @if (running() && pendingRequests() === 0) {
-<p class="working"><span class="app-pulse"></span>Claude is working…</p>
+<p class="m-0 flex items-center gap-2 type-body-small text-on-surface-variant">
+  <span class="app-pulse"></span>Claude is working…
+</p>
 } @else if (preparing()) {
-<p class="working"><span class="app-pulse"></span>Preparing the session…</p>
+<p class="m-0 flex items-center gap-2 type-body-small text-on-surface-variant">
+  <span class="app-pulse"></span>Preparing the session…
+</p>
 } @if (session(); as s) { @if (s.status === 'failed' && resumable()) {
 <app-banner data-testid="failed-banner">
   The session failed. Send a message to try again in a new process.
@@ -193,14 +241,13 @@
 
 <ng-template #setupRow let-item>
   <details
-    class="tool setup"
+    class="tool-row"
     [class.tool-bad]="item.state === 'failed' || item.state === 'timed_out'"
     [open]="item.state === 'failed' || item.state === 'timed_out'"
     data-testid="setup"
   >
     <summary>
       <app-icon
-        class="tool-icon"
         [name]="
           item.state === 'succeeded'
             ? 'check'
@@ -209,56 +256,78 @@
               : 'alert'
         "
       />
-      <span class="tool-name">Setup {{ item.repository }}</span>
-      <span class="tool-state tool-state-{{ item.state }}"
-        >{{ setupState(item) }}</span
-      >
+      <span class="font-medium">Setup {{ item.repository }}</span>
+      <span data-tool-state>{{ setupState(item) }}</span>
       @if (item.durationMs !== null) {
-      <span class="setup-duration"
+      <span class="whitespace-nowrap"
         >{{ item.durationMs / 1000 | number: '1.1-1' }} s</span
       >
       }
     </summary>
-    <div class="tool-body">
+    <div class="px-1.5 pt-0 pb-2">
       @if (item.message) {
-      <p class="tool-denied">{{ item.message }}</p>
+      <p class="mt-1.5 mb-0 text-error wrap-anywhere">{{ item.message }}</p>
       } @if (item.output) {
       <pre class="tool-io">{{ item.output }}</pre>
       } @if (item.outputTail) {
-      <p class="setup-truncated">Output truncated. Last lines:</p>
+      <p class="mt-1.5 mb-0 wrap-anywhere">Output truncated. Last lines:</p>
       <pre class="tool-io">{{ item.outputTail }}</pre>
       }
     </div>
   </details>
 </ng-template>
 
-<ng-template #toolRow let-item>
+<ng-template #toolRow let-item let-inGroup="inGroup">
   @let state = toolState(item);
-  <details class="tool tool-{{ toolTone(state) }}" [class.nested]="item.nested">
+  <details
+    class="tool-row"
+    [class]="
+      'tool-' +
+      toolTone(state) +
+      (item.nested
+        ? (inGroup ? '' : ' ml-3') + ' rounded-none border-l-2 border-outline-variant'
+        : '')
+    "
+    data-testid="tool"
+  >
     <summary>
-      <app-icon class="tool-icon" [name]="toolIcon(state)" />
-      <span class="tool-name">{{ item.name }}</span>
-      <code class="tool-summary">{{ toolLine(item) }}</code>
-      <span class="tool-state tool-state-{{ state }}">{{ state }}</span>
+      <app-icon [name]="toolIcon(state)" />
+      <span class="font-medium" data-testid="tool-name">{{ item.name }}</span>
+      <code
+        class="truncate type-code text-[12px] opacity-80"
+        data-testid="tool-summary"
+        >{{ toolLine(item) }}</code
+      >
+      <span data-tool-state>{{ state }}</span>
     </summary>
-    <div class="tool-body">
+    <div class="px-1.5 pt-0 pb-2">
       @if (item.byApp; as byApp) {
-      <p class="tool-by-app" data-testid="tool-by-app">
+      <p class="mt-1.5 mb-0 text-secondary" data-testid="tool-by-app">
         Run by the app (autofix): {{ byApp.summary }}
       </p>
       } @if (item.denied) {
-      <p class="tool-denied">{{ item.denied }}</p>
+      <p class="mt-1.5 mb-0 text-error wrap-anywhere" data-testid="tool-denied">
+        {{ item.denied }}
+      </p>
       } @if (item.permission?.resolved?.answers; as answers) {
-      <dl class="answers">
+      <dl class="mt-1.5 mb-0">
         @for (answer of answers | keyvalue; track answer.key) {
-        <dt>{{ answer.key }}</dt>
-        <dd>{{ answer.value }}</dd>
+        <dt class="font-semibold">{{ answer.key }}</dt>
+        <dd class="mt-0 mb-1 ml-0">{{ answer.value }}</dd>
         }
       </dl>
       }
-      <pre class="tool-io">{{ inputJson(item.input) }}</pre>
+      <pre class="tool-io" [class.bg-surface-container-high]="inGroup">
+{{
+        inputJson(item.input)
+      }}</pre
+      >
       @if (item.result; as result) {
-      <pre class="tool-io" [class.tool-error]="result.isError">
+      <pre
+        class="tool-io"
+        [class.bg-surface-container-high]="inGroup"
+        [class.text-error]="result.isError"
+      >
 {{ result.content }}@if (result.truncated) {
 …(truncated)}</pre
       >
@@ -270,30 +339,32 @@
 <ng-template #toolExtras let-item>
   @if (item.diff; as change) {
   <app-file-diff-card
-    class="tool-diff"
-    [class.nested]="item.nested"
+    class="-mt-1"
+    [class.ml-3]="item.nested"
     [diff]="change.diff"
     [label]="sessionPath(change.diff.path)"
     data-testid="tool-diff"
   />
   } @for (file of item.shown; track file.id) {
   <app-shown-file-card
-    class="shown"
-    [class.nested]="item.nested"
+    class="-mt-1"
+    [class.ml-3]="item.nested"
     [file]="file"
     (open)="openFile.emit($event)"
   />
   } @for (preview of item.previews; track preview.id) {
   <app-preview-card
-    class="shown"
-    [class.nested]="item.nested"
+    class="-mt-1"
+    [class.ml-3]="item.nested"
     [preview]="current(preview)"
     (embed)="embed.emit($event)"
   />
-  } @if (item.permission; as permission) {
-  @if (permission.request.plan && permission.resolved) {
-  <details class="plan" [class.nested]="item.nested">
-    <summary>Plan</summary>
+  } @if (item.permission; as permission) { @if (permission.request.plan &&
+  permission.resolved) {
+  <details [class.ml-3]="item.nested">
+    <summary class="cursor-pointer type-body-small text-on-surface-variant">
+      Plan
+    </summary>
     <div
       class="markdown"
       [innerHTML]="permission.request.plan | markdown"
@@ -302,12 +373,12 @@
   } }
 </ng-template>
 
-<ng-template #permissionLine let-item>
+<ng-template #permissionLine let-item let-inGroup="inGroup">
   @if (item.permission?.resolved) {
   <p
-    class="permission-line"
-    [class.permission-denied]="item.permission.resolved.decision === 'deny'"
-    [class.nested]="item.nested"
+    class="hint-text wrap-anywhere"
+    [class]="inGroup ? '' : '-mt-1.5 pl-2.5' + (item.nested ? ' ml-3' : '')"
+    [class.text-error!]="item.permission.resolved.decision === 'deny'"
     data-testid="permission-line"
   >
     {{ resolutionText(item.permission) }}

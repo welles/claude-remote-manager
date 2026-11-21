@@ -351,17 +351,19 @@ describe('SessionView', () => {
       ],
     });
     await harness.fixture.whenStable();
-    const summary = element.querySelector('.tool summary');
-    expect(summary?.querySelector('.tool-name')?.textContent).toBe('Bash');
-    expect(summary?.querySelector('.tool-summary')?.textContent).toBe(
-      'touch a',
-    );
-    expect(summary?.querySelector('.tool-state')?.textContent?.trim()).toBe(
-      'denied',
-    );
-    expect(element.querySelector('.tool-denied')?.textContent).toContain(
-      'not implemented',
-    );
+    const summary = element.querySelector('[data-testid="tool"] summary');
+    expect(
+      summary?.querySelector('[data-testid="tool-name"]')?.textContent,
+    ).toBe('Bash');
+    expect(
+      summary?.querySelector('[data-testid="tool-summary"]')?.textContent,
+    ).toBe('touch a');
+    expect(
+      summary?.querySelector('[data-tool-state]')?.textContent?.trim(),
+    ).toBe('denied');
+    expect(
+      element.querySelector('[data-testid="tool-denied"]')?.textContent,
+    ).toContain('not implemented');
   });
 
   it('folds a run of tool calls into one quiet row that opens to the calls', async () => {
@@ -417,7 +419,7 @@ describe('SessionView', () => {
     expect(summary).toContain('3 tool calls');
     expect(summary).toContain('Bash 2 · Read');
     expect(summary).toContain('1 failed');
-    expect(group.querySelectorAll('.tool')).toHaveLength(3);
+    expect(group.querySelectorAll('[data-testid="tool"]')).toHaveLength(3);
     // Claude's text stays outside, after the group.
     expect(group.nextElementSibling?.textContent).toContain('Found it.');
   });
@@ -550,9 +552,9 @@ describe('SessionView', () => {
       ],
     });
     await harness.fixture.whenStable();
-    const states = [...element.querySelectorAll('.tool .tool-state')].map(
-      (node) => node.textContent?.trim(),
-    );
+    const states = [
+      ...element.querySelectorAll('[data-testid="tool"] [data-tool-state]'),
+    ].map((node) => node.textContent?.trim());
     expect(states).toEqual(['done by the app', 'failed']);
     const notes = [
       ...element.querySelectorAll('[data-testid="tool-by-app"]'),
@@ -860,7 +862,9 @@ describe('SessionView', () => {
     // The row says it waits; the card in the dock is the only other place.
     expect(text('permission-line')).toBeUndefined();
     expect(
-      element.querySelector('.tool .tool-state')?.textContent?.trim(),
+      element
+        .querySelector('[data-testid="tool"] [data-tool-state]')
+        ?.textContent?.trim(),
     ).toBe('needs approval');
     // A turn waits: it can be stopped, and messages are queued.
     expect(text('interrupt')).toBe('Stop');
@@ -966,7 +970,7 @@ describe('SessionView', () => {
     await harness.fixture.whenStable();
     // The question breaks the run: no group, two rows and the card.
     expect(element.querySelector('[data-testid="tool-group"]')).toBeNull();
-    expect(element.querySelectorAll('.tool')).toHaveLength(2);
+    expect(element.querySelectorAll('[data-testid="tool"]')).toHaveLength(2);
     expect(text('question-card')).toContain('Claude asked · Answered');
     const entries = [
       ...element.querySelectorAll('[data-testid="question"]'),
@@ -1340,9 +1344,9 @@ describe('SessionView', () => {
     });
     await harness.fixture.whenStable();
     const messages = [...element.querySelectorAll('.user-message')];
-    expect(messages[0].classList.contains('app-message')).toBe(false);
+    expect(messages[0].getAttribute('data-origin')).not.toBe('app');
     expect(messages[0].textContent).toBe('Mine');
-    expect(messages[1].classList.contains('app-message')).toBe(true);
+    expect(messages[1].getAttribute('data-origin')).toBe('app');
     expect(
       messages[1].querySelector('[data-testid="app-message-label"]')
         ?.textContent,

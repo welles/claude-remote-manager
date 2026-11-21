@@ -1,30 +1,40 @@
 @let r = request();
+<!-- Needs the user: the attention colour, like every "needs you" state.
+     Long requests scroll inside the content; header and buttons stay. -->
 <section
-  class="card kind-{{ r.kind }}"
+  class="card-enter box-border flex max-h-[min(62dvh,640px)] flex-col gap-2 rounded-md border border-tertiary bg-[linear-gradient(var(--app-status-attention-container),var(--mat-sys-surface-container-low)_64px)] px-3 pt-2.5 pb-3 wrap-anywhere"
   role="region"
   [attr.aria-label]="heading()"
   data-testid="permission-card"
 >
-  <header class="card-header">
-    <span class="heading">{{ heading() }}</span>
+  <header class="flex flex-none items-center gap-2">
+    <span class="type-title-small text-tertiary">{{ heading() }}</span>
     @if (r.agentId) {
     <span class="badge">subagent</span>
     } @if (position(); as position) {
-    <span class="position">{{ position }}</span>
+    <span class="ml-auto type-body-small text-on-surface-variant"
+      >{{ position }}</span
+    >
     }
   </header>
 
   <!-- What is asked scrolls here; the buttons below stay in view. -->
-  <div class="content" data-testid="permission-content">
+  <div
+    class="flex min-h-0 flex-auto flex-col gap-2 overflow-y-auto overscroll-contain"
+    data-testid="permission-content"
+  >
     @switch (r.kind) { @case ('question') {
-    <div class="questions">
+    <div class="flex flex-col gap-3">
       @for (question of r.questions ?? []; track question.question) {
-      <fieldset class="question" data-testid="question">
-        <legend>
+      <fieldset
+        class="m-0 flex flex-col gap-1 border-0 p-0"
+        data-testid="question"
+      >
+        <legend class="mb-1 flex flex-wrap items-center gap-1.5 p-0">
           @if (question.header) {
           <span class="badge">{{ question.header }}</span>
           }
-          <span class="question-text">{{ question.question }}</span>
+          <span class="font-medium">{{ question.question }}</span>
         </legend>
         @if (question.multiSelect) { @for (option of question.options; track
         option.label) {
@@ -32,32 +42,36 @@
           [checked]="isSelected(question, option.label)"
           (change)="toggle(question, option.label, $event.checked)"
         >
-          <span class="option-label">{{ option.label }}</span>
+          <span class="font-medium">{{ option.label }}</span>
           @if (option.description) {
-          <span class="option-description">{{ option.description }}</span>
+          <span class="block type-body-small text-on-surface-variant"
+            >{{ option.description }}</span
+          >
           }
         </mat-checkbox>
         @if (option.preview) {
         <div
-          class="preview markdown"
+          class="markdown ml-10 text-[0.85em]"
           [innerHTML]="option.preview | markdown"
         ></div>
         } } } @else {
         <mat-radio-group
           [value]="singleValue(question)"
           (change)="choose(question, $event.value)"
-          class="options"
+          class="flex flex-col"
         >
           @for (option of question.options; track option.label) {
           <mat-radio-button [value]="option.label">
-            <span class="option-label">{{ option.label }}</span>
+            <span class="font-medium">{{ option.label }}</span>
             @if (option.description) {
-            <span class="option-description">{{ option.description }}</span>
+            <span class="block type-body-small text-on-surface-variant"
+              >{{ option.description }}</span
+            >
             }
           </mat-radio-button>
           @if (option.preview) {
           <div
-            class="preview markdown"
+            class="markdown ml-10 text-[0.85em]"
             [innerHTML]="option.preview | markdown"
           ></div>
           } }
@@ -83,7 +97,7 @@
     </div>
     } @case ('plan') { @if (r.plan; as plan) {
     <div
-      class="plan markdown"
+      class="markdown rounded-xs bg-surface-container-highest px-2"
       data-testid="plan"
       [innerHTML]="plan | markdown"
     ></div>
@@ -91,34 +105,34 @@
     <p>Claude wants to leave plan mode and start implementing.</p>
     }
     <mat-radio-group
-      class="options"
+      class="flex flex-col"
       [value]="planMode()"
       (change)="planMode.set($event.value)"
       aria-label="Continue in"
     >
       <mat-radio-button value="default">
-        <span class="option-label">Ask before changes</span>
-        <span class="option-description"
+        <span class="font-medium">Ask before changes</span>
+        <span class="block type-body-small text-on-surface-variant"
           >{{ modeInfo.default.description }}</span
         >
       </mat-radio-button>
       <mat-radio-button value="acceptEdits" data-testid="plan-accept-edits">
-        <span class="option-label">Accept edits</span>
-        <span class="option-description"
+        <span class="font-medium">Accept edits</span>
+        <span class="block type-body-small text-on-surface-variant"
           >{{ modeInfo.acceptEdits.description }}</span
         >
       </mat-radio-button>
     </mat-radio-group>
     } @default { @if (r.repositoryAddition) {
-    <p class="title">Add a repository to this session</p>
+    <p class="m-0 font-medium">Add a repository to this session</p>
     } @else if (r.title) {
-    <p class="title">{{ r.title }}</p>
+    <p class="m-0 font-medium">{{ r.title }}</p>
     } @else {
-    <p class="title">{{ summary().action }}</p>
+    <p class="m-0 font-medium">{{ summary().action }}</p>
     }
-    <dl class="fields">
+    <dl class="field-list">
       @for (field of summary().fields; track field.label) {
-      <div class="field">
+      <div>
         <dt>{{ field.label }}</dt>
         <dd>
           @if (field.code) {
@@ -130,28 +144,27 @@
     </dl>
     @if (r.diff; as diff) {
     <app-file-diff-card
-      class="diff"
       [diff]="diff"
       [label]="diffLabel()"
       data-testid="request-diff"
     />
     } @if (r.pullRequest; as pull) {
-    <dl class="fields" data-testid="pull-request">
-      <div class="field">
+    <dl class="field-list" data-testid="pull-request">
+      <div>
         <dt>Repository</dt>
         <dd><code>{{ pull.repository ?? 'not named' }}</code></dd>
       </div>
-      <div class="field">
+      <div>
         <dt>Title</dt>
         <dd>{{ pull.title }}</dd>
       </div>
       @if (pull.head) {
-      <div class="field">
+      <div>
         <dt>From</dt>
         <dd><code data-testid="pull-request-head">{{ pull.head }}</code></dd>
       </div>
       }
-      <div class="field">
+      <div>
         <dt>Into</dt>
         <dd>
           <code>{{ pull.base ?? 'the base branch' }}</code>@if (pull.draft) {
@@ -159,15 +172,18 @@
         </dd>
       </div>
       @if (pull.body) {
-      <div class="field">
+      <div>
         <dt>Description</dt>
-        <dd class="markdown body" [innerHTML]="pull.body | markdown"></dd>
+        <dd
+          class="markdown rounded-xs bg-surface-container-highest px-2"
+          [innerHTML]="pull.body | markdown"
+        ></dd>
       </div>
       }
     </dl>
     } @if (r.reviewThreadReply; as reply) {
-    <dl class="fields" data-testid="review-thread-reply">
-      <div class="field">
+    <dl class="field-list" data-testid="review-thread-reply">
+      <div>
         <dt>Pull request</dt>
         <dd>
           <code
@@ -176,17 +192,20 @@
           >
         </dd>
       </div>
-      <div class="field">
+      <div>
         <dt>Thread of comment</dt>
         <dd><code>{{ reply.commentId ?? '?' }}</code></dd>
       </div>
       @if (reply.body) {
-      <div class="field">
+      <div>
         <dt>Reply</dt>
-        <dd class="markdown body" [innerHTML]="reply.body | markdown"></dd>
+        <dd
+          class="markdown rounded-xs bg-surface-container-highest px-2"
+          [innerHTML]="reply.body | markdown"
+        ></dd>
       </div>
       }
-      <div class="field">
+      <div>
         <dt>Resolve</dt>
         <dd data-testid="reply-resolve">
           {{ reply.resolve ? 'yes, resolve the thread' : 'no' }}
@@ -194,8 +213,8 @@
       </div>
     </dl>
     } @if (r.pullRequestMerge; as merge) {
-    <dl class="fields" data-testid="pull-request-merge">
-      <div class="field">
+    <dl class="field-list" data-testid="pull-request-merge">
+      <div>
         <dt>Pull request</dt>
         <dd>
           <code
@@ -204,7 +223,7 @@
           >@if (merge.title) { {{ merge.title }} }
         </dd>
       </div>
-      <div class="field">
+      <div>
         <dt>Method</dt>
         <dd data-testid="merge-method">
           {{ merge.method ?? 'rebase, else squash, else merge commit' }}
@@ -212,8 +231,8 @@
       </div>
     </dl>
     } @if (r.pullRequestAutomation; as automation) {
-    <dl class="fields" data-testid="pull-request-automation">
-      <div class="field">
+    <dl class="field-list" data-testid="pull-request-automation">
+      <div>
         <dt>Pull request</dt>
         <dd>
           <code
@@ -224,7 +243,7 @@
       </div>
       @for (name of automationSwitches; track name) { @if (automation[name] !==
       null) {
-      <div class="field">
+      <div>
         <dt>{{ name }}</dt>
         <dd [attr.data-testid]="'automation-' + name">
           {{ automation[name] ? 'turn on' : 'turn off' }}
@@ -233,14 +252,14 @@
       } }
     </dl>
     } @if (r.repositoryAddition; as add) {
-    <dl class="fields" data-testid="repository-addition">
-      <div class="field">
+    <dl class="field-list" data-testid="repository-addition">
+      <div>
         <dt>Repository</dt>
         <dd>
           <code data-testid="addition-repository">{{ add.repository }}</code>
         </dd>
       </div>
-      <div class="field">
+      <div>
         <dt>From</dt>
         <dd data-testid="addition-source">
           {{ additionSource(add) }} @if (add.source === 'url' && add.url) {
@@ -248,7 +267,7 @@
           }
         </dd>
       </div>
-      <div class="field">
+      <div>
         <dt>Base branch</dt>
         <dd data-testid="addition-base">
           @if (add.baseBranch) {
@@ -258,51 +277,57 @@
           default branch }
         </dd>
       </div>
-      <div class="field">
+      <div>
         <dt>Claude's reason</dt>
-        <dd class="reason" data-testid="addition-reason">{{ add.reason }}</dd>
+        <!-- Claude's own words: kept as written, never rendered. -->
+        <!-- prettier-ignore -->
+        <dd class="whitespace-pre-wrap" data-testid="addition-reason">{{ add.reason }}</dd>
       </div>
     </dl>
-    <p class="hint">
+    <p class="hint-text">
       Clones it into this session on the session branch and runs its setup
       script; Claude can then read and change it. Only this repository, only
       this time.
     </p>
     } @if (r.gitPushes.length > 0) {
     <div
-      class="pushes"
-      [class.danger]="!plainPushes()"
+      class="rounded-sm px-2 py-1.5"
+      [class]="
+        plainPushes()
+          ? 'bg-surface-container-highest'
+          : 'bg-error-container text-on-error-container [&_.hint-text]:text-inherit'
+      "
       data-testid="git-pushes"
     >
       @for (push of r.gitPushes; track $index) {
-      <p class="push">
+      <p class="m-0">
         Push @for (target of push.targets; track $index) {
         <code>{{ target.destination }}</code>
         } @empty { the current branch } to
         <code>{{ push.remote ?? 'its upstream' }}</code>
       </p>
       @if (push.warnings.length > 0) {
-      <ul class="warnings">
+      <ul class="my-1 pl-5 font-semibold">
         @for (warning of push.warnings; track warning) {
         <li>{{ warning }}</li>
         }
       </ul>
       } } @if (plainPushes()) {
-      <p class="hint">Pushes only the session branch.</p>
+      <p class="hint-text">Pushes only the session branch.</p>
       } @else {
-      <p class="hint">
+      <p class="hint-text">
         Allowing it lets this command write to the whole repository.
       </p>
       }
     </div>
     } @if (r.description) {
-    <p class="hint">{{ r.description }}</p>
+    <p class="hint-text">{{ r.description }}</p>
     } @if (r.decisionReason) {
-    <p class="hint">Asked because: {{ r.decisionReason }}</p>
+    <p class="hint-text">Asked because: {{ r.decisionReason }}</p>
     } } } @if (denying()) {
     <mat-form-field
       appearance="outline"
-      class="message"
+      class="w-full"
       subscriptSizing="dynamic"
     >
       <mat-label
@@ -319,13 +344,13 @@
         data-testid="deny-message"
       ></textarea>
     </mat-form-field>
-    <p class="hint">
+    <p class="hint-text">
       @if (r.kind === 'plan') { With feedback Claude revises the plan; without,
       Claude stops and waits for your message. } @else { With a message Claude
       continues with it; without, Claude stops and waits. }
     </p>
     } @else if (r.sessionAllow; as allowed) {
-    <p class="hint" data-testid="session-allow">
+    <p class="hint-text [&_code]:mr-1" data-testid="session-allow">
       "Allow for this session" also allows from now on: @for (rule of
       allowed.rules; track rule) {
       <code>{{ rule }}</code>
@@ -336,7 +361,9 @@
     }
   </div>
   @if (denying()) {
-  <div class="buttons">
+  <div
+    class="flex flex-none flex-wrap gap-2 [&_button]:min-h-10 max-[481px]:[&_button]:flex-auto"
+  >
     <button
       matButton="filled"
       class="app-danger"
@@ -350,7 +377,9 @@
     <button matButton (click)="denying.set(false)">Back</button>
   </div>
   } @else {
-  <div class="buttons">
+  <div
+    class="flex flex-none flex-wrap gap-2 [&_button]:min-h-10 max-[481px]:[&_button]:flex-auto"
+  >
     @switch (r.kind) { @case ('question') {
     <button
       matButton="filled"

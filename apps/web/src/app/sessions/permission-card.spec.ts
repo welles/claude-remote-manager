@@ -182,7 +182,7 @@ describe('PermissionCard', () => {
       }),
     );
     const pushes = element.querySelector('[data-testid="git-pushes"]');
-    expect(pushes?.classList).toContain('danger');
+    expect(pushes?.classList).toContain('bg-error-container');
     expect(pushes?.textContent).toContain('Force push');
     expect(pushes?.textContent).toContain('write to the whole repository');
   });

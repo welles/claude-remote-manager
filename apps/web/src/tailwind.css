@@ -28,6 +28,7 @@
   --color-on-primary: var(--mat-sys-on-primary);
   --color-primary-container: var(--mat-sys-primary-container);
   --color-on-primary-container: var(--mat-sys-on-primary-container);
+  --color-secondary: var(--mat-sys-secondary);
   --color-secondary-container: var(--mat-sys-secondary-container);
   --color-on-secondary-container: var(--mat-sys-on-secondary-container);
   --color-tertiary: var(--mat-sys-tertiary);
@@ -465,4 +466,145 @@
   font: var(--mat-sys-body-medium);
   letter-spacing: var(--mat-sys-body-medium-tracking);
   cursor: pointer;
+}
+
+/*
+ * A tool call (and prep and setup steps) in the conversation: a quiet
+ * disclosure row without a frame, so Claude's text and the user's messages
+ * stand out. The summary is icon, name, a line of detail, then the state
+ * (`data-tool-state`). The state colours icon and state text:
+ * `tool-ok`, `tool-bad`, `tool-ask` (needs the user), `tool-busy`.
+ */
+@utility tool-row {
+  border-radius: var(--mat-sys-corner-small);
+  color: var(--mat-sys-on-surface-variant);
+  font: var(--mat-sys-body-small);
+  letter-spacing: var(--mat-sys-body-small-tracking);
+
+  &[open] {
+    background: var(--mat-sys-surface-container-low);
+  }
+
+  & > summary {
+    display: grid;
+    grid-template-columns: 14px auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 26px;
+    padding: 0 6px;
+    border-radius: var(--mat-sys-corner-small);
+    cursor: pointer;
+    list-style: none;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+
+    &:hover {
+      background: var(--mat-sys-surface-container-low);
+    }
+
+    & > app-icon:first-child {
+      --app-icon-size: 14px;
+      --app-icon-stroke: 2.2;
+    }
+
+    & > [data-tool-state] {
+      white-space: nowrap;
+    }
+  }
+
+  &.tool-ok > summary > app-icon:first-child {
+    color: var(--app-success);
+  }
+
+  &.tool-bad > summary > :is(app-icon:first-child, [data-tool-state]) {
+    color: var(--mat-sys-error);
+  }
+
+  &.tool-busy > summary > :is(app-icon:first-child, [data-tool-state]) {
+    color: var(--app-status-running);
+  }
+
+  &.tool-ask > summary > :is(app-icon:first-child, [data-tool-state]) {
+    color: var(--app-status-attention);
+  }
+
+  &.tool-ask > summary > [data-tool-state] {
+    font-weight: 600;
+  }
+}
+
+/* Input or output of a tool: preformatted, scrolling, at most 240 px. */
+@utility tool-io {
+  max-height: 240px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: var(--mat-sys-corner-extra-small);
+  background: var(--mat-sys-surface-container);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The conversation element the search jumped to (set by the session view). */
+@utility search-target {
+  outline: 2px solid var(--mat-sys-primary);
+  outline-offset: 4px;
+}
+
+/* Text that is still streaming ends in a caret. */
+@utility streaming-caret {
+  &::after {
+    content: '▍';
+    color: var(--app-status-running);
+  }
+}
+
+/*
+ * Label and value pairs (`dl` of `div`s with `dt` and `dd`): what an
+ * approval request asks for, facts on a page. Code values are `pre`.
+ */
+@utility field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+
+  & dt {
+    font: var(--mat-sys-label-medium);
+    letter-spacing: var(--mat-sys-label-medium-tracking);
+    color: var(--mat-sys-on-surface-variant);
+  }
+
+  & dd {
+    margin: 0;
+  }
+
+  & pre {
+    overflow-x: auto;
+    margin: 2px 0 0;
+    padding: 6px;
+    border-radius: var(--mat-sys-corner-extra-small);
+    background: var(--mat-sys-surface-container-highest);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font: var(--app-font-code);
+  }
+}
+
+/*
+ * A thing in the conversation with its actions (a shown file, a preview):
+ * a framed row, text on the left, buttons on the right.
+ */
+@utility item-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--mat-sys-outline-variant);
+  border-radius: var(--mat-sys-corner-small);
+  background: var(--mat-sys-surface-container-low);
 }
