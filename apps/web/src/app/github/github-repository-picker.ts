@@ -33,6 +33,7 @@ const PAGE_SIZE = 20;
  */
 @Component({
   selector: 'app-github-repository-picker',
+  host: { class: 'block' },
   imports: [
     FormsModule,
     MatAutocompleteModule,
@@ -40,7 +41,6 @@ const PAGE_SIZE = 20;
     MatInputModule,
   ],
   templateUrl: './github-repository-picker.html',
-  styleUrl: './github-repository-picker.scss',
 })
 export class GitHubRepositoryPicker {
   private readonly github = inject(GitHubApi);

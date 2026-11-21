@@ -1,6 +1,6 @@
-<form (ngSubmit)="create()" class="form">
-  <div class="prompt">
-    <mat-form-field appearance="outline" class="full">
+<form (ngSubmit)="create()" class="flex flex-col gap-2">
+  <div class="relative">
+    <mat-form-field appearance="outline" class="w-full">
       <mat-label>What should Claude do?</mat-label>
       <textarea
         matInput
@@ -38,7 +38,7 @@
     (optionsChange)="setReferenceOptions($event)"
     (repositoryChosen)="chooseReferenceRepository($event)"
   />
-  <div class="images">
+  <div class="flex flex-col items-start">
     <app-draft-images [drafts]="images" />
     <button
       matButton
@@ -58,7 +58,7 @@
     />
   </div>
 
-  <div class="workspace">
+  <div class="mt-2 flex flex-col gap-3">
     <div
       class="inline-flex flex-wrap gap-1 self-start"
       role="group"
@@ -94,7 +94,11 @@
     </div>
 
     @if (mode() === 'project') {
-    <mat-form-field appearance="outline" class="full" subscriptSizing="dynamic">
+    <mat-form-field
+      appearance="outline"
+      class="w-full"
+      subscriptSizing="dynamic"
+    >
       <mat-label>Project name</mat-label>
       <input
         matInput
@@ -111,25 +115,25 @@
       >
     </mat-form-field>
     } @if (mode() === 'scratch') {
-    <p class="hint">
+    <p class="m-0 text-on-surface-variant">
       The session gets an empty directory of its own, without git.
     </p>
     } @if (mode() !== 'scratch' && repositoriesLoaded() && repositories().length
     === 0) {
-    <p class="hint">
+    <p class="m-0 text-on-surface-variant">
       No repositories registered yet. Choose one from GitHub below or
       <a routerLink="/repositories">add one by URL</a>.
     </p>
     } @for (choice of choices(); track $index; let index = $index) {
-    <div class="choice" data-testid="repository-choice">
-      <span class="choice-label">
+    <div class="flex flex-col gap-1" data-testid="repository-choice">
+      <span class="type-label-large text-on-surface-variant">
         {{ mode() === 'repository' && index === 0 ? 'Main repository' :
         'Additional repository' }}
       </span>
-      <div class="choice-fields">
+      <div class="flex flex-wrap items-center gap-2">
         <mat-form-field
           appearance="outline"
-          class="repository"
+          class="flex-[2_1_220px]"
           subscriptSizing="dynamic"
         >
           <mat-label>Repository</mat-label>
@@ -153,7 +157,7 @@
         </mat-form-field>
         <mat-form-field
           appearance="outline"
-          class="branch"
+          class="flex-[1_1_160px]"
           subscriptSizing="dynamic"
         >
           <mat-label>Base branch</mat-label>
@@ -186,7 +190,6 @@
     </div>
     } @if (mode() !== 'scratch') {
     <app-github-repository-picker
-      class="github-picker"
       label="Add from GitHub"
       (picked)="addFromGitHub($event)"
     />
@@ -194,7 +197,7 @@
     <button
       matButton
       type="button"
-      class="add-repository"
+      class="self-start"
       (click)="addRepository()"
       data-testid="add-repository"
     >
@@ -203,11 +206,11 @@
     }
   </div>
 
-  <div class="actions">
+  <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
     @if (environments().length > 0) {
     <mat-form-field
       appearance="outline"
-      class="environment"
+      class="max-w-[260px] flex-[1_1_180px]"
       subscriptSizing="dynamic"
     >
       <mat-label>Environment</mat-label>
@@ -223,11 +226,7 @@
       </mat-select>
     </mat-form-field>
     }
-    <mat-form-field
-      appearance="outline"
-      class="model"
-      subscriptSizing="dynamic"
-    >
+    <mat-form-field appearance="outline" class="w-40" subscriptSizing="dynamic">
       <mat-label>Model</mat-label>
       <mat-select
         name="model"
@@ -242,7 +241,11 @@
         }
       </mat-select>
     </mat-form-field>
-    <mat-form-field appearance="outline" class="mode" subscriptSizing="dynamic">
+    <mat-form-field
+      appearance="outline"
+      class="max-w-[360px] flex-[1_1_220px]"
+      subscriptSizing="dynamic"
+    >
       <mat-label>Permissions</mat-label>
       <mat-select
         name="permissionMode"
@@ -254,13 +257,15 @@
         <mat-option
           [value]="option.value"
           [title]="option.description"
-          [class.mode-danger]="option.dangerous"
+          [style.--mat-option-label-text-color]="
+            option.dangerous ? 'var(--mat-sys-tertiary)' : null
+          "
           >{{ option.label }}</mat-option
         >
         }
       </mat-select>
       <mat-hint
-        [class.mode-danger]="dangerousModes.includes(permissionMode)"
+        [class.text-tertiary]="dangerousModes.includes(permissionMode)"
         data-testid="permission-mode-hint"
         >{{ modeInfo[permissionMode].description }}</mat-hint
       >
@@ -275,6 +280,6 @@
     </button>
   </div>
   @if (createError(); as error) {
-  <p class="error" data-testid="create-error">{{ error }}</p>
+  <p class="text-error wrap-anywhere" data-testid="create-error">{{ error }}</p>
   }
 </form>
