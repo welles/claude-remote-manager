@@ -24,7 +24,9 @@ describe('App', () => {
     const fixture = TestBed.createComponent(App);
     await fixture.whenStable();
     const element = fixture.nativeElement as HTMLElement;
-    const items = [...element.querySelectorAll('nav[aria-label="Main"] .item')];
+    const items = [
+      ...element.querySelectorAll('nav[aria-label="Main"] a[data-testid]'),
+    ];
     expect(items.map((item) => item.textContent?.trim())).toEqual([
       'Sessions',
       'Repos',

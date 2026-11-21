@@ -93,7 +93,7 @@ function isTopLevel(url: string): boolean {
   ],
   selector: 'app-root',
   templateUrl: './app.html',
-  styleUrl: './app.scss',
+  host: { class: 'block min-h-dvh' },
 })
 export class App {
   protected readonly access = inject(AccessSession);

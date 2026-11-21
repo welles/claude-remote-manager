@@ -1,29 +1,59 @@
-<a class="skip-link" href="#main" (click)="skip($event)">Skip to content</a>
-<nav class="nav" [class.detail]="!topLevel()" aria-label="Main">
-  <a class="mark" routerLink="/" aria-label="Claude Remote Manager, sessions">
-    <img src="icons/icon-192.png" alt="" width="32" height="32" />
+<a
+  class="fixed top-2 left-2 z-10 -translate-y-[200%] rounded-sm bg-primary px-3 py-2 text-on-primary focus:translate-y-0"
+  href="#main"
+  (click)="skip($event)"
+  >Skip to content</a
+>
+<!-- One list of destinations: a bottom bar on top-level pages below 840 px (detail pages get the whole height), a rail from 840 px. -->
+<nav
+  class="fixed z-5 flex bg-surface-container-low max-md:inset-x-0 max-md:bottom-0 max-md:box-border max-md:h-[calc(var(--app-nav-height)+env(safe-area-inset-bottom))] max-md:border-t max-md:border-outline-variant max-md:pb-[env(safe-area-inset-bottom)] md:inset-y-0 md:left-0 md:w-(--app-rail-width) md:flex-col md:items-stretch md:gap-2 md:border-r md:border-outline-variant md:py-2"
+  [class.max-md:hidden]="!topLevel()"
+  aria-label="Main"
+>
+  <a
+    class="hidden md:mb-2 md:grid md:h-12 md:place-items-center"
+    routerLink="/"
+    aria-label="Claude Remote Manager, sessions"
+  >
+    <img
+      class="rounded-sm"
+      src="icons/icon-192.png"
+      alt=""
+      width="32"
+      height="32"
+    />
   </a>
   @for (item of destinations; track item.link) {
   <a
-    class="item"
+    class="flex flex-col items-center justify-center gap-0.5 type-label-medium no-underline hover:no-underline max-md:flex-1 md:h-14"
+    [class]="
+      active(item)
+        ? 'text-on-surface'
+        : 'text-on-surface-variant hover:text-on-surface'
+    "
     [routerLink]="item.link"
-    [class.active]="active(item)"
     [attr.aria-current]="active(item) ? 'page' : null"
     [attr.data-testid]="item.testId"
   >
-    <span class="icon">
+    <span
+      class="relative grid h-7 w-[52px] place-items-center rounded-sm"
+      [class]="active(item) ? 'bg-surface-container-highest text-primary' : ''"
+    >
       <app-icon [name]="item.icon" />
       @if (item.link === '/' && needsYou() > 0) {
-      <span class="nav-badge" data-testid="nav-needs-you"
+      <span
+        class="absolute -top-[5px] left-[30px] box-border h-4 min-w-4 rounded-[8px] bg-(--app-status-attention) px-1 text-center text-[10px]/4 font-bold text-on-tertiary"
+        data-testid="nav-needs-you"
         >{{ needsYou() }}<span class="visually-hidden"> need you</span></span
       >
       }
     </span>
-    <span class="label">{{ item.label }}</span>
+    <span>{{ item.label }}</span>
   </a>
   }
 </nav>
-<div class="top" #top>
+<!-- Global banners stay visible; page bars stick below them. -->
+<div class="sticky top-0 z-4 md:ml-(--app-rail-width)" #top>
   @if (access.state() === 'expired') {
   <app-banner strip kind="error" role="alert" data-testid="access-expired">
     Your sign-in has expired. Nothing you send reaches the server.
@@ -42,7 +72,17 @@
   </app-banner>
   }
 </div>
-<main id="main" class="main" #main tabindex="-1">
+<main
+  id="main"
+  class="block outline-none md:ml-(--app-rail-width)"
+  [class]="
+    topLevel()
+      ? 'max-md:pb-[calc(var(--app-nav-height)+env(safe-area-inset-bottom))]'
+      : ''
+  "
+  #main
+  tabindex="-1"
+>
   <router-outlet />
 </main>
 <app-toasts />

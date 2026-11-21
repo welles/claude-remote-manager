@@ -113,7 +113,7 @@ const unavailable = (branch: RemoteBranch) =>
   ],
   template: `
     <app-dialog
-      class="wide"
+      wide
       [heading]="mode() === 'archive' ? 'Archive this session?' : 'Clean up'"
       testId="cleanup-dialog"
       (closed)="closed()"
