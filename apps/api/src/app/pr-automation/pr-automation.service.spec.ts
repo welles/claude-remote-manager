@@ -2603,6 +2603,46 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       expect(wakeMessages()[0]).toContain('was closed without merging');
     });
 
+    it('names no base branch with characters app text must not contain', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      await claudeGoesOn(session.id);
+      merge(pull.number);
+      fakePull(pull.number).base = 'release@1';
+
+      await automation.check(pull.id);
+      await waitFor(() => wakeMessages().length === 1);
+
+      expect(wakeMessages()[0]).toContain('was merged into its base branch');
+      expect(wakeMessages()[0]).not.toContain('@');
+    });
+
+    it('tells in the conversation when the wake cannot be sent', async () => {
+      const { session, pull } = await sessionWithPullRequest();
+      await claudeGoesOn(session.id);
+      const send = harness.service.sendMessage.bind(harness.service);
+      jest
+        .spyOn(harness.service, 'sendMessage')
+        .mockImplementation((id, input) =>
+          input.text.includes('was merged into')
+            ? Promise.reject(new Error('A directory is being added'))
+            : send(id, input),
+        );
+      merge(pull.number);
+
+      await automation.check(pull.id);
+      await waitFor(() =>
+        harness
+          .eventsOfType(session.id, 'notice')
+          .some((event) => event.text.includes('could not be woken')),
+      );
+
+      const notice = harness
+        .eventsOfType(session.id, 'notice')
+        .find((event) => event.text.includes('could not be woken'));
+      expect(notice?.level).toBe('warning');
+      expect(notice?.text).toContain('A directory is being added');
+    });
+
     it('does not wake Claude when autoclose ends the session', async () => {
       const { session, pull } = await sessionWithPullRequest();
       automation.update(session.id, pull.id, { autoclose: true });
