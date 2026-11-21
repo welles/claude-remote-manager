@@ -18,7 +18,7 @@
   <!-- On phones a floating button above the bottom navigation. -->
   <a
     matButton="filled"
-    class="max-sm:fixed! max-sm:right-4 max-sm:bottom-[calc(var(--app-nav-height)+env(safe-area-inset-bottom)+16px)] max-sm:z-4 max-sm:shadow-3! max-sm:[--mat-button-filled-container-height:48px] max-sm:[--mat-button-filled-container-shape:var(--mat-sys-corner-large)] max-sm:[--mat-button-filled-horizontal-padding:16px]"
+    class="max-sm:fixed! max-sm:right-4 max-sm:bottom-[calc(var(--app-nav-height)+env(safe-area-inset-bottom)+16px)] max-sm:z-4 max-sm:pr-4.5! max-sm:pl-3.5! max-sm:shadow-3 max-sm:[--mat-button-filled-container-height:48px] max-sm:[--mat-button-filled-container-shape:var(--mat-sys-corner-large)]"
     routerLink="/new"
     data-testid="new-session"
     ><app-icon matButtonIcon name="plus" />New session</a
@@ -109,8 +109,7 @@
 </h2>
 }
 <nav
-  class="card-list"
-  [class]="pane() ? '' : 'max-sm:mx-[calc(8px-var(--app-gutter))]'"
+  class="card-list max-sm:mx-[calc(8px-var(--app-gutter))]"
   [class.opacity-70]="staleSince() !== null"
   [attr.aria-label]="group.label || 'Sessions'"
 >
@@ -120,14 +119,15 @@
        Wide screens (not beside a session) add model and usage, and the
        time spans both lines. -->
   <a
-    class="grid grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-0.5 text-inherit no-underline hover:bg-surface-container hover:no-underline focus-visible:-outline-offset-2"
+    class="grid grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-y-0.5"
     [class]="
       (pane()
-        ? 'px-2.5 py-2'
-        : 'px-3 py-2.5 md:grid-cols-[12px_minmax(0,1fr)_auto_auto] md:gap-x-4') +
+        ? 'gap-x-4 px-2.5 py-2'
+        : 'gap-x-2.5 px-3 py-2.5 md:grid-cols-[12px_minmax(0,1fr)_auto_auto] md:gap-x-4') +
+      ' ' +
       (active
-        ? ' bg-secondary-container shadow-[inset_3px_0_0_var(--mat-sys-primary)]'
-        : '')
+        ? 'bg-secondary-container shadow-[inset_3px_0_0_var(--mat-sys-primary)]'
+        : 'hover:bg-surface-container')
     "
     [attr.aria-current]="active ? 'page' : null"
     [routerLink]="['/sessions', session.id]"
@@ -143,19 +143,17 @@
       >{{ session.title || 'Untitled session' }}</span
     >
     <time
-      class="row-start-1 type-body-small whitespace-nowrap text-on-surface-variant tabular-nums"
+      class="col-start-3 row-start-1 type-body-small whitespace-nowrap text-on-surface-variant tabular-nums"
       [class]="
-        pane()
-          ? 'col-start-3'
-          : 'col-start-3 md:col-start-4 md:row-end-3 md:min-w-[5.5em] md:text-right'
+        pane() ? '' : 'md:col-start-4 md:row-end-3 md:min-w-[5.5em] md:text-right'
       "
       [attr.datetime]="session.updatedAt"
       [title]="session.updatedAt | appDate"
       >{{ session.updatedAt | appDate: 'relative' : now() }}</time
     >
     <span
-      class="col-start-2 row-start-2 flex min-w-0 items-center gap-2 overflow-hidden type-body-small whitespace-nowrap text-on-surface-variant"
-      [class]="pane() ? 'col-end-4' : 'col-end-4 md:col-end-3'"
+      class="col-start-2 col-end-4 row-start-2 flex min-w-0 items-center gap-2 overflow-hidden type-body-small whitespace-nowrap text-on-surface-variant"
+      [class]="pane() ? '' : 'md:col-end-3'"
     >
       @if (tagged(kind)) {
       <span [class]="kindClass[kind]" data-testid="session-status"
@@ -177,7 +175,7 @@
     <span
       class="col-start-3 row-start-1 row-end-3 hidden justify-end gap-4 type-body-small whitespace-nowrap text-on-surface-variant tabular-nums md:flex"
     >
-      <span class="md:min-w-[7em] md:text-right"
+      <span class="min-w-[7em] text-right"
         >{{ modelLabel(models(), session.model) }}</span
       >
       <span

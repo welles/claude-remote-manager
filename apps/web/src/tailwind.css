@@ -355,4 +355,15 @@
   & > * + * {
     border-top: 1px solid var(--mat-sys-outline-variant);
   }
+
+  /* Rows that are links: no link look, and a focus ring inside the card
+     (its overflow would clip one outside). */
+  & > a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  & > :focus-visible {
+    outline-offset: -2px;
+  }
 }

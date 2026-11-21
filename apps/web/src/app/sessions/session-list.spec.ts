@@ -169,6 +169,36 @@ describe('SessionList', () => {
     http.expectOne('/api/limits');
   });
 
+  it('marks the session open beside the list as the current page', async () => {
+    const fixture = TestBed.createComponent(SessionList);
+    fixture.componentRef.setInput('pane', true);
+    fixture.componentRef.setInput('activeId', 's2');
+    fixture.detectChanges();
+    for (const request of http.match((req) => req.url === '/api/models')) {
+      request.flush({ models: [], source: 'fallback', updatedAt: null });
+    }
+    http
+      .expectOne((req) => req.url === '/api/sessions')
+      .flush({
+        sessions: [
+          sessionDto({ id: 's1', title: 'One', waitingFor: 'message' }),
+          sessionDto({ id: 's2', title: 'Two', waitingFor: 'message' }),
+        ],
+      });
+    await fixture.whenStable();
+    const rows = [
+      ...(fixture.nativeElement as HTMLElement).querySelectorAll(
+        '[data-testid="session"]',
+      ),
+    ];
+    expect(rows.map((row) => row.getAttribute('aria-current'))).toEqual([
+      null,
+      'page',
+    ]);
+    expect(rows[1].classList).toContain('bg-secondary-container');
+    expect(rows[0].classList).not.toContain('bg-secondary-container');
+  });
+
   it('groups the sessions by what they need', async () => {
     const fixture = await render();
     http.expectOne('/api/sessions').flush({
