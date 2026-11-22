@@ -6,6 +6,7 @@ import {
   type SelectionRange,
   type StateCommand,
 } from '@codemirror/state';
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 
 /** Markers that wrap inline text: bold, italic, strikethrough, code. */
 export type InlineFormat = 'bold' | 'italic' | 'strikethrough' | 'code';
@@ -239,33 +240,69 @@ function insertLink(state: EditorState) {
   });
 }
 
-const FENCE = /^\s*(```|~~~)/;
+/** A line that only closes a fence. */
+const CLOSING_FENCE = /^\s*(```|~~~)\s*$/;
+
+/**
+ * The fenced code block (as parsed) that holds the whole range, with its
+ * opening and closing fence lines; `null` outside one or for a block that
+ * is not closed.
+ */
+function fencedBlock(
+  state: EditorState,
+  range: SelectionRange,
+): { open: Line; close: Line } | null {
+  const tree =
+    ensureSyntaxTree(state, state.doc.length, 50) ?? syntaxTree(state);
+  for (
+    let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(
+      range.from,
+      1,
+    );
+    node;
+    node = node.parent
+  ) {
+    if (node.name !== 'FencedCode') {
+      continue;
+    }
+    if (node.to < range.to) {
+      return null;
+    }
+    const open = state.doc.lineAt(node.from);
+    const close = state.doc.lineAt(node.to);
+    return close.number > open.number && CLOSING_FENCE.test(close.text)
+      ? { open, close }
+      : null;
+  }
+  return null;
+}
 
 /**
  * Puts the selected lines between ``` fences (on lines of their own); an
- * empty selection gets an empty block with the caret inside. Lines with
- * fences right around them lose them.
+ * empty selection gets an empty block with the caret inside. Inside a
+ * fenced block (by the syntax tree, so two neighbouring blocks are not
+ * taken for one), its fences go instead.
  */
 function insertCodeBlock(state: EditorState) {
   return state.changeByRange((range) => {
     const first = state.doc.lineAt(range.from);
     const last = state.doc.lineAt(range.to);
-    if (first.number > 1 && last.number < state.doc.lines) {
-      const before = state.doc.line(first.number - 1);
-      const after = state.doc.line(last.number + 1);
-      if (FENCE.test(before.text) && /^\s*(```|~~~)\s*$/.test(after.text)) {
-        const removed = before.length + 1;
-        return {
-          changes: [
-            { from: before.from, to: first.from },
-            { from: last.to, to: after.to },
-          ],
-          range: EditorSelection.range(
-            range.from - removed,
-            range.to - removed,
-          ),
-        };
-      }
+    const block = fencedBlock(state, range);
+    if (block) {
+      const { open, close } = block;
+      const removed = open.length + 1;
+      // The code between the fences, after they are gone.
+      const start = open.from;
+      const end = Math.max(start, close.from - 1 - removed);
+      const place = (position: number) =>
+        Math.min(end, Math.max(start, position - removed));
+      return {
+        changes: [
+          { from: open.from, to: open.to + 1 },
+          { from: close.from - 1, to: close.to },
+        ],
+        range: EditorSelection.range(place(range.anchor), place(range.head)),
+      };
     }
     if (range.empty && first.text.trim() === '') {
       return {

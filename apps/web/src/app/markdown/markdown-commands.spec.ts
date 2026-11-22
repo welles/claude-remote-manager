@@ -1,3 +1,4 @@
+import { markdownLanguage } from '@codemirror/lang-markdown';
 import { EditorSelection, EditorState } from '@codemirror/state';
 import {
   formatCommand,
@@ -16,6 +17,7 @@ function stateOf(marked: string): EditorState {
     return EditorState.create({
       doc: marked.replace('|', ''),
       selection: EditorSelection.cursor(caret),
+      extensions: markdownLanguage,
     });
   }
   const from = marked.indexOf('[');
@@ -23,6 +25,7 @@ function stateOf(marked: string): EditorState {
   return EditorState.create({
     doc: marked.replace('[', '').replace(']', ''),
     selection: EditorSelection.range(from, to),
+    extensions: markdownLanguage,
   });
 }
 
@@ -122,6 +125,13 @@ describe('Markdown formatting', () => {
     // Fenced already: the fences go.
     expect(format('codeBlock', '```ts\n[a\nb]\n```')).toBe('[a\nb]');
     expect(format('codeBlock', 'x\n```\n|\n```\ny')).toBe('x\n|\ny');
+    // Between two blocks: a block of its own, the others stay.
+    expect(format('codeBlock', '```\na\n```\nb|\n```\nc\n```')).toBe(
+      '```\na\n```\nb\n```\n|\n```\n```\nc\n```',
+    );
+    expect(format('codeBlock', '```\na\n```\n[b]\n```\nc\n```')).toBe(
+      '```\na\n```\n```\n[b]\n```\n```\nc\n```',
+    );
   });
 });
 
