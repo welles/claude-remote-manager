@@ -129,10 +129,10 @@ describe('List indentation', () => {
   it('nests an item under the one before, to its text', () => {
     expect(run(indentListItem, '- a\n- |b').result).toBe('- a\n  - |b');
     expect(run(indentListItem, '1. a\n2. |b').result).toBe('1. a\n   2. |b');
-    // The first item cannot be nested, but Tab stays in the list.
+    // The first item cannot be nested: Tab moves the focus on.
     expect(run(indentListItem, '- |a')).toEqual({
       result: '- |a',
-      handled: true,
+      handled: false,
     });
   });
 
@@ -141,6 +141,11 @@ describe('List indentation', () => {
       '- a\n  - b\n  - |c',
     );
     expect(run(outdentListItem, '- a\n  - |b').result).toBe('- a\n- |b');
+    // Nothing nested: Shift+Tab moves the focus back.
+    expect(run(outdentListItem, '- |a')).toEqual({
+      result: '- |a',
+      handled: false,
+    });
   });
 
   it('looks past continuation text and blank lines', () => {
