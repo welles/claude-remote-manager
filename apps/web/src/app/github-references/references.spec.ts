@@ -100,9 +100,13 @@ describe('GitHub references in the web app', () => {
     expect(first.querySelectorAll('br')).toHaveLength(2);
     expect(first.textContent).toBe('<div>  <span>x</span></div>');
     expect(element.querySelector('a')?.getAttribute('href')).toBe('#12');
-    expect(element.querySelector('a .token')).toBeNull();
     expect(
-      [...element.querySelectorAll('.token')].map((token) => token.textContent),
+      element.querySelector('a [data-testid="reference-token"]'),
+    ).toBeNull();
+    expect(
+      [...element.querySelectorAll('[data-testid="reference-token"]')].map(
+        (token) => token.textContent,
+      ),
     ).toEqual(['#12']);
   });
 
@@ -119,21 +123,26 @@ describe('GitHub references in the web app', () => {
     await fixture.whenStable();
     const element = fixture.nativeElement as HTMLElement;
     // The chip inside the bold text, where #12 was written.
-    expect(element.querySelector('strong .token')?.textContent).toBe('#12');
+    expect(
+      element.querySelector('strong [data-testid="reference-token"]')
+        ?.textContent,
+    ).toBe('#12');
     expect(element.querySelectorAll('ul')).toHaveLength(2);
     expect(element.querySelector('li code')?.textContent).toBe('x');
     // Task boxes as characters (the sanitizer drops inputs).
     expect(element.querySelector('li')?.textContent).toBe('☑ done');
     // HTML shows as typed; a typed line break stays.
-    expect(element.querySelector('button:not(.chip), b')).toBeNull();
+    expect(
+      element.querySelector('button:not([data-testid="reference-chip"]), b'),
+    ).toBeNull();
     expect(element.querySelectorAll('li')[2].textContent).toBe(
       'add a <button> to the <b>page</b>next line',
     );
     expect(element.querySelector('li br')).not.toBeNull();
     // A reference the text does not contain follows it.
-    const tokens = [...element.querySelectorAll('.token')].map(
-      (token) => token.textContent,
-    );
+    const tokens = [
+      ...element.querySelectorAll('[data-testid="reference-token"]'),
+    ].map((token) => token.textContent);
     expect(tokens).toEqual(['#12', '#9']);
 
     // The other one in a paragraph of its own.
@@ -144,7 +153,7 @@ describe('GitHub references in the web app', () => {
     fixture.componentRef.setInput('text', 'Plain');
     fixture.componentRef.setInput('references', []);
     await fixture.whenStable();
-    expect(element.querySelector('.token')).toBeNull();
+    expect(element.querySelector('[data-testid="reference-token"]')).toBeNull();
     expect(element.textContent).toBe('Plain');
   });
 
