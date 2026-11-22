@@ -91,6 +91,10 @@ describe('MarkdownEditor', () => {
     expect(editor.value).toBe('- one\n  - two');
     expect(editor.press('Tab', { shiftKey: true }).defaultPrevented).toBe(true);
     expect(editor.value).toBe('- one\n- two');
+    // Nothing to move out: Shift+Tab is the browser's (focus back).
+    expect(editor.press('Tab', { shiftKey: true }).defaultPrevented).toBe(
+      false,
+    );
     editor.type('plain');
     expect(editor.press('Tab').defaultPrevented).toBe(false);
   });

@@ -365,9 +365,9 @@ function inList(state: EditorState): boolean {
 
 /**
  * Tab in a list: nests the selected items under the item before them
- * (indented to its text, as Markdown needs). The first item of a list
- * cannot be nested, but Tab stays in the list. Outside lists, nothing
- * (Tab keeps its usual meaning).
+ * (indented to its text, as Markdown needs). Outside lists, and where
+ * nothing can be nested (the first item of a list), nothing: Tab keeps
+ * its usual meaning.
  */
 export const indentListItem: StateCommand = ({ state, dispatch }) => {
   if (!inList(state)) {
@@ -389,15 +389,19 @@ export const indentListItem: StateCommand = ({ state, dispatch }) => {
       changes.push({ from: line.from, insert: ' '.repeat(previous.width) });
     }
   }
-  if (changes.length > 0) {
-    dispatch(state.update({ changes, userEvent: 'input.indent' }));
+  // Nothing to move: the key keeps its usual meaning (focus), so the
+  // editor never traps the keyboard.
+  if (changes.length === 0) {
+    return false;
   }
+  dispatch(state.update({ changes, userEvent: 'input.indent' }));
   return true;
 };
 
 /**
  * Shift+Tab in a list: moves the selected items out by one level (to the
- * indentation of the item they are nested in).
+ * indentation of the item they are nested in). Where nothing is nested,
+ * nothing: Shift+Tab keeps its usual meaning.
  */
 export const outdentListItem: StateCommand = ({ state, dispatch }) => {
   if (!inList(state)) {
@@ -417,8 +421,11 @@ export const outdentListItem: StateCommand = ({ state, dispatch }) => {
     const target = parent?.indent ?? 0;
     changes.push({ from: line.from + target, to: line.from + item.indent });
   }
-  if (changes.length > 0) {
-    dispatch(state.update({ changes, userEvent: 'delete.dedent' }));
+  // Nothing to move: the key keeps its usual meaning (focus), so the
+  // editor never traps the keyboard.
+  if (changes.length === 0) {
+    return false;
   }
+  dispatch(state.update({ changes, userEvent: 'delete.dedent' }));
   return true;
 };
