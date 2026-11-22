@@ -60,7 +60,7 @@ export function shortcutLabel(key: string, mac = isMac()): string {
     @for (button of buttons; track button.format) {
       <button
         type="button"
-        class="icon-btn size-9!"
+        class="icon-btn size-[34px]!"
         [title]="title(button)"
         [attr.aria-label]="button.label"
         (mousedown)="$event.preventDefault()"
