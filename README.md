@@ -2145,11 +2145,14 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
 - **Review mode** per session: `off` (only "Review now"), `claude` (the default: Claude asks
   with the app tool `request_review`) or `turn` (after every turn, see below, and when Claude
   asks). Sessions that had auto-review on became `turn` (migration 0024).
-- **Claude's requests:** in modes `claude` and `turn` the tool `request_review` (no approval
-  needed) starts a review and returns at once; the findings come later as usual.
-  `claude-md/core.md` tells Claude to ask after a finished, locally checked work package,
-  before a pull request or push. The tool refuses while a review runs, without changes, for a
-  diff already reviewed (same fingerprint as below), at the round limit, or with mode `off`.
+- **Claude's requests:** the tool `request_review` (no approval needed; offered in every
+  session, since the mode can change while the process runs) starts a review and returns at
+  once. Claude always hears the outcome as the app's message: the findings, or that there were
+  none, or that the review failed or was cancelled (so Claude, waiting before its pull
+  request, goes on). `claude-md/core.md` tells Claude to ask after a finished, locally
+  checked work package, before a pull request or push. The tool refuses while a review runs,
+  without changes, for a diff already reviewed (same fingerprint as below), at the round
+  limit, without a repository, or with mode `off`.
 - **Auto-review** (mode `turn`): when a session's turn is over (it waits for a message, or
   only for what Claude goes on with by itself) and the fingerprint of its diff's content
   (`sessions.reviewed_diff`; not commits or line numbers, so committing or rebasing reviewed
@@ -2161,7 +2164,8 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
 - **Findings** go to Claude right away as the app's message ("An independent review …",
   shown as "Sent by the app · Review"), queued while a turn runs; the findings themselves go
   along as untrusted context (the reviewer read repository content). Without findings Claude
-  gets nothing. The history shows a card per review (`review.started`, `review.finished`):
+  gets nothing, except for a review it asked for. The history shows a card per review
+  (`review.started`, `review.finished`):
   running with Cancel, the findings, the summary, an error, model, effort, duration and
   cost. A review cut off by a server stop shows as interrupted. Findings never go to an
   archived session, and those of a review that started by itself (auto-review or Claude's

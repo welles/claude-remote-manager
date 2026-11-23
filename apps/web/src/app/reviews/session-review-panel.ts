@@ -12,6 +12,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule, type MatSelect } from '@angular/material/select';
 import {
   REVIEW_EFFORTS,
+  DEFAULT_REVIEW_MODE,
   REVIEW_MODES,
   canResume,
   type SessionDto,
@@ -78,11 +79,11 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
     <mat-form-field appearance="outline" subscriptSizing="dynamic">
       <mat-label>Reviews start</mat-label>
       <mat-select
-        [value]="review?.mode ?? 'claude'"
+        [value]="review?.mode ?? defaultMode"
         (selectionChange)="
           update(
             { mode: $event.value },
-            revertSelect($event.source, review?.mode ?? 'claude')
+            revertSelect($event.source, review?.mode ?? defaultMode)
           )
         "
         [disabled]="busy() || !enabled()"
@@ -95,7 +96,7 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
         }
       </mat-select>
       <mat-hint data-testid="review-mode-hint"
-        >{{ modeLabels[review?.mode ?? 'claude'].hint }}
+        >{{ modeLabels[review?.mode ?? defaultMode].hint }}
         @if (review && review.mode !== 'off') {
           @if (defaults(); as d) {
             @if (review.autoRounds >= d.maxAutoRounds) {
@@ -173,6 +174,7 @@ export class SessionReviewPanel implements OnInit {
   protected readonly efforts = REVIEW_EFFORTS;
   protected readonly effortLabels = EFFORT_LABELS;
   protected readonly modes = REVIEW_MODES;
+  protected readonly defaultMode = DEFAULT_REVIEW_MODE;
   protected readonly modeLabels = MODE_LABELS;
   protected readonly triggerLabel = triggerLabel;
   private readonly defaultsState = inject(ReviewDefaultsState);

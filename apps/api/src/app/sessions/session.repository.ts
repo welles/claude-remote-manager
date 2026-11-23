@@ -171,7 +171,7 @@ export interface SessionRecord {
   workingDirectory: number | null;
   /** Set while the usage limit stopped the session (see `LimitWait`). */
   limitWait: LimitWait | null;
-  /** Independent reviews (see `sessions.auto_review` and the following columns). */
+  /** Independent reviews (see `sessions.review_mode` and the following columns). */
   reviewMode: ReviewMode;
   reviewModel: string | null;
   reviewEffort: ReviewEffort | null;

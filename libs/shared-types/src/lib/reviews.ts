@@ -32,8 +32,9 @@ export interface ReviewDefaults {
   model: string;
   effort: ReviewEffort;
   /**
-   * Auto-review rounds with findings in a row, after which auto-review
-   * waits for the user's next message (1 to {@link MAX_AUTO_REVIEW_ROUNDS}).
+   * Rounds with findings in a row of reviews that started by themselves
+   * (auto-review, Claude's requests), after which both wait for the
+   * user's next message (1 to {@link MAX_AUTO_REVIEW_ROUNDS}).
    */
   maxAutoRounds: number;
 }

@@ -23,6 +23,7 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { REVIEW_MODES } from '@claude-remote-manager/shared-types';
 import { AgentRunner } from '../agent/agent-runner';
+import type { UntrustedContext } from '../agent/untrusted-context';
 import { requireObject } from '../common/validation';
 import { SessionDiffService } from '../diffs/session-diff.service';
 import { SessionAutomationHooks } from '../sessions/session-automation-hooks';
@@ -47,6 +48,7 @@ import {
   diffFingerprint,
   findingsContext,
   findingsMessage,
+  reviewOutcomeMessage,
   parseReviewOutput,
   REVIEW_SCHEMA,
   REVIEWER_INSTRUCTIONS,
@@ -223,7 +225,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     const record = this.requireRecord(sessionId);
     if (record.reviewMode === 'off') {
       throw new Error(
-        'The user turned independent reviews off for this session; do not ask again unless the user wants a review.',
+        'The user turned independent reviews off for this session. The user can start one with "Review now" or change the review mode in the session\'s details; do not call this tool again in this session.',
       );
     }
     if (this.active.has(sessionId) || this.starting.has(sessionId)) {
@@ -235,6 +237,11 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     if (record.autoReviewRounds >= limit) {
       throw new Error(
         `Reviews found issues ${record.autoReviewRounds} times in a row; no further review until the user writes. Tell the user what is still open.`,
+      );
+    }
+    if (!record.directories.some((directory) => directory.kind === 'clone')) {
+      throw new Error(
+        'This session has no repository, so there is nothing to review; do not call this tool again in this session.',
       );
     }
     if (!this.reviewable(record)) {
@@ -427,9 +434,17 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
         reviewedDiff: diffFingerprint(diff),
         autoReviewRounds: rounds,
       });
-      if (findings.length > 0) {
-        messageId = await this.deliver(current, dto, summary, findings);
-      }
+    }
+    if (outcome === 'finished' && findings.length > 0) {
+      messageId = await this.deliver(current, dto, 'findings', {
+        text: findingsMessage(findings.length, dto.model, dto.effort),
+        untrusted: findingsContext(summary, findings),
+      });
+    } else if (dto.trigger === 'claude') {
+      // Claude waits for the review it asked for: it learns the outcome.
+      messageId = await this.deliver(current, dto, 'result', {
+        text: reviewOutcomeMessage(outcome),
+      });
     }
     this.sessions.recordEvent(sessionId, {
       type: 'review.finished',
@@ -463,16 +478,17 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Sends the findings to Claude; the message's ID, `null` if they were not
-   * sent. Never to an archived session, and an auto-review's findings not
-   * to a session that ended meanwhile (they would continue it): the card
-   * shows them.
+   * Sends a review's findings (or, for a review Claude asked for, its
+   * outcome) to Claude; the message's ID, `null` if it was not sent. Never
+   * to an archived session, and for a review that started by itself
+   * (auto-review, Claude's request) not to a session that ended meanwhile
+   * (it would continue it): the card shows the result.
    */
   private async deliver(
     record: SessionRecord,
     dto: RunningReviewDto,
-    summary: string | null,
-    findings: ReviewFinding[],
+    what: 'findings' | 'result',
+    message: { text: string; untrusted?: UntrustedContext },
   ): Promise<string | null> {
     const sessionId = record.id;
     if (
@@ -482,7 +498,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       this.sessions.recordEvent(sessionId, {
         type: 'notice',
         level: 'info',
-        text: `The session ${record.archivedAt !== null ? 'was archived' : 'ended'}: the review's findings were not sent to Claude.`,
+        text: `The session ${record.archivedAt !== null ? 'was archived' : 'ended'}: the review's ${what} ${what === 'findings' ? 'were' : 'was'} not sent to Claude.`,
       });
       return null;
     }
@@ -490,19 +506,19 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.sessions.sendMessage(sessionId, {
         id,
-        text: findingsMessage(findings.length, dto.model, dto.effort),
+        text: message.text,
         origin: 'app',
-        untrusted: findingsContext(summary, findings),
+        ...(message.untrusted ? { untrusted: message.untrusted } : {}),
       });
       return id;
     } catch (failure) {
       this.logger.warn(
-        `The findings of review ${dto.id} could not go to session ${sessionId}: ${errorText(failure)}`,
+        `The ${what} of review ${dto.id} could not go to session ${sessionId}: ${errorText(failure)}`,
       );
       this.sessions.recordEvent(sessionId, {
         type: 'notice',
         level: 'warning',
-        text: `The review's findings could not be sent to Claude: ${errorText(failure)}`,
+        text: `The review's ${what} could not be sent to Claude: ${errorText(failure)}`,
       });
       return null;
     }
