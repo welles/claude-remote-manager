@@ -2125,7 +2125,8 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
   tool exists) and no allow rules: reads inside the session's directories need none, and
   `dontAsk` refuses everything else, also reads elsewhere such as the Claude login (checked
   with Claude Code). No MCP servers, claude.ai connectors or hooks (`disableAllHooks`: the
-  reviewed changes may have written the project's settings), no transcript (`persistSession: false`), the chosen model and effort, and a JSON schema for
+  reviewed changes may have written the project's settings), no transcript
+  (`persistSession: false`), the chosen model and effort, and a JSON schema for
   its answer (`outputFormat`). Settings and CLAUDE.md files load as for a session. Its
   prompt is the session diff (`SessionDiffService`: every clone against the merge base with
   its base branch, with uncommitted and untracked files) as patches up to about 400 000
