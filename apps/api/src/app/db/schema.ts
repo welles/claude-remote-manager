@@ -15,6 +15,7 @@ import type {
   RepositoryAddedBy,
   RepositoryAdditionState,
   ReviewEffort,
+  ReviewMode,
   SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
@@ -198,10 +199,11 @@ export const sessions = sqliteTable('sessions', {
    * continues it once the limit has reset (see `LimitWait`).
    */
   limitWait: text('limit_wait', { mode: 'json' }).$type<LimitWait>(),
-  /** Auto-review: an independent review after each turn that changed the diff. */
-  autoReview: integer('auto_review', { mode: 'boolean' })
+  /** When independent reviews start by themselves (see `ReviewMode`). */
+  reviewMode: text('review_mode')
+    .$type<ReviewMode>()
     .notNull()
-    .default(false),
+    .default('claude'),
   /** The reviewer's model and effort; `null`: the app's default. */
   reviewModel: text('review_model'),
   reviewEffort: text('review_effort').$type<ReviewEffort>(),

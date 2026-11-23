@@ -1,7 +1,9 @@
 import type {
   ModelOption,
   ReviewEffort,
+  ReviewMode,
   ReviewSeverity,
+  ReviewTrigger,
 } from '@claude-remote-manager/shared-types';
 import { DEFAULT_REVIEW_MODEL } from '@claude-remote-manager/shared-types';
 
@@ -69,4 +71,29 @@ export function reviewModelLabel(
       (option) => option.value === model || option.resolvedModel === model,
     )?.label ?? (model === DEFAULT_REVIEW_MODEL ? 'Fable 5.2' : model)
   );
+}
+
+export const MODE_LABELS: Record<ReviewMode, { label: string; hint: string }> =
+  {
+    off: {
+      label: 'Off',
+      hint: 'Reviews start only with “Review now”.',
+    },
+    claude: {
+      label: 'When Claude asks',
+      hint: 'Claude asks for a review after a finished, locally checked work package.',
+    },
+    turn: {
+      label: 'After every turn',
+      hint: 'After each turn that changed the diff, and when Claude asks.',
+    },
+  };
+
+/** How a review started, for its card and the session's details. */
+export function triggerLabel(trigger: ReviewTrigger): string {
+  return trigger === 'auto'
+    ? 'Auto-review'
+    : trigger === 'claude'
+      ? 'Review requested by Claude'
+      : 'Review';
 }

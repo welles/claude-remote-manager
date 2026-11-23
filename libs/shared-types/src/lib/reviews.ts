@@ -64,8 +64,26 @@ export interface ReviewFinding {
   detail: string;
 }
 
-/** Who started a review: the user's button, or auto-review. */
-export type ReviewTrigger = 'manual' | 'auto';
+/**
+ * Who started a review: the user's button (`manual`), auto-review after a
+ * turn (`auto`), or Claude with the tool `request_review` (`claude`).
+ */
+export type ReviewTrigger = 'manual' | 'auto' | 'claude';
+
+/**
+ * When reviews start by themselves in a session (besides the user's
+ * button):
+ * - `off`: never;
+ * - `claude`: when Claude asks with the tool `request_review` (after a
+ *   finished work package);
+ * - `turn`: after every turn that changed the diff, and when Claude asks.
+ */
+export type ReviewMode = 'off' | 'claude' | 'turn';
+
+export const REVIEW_MODES: readonly ReviewMode[] = ['off', 'claude', 'turn'];
+
+/** The review mode of new sessions. */
+export const DEFAULT_REVIEW_MODE: ReviewMode = 'claude';
 
 /**
  * How a review ended:
@@ -92,12 +110,13 @@ export interface RunningReviewDto {
  * `model` and `effort` `null`: the app's {@link ReviewDefaults}.
  */
 export interface SessionReviewDto {
-  autoReview: boolean;
+  mode: ReviewMode;
   model: string | null;
   effort: ReviewEffort | null;
   /**
-   * Auto-review rounds with findings in a row since the user's last
-   * message (or the last review without findings).
+   * Rounds with findings in a row of reviews that started by themselves
+   * (auto-review and Claude's requests) since the user's last message (or
+   * the last review without findings).
    */
   autoRounds: number;
   /** The review running now, if any. */
@@ -109,7 +128,7 @@ export interface SessionReviewDto {
  * `null` for `model` or `effort` uses the app's default again.
  */
 export interface UpdateSessionReviewRequest {
-  autoReview?: boolean;
+  mode?: ReviewMode;
   model?: string | null;
   effort?: ReviewEffort | null;
 }

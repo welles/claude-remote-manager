@@ -11,11 +11,8 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule, type MatSelect } from '@angular/material/select';
 import {
-  MatSlideToggleModule,
-  type MatSlideToggleChange,
-} from '@angular/material/slide-toggle';
-import {
   REVIEW_EFFORTS,
+  REVIEW_MODES,
   canResume,
   type SessionDto,
   type UpdateSessionReviewRequest,
@@ -25,32 +22,30 @@ import { ModelsStore } from '../sessions/models-store';
 import { Toasts } from '../ui/toasts';
 import {
   EFFORT_LABELS,
+  MODE_LABELS,
   reviewModelLabel,
   reviewModelOptions,
+  triggerLabel,
 } from './review-labels';
 import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
 
 /**
  * The independent review of a session in its details: start one now (or
- * cancel the running one), auto-review, and the reviewer's model and
- * effort (the app's defaults unless chosen here).
+ * cancel the running one), when reviews start by themselves (the review
+ * mode), and the reviewer's model and effort (the app's defaults unless
+ * chosen here).
  */
 @Component({
   selector: 'app-session-review-panel',
   host: { class: 'flex flex-col gap-3', 'data-testid': 'review-panel' },
-  imports: [
-    MatButtonModule,
-    MatFormFieldModule,
-    MatSelectModule,
-    MatSlideToggleModule,
-  ],
+  imports: [MatButtonModule, MatFormFieldModule, MatSelectModule],
   template: `
     @let s = session();
     @let review = s.review;
     <div class="flex flex-wrap items-center gap-2">
       @if (review?.running; as running) {
         <span class="flex-1 type-body-medium" data-testid="review-running"
-          >{{ running.trigger === 'auto' ? 'Auto-review' : 'Review' }} runs ({{
+          >{{ triggerLabel(running.trigger) }} runs ({{
             modelLabel(running.model)
           }})…</span
         >
@@ -80,29 +75,40 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
         </button>
       }
     </div>
-    <mat-slide-toggle
-      [checked]="review?.autoReview ?? false"
-      [disabled]="busy() || !enabled()"
-      (change)="toggleAuto($event)"
-      data-testid="auto-review-toggle"
-      >Auto-review</mat-slide-toggle
-    >
-    <p class="-mt-2 mb-0 hint-text" data-testid="auto-review-hint">
-      After each turn that changed the diff.
-      @if (review?.autoReview) {
-        @if (defaults(); as d) {
-          @if (review.autoRounds >= d.maxAutoRounds) {
-            Paused after {{ d.maxAutoRounds }} rounds with findings until you
-            write.
-          } @else {
-            Pauses after {{ d.maxAutoRounds }} rounds with findings in a row ({{
-              review.autoRounds
-            }}
-            so far).
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Reviews start</mat-label>
+      <mat-select
+        [value]="review?.mode ?? 'claude'"
+        (selectionChange)="
+          update(
+            { mode: $event.value },
+            revertSelect($event.source, review?.mode ?? 'claude')
+          )
+        "
+        [disabled]="busy() || !enabled()"
+        data-testid="review-mode-select"
+      >
+        @for (mode of modes; track mode) {
+          <mat-option [value]="mode" [title]="modeLabels[mode].hint">{{
+            modeLabels[mode].label
+          }}</mat-option>
+        }
+      </mat-select>
+      <mat-hint data-testid="review-mode-hint"
+        >{{ modeLabels[review?.mode ?? 'claude'].hint }}
+        @if (review && review.mode !== 'off') {
+          @if (defaults(); as d) {
+            @if (review.autoRounds >= d.maxAutoRounds) {
+              Paused after {{ d.maxAutoRounds }} rounds with findings until you
+              write.
+            } @else if (review.autoRounds > 0) {
+              {{ review.autoRounds }} of {{ d.maxAutoRounds }} rounds with
+              findings.
+            }
           }
         }
-      }
-    </p>
+      </mat-hint>
+    </mat-form-field>
     <mat-form-field appearance="outline" subscriptSizing="dynamic">
       <mat-label>Reviewer model</mat-label>
       <mat-select
@@ -166,6 +172,9 @@ export class SessionReviewPanel implements OnInit {
 
   protected readonly efforts = REVIEW_EFFORTS;
   protected readonly effortLabels = EFFORT_LABELS;
+  protected readonly modes = REVIEW_MODES;
+  protected readonly modeLabels = MODE_LABELS;
+  protected readonly triggerLabel = triggerLabel;
   private readonly defaultsState = inject(ReviewDefaultsState);
   protected readonly defaults = this.defaultsState.value;
   protected readonly busy = signal(false);
@@ -218,13 +227,6 @@ export class SessionReviewPanel implements OnInit {
       next: () => this.busy.set(false),
       error: (error: unknown) =>
         this.failed(error, 'The review could not be cancelled'),
-    });
-  }
-
-  protected toggleAuto(event: MatSlideToggleChange): void {
-    this.update({ autoReview: event.checked }, () => {
-      // Shows the state the server has.
-      event.source.checked = this.session().review?.autoReview ?? false;
     });
   }
 

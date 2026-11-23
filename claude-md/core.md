@@ -41,6 +41,19 @@
 - Only files in your session's directories can be shown. HTML pages are shown sandboxed and
   cannot load anything from the network: keep them self-contained (inline CSS and scripts).
 
+## Independent reviews
+
+- When a coherent work package is finished and checked locally (built, tested), and before you
+  open a pull request or push that state, call the tool `request_review`: a separate,
+  read-only Claude reviews the session's whole diff without this conversation. It returns at
+  once; end your turn (or say with `set_waiting_state` "work" that you wait for the review).
+  Not for intermediate states.
+- The findings come as a message of the app. Check each against the code: fix the ones that
+  hold, and say briefly why for the others.
+- If the tool refuses (reviews turned off for the session, a review already runs, nothing new
+  to review, too many rounds with findings), go on without it. If `request_review` is not
+  available, reviews are not offered here.
+
 ## Previews of dev servers
 
 - To let the user see a web app you run (dev server, Storybook, a static build), start the
