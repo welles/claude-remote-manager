@@ -608,6 +608,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly events = new Subject<SessionEventEnvelope>();
   private readonly updates = new Subject<SessionDto>();
   private readonly deletions = new Subject<string>();
+  private readonly ownerMessages = new Subject<string>();
   /** CI the sessions wait for, by session and pull request ID. */
   private readonly ciWaits = new Map<string, Map<number, CiWait>>();
   /** Timers of the sessions the usage limit stopped, by session. */
@@ -649,6 +650,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   readonly updates$ = this.updates.asObservable();
   /** IDs of sessions deleted for good. */
   readonly deletions$ = this.deletions.asObservable();
+  /** IDs of sessions the owner sent a message (not the app). */
+  readonly ownerMessages$ = this.ownerMessages.asObservable();
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -989,6 +992,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     });
     // The owner answered: automerge waits no longer for their decision.
     this.automation?.ownerMessage?.(sessionId);
+    this.ownerMessages.next(sessionId);
   }
 
   /**
@@ -5511,6 +5515,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       previews: this.previews?.forSession(record.id) ?? [],
       archivedAt: record.archivedAt?.toISOString() ?? null,
       environment: this.environmentOf(record),
+      review: {
+        autoReview: record.autoReview,
+        model: record.reviewModel,
+        effort: record.reviewEffort,
+        autoRounds: record.autoReviewRounds,
+        running: this.automation?.runningReview?.(record.id) ?? null,
+      },
     };
   }
 }

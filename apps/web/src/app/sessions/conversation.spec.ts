@@ -878,3 +878,60 @@ describe('tool summaries', () => {
     ).toBe('#2 → completed');
   });
 });
+
+describe('independent reviews in the conversation', () => {
+  it('shows a review as running and completes it with its result', () => {
+    let items = buildConversation([
+      event({
+        type: 'review.started',
+        reviewId: 'r1',
+        trigger: 'auto',
+        model: 'claude-fable-5-2',
+        effort: 'high',
+        fileCount: 2,
+        repositories: ['alice/app'],
+      }),
+    ]);
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: 'review',
+        key: 'review:r1',
+        trigger: 'auto',
+        outcome: null,
+        findings: [],
+      }),
+    ]);
+    const finding = {
+      severity: 'high' as const,
+      repository: 'alice/app',
+      file: 'a.ts',
+      line: 3,
+      title: 'Wrong',
+      detail: 'Because',
+    };
+    items = applyEvent(
+      items,
+      event({
+        type: 'review.finished',
+        reviewId: 'r1',
+        outcome: 'finished',
+        summary: 'One issue.',
+        findings: [finding],
+        error: null,
+        durationMs: 5000,
+        usage,
+        messageId: 'm1',
+      }),
+    );
+    expect(items).toEqual([
+      expect.objectContaining({
+        kind: 'review',
+        outcome: 'finished',
+        summary: 'One issue.',
+        findings: [finding],
+        durationMs: 5000,
+        messageId: 'm1',
+      }),
+    ]);
+  });
+});

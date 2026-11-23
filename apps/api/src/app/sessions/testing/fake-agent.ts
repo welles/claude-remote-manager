@@ -7,6 +7,8 @@ import type {
   SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
+  AgentReviewOptions,
+  AgentReviewResult,
   AgentProbe,
   AgentRun,
   AgentRunner,
@@ -163,6 +165,14 @@ export class FakeAgentRunner implements AgentRunner {
   };
   probeCommands: () => SlashCommand[] = () => [];
   probes = 0;
+  /** Review processes started, in order. */
+  readonly reviews: FakeReview[] = [];
+
+  review(options: AgentReviewOptions): Promise<AgentReviewResult> {
+    const review = new FakeReview(options);
+    this.reviews.push(review);
+    return review.result;
+  }
 
   async probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T> {
     this.probes++;
@@ -193,6 +203,32 @@ export class FakeAgentRunner implements AgentRunner {
       throw new Error('No run started');
     }
     return run;
+  }
+}
+
+/** A review process of a test: it ends when the test says so. */
+export class FakeReview {
+  readonly result: Promise<AgentReviewResult>;
+  finish!: (result: Partial<AgentReviewResult>) => void;
+  fail!: (error: Error) => void;
+
+  constructor(readonly options: AgentReviewOptions) {
+    this.result = new Promise<AgentReviewResult>((resolve, reject) => {
+      this.finish = (result) =>
+        resolve({
+          output: null,
+          error: null,
+          modelUsage: {},
+          durationMs: 1000,
+          ...result,
+        });
+      this.fail = reject;
+      options.signal.addEventListener('abort', () =>
+        reject(new Error('aborted')),
+      );
+    });
+    // A test that never ends the review leaves no unhandled rejection.
+    this.result.catch(() => undefined);
   }
 }
 

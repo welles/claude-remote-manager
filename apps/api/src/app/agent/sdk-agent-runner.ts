@@ -13,6 +13,8 @@ import {
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import type {
   AgentProbe,
+  AgentReviewOptions,
+  AgentReviewResult,
   AgentRun,
   AgentRunner,
   AgentStartOptions,
@@ -369,6 +371,67 @@ export function buildQueryOptions(
   };
 }
 
+/** The only tools of a review process: reading. */
+export const REVIEW_TOOLS = ['Read', 'Grep', 'Glob'];
+
+/**
+ * Builds the SDK options of a review process (see `AgentReviewOptions`):
+ * only the reading tools exist, all allowed and everything else refused
+ * without asking (`dontAsk`); no MCP servers or connectors; no transcript.
+ * Settings and CLAUDE.md files load as for a session, so the project's
+ * conventions apply to the review. Exported for tests.
+ */
+export function buildReviewQueryOptions(
+  options: AgentReviewOptions,
+  config: Pick<AppConfig, 'claudeExecutable'>,
+  stderr: (data: string) => void,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+  launcher: ProcessLauncher = SINGLE_USER,
+): Sdk.Options {
+  const abortController = new AbortController();
+  if (options.signal.aborted) {
+    abortController.abort();
+  } else {
+    options.signal.addEventListener('abort', () => abortController.abort(), {
+      once: true,
+    });
+  }
+  return {
+    ...(launcher.separated
+      ? {
+          spawnClaudeCodeProcess: (spawnOptions: Sdk.SpawnOptions) =>
+            spawnAsSession(launcher, spawnOptions, stderr),
+        }
+      : {}),
+    ...PROBE_SETTINGS,
+    env: launcher.environment(
+      'session',
+      {},
+      { keep: CLAUDE_CODE_SECRETS, base: baseEnv },
+    ),
+    cwd: options.cwd,
+    additionalDirectories: options.additionalDirectories,
+    tools: REVIEW_TOOLS,
+    allowedTools: REVIEW_TOOLS,
+    permissionMode: 'dontAsk',
+    model: options.model,
+    effort: options.effort,
+    persistSession: false,
+    outputFormat: { type: 'json_schema', schema: options.schema },
+    systemPrompt: {
+      type: 'preset',
+      preset: 'claude_code',
+      append: options.instructions,
+    },
+    settingSources: SETTING_SOURCES,
+    abortController,
+    ...(config.claudeExecutable
+      ? { pathToClaudeCodeExecutable: config.claudeExecutable }
+      : {}),
+    stderr,
+  };
+}
+
 /** Runs sessions with the Claude Agent SDK. */
 @Injectable()
 export class SdkAgentRunner implements AgentRunner {
@@ -457,6 +520,64 @@ export class SdkAgentRunner implements AgentRunner {
       },
       stderrTail: () => [...stderr],
     };
+  }
+
+  async review(options: AgentReviewOptions): Promise<AgentReviewResult> {
+    const sdk = await loadAgentSdk();
+    const stderr: string[] = [];
+    const started = Date.now();
+    const query = sdk.query({
+      prompt: options.prompt,
+      options: buildReviewQueryOptions(
+        options,
+        this.config,
+        (data) => {
+          this.logger.debug(data.trimEnd());
+          for (const line of data.split('\n')) {
+            if (line.trim()) {
+              stderr.push(line.trim());
+            }
+          }
+          stderr.splice(0, Math.max(0, stderr.length - STDERR_LINES));
+        },
+        process.env,
+        this.launcher,
+      ),
+    });
+    try {
+      for await (const message of query) {
+        if (message.type !== 'result') {
+          continue;
+        }
+        const failed = message.subtype !== 'success' || message.is_error;
+        const output =
+          message.subtype === 'success' ? message.structured_output : undefined;
+        return {
+          output: failed || output === undefined ? null : output,
+          error: failed
+            ? (message.subtype === 'success'
+                ? message.result
+                : message.errors.join('\n')) ||
+              `The review ended with ${message.subtype}`
+            : output === undefined
+              ? 'The reviewer gave no structured answer'
+              : null,
+          modelUsage: message.modelUsage,
+          durationMs: message.duration_ms,
+        };
+      }
+      if (options.signal.aborted) {
+        throw new Error('The review was cancelled');
+      }
+      return {
+        output: null,
+        error: ['Claude Code ended without a result', ...stderr].join('\n'),
+        modelUsage: {},
+        durationMs: Date.now() - started,
+      };
+    } finally {
+      query.close();
+    }
   }
 
   async probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T> {

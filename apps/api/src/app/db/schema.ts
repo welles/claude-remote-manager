@@ -14,6 +14,7 @@ import type {
   PullRequestState,
   RepositoryAddedBy,
   RepositoryAdditionState,
+  ReviewEffort,
   SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
@@ -197,6 +198,20 @@ export const sessions = sqliteTable('sessions', {
    * continues it once the limit has reset (see `LimitWait`).
    */
   limitWait: text('limit_wait', { mode: 'json' }).$type<LimitWait>(),
+  /** Auto-review: an independent review after each turn that changed the diff. */
+  autoReview: integer('auto_review', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+  /** The reviewer's model and effort; `null`: the app's default. */
+  reviewModel: text('review_model'),
+  reviewEffort: text('review_effort').$type<ReviewEffort>(),
+  /**
+   * Auto-review rounds with findings in a row since the user's last
+   * message or the last review without findings.
+   */
+  autoReviewRounds: integer('auto_review_rounds').notNull().default(0),
+  /** Fingerprint of the session diff the last review was given. */
+  reviewedDiff: text('reviewed_diff'),
 });
 
 /**
@@ -428,6 +443,11 @@ export const usageRecords = sqliteTable(
     cacheCreationInputTokens: integer('cache_creation_input_tokens').notNull(),
     cacheReadInputTokens: integer('cache_read_input_tokens').notNull(),
     costUsd: real('cost_usd').notNull(),
+    /**
+     * Set for the usage of an independent review (not part of the
+     * session's Claude Code process, whose totals start from the others).
+     */
+    reviewId: text('review_id'),
     createdAt: createdAt(),
   },
   (table) => [

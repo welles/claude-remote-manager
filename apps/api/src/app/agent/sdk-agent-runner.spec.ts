@@ -3,6 +3,7 @@ import { AsyncQueue } from './async-queue';
 import { ProcessLauncher, type ProcessRole } from '../common/process-isolation';
 import {
   buildQueryOptions,
+  buildReviewQueryOptions,
   gateHooks,
   sdkUserMessages,
   spawnAsSession,
@@ -40,10 +41,13 @@ describe('gateHooks', () => {
   it('passes the call and maps the decision', async () => {
     const seen: unknown[] = [];
     await expect(
-      run((call) => {
-        seen.push(call);
-        return null;
-      }, { command: 'ls' }),
+      run(
+        (call) => {
+          seen.push(call);
+          return null;
+        },
+        { command: 'ls' },
+      ),
     ).resolves.toEqual({});
     expect(seen).toEqual([
       {
@@ -359,5 +363,58 @@ describe('toolUseIdOf', () => {
     );
     expect(toolUseIdOf({ _meta: {} })).toBeNull();
     expect(toolUseIdOf(undefined)).toBeNull();
+  });
+});
+
+describe('buildReviewQueryOptions', () => {
+  const review = (signal = new AbortController().signal) =>
+    buildReviewQueryOptions(
+      {
+        cwd: '/work',
+        additionalDirectories: ['/extra'],
+        model: 'claude-fable-5-2',
+        effort: 'high',
+        prompt: 'Review',
+        instructions: 'Be strict',
+        schema: { type: 'object' },
+        signal,
+      },
+      { claudeExecutable: null },
+      () => undefined,
+      { PATH: '/bin' },
+    );
+
+  it('gives the reviewer only reading tools, no MCP servers and no transcript', () => {
+    const options = review();
+    expect(options).toMatchObject({
+      cwd: '/work',
+      additionalDirectories: ['/extra'],
+      tools: ['Read', 'Grep', 'Glob'],
+      allowedTools: ['Read', 'Grep', 'Glob'],
+      permissionMode: 'dontAsk',
+      model: 'claude-fable-5-2',
+      effort: 'high',
+      persistSession: false,
+      strictMcpConfig: true,
+      settings: { disableClaudeAiConnectors: true },
+      outputFormat: { type: 'json_schema', schema: { type: 'object' } },
+      systemPrompt: {
+        type: 'preset',
+        preset: 'claude_code',
+        append: 'Be strict',
+      },
+      env: { PATH: '/bin' },
+    });
+    expect(options).not.toHaveProperty('mcpServers');
+    expect(options).not.toHaveProperty('canUseTool');
+    expect(options).not.toHaveProperty('allowDangerouslySkipPermissions');
+  });
+
+  it('aborts the process with the signal', () => {
+    const controller = new AbortController();
+    const options = review(controller.signal);
+    expect(options.abortController?.signal.aborted).toBe(false);
+    controller.abort();
+    expect(options.abortController?.signal.aborted).toBe(true);
   });
 });

@@ -1736,6 +1736,10 @@ export class PrAutomationService
     if (session.status !== 'waiting' || session.pendingMessage) {
       return false;
     }
+    if (this.hooks.reviewBusy?.(session.id)) {
+      // An independent review runs: its findings may come first.
+      return false;
+    }
     return (
       this.sessions.acceptsAppMessage(session.id) &&
       session.directories.every(

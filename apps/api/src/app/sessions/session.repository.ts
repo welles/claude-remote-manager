@@ -17,6 +17,7 @@ import type {
   PullRequestState,
   RepositoryAddedBy,
   RepositoryAdditionState,
+  ReviewEffort,
   SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
@@ -169,6 +170,12 @@ export interface SessionRecord {
   workingDirectory: number | null;
   /** Set while the usage limit stopped the session (see `LimitWait`). */
   limitWait: LimitWait | null;
+  /** Independent reviews (see `sessions.auto_review` and the following columns). */
+  autoReview: boolean;
+  reviewModel: string | null;
+  reviewEffort: ReviewEffort | null;
+  autoReviewRounds: number;
+  reviewedDiff: string | null;
 }
 
 export type NewSessionDirectory = Pick<
@@ -212,6 +219,11 @@ export type SessionPatch = Partial<
     | 'environmentSetupStatus'
     | 'workingDirectory'
     | 'limitWait'
+    | 'autoReview'
+    | 'reviewModel'
+    | 'reviewEffort'
+    | 'autoReviewRounds'
+    | 'reviewedDiff'
   >
 >;
 
