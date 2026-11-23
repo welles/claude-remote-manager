@@ -2134,29 +2134,37 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
 - **Settings:** `GET`/`PUT /api/settings/review` (`app_settings` key `review`): model
   (default `claude-fable-5-2`), effort (default `high`) and the auto-review round limit
   (default 3), on the Settings page. Per session (`PUT /api/sessions/:id/review-settings`,
-  in the session's details): auto-review on or off, and a model and effort of its own
-  (`null`: the app's default).
+  in the session's details): the review mode (`sessions.review_mode`), and a model and effort
+  of its own (`null`: the app's default).
 - **Starting:** `POST /api/sessions/:id/review` ("Review now" in the session's details) starts
   one at once, also while Claude works; 409 while one runs or when nothing changed.
   `DELETE /api/sessions/:id/review` cancels it; after 30 minutes it fails, and archiving the
   session cancels it. One review per session at a time; it counts as running until its
   findings were delivered.
-- **Auto-review:** when a session's turn is over (it waits for a message, or only for what
-  Claude goes on with by itself) and the fingerprint of its diff's content
+- **Review mode** per session: `off` (only "Review now"), `claude` (the default: Claude asks
+  with the app tool `request_review`) or `turn` (after every turn, see below, and when Claude
+  asks). Sessions that had auto-review on became `turn` (migration 0024).
+- **Claude's requests:** in modes `claude` and `turn` the tool `request_review` (no approval
+  needed) starts a review and returns at once; the findings come later as usual.
+  `claude-md/core.md` tells Claude to ask after a finished, locally checked work package,
+  before a pull request or push. The tool refuses while a review runs, without changes, for a
+  diff already reviewed (same fingerprint as below), at the round limit, or with mode `off`.
+- **Auto-review** (mode `turn`): when a session's turn is over (it waits for a message, or
+  only for what Claude goes on with by itself) and the fingerprint of its diff's content
   (`sessions.reviewed_diff`; not commits or line numbers, so committing or rebasing reviewed
   changes does not count) changed since the last review, a review starts (also once a review
   ends that ran while the turn ended), also after the turns that fix findings.
-  Rounds with findings count (`sessions.auto_review_rounds`); at the limit auto-review pauses
-  (a notice in the history) until the owner writes; a review without findings resets the
-  count too.
+  Rounds with findings of auto-reviews and Claude's requests count
+  (`sessions.auto_review_rounds`); at the limit both pause (a notice in the history) until the
+  owner writes; a review without findings resets the count too.
 - **Findings** go to Claude right away as the app's message ("An independent review …",
   shown as "Sent by the app · Review"), queued while a turn runs; the findings themselves go
   along as untrusted context (the reviewer read repository content). Without findings Claude
   gets nothing. The history shows a card per review (`review.started`, `review.finished`):
   running with Cancel, the findings, the summary, an error, model, effort, duration and
   cost. A review cut off by a server stop shows as interrupted. Findings never go to an
-  archived session, and an auto-review's not to a session that ended meanwhile (a manual
-  review's resume it).
+  archived session, and those of a review that started by itself (auto-review or Claude's
+  request) not to a session that ended meanwhile (a manual review's resume it).
 - **Usage** of the reviewer counts for the session (`usage_records.review_id`), but not as the
   baseline the session's own Claude Code totals start from.
 - While a review runs, or auto-review is about to start one, the PR automation waits: no

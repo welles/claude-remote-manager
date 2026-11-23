@@ -18,6 +18,7 @@ import type {
   RepositoryAddedBy,
   RepositoryAdditionState,
   ReviewEffort,
+  ReviewMode,
   SessionDirectoryKind,
   SessionDirectoryState,
   SessionPermissionMode,
@@ -171,7 +172,7 @@ export interface SessionRecord {
   /** Set while the usage limit stopped the session (see `LimitWait`). */
   limitWait: LimitWait | null;
   /** Independent reviews (see `sessions.auto_review` and the following columns). */
-  autoReview: boolean;
+  reviewMode: ReviewMode;
   reviewModel: string | null;
   reviewEffort: ReviewEffort | null;
   autoReviewRounds: number;
@@ -219,7 +220,7 @@ export type SessionPatch = Partial<
     | 'environmentSetupStatus'
     | 'workingDirectory'
     | 'limitWait'
-    | 'autoReview'
+    | 'reviewMode'
     | 'reviewModel'
     | 'reviewEffort'
     | 'autoReviewRounds'

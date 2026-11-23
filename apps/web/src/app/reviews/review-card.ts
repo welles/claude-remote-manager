@@ -8,7 +8,7 @@ import { MarkdownPipe } from '../sessions/markdown.pipe';
 import { errorMessage } from '../repositories/repositories-api';
 import { AppIcon } from '../ui/icon';
 import { Toasts } from '../ui/toasts';
-import { EFFORT_LABELS, SEVERITY_LABELS } from './review-labels';
+import { EFFORT_LABELS, SEVERITY_LABELS, triggerLabel } from './review-labels';
 import { ReviewsApi } from './reviews-api';
 
 export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
@@ -54,9 +54,7 @@ export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
               : 'text-on-surface-variant'
         "
       />
-      <span class="font-medium">{{
-        review.trigger === 'auto' ? 'Auto-review' : 'Review'
-      }}</span>
+      <span class="font-medium">{{ triggerLabel(review.trigger) }}</span>
       <span class="text-on-surface-variant" data-testid="review-state">{{
         stateText()
       }}</span>
@@ -150,6 +148,7 @@ export class ReviewCard {
   readonly runningId = input<string | null>(null);
 
   protected readonly severityLabels = SEVERITY_LABELS;
+  protected readonly triggerLabel = triggerLabel;
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;

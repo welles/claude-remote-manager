@@ -222,6 +222,28 @@ describe('openDatabase', () => {
     db.$client.close();
   });
 
+  it('keeps auto-review as the review mode "turn", others ask Claude (migrations 0024, 0025)', () => {
+    const old = openDatabase(dir, migrationsUpTo(23));
+    old.$client
+      .prepare(
+        "INSERT INTO sessions (id, status, updated_at, auto_review) VALUES ('a', 'waiting', 1, 1), ('b', 'waiting', 1, 0)",
+      )
+      .run();
+    old.$client.close();
+
+    const db = openDatabase(dir);
+    const modes = Object.fromEntries(
+      (
+        db.$client.prepare('SELECT id, review_mode FROM sessions').all() as {
+          id: string;
+          review_mode: string;
+        }[]
+      ).map((row) => [row.id, row.review_mode]),
+    );
+    expect(modes).toEqual({ a: 'turn', b: 'claude' });
+    db.$client.close();
+  });
+
   it('keeps the full-text index in step with the search documents', () => {
     const db = openDatabase(dir);
     const run = (sql: string) => db.$client.prepare(sql).run();

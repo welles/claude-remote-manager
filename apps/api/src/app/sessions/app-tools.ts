@@ -73,6 +73,13 @@ export const SET_WAITING_STATE_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${SET_WAITIN
 export const REQUEST_OWNER_DECISION_TOOL = 'request_owner_decision';
 export const REQUEST_OWNER_DECISION_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${REQUEST_OWNER_DECISION_TOOL}`;
 /**
+ * The app's tool with which Claude asks for an independent review of the
+ * session's changes (no approval needed: it only starts a read-only
+ * reviewer, as the session's review mode allows).
+ */
+export const REQUEST_REVIEW_TOOL = 'request_review';
+export const REQUEST_REVIEW_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${REQUEST_REVIEW_TOOL}`;
+/**
  * The app's tools that never ask the user: showing a file (reads only the
  * session's directories), exposing or stopping a preview of the session's
  * own dev server (the owner decided so; the user sees each preview and can
@@ -92,6 +99,7 @@ export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
   REQUEST_OWNER_DECISION_TOOL_NAME,
   ADD_BRANCH_TOOL_NAME,
   SWITCH_DIRECTORY_TOOL_NAME,
+  REQUEST_REVIEW_TOOL_NAME,
 ]);
 
 /** Commands that run the command after them. */

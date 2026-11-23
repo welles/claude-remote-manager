@@ -258,10 +258,80 @@ describe('ReviewsService', () => {
     });
   });
 
+  describe('requests by Claude', () => {
+    /** Claude calls `request_review` in the running process. */
+    const request = async () => {
+      const tool = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'request_review',
+      );
+      if (!tool) {
+        throw new Error('request_review is missing');
+      }
+      return (await tool.handler({}, { toolUseId: 'toolu_review' })).text;
+    };
+
+    it('offers the tool without asking and starts a review when Claude asks', async () => {
+      const session = await idleSession();
+      expect(harness.service.get(session.id).review?.mode).toBe('claude');
+      expect(harness.runner.last.options.allowedTools).toContain(
+        'mcp__crm__request_review',
+      );
+      await turn(session.id, async () => {
+        await commitFile(session.cwd, 'work.txt', 'changed');
+        expect(await request()).toContain('The independent review started');
+        await expect(request()).rejects.toThrow('already runs');
+      });
+      expect(harness.runner.reviews).toHaveLength(1);
+      expect(reviewEvents(session.id, 'review.started')[0].trigger).toBe(
+        'claude',
+      );
+      harness.runner.reviews[0].finish({
+        output: { summary: null, findings: [finding] },
+      });
+      await waitFor(() => findingMessages().length === 1);
+      expect(harness.service.get(session.id).review?.autoRounds).toBe(1);
+    });
+
+    it('does not review after each turn in this mode', async () => {
+      const session = await idleSession();
+      await turn(session.id, () =>
+        commitFile(session.cwd, 'work.txt', 'changed'),
+      );
+      await flush();
+      expect(harness.runner.reviews).toHaveLength(0);
+    });
+
+    it('refuses when reviews are off, nothing is new, or the rounds are used up', async () => {
+      defaults.update({ maxAutoRounds: 1 });
+      const session = await idleSession();
+      await harness.service.sendMessage(session.id, { text: 'Go on' });
+      await waitFor(() => harness.service.get(session.id).status === 'running');
+      await expect(request()).rejects.toThrow('nothing to review');
+      await commitFile(session.cwd, 'work.txt', 'changed');
+      reviews.updateSession(session.id, { mode: 'off' });
+      await expect(request()).rejects.toThrow('turned independent reviews off');
+      reviews.updateSession(session.id, { mode: 'claude' });
+      await request();
+      harness.runner.reviews[0].finish({
+        output: { summary: null, findings: [] },
+      });
+      await waitFor(() => !harness.hooks.reviewBusy?.(session.id));
+      await expect(request()).rejects.toThrow('reviewed already');
+      await commitFile(session.cwd, 'work.txt', 'again');
+      await request();
+      harness.runner.reviews[1].finish({
+        output: { summary: null, findings: [finding] },
+      });
+      await waitFor(() => !harness.hooks.reviewBusy?.(session.id));
+      await commitFile(session.cwd, 'work.txt', 'third');
+      await expect(request()).rejects.toThrow('until the user writes');
+    });
+  });
+
   describe('auto-review', () => {
     it('reviews after a turn that changed the diff, and not again for the same diff', async () => {
       const session = await idleSession();
-      reviews.updateSession(session.id, { autoReview: true });
+      reviews.updateSession(session.id, { mode: 'turn' });
       // Nothing changed yet.
       await flush();
       await waitFor(() => !harness.hooks.reviewBusy?.(session.id));
@@ -291,7 +361,7 @@ describe('ReviewsService', () => {
     it('stops after the round limit until the user writes', async () => {
       defaults.update({ maxAutoRounds: 1 });
       const session = await idleSession();
-      reviews.updateSession(session.id, { autoReview: true });
+      reviews.updateSession(session.id, { mode: 'turn' });
       await turn(session.id, () => commitFile(session.cwd, 'work.txt', 'one'));
       await waitFor(() => harness.runner.reviews.length === 1);
       harness.runner.reviews[0].finish({
@@ -305,7 +375,7 @@ describe('ReviewsService', () => {
         harness.events.some(
           (envelope) =>
             envelope.event.type === 'notice' &&
-            envelope.event.text.includes('pauses until your next message'),
+            envelope.event.text.includes('pause until your next message'),
         ),
       ).toBe(true);
       await commitFile(session.cwd, 'work.txt', 'two');
@@ -326,7 +396,7 @@ describe('ReviewsService', () => {
       const session = await idleSession();
       await commitFile(session.cwd, 'work.txt', 'one');
       await reviews.start(session.id);
-      reviews.updateSession(session.id, { autoReview: true });
+      reviews.updateSession(session.id, { mode: 'turn' });
       // The turn ends while the manual review runs: no second review yet.
       await turn(session.id, () => commitFile(session.cwd, 'work.txt', 'two'));
       await flush();

@@ -92,6 +92,13 @@ export class SessionAutomationHooks {
   reviewBusy: ((sessionId: string) => boolean) | null = null;
 
   /**
+   * The tool `request_review`: Claude asks for an independent review of
+   * the session's changes. Returns what Claude is told; throws when it is
+   * refused (mode off, a review runs, nothing new to review, round limit).
+   */
+  requestReview: ((sessionId: string) => Promise<string>) | null = null;
+
+  /**
    * The tool `set_pr_automation`: switches autofix, automerge or autoclose
    * of the session's open pull request `number` of `repositoryId`. Returns
    * what Claude is told; throws when it is refused.

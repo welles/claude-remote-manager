@@ -92,6 +92,8 @@ import {
   SET_SESSION_TITLE_TOOL_NAME,
   SET_WAITING_STATE_TOOL,
   SET_WAITING_STATE_TOOL_NAME,
+  REQUEST_REVIEW_TOOL,
+  REQUEST_REVIEW_TOOL_NAME,
 } from './app-tools';
 import type { AgentTool } from '../agent/agent-runner';
 import { zeroTurnMessages } from '../agent/sdk-agent-runner';
@@ -2066,6 +2068,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Further branches, like further repositories, can come up any time
       // (a repository added later); the tool refuses what it cannot do.
       const offersBranches = this.additions !== undefined;
+      // Independent reviews need a clone; the tool refuses when the
+      // session's review mode is off.
+      const offersReview =
+        !!this.automation?.requestReview &&
+        record.directories.some((directory) => directory.kind === 'clone');
       const first = this.withNote(
         live,
         await this.agentMessage(live.id, firstMessage),
@@ -2097,6 +2104,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             ...(offersBranches ? [ADD_BRANCH_TOOL_NAME] : []),
             // Restarts Claude Code in another directory of the session.
             SWITCH_DIRECTORY_TOOL_NAME,
+            // Starts only a read-only reviewer, as the review mode allows.
+            ...(offersReview ? [REQUEST_REVIEW_TOOL_NAME] : []),
           ],
           env: { ...SESSION_ENV, ...extras.env },
           tools: [
@@ -2107,6 +2116,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             ...(this.additions ? [this.addRepositoryTool(live)] : []),
             ...(offersBranches ? [this.addBranchTool(live)] : []),
             this.switchDirectoryTool(live),
+            ...(offersReview ? [this.requestReviewTool(live)] : []),
           ],
           settings: extras.settings,
           ...(extras.instructions ? { instructions: extras.instructions } : {}),
@@ -3669,6 +3679,38 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * once the turn is over, ahead of what the background tasks suggest. No
    * approval: it changes only how the session is shown and notified.
    */
+  /**
+   * The tool `request_review`: an independent review of the session's
+   * changes starts now; its findings come later as the app's message.
+   */
+  private requestReviewTool(live: LiveSession): AgentTool {
+    return {
+      name: REQUEST_REVIEW_TOOL,
+      description:
+        'Ask for an independent review of the changes of this session: a separate Claude ' +
+        'process with read-only access reviews the whole session diff (all repositories ' +
+        'against their base branches, with uncommitted files), without this conversation. ' +
+        'Call it once a coherent work package is finished and checked locally (built, ' +
+        'tested), before you open a pull request or push the next state; not for ' +
+        'intermediate states. It starts the review and returns at once; the findings come ' +
+        'later as a message of the app. End your turn after calling it, or say with ' +
+        'set_waiting_state "work" that you wait for the review. It is refused when the ' +
+        'user turned reviews off for this session, a review already runs, nothing changed ' +
+        'since the last review, or reviews found issues too many times in a row.',
+      inputSchema: () => ({}),
+      handler: async () => {
+        const request = this.automation?.requestReview;
+        if (!request) {
+          return {
+            text: 'Independent reviews are not available on this server.',
+            isError: true,
+          };
+        }
+        return { text: await request(live.id) };
+      },
+    };
+  }
+
   private setWaitingStateTool(live: LiveSession): AgentTool {
     return {
       name: SET_WAITING_STATE_TOOL,
@@ -5516,7 +5558,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       archivedAt: record.archivedAt?.toISOString() ?? null,
       environment: this.environmentOf(record),
       review: {
-        autoReview: record.autoReview,
+        mode: record.reviewMode,
         model: record.reviewModel,
         effort: record.reviewEffort,
         autoRounds: record.autoReviewRounds,

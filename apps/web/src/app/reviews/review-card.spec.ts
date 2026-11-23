@@ -114,3 +114,22 @@ describe('ReviewCard', () => {
     expect(render(item()).text('review-state')).toEqual(['interrupted']);
   });
 });
+
+describe('ReviewCard trigger', () => {
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [ReviewCard],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    }).compileComponents();
+  });
+
+  it('says when Claude asked for the review', () => {
+    const fixture = TestBed.createComponent(ReviewCard);
+    fixture.componentRef.setInput('item', item({ trigger: 'claude' }));
+    fixture.componentRef.setInput('sessionId', 's1');
+    fixture.detectChanges();
+    expect(words(fixture.nativeElement as HTMLElement)).toContain(
+      'Review requested by Claude',
+    );
+  });
+});

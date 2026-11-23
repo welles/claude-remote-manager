@@ -21,6 +21,7 @@ import type {
   UpdateSessionReviewRequest,
   UsageTotals,
 } from '@claude-remote-manager/shared-types';
+import { REVIEW_MODES } from '@claude-remote-manager/shared-types';
 import { AgentRunner } from '../agent/agent-runner';
 import { requireObject } from '../common/validation';
 import { SessionDiffService } from '../diffs/session-diff.service';
@@ -102,6 +103,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       this.active.get(sessionId)?.dto ?? null;
     this.hooks.reviewBusy = (sessionId) =>
       this.active.has(sessionId) || this.starting.has(sessionId);
+    this.hooks.requestReview = (sessionId) => this.requestByClaude(sessionId);
     this.subscriptions.push(
       this.sessions.updates$.subscribe((session) =>
         this.sessionChanged(session),
@@ -126,6 +128,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     }
     this.hooks.runningReview = null;
     this.hooks.reviewBusy = null;
+    this.hooks.requestReview = null;
   }
 
   // --- Settings ------------------------------------------------------------
@@ -138,7 +141,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     return this.defaults.update(requireObject(request));
   }
 
-  /** Changes a session's review settings; turning auto-review on may start one. */
+  /** Changes a session's review settings; switching to `turn` may start a review. */
   updateSession(sessionId: string, request: unknown): SessionDto {
     const body = requireObject(request) as Record<string, unknown> &
       UpdateSessionReviewRequest;
@@ -146,16 +149,18 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     const patch: Partial<
       Pick<
         SessionRecord,
-        'autoReview' | 'reviewModel' | 'reviewEffort' | 'autoReviewRounds'
+        'reviewMode' | 'reviewModel' | 'reviewEffort' | 'autoReviewRounds'
       >
     > = {};
-    if (body.autoReview !== undefined) {
-      if (typeof body.autoReview !== 'boolean') {
-        throw new BadRequestException('autoReview must be a boolean');
+    if (body.mode !== undefined) {
+      if (!(REVIEW_MODES as readonly unknown[]).includes(body.mode)) {
+        throw new BadRequestException(
+          `mode must be one of ${REVIEW_MODES.join(', ')}`,
+        );
       }
-      patch.autoReview = body.autoReview;
-      if (body.autoReview && !record.autoReview) {
-        // Switched on: the rounds start over.
+      patch.reviewMode = body.mode;
+      if (body.mode !== record.reviewMode) {
+        // Another mode: the rounds start over.
         patch.autoReviewRounds = 0;
       }
     }
@@ -172,7 +177,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     this.records.update(sessionId, patch);
     const session = this.sessions.get(sessionId);
     this.sessions.publishUpdate(sessionId);
-    if (patch.autoReview && this.isTurnOver(session)) {
+    if (patch.reviewMode === 'turn' && this.isTurnOver(session)) {
       void this.autoReview(sessionId);
     }
     return this.sessions.get(sessionId);
@@ -203,6 +208,62 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       this.starting.delete(sessionId);
       if (!this.active.has(sessionId) && this.records.get(sessionId)) {
         // No review: PR automation that waited looks again.
+        this.sessions.publishUpdate(sessionId);
+      }
+    }
+  }
+
+  /**
+   * Claude's tool `request_review`: starts a review unless the session's
+   * mode is off, one runs, nothing changed since the last review, or the
+   * round limit is reached. Returns what Claude is told; throws with the
+   * reason when it is refused.
+   */
+  async requestByClaude(sessionId: string): Promise<string> {
+    const record = this.requireRecord(sessionId);
+    if (record.reviewMode === 'off') {
+      throw new Error(
+        'The user turned independent reviews off for this session; do not ask again unless the user wants a review.',
+      );
+    }
+    if (this.active.has(sessionId) || this.starting.has(sessionId)) {
+      throw new Error(
+        'A review of this session already runs; its findings will come as a message of the app.',
+      );
+    }
+    const limit = this.defaults.get().maxAutoRounds;
+    if (record.autoReviewRounds >= limit) {
+      throw new Error(
+        `Reviews found issues ${record.autoReviewRounds} times in a row; no further review until the user writes. Tell the user what is still open.`,
+      );
+    }
+    if (!this.reviewable(record)) {
+      throw new Error(
+        'The session cannot be reviewed now (being prepared, archived, or its clones are not all there).',
+      );
+    }
+    this.starting.add(sessionId);
+    try {
+      const diff = await this.diffs.sessionDiff(sessionId);
+      if (changedRepositories(diff).length === 0) {
+        throw new Error(
+          'The session has no changes against the base branches: nothing to review.',
+        );
+      }
+      const current = this.requireRecord(sessionId);
+      if (current.reviewedDiff === diffFingerprint(diff)) {
+        throw new Error(
+          'Exactly these changes were reviewed already (committing or rebasing does not count as a change); no new review.',
+        );
+      }
+      if (current.reviewMode === 'off' || !this.reviewable(current)) {
+        throw new Error('The session cannot be reviewed now.');
+      }
+      const review = this.launch(current, diff, 'claude');
+      return `The independent review started (model ${review.model}, effort ${review.effort}, ${review.fileCount} changed files). Its findings will come as a message of the app, usually within minutes. End your turn now, or say with set_waiting_state "work" that you wait for the review.`;
+    } finally {
+      this.starting.delete(sessionId);
+      if (!this.active.has(sessionId) && this.records.get(sessionId)) {
         this.sessions.publishUpdate(sessionId);
       }
     }
@@ -276,7 +337,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     }
     const session = this.sessions.get(sessionId);
     this.sessions.publishUpdate(sessionId);
-    if (session.review?.autoReview && this.isTurnOver(session)) {
+    if (session.review?.mode === 'turn' && this.isTurnOver(session)) {
       void this.autoReview(sessionId);
     }
   }
@@ -359,7 +420,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       const rounds =
         findings.length === 0
           ? 0
-          : dto.trigger === 'auto'
+          : dto.trigger !== 'manual'
             ? current.autoReviewRounds + 1
             : current.autoReviewRounds;
       this.records.update(sessionId, {
@@ -385,15 +446,15 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     if (
       outcome === 'finished' &&
       findings.length > 0 &&
-      dto.trigger === 'auto' &&
+      dto.trigger !== 'manual' &&
       after &&
-      after.autoReview &&
+      after.reviewMode !== 'off' &&
       after.autoReviewRounds >= maxAutoRounds
     ) {
       this.sessions.recordEvent(sessionId, {
         type: 'notice',
         level: 'info',
-        text: `Auto-review found issues ${after.autoReviewRounds} times in a row and pauses until your next message.`,
+        text: `Reviews found issues ${after.autoReviewRounds} times in a row: auto-review and Claude's requests for reviews pause until your next message.`,
       });
     }
     this.logger.log(
@@ -416,7 +477,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     const sessionId = record.id;
     if (
       record.archivedAt !== null ||
-      (dto.trigger === 'auto' && record.status === 'finished')
+      (dto.trigger !== 'manual' && record.status === 'finished')
     ) {
       this.sessions.recordEvent(sessionId, {
         type: 'notice',
@@ -468,7 +529,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     const over = this.isTurnOver(session);
     const before = this.turnOver.get(session.id) ?? false;
     this.turnOver.set(session.id, over);
-    if (over && !before && session.review?.autoReview) {
+    if (over && !before && session.review?.mode === 'turn') {
       void this.autoReview(session.id);
     }
   }
@@ -484,7 +545,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     }
     const record = this.records.get(sessionId);
     if (
-      !record?.autoReview ||
+      record?.reviewMode !== 'turn' ||
       !this.reviewable(record) ||
       record.autoReviewRounds >= this.defaults.get().maxAutoRounds
     ) {
@@ -496,7 +557,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       const fingerprint = diffFingerprint(diff);
       const current = this.records.get(sessionId);
       if (
-        !current?.autoReview ||
+        current?.reviewMode !== 'turn' ||
         !this.reviewable(current) ||
         current.reviewedDiff === fingerprint ||
         changedRepositories(diff).length === 0 ||
