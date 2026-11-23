@@ -2068,11 +2068,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Further branches, like further repositories, can come up any time
       // (a repository added later); the tool refuses what it cannot do.
       const offersBranches = this.additions !== undefined;
-      // Independent reviews need a clone; the tool refuses when the
-      // session's review mode is off.
-      const offersReview =
-        !!this.automation?.requestReview &&
-        record.directories.some((directory) => directory.kind === 'clone');
+      // Like further branches, a review can come up any time (a mode
+      // changed, a repository added): the tool refuses what it cannot do.
+      const offersReview = !!this.automation?.requestReview;
       const first = this.withNote(
         live,
         await this.agentMessage(live.id, firstMessage),
@@ -3675,28 +3673,27 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * The tool `set_waiting_state`: Claude says what the session waits for
-   * once the turn is over, ahead of what the background tasks suggest. No
-   * approval: it changes only how the session is shown and notified.
-   */
-  /**
    * The tool `request_review`: an independent review of the session's
-   * changes starts now; its findings come later as the app's message.
+   * changes starts now; its findings (or that there are none) come later
+   * as the app's message. Offered in every mode: the user may change it
+   * while the process runs; the tool refuses in mode `off`.
    */
   private requestReviewTool(live: LiveSession): AgentTool {
     return {
       name: REQUEST_REVIEW_TOOL,
       description:
-        'Ask for an independent review of the changes of this session: a separate Claude ' +
-        'process with read-only access reviews the whole session diff (all repositories ' +
-        'against their base branches, with uncommitted files), without this conversation. ' +
-        'Call it once a coherent work package is finished and checked locally (built, ' +
-        'tested), before you open a pull request or push the next state; not for ' +
-        'intermediate states. It starts the review and returns at once; the findings come ' +
+        'Ask for an independent review of the changes of this session (only from the ' +
+        'main conversation, never from a subagent): a separate Claude process with ' +
+        'read-only access reviews the whole session diff (all repositories against their ' +
+        'base branches, with uncommitted files), without this conversation. Call it once a ' +
+        'coherent work package is finished and checked locally (built, tested), before you ' +
+        'open a pull request or push the next state; not for intermediate states. It ' +
+        'starts the review and returns at once; its findings, or that it found none, come ' +
         'later as a message of the app. End your turn after calling it, or say with ' +
         'set_waiting_state "work" that you wait for the review. It is refused when the ' +
-        'user turned reviews off for this session, a review already runs, nothing changed ' +
-        'since the last review, or reviews found issues too many times in a row.',
+        'user turned reviews off for this session, it has no repository, a review already ' +
+        'runs, nothing changed since the last review, or reviews found issues too many ' +
+        'times in a row.',
       inputSchema: () => ({}),
       handler: async () => {
         const request = this.automation?.requestReview;
@@ -3711,6 +3708,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /**
+   * The tool `set_waiting_state`: Claude says what the session waits for
+   * once the turn is over, ahead of what the background tasks suggest. No
+   * approval: it changes only how the session is shown and notified.
+   */
   private setWaitingStateTool(live: LiveSession): AgentTool {
     return {
       name: SET_WAITING_STATE_TOOL,

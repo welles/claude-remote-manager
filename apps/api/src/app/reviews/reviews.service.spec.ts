@@ -5,6 +5,7 @@ import type {
   ReviewStartedEvent,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
+import { SessionEventRepository } from '../sessions/session-event.repository';
 import { SessionDiffService } from '../diffs/session-diff.service';
 import { commitFile } from '../git/testing/git-fixtures';
 import { flush, resultMessage, waitFor } from '../sessions/testing/fake-agent';
@@ -292,6 +293,80 @@ describe('ReviewsService', () => {
       expect(harness.service.get(session.id).review?.autoRounds).toBe(1);
     });
 
+    it('tells Claude when the review it asked for found nothing or failed', async () => {
+      const session = await idleSession();
+      const outcomes = () =>
+        harness.runner.runs.flatMap((run) =>
+          run.sent
+            .map((message) => message.text)
+            .filter((text) => text.includes('you asked for')),
+        );
+      await turn(session.id, async () => {
+        await commitFile(session.cwd, 'work.txt', 'one');
+        await request();
+      });
+      harness.runner.reviews[0].finish({
+        output: { summary: 'Fine.', findings: [] },
+      });
+      await waitFor(() => outcomes().length === 1);
+      expect(outcomes()[0]).toContain('found no issues');
+      expect(
+        reviewEvents(session.id, 'review.finished')[0].messageId,
+      ).not.toBeNull();
+      harness.runner.last.emit(resultMessage(10, 0.01));
+      await waitFor(
+        () => harness.service.get(session.id).waitingFor === 'message',
+      );
+      await turn(session.id, async () => {
+        await commitFile(session.cwd, 'work.txt', 'two');
+        await request();
+      });
+      harness.runner.reviews[1].finish({ output: null, error: 'broken' });
+      await waitFor(() => outcomes().length === 2);
+      expect(outcomes()[1]).toContain('failed');
+      expect(outcomes()[1]).not.toContain('broken');
+    });
+
+    it('sends nothing to a session that ended meanwhile', async () => {
+      const session = await idleSession();
+      await turn(session.id, async () => {
+        await commitFile(session.cwd, 'work.txt', 'one');
+        await request();
+      });
+      await harness.service.end(session.id);
+      harness.runner.reviews[0].finish({
+        output: { summary: null, findings: [finding] },
+      });
+      // The ended session is not live: its events are only stored.
+      const stored = () =>
+        new SessionEventRepository(harness.db)
+          .list(session.id)
+          .map(({ event }) => event);
+      await waitFor(() =>
+        stored().some((event) => event.type === 'review.finished'),
+      );
+      expect(stored()).toContainEqual(
+        expect.objectContaining({ type: 'review.finished', messageId: null }),
+      );
+      expect(stored()).toContainEqual(
+        expect.objectContaining({
+          type: 'notice',
+          text: expect.stringContaining('were not sent to Claude'),
+        }),
+      );
+      expect(findingMessages()).toEqual([]);
+      expect(harness.service.get(session.id).status).toBe('finished');
+    });
+
+    it('refuses in a session without repository', async () => {
+      const created = await harness.service.create({
+        prompt: 'Work',
+        scratch: true,
+      });
+      await harness.prepared(created.id);
+      await expect(request()).rejects.toThrow('no repository');
+    });
+
     it('does not review after each turn in this mode', async () => {
       const session = await idleSession();
       await turn(session.id, () =>
@@ -329,6 +404,23 @@ describe('ReviewsService', () => {
   });
 
   describe('auto-review', () => {
+    it('checks the mode, starts the rounds over on a change and reviews at once when switched on after a turn', async () => {
+      const session = await idleSession();
+      expect(() =>
+        reviews.updateSession(session.id, {
+          mode: 'sometimes' as unknown as 'turn',
+        }),
+      ).toThrow('mode must be one of');
+      harness.sessions.update(session.id, { autoReviewRounds: 2 });
+      await commitFile(session.cwd, 'work.txt', 'changed');
+      reviews.updateSession(session.id, { mode: 'turn' });
+      expect(harness.service.get(session.id).review?.autoRounds).toBe(0);
+      await waitFor(() => harness.runner.reviews.length === 1);
+      expect(harness.service.get(session.id).review?.running?.trigger).toBe(
+        'auto',
+      );
+    });
+
     it('reviews after a turn that changed the diff, and not again for the same diff', async () => {
       const session = await idleSession();
       reviews.updateSession(session.id, { mode: 'turn' });

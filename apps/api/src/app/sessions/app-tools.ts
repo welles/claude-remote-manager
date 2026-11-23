@@ -87,8 +87,9 @@ export const REQUEST_REVIEW_TOOL_NAME = `mcp__${APP_MCP_SERVER}__${REQUEST_REVIE
  * saying what the session waits for, asking for the owner's decision
  * (it only pauses automerge), adding a further branch of a repository
  * of the session (the owner decided so; it only clones a repository the
- * session has already), and switching the working directory to another
- * of the session's clones.
+ * session has already), switching the working directory to another of
+ * the session's clones, and asking for an independent review (it only
+ * starts a read-only reviewer, as the session's review mode allows).
  */
 export const APP_TOOLS_WITHOUT_APPROVAL: ReadonlySet<string> = new Set([
   SHOW_FILE_TOOL_NAME,

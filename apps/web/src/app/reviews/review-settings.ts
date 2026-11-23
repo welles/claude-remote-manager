@@ -80,7 +80,7 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
         </mat-select>
       </mat-form-field>
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
-        <mat-label>Auto-review rounds</mat-label>
+        <mat-label>Review rounds</mat-label>
         <input
           matInput
           type="number"
@@ -92,8 +92,9 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
           data-testid="review-default-rounds"
         />
         <mat-hint
-          >Auto-review pauses after this many rounds with findings in a row,
-          until you write.</mat-hint
+          >Reviews that start by themselves (after a turn, or when Claude asks)
+          pause after this many rounds with findings in a row, until you
+          write.</mat-hint
         >
       </mat-form-field>
     }

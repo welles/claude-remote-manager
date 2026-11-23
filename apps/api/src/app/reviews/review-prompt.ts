@@ -286,3 +286,20 @@ export function findingsContext(
     ],
   };
 }
+
+/**
+ * The app's message to Claude about a review it asked for that brought no
+ * findings: Claude waits for it before going on (e.g. with a pull request).
+ */
+export function reviewOutcomeMessage(
+  outcome: 'finished' | 'failed' | 'cancelled',
+): string {
+  switch (outcome) {
+    case 'finished':
+      return `${REVIEW_MESSAGE_PREFIX} you asked for found no issues. Go on with what you planned (for example the push or pull request).`;
+    case 'failed':
+      return `${REVIEW_MESSAGE_PREFIX} you asked for failed, so there are no findings (the session's history shows why). Go on with what you planned without it; do not ask for another review of the same changes.`;
+    default:
+      return `${REVIEW_MESSAGE_PREFIX} you asked for was cancelled (by the user, or because the server stopped). Go on with what you planned without it.`;
+  }
+}
