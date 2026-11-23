@@ -390,13 +390,12 @@ describe('buildReviewQueryOptions', () => {
       cwd: '/work',
       additionalDirectories: ['/extra'],
       tools: ['Read', 'Grep', 'Glob'],
-      allowedTools: ['Read', 'Grep', 'Glob'],
       permissionMode: 'dontAsk',
       model: 'claude-fable-5-2',
       effort: 'high',
       persistSession: false,
       strictMcpConfig: true,
-      settings: { disableClaudeAiConnectors: true },
+      settings: { disableClaudeAiConnectors: true, disableAllHooks: true },
       outputFormat: { type: 'json_schema', schema: { type: 'object' } },
       systemPrompt: {
         type: 'preset',
@@ -406,6 +405,7 @@ describe('buildReviewQueryOptions', () => {
       env: { PATH: '/bin' },
     });
     expect(options).not.toHaveProperty('mcpServers');
+    expect(options).not.toHaveProperty('allowedTools');
     expect(options).not.toHaveProperty('canUseTool');
     expect(options).not.toHaveProperty('allowDangerouslySkipPermissions');
   });

@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatSelectModule } from '@angular/material/select';
+import { MatSelectModule, type MatSelect } from '@angular/material/select';
 import {
   MatSlideToggleModule,
   type MatSlideToggleChange,
@@ -17,7 +17,6 @@ import {
 import {
   REVIEW_EFFORTS,
   canResume,
-  type ReviewDefaults,
   type SessionDto,
   type UpdateSessionReviewRequest,
 } from '@claude-remote-manager/shared-types';
@@ -29,7 +28,7 @@ import {
   reviewModelLabel,
   reviewModelOptions,
 } from './review-labels';
-import { ReviewsApi } from './reviews-api';
+import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
 
 /**
  * The independent review of a session in its details: start one now (or
@@ -108,7 +107,12 @@ import { ReviewsApi } from './reviews-api';
       <mat-label>Reviewer model</mat-label>
       <mat-select
         [value]="review?.model ?? ''"
-        (selectionChange)="update({ model: $event.value || null })"
+        (selectionChange)="
+          update(
+            { model: $event.value || null },
+            revertSelect($event.source, review?.model ?? '')
+          )
+        "
         [disabled]="busy() || !enabled()"
         data-testid="review-model-select"
       >
@@ -128,7 +132,12 @@ import { ReviewsApi } from './reviews-api';
       <mat-label>Reviewer effort</mat-label>
       <mat-select
         [value]="review?.effort ?? ''"
-        (selectionChange)="update({ effort: $event.value || null })"
+        (selectionChange)="
+          update(
+            { effort: $event.value || null },
+            revertSelect($event.source, review?.effort ?? '')
+          )
+        "
         [disabled]="busy() || !enabled()"
         data-testid="review-effort-select"
       >
@@ -157,7 +166,8 @@ export class SessionReviewPanel implements OnInit {
 
   protected readonly efforts = REVIEW_EFFORTS;
   protected readonly effortLabels = EFFORT_LABELS;
-  protected readonly defaults = signal<ReviewDefaults | null>(null);
+  private readonly defaultsState = inject(ReviewDefaultsState);
+  protected readonly defaults = this.defaultsState.value;
   protected readonly busy = signal(false);
 
   protected readonly modelOptions = computed(() =>
@@ -179,10 +189,15 @@ export class SessionReviewPanel implements OnInit {
 
   ngOnInit(): void {
     this.models.load();
-    this.api.defaults().subscribe({
-      next: (defaults) => this.defaults.set(defaults),
-      error: () => this.defaults.set(null),
-    });
+    // Fresh: the Settings page may have changed them.
+    this.defaultsState.load();
+  }
+
+  /** Puts a select back to `value` (after a failed save). */
+  protected revertSelect(select: MatSelect, value: string): () => void {
+    return () => {
+      select.value = value;
+    };
   }
 
   protected modelLabel(model: string): string {

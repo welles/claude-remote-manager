@@ -1174,7 +1174,9 @@ export class PrAutomationService
     repositoryId: string,
     number: number,
   ): Promise<string | null> {
-    if (!this.github.configured) {
+    if (!this.github.configured || this.hooks.reviewBusy?.(sessionId)) {
+      // Without GitHub, or while an independent review runs (its findings
+      // may come first): Claude asks as the mode says.
       return null;
     }
     const known = this.records

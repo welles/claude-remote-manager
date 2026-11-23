@@ -1426,6 +1426,11 @@ describe('PrAutomationService', () => {
       await expect(ready()).resolves.toBeNull();
       enableAutomerge(session.id, pull);
       await expect(ready()).resolves.toBe(head);
+      // Not while an independent review runs: its findings come first.
+      harness.hooks.reviewBusy = () => true;
+      await expect(ready()).resolves.toBeNull();
+      harness.hooks.reviewBusy = null;
+      await expect(ready()).resolves.toBe(head);
       // Not another pull request number of the repository.
       await expect(
         automation.mayMergeUnasked(session.id, repositoryId, 999),

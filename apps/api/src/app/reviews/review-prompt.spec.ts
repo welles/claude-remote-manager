@@ -97,6 +97,21 @@ describe('diffFingerprint', () => {
     expect(diffFingerprint(diff([file('a.ts', ['+2'])]))).not.toBe(one);
     expect(diffFingerprint(diff([]))).not.toBe(one);
   });
+
+  it('stays when only commits or line numbers changed', () => {
+    const before = diff([file('a.ts', ['+1'])]);
+    const after = diff([file('a.ts', ['+1'])]);
+    after.repositories[0].headCommit = 'd'.repeat(40);
+    after.repositories[0].comparison = {
+      ...(after.repositories[0].comparison as NonNullable<
+        RepositoryDiff['comparison']
+      >),
+      commit: 'e'.repeat(40),
+    };
+    after.repositories[0].files[0].hunks[0].oldStart = 7;
+    after.repositories[0].files[0].hunks[0].newStart = 7;
+    expect(diffFingerprint(after)).toBe(diffFingerprint(before));
+  });
 });
 
 describe('parseReviewOutput', () => {

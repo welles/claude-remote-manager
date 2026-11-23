@@ -58,6 +58,9 @@ interface ActiveReview {
   abort: AbortController;
 }
 
+/** How long a review may take. */
+export const REVIEW_TIMEOUT_MS = 30 * 60_000;
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -79,6 +82,10 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
   /** Whether each session's turn was over at its last update. */
   private readonly turnOver = new Map<string, boolean>();
   private readonly subscriptions: Subscription[] = [];
+  /** A review taking longer is stopped and fails (tests shorten it). */
+  timeoutMs = REVIEW_TIMEOUT_MS;
+  /** The module is shutting down: nothing starts any more. */
+  private stopped = false;
 
   constructor(
     private readonly sessions: SessionsService,
@@ -110,6 +117,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
+    this.stopped = true;
     for (const subscription of this.subscriptions) {
       subscription.unsubscribe();
     }
@@ -187,9 +195,16 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
           'The session has no changes to review (against the base branches)',
         );
       }
-      return this.launch(this.requireRecord(sessionId), diff, 'manual');
+      // Archived or cleaned up meanwhile?
+      const current = this.requireRecord(sessionId);
+      this.requireReviewable(current);
+      return this.launch(current, diff, 'manual');
     } finally {
       this.starting.delete(sessionId);
+      if (!this.active.has(sessionId) && this.records.get(sessionId)) {
+        // No review: PR automation that waited looks again.
+        this.sessions.publishUpdate(sessionId);
+      }
     }
   }
 
@@ -221,6 +236,8 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     };
     const abort = new AbortController();
     this.active.set(record.id, { dto, abort });
+    // The session shows the review as running before its card appears.
+    this.sessions.publishUpdate(record.id);
     this.sessions.recordEvent(record.id, {
       type: 'review.started',
       reviewId: dto.id,
@@ -232,14 +249,42 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
         (repository) => repository.repository,
       ),
     });
-    this.sessions.publishUpdate(record.id);
     this.logger.log(
       `Review ${dto.id} of session ${record.id} started (${trigger}, ${model}, ${effort})`,
     );
-    void this.run(record, diff, dto, abort, defaults.maxAutoRounds);
+    void this.run(record, diff, dto, abort, defaults.maxAutoRounds)
+      .catch((failure: unknown) =>
+        this.logger.error(
+          `Review ${dto.id} of session ${record.id} broke: ${errorText(failure)}`,
+        ),
+      )
+      .finally(() => this.ended(record.id, dto.id));
     return dto;
   }
 
+  /**
+   * A review is over (its findings delivered, or it failed): the session is
+   * free for the PR automation, and auto-review looks whether the diff
+   * changed meanwhile (e.g. by a turn that ended while the review ran).
+   */
+  private ended(sessionId: string, reviewId: string): void {
+    if (this.active.get(sessionId)?.dto.id === reviewId) {
+      this.active.delete(sessionId);
+    }
+    if (this.stopped || !this.records.get(sessionId)) {
+      return;
+    }
+    const session = this.sessions.get(sessionId);
+    this.sessions.publishUpdate(sessionId);
+    if (session.review?.autoReview && this.isTurnOver(session)) {
+      void this.autoReview(sessionId);
+    }
+  }
+
+  /**
+   * Runs the reviewer and hands its findings to Claude. The review counts
+   * as running (see `reviewBusy`) until the findings were delivered.
+   */
   private async run(
     record: SessionRecord,
     diff: SessionDiffResponse,
@@ -255,6 +300,12 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     let error: string | null = null;
     let usage: UsageTotals | null = null;
     let durationMs = 0;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      abort.abort();
+    }, this.timeoutMs);
+    timer.unref?.();
     try {
       const result = await this.runner.review({
         cwd: workingDirectory(record),
@@ -275,6 +326,10 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
         }
       }
       const parsed = result.error ? null : parseReviewOutput(result.output);
+      if (abort.signal.aborted) {
+        // Stopped, though the process still answered.
+        throw new Error('aborted');
+      }
       if (parsed) {
         outcome = 'finished';
         summary = parsed.summary;
@@ -283,14 +338,17 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
         error = result.error ?? 'The reviewer gave no usable answer';
       }
     } catch (failure) {
-      durationMs = Date.now() - started;
-      if (abort.signal.aborted) {
+      durationMs ||= Date.now() - started;
+      if (timedOut) {
+        error = `The review took longer than ${Math.round(this.timeoutMs / 60_000)} minutes and was stopped`;
+      } else if (abort.signal.aborted) {
         outcome = 'cancelled';
       } else {
         error = errorText(failure);
       }
+    } finally {
+      clearTimeout(timer);
     }
-    this.active.delete(sessionId);
     const current = this.records.get(sessionId);
     if (!current) {
       // Deleted meanwhile.
@@ -309,7 +367,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
         autoReviewRounds: rounds,
       });
       if (findings.length > 0) {
-        messageId = await this.deliver(sessionId, dto, summary, findings);
+        messageId = await this.deliver(current, dto, summary, findings);
       }
     }
     this.sessions.recordEvent(sessionId, {
@@ -341,16 +399,32 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `Review ${dto.id} of session ${sessionId} ${outcome}${outcome === 'finished' ? ` with ${findings.length} findings` : ''}${error ? `: ${error}` : ''}`,
     );
-    this.sessions.publishUpdate(sessionId);
   }
 
-  /** Sends the findings to Claude; the message's ID, `null` if it failed. */
+  /**
+   * Sends the findings to Claude; the message's ID, `null` if they were not
+   * sent. Never to an archived session, and an auto-review's findings not
+   * to a session that ended meanwhile (they would continue it): the card
+   * shows them.
+   */
   private async deliver(
-    sessionId: string,
+    record: SessionRecord,
     dto: RunningReviewDto,
     summary: string | null,
     findings: ReviewFinding[],
   ): Promise<string | null> {
+    const sessionId = record.id;
+    if (
+      record.archivedAt !== null ||
+      (dto.trigger === 'auto' && record.status === 'finished')
+    ) {
+      this.sessions.recordEvent(sessionId, {
+        type: 'notice',
+        level: 'info',
+        text: `The session ${record.archivedAt !== null ? 'was archived' : 'ended'}: the review's findings were not sent to Claude.`,
+      });
+      return null;
+    }
     const id = randomUUID();
     try {
       await this.sessions.sendMessage(sessionId, {
@@ -387,6 +461,10 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private sessionChanged(session: SessionDto): void {
+    if (session.archivedAt !== null) {
+      // Archiving ends the session and may remove its clones.
+      this.active.get(session.id)?.abort.abort();
+    }
     const over = this.isTurnOver(session);
     const before = this.turnOver.get(session.id) ?? false;
     this.turnOver.set(session.id, over);
@@ -397,7 +475,11 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
 
   /** Starts an auto-review if the diff changed since the last review. */
   private async autoReview(sessionId: string): Promise<void> {
-    if (this.active.has(sessionId) || this.starting.has(sessionId)) {
+    if (
+      this.stopped ||
+      this.active.has(sessionId) ||
+      this.starting.has(sessionId)
+    ) {
       return;
     }
     const record = this.records.get(sessionId);
@@ -415,6 +497,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       const current = this.records.get(sessionId);
       if (
         !current?.autoReview ||
+        !this.reviewable(current) ||
         current.reviewedDiff === fingerprint ||
         changedRepositories(diff).length === 0 ||
         // A turn started meanwhile: auto-review follows its end.
@@ -430,7 +513,11 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.starting.delete(sessionId);
       // Waiting PR automation looks again.
-      if (!this.active.has(sessionId) && this.records.get(sessionId)) {
+      if (
+        !this.stopped &&
+        !this.active.has(sessionId) &&
+        this.records.get(sessionId)
+      ) {
         this.sessions.publishUpdate(sessionId);
       }
     }
