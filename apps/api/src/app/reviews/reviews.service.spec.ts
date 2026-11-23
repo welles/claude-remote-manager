@@ -322,5 +322,67 @@ describe('ReviewsService', () => {
       harness.runner.last.emit(resultMessage(10, 0.01));
       await waitFor(() => harness.runner.reviews.length === 2);
     });
+    it('reviews a diff that changed while a manual review ran, once that one ends', async () => {
+      const session = await idleSession();
+      await commitFile(session.cwd, 'work.txt', 'one');
+      await reviews.start(session.id);
+      reviews.updateSession(session.id, { autoReview: true });
+      // The turn ends while the manual review runs: no second review yet.
+      await turn(session.id, () => commitFile(session.cwd, 'work.txt', 'two'));
+      await flush();
+      expect(harness.runner.reviews).toHaveLength(1);
+      harness.runner.reviews[0].finish({
+        output: { summary: null, findings: [] },
+      });
+      await waitFor(() => harness.runner.reviews.length === 2);
+      expect(harness.runner.reviews[1].options.prompt).toContain('+two');
+    });
+  });
+
+  it('counts as busy until the findings went to Claude', async () => {
+    const session = await idleSession();
+    await commitFile(session.cwd, 'work.txt', 'changed');
+    await reviews.start(session.id);
+    const busyWhenSent: boolean[] = [];
+    const send = harness.service.sendMessage.bind(harness.service);
+    jest
+      .spyOn(harness.service, 'sendMessage')
+      .mockImplementation(async (id, input) => {
+        busyWhenSent.push(harness.hooks.reviewBusy?.(id) ?? false);
+        await send(id, input);
+      });
+    harness.runner.reviews[0].finish({
+      output: { summary: null, findings: [finding] },
+    });
+    await waitFor(() => reviewEvents(session.id, 'review.finished').length > 0);
+    expect(busyWhenSent).toEqual([true]);
+    await waitFor(() => !harness.hooks.reviewBusy?.(session.id));
+  });
+
+  it('stops a review when the session is archived and sends nothing', async () => {
+    const session = await idleSession();
+    await commitFile(session.cwd, 'work.txt', 'changed');
+    await reviews.start(session.id);
+    harness.service.setArchived(session.id, new Date());
+    await waitFor(() => reviewEvents(session.id, 'review.finished').length > 0);
+    expect(reviewEvents(session.id, 'review.finished')[0].outcome).toBe(
+      'cancelled',
+    );
+    expect(findingMessages()).toEqual([]);
+    await expect(reviews.start(session.id)).rejects.toThrow(
+      'cannot be reviewed',
+    );
+  });
+
+  it('stops a review that takes too long', async () => {
+    reviews.timeoutMs = 20;
+    const session = await idleSession();
+    await commitFile(session.cwd, 'work.txt', 'changed');
+    await reviews.start(session.id);
+    await waitFor(() => reviewEvents(session.id, 'review.finished').length > 0);
+    expect(reviewEvents(session.id, 'review.finished')[0]).toMatchObject({
+      outcome: 'failed',
+      error: expect.stringContaining('took longer than'),
+    });
   });
 });

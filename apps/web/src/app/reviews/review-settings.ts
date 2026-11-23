@@ -5,22 +5,20 @@ import {
   signal,
   type OnInit,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { MatSelectModule } from '@angular/material/select';
+import { MatSelectModule, type MatSelect } from '@angular/material/select';
 import {
   MAX_AUTO_REVIEW_ROUNDS,
   REVIEW_EFFORTS,
-  type ReviewDefaults,
   type UpdateReviewDefaultsRequest,
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { ModelsStore } from '../sessions/models-store';
 import { Toasts } from '../ui/toasts';
 import { EFFORT_LABELS, reviewModelOptions } from './review-labels';
-import { ReviewsApi } from './reviews-api';
+import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
 
 /**
  * The app's review settings on the Settings page: the reviewer's model and
@@ -31,7 +29,6 @@ import { ReviewsApi } from './reviews-api';
   selector: 'app-review-settings',
   host: { class: 'app-compact flex flex-col gap-4' },
   imports: [
-    FormsModule,
     MatButtonModule,
     MatFormFieldModule,
     MatInputModule,
@@ -51,7 +48,9 @@ import { ReviewsApi } from './reviews-api';
         <mat-label>Model</mat-label>
         <mat-select
           [value]="d.model"
-          (selectionChange)="save({ model: $event.value })"
+          (selectionChange)="
+            save({ model: $event.value }, revertSelect($event.source, d.model))
+          "
           [disabled]="busy()"
           data-testid="review-default-model"
         >
@@ -66,7 +65,12 @@ import { ReviewsApi } from './reviews-api';
         <mat-label>Effort</mat-label>
         <mat-select
           [value]="d.effort"
-          (selectionChange)="save({ effort: $event.value })"
+          (selectionChange)="
+            save(
+              { effort: $event.value },
+              revertSelect($event.source, d.effort)
+            )
+          "
           [disabled]="busy()"
           data-testid="review-default-effort"
         >
@@ -82,7 +86,7 @@ import { ReviewsApi } from './reviews-api';
           type="number"
           min="1"
           [max]="maxRounds"
-          [ngModel]="d.maxAutoRounds"
+          [value]="d.maxAutoRounds"
           (change)="saveRounds($event)"
           [disabled]="busy()"
           data-testid="review-default-rounds"
@@ -103,8 +107,16 @@ export class ReviewSettings implements OnInit {
   protected readonly efforts = REVIEW_EFFORTS;
   protected readonly effortLabels = EFFORT_LABELS;
   protected readonly maxRounds = MAX_AUTO_REVIEW_ROUNDS;
-  protected readonly defaults = signal<ReviewDefaults | null>(null);
-  protected readonly loadError = signal<string | null>(null);
+  private readonly state = inject(ReviewDefaultsState);
+  protected readonly defaults = this.state.value;
+  protected readonly loadError = computed(() =>
+    this.state.error()
+      ? errorMessage(
+          this.state.error(),
+          'The review settings could not be loaded',
+        )
+      : null,
+  );
   protected readonly busy = signal(false);
 
   protected readonly modelOptions = computed(() =>
@@ -117,39 +129,44 @@ export class ReviewSettings implements OnInit {
   }
 
   protected load(): void {
-    this.loadError.set(null);
-    this.api.defaults().subscribe({
-      next: (defaults) => this.defaults.set(defaults),
-      error: (error: unknown) =>
-        this.loadError.set(
-          errorMessage(error, 'The review settings could not be loaded'),
-        ),
-    });
+    this.state.load();
+  }
+
+  /** Puts a select back to `value` (after a failed save). */
+  protected revertSelect(select: MatSelect, value: string): () => void {
+    return () => {
+      select.value = value;
+    };
   }
 
   protected saveRounds(event: Event): void {
-    const value = Number((event.target as HTMLInputElement).value);
+    const input = event.target as HTMLInputElement;
+    const previous = this.defaults()?.maxAutoRounds;
+    const revert = () => {
+      input.value = previous === undefined ? '' : String(previous);
+    };
+    const value = Number(input.value);
     if (Number.isInteger(value) && value >= 1 && value <= this.maxRounds) {
-      this.save({ maxAutoRounds: value });
+      this.save({ maxAutoRounds: value }, revert);
     } else {
-      // Back to the stored value.
-      const current = this.defaults();
-      this.defaults.set(current ? { ...current } : null);
+      revert();
     }
   }
 
-  protected save(request: UpdateReviewDefaultsRequest): void {
+  /** Saves a change; `revert` puts its control back if that fails. */
+  protected save(
+    request: UpdateReviewDefaultsRequest,
+    revert: () => void,
+  ): void {
     this.busy.set(true);
     this.api.updateDefaults(request).subscribe({
       next: (defaults) => {
         this.busy.set(false);
-        this.defaults.set(defaults);
+        this.state.value.set(defaults);
       },
       error: (error: unknown) => {
         this.busy.set(false);
-        // Back to the stored values.
-        const current = this.defaults();
-        this.defaults.set(current ? { ...current } : null);
+        revert();
         this.toasts.show({
           title: errorMessage(error, 'The review settings could not be saved'),
           kind: 'error',

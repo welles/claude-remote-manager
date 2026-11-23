@@ -376,8 +376,9 @@ export const REVIEW_TOOLS = ['Read', 'Grep', 'Glob'];
 
 /**
  * Builds the SDK options of a review process (see `AgentReviewOptions`):
- * only the reading tools exist, all allowed and everything else refused
- * without asking (`dontAsk`); no MCP servers or connectors; no transcript.
+ * only the reading tools exist, reading only in the session's directories
+ * and everything else refused without asking (`dontAsk`); no MCP servers,
+ * connectors or hooks; no transcript.
  * Settings and CLAUDE.md files load as for a session, so the project's
  * conventions apply to the review. Exported for tests.
  */
@@ -403,7 +404,10 @@ export function buildReviewQueryOptions(
             spawnAsSession(launcher, spawnOptions, stderr),
         }
       : {}),
-    ...PROBE_SETTINGS,
+    strictMcpConfig: true,
+    // No connectors, and no hooks: the user's, the project's (which the
+    // reviewed changes may have written) and plugins' would run commands.
+    settings: { disableClaudeAiConnectors: true, disableAllHooks: true },
     env: launcher.environment(
       'session',
       {},
@@ -411,8 +415,10 @@ export function buildReviewQueryOptions(
     ),
     cwd: options.cwd,
     additionalDirectories: options.additionalDirectories,
+    // No allow rules: reads inside the working and additional directories
+    // need none, and `dontAsk` refuses everything else (also reads
+    // elsewhere, such as the Claude login), checked with Claude Code.
     tools: REVIEW_TOOLS,
-    allowedTools: REVIEW_TOOLS,
     permissionMode: 'dontAsk',
     model: options.model,
     effort: options.effort,

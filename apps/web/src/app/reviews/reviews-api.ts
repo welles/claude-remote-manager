@@ -1,5 +1,5 @@
 import { HttpClient } from '@angular/common/http';
-import { Injectable, inject } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import type { Observable } from 'rxjs';
 import type {
   ReviewDefaults,
@@ -45,5 +45,25 @@ export class ReviewsApi {
       `${sessionPath(sessionId)}/review-settings`,
       request,
     );
+  }
+}
+
+/**
+ * The app's review settings as last read or saved, shared by the Settings
+ * page and the sessions' review panels.
+ */
+@Injectable({ providedIn: 'root' })
+export class ReviewDefaultsState {
+  private readonly api = inject(ReviewsApi);
+  readonly value = signal<ReviewDefaults | null>(null);
+  readonly error = signal<unknown>(null);
+
+  /** Reads them (again). */
+  load(): void {
+    this.error.set(null);
+    this.api.defaults().subscribe({
+      next: (defaults) => this.value.set(defaults),
+      error: (error: unknown) => this.error.set(error),
+    });
   }
 }

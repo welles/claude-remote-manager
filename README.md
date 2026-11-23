@@ -2122,8 +2122,10 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
 - **The reviewer** is a Claude Code process of its own that the API starts
   (`AgentRunner.review`, `buildReviewQueryOptions`), as the session user like a session: in
   the session's clones, with only `Read`, `Grep` and `Glob` (the `tools` option, so no other
-  tool exists; `dontAsk` refuses anything else), no MCP servers or claude.ai connectors, no
-  transcript (`persistSession: false`), the chosen model and effort, and a JSON schema for
+  tool exists) and no allow rules: reads inside the session's directories need none, and
+  `dontAsk` refuses everything else, also reads elsewhere such as the Claude login (checked
+  with Claude Code). No MCP servers, claude.ai connectors or hooks (`disableAllHooks`: the
+  reviewed changes may have written the project's settings), no transcript (`persistSession: false`), the chosen model and effort, and a JSON schema for
   its answer (`outputFormat`). Settings and CLAUDE.md files load as for a session. Its
   prompt is the session diff (`SessionDiffService`: every clone against the merge base with
   its base branch, with uncommitted and untracked files) as patches up to about 400 000
@@ -2136,10 +2138,14 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
   (`null`: the app's default).
 - **Starting:** `POST /api/sessions/:id/review` ("Review now" in the session's details) starts
   one at once, also while Claude works; 409 while one runs or when nothing changed.
-  `DELETE /api/sessions/:id/review` cancels it. One review per session at a time.
+  `DELETE /api/sessions/:id/review` cancels it; after 30 minutes it fails, and archiving the
+  session cancels it. One review per session at a time; it counts as running until its
+  findings were delivered.
 - **Auto-review:** when a session's turn is over (it waits for a message, or only for what
-  Claude goes on with by itself) and the fingerprint of its diff (`sessions.reviewed_diff`)
-  changed since the last review, a review starts, also after the turns that fix findings.
+  Claude goes on with by itself) and the fingerprint of its diff's content
+  (`sessions.reviewed_diff`; not commits or line numbers, so committing or rebasing reviewed
+  changes does not count) changed since the last review, a review starts (also once a review
+  ends that ran while the turn ended), also after the turns that fix findings.
   Rounds with findings count (`sessions.auto_review_rounds`); at the limit auto-review pauses
   (a notice in the history) until the owner writes; a review without findings resets the
   count too.
@@ -2148,11 +2154,14 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
   along as untrusted context (the reviewer read repository content). Without findings Claude
   gets nothing. The history shows a card per review (`review.started`, `review.finished`):
   running with Cancel, the findings, the summary, an error, model, effort, duration and
-  cost. A review cut off by a server stop shows as interrupted.
+  cost. A review cut off by a server stop shows as interrupted. Findings never go to an
+  archived session, and an auto-review's not to a session that ended meanwhile (a manual
+  review's resume it).
 - **Usage** of the reviewer counts for the session (`usage_records.review_id`), but not as the
   baseline the session's own Claude Code totals start from.
 - While a review runs, or auto-review is about to start one, the PR automation waits: no
-  autofix run, no merge (`SessionAutomationHooks.reviewBusy`).
+  autofix run, no merge (`SessionAutomationHooks.reviewBusy`), and Claude's
+  `merge_pull_request` asks as the mode says instead of merging unasked.
 
 ## Container
 

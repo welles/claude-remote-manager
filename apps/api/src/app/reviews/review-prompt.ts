@@ -101,8 +101,10 @@ export function changedRepositories(
 
 /**
  * Fingerprint of what a session diff contains: auto-review starts again
- * only when it changed. Covers the commits and every file's change (its
- * hunks where the diff has them, else its line counts).
+ * only when it changed. Covers only the content of every file's change
+ * (the lines of its hunks where the diff has them, else its line counts),
+ * not commits or line numbers: committing or rebasing reviewed changes
+ * does not count as a change.
  */
 export function diffFingerprint(diff: SessionDiffResponse): string {
   const hash = createHash('sha256');
@@ -110,10 +112,7 @@ export function diffFingerprint(diff: SessionDiffResponse): string {
     hash.update(
       JSON.stringify([
         repository.repositoryId,
-        repository.path,
         repository.state,
-        repository.headCommit,
-        repository.comparison?.commit ?? null,
         repository.fileCount,
       ]),
     );
@@ -126,7 +125,7 @@ export function diffFingerprint(diff: SessionDiffResponse): string {
           file.additions,
           file.deletions,
           file.content,
-          file.hunks,
+          file.hunks.map((hunk) => hunk.lines),
         ]),
       );
     }
