@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { UsageTotals } from '@claude-remote-manager/shared-types';
 import { DATABASE, type AppDatabase } from '../db/database';
 import { usageRecords } from '../db/schema';
@@ -27,16 +27,21 @@ const sums = {
 export class UsageRepository {
   constructor(@Inject(DATABASE) private readonly db: AppDatabase) {}
 
-  /** Stores the usage of one request, one row per model. */
+  /**
+   * Stores the usage of one request, one row per model; `reviewId` for
+   * the request of an independent review.
+   */
   record(
     sessionId: string,
     sdkSessionId: string | null,
     byModel: Record<string, ModelUsageAmounts>,
     now = new Date(),
+    reviewId: string | null = null,
   ): void {
     const rows = Object.entries(byModel).map(([model, usage]) => ({
       sessionId,
       sdkSessionId,
+      reviewId,
       model,
       ...usage,
       createdAt: now,
@@ -68,12 +73,20 @@ export class UsageRepository {
     return new Map(rows.map(({ sessionId, ...totals }) => [sessionId, totals]));
   }
 
-  /** Summed usage of one session per model. */
+  /**
+   * Summed usage of the session's Claude Code process per model (without
+   * independent reviews): where the totals of its result messages start.
+   */
   totalsByModel(sessionId: string): Record<string, UsageTotals> {
     const rows = this.db
       .select({ model: usageRecords.model, ...sums })
       .from(usageRecords)
-      .where(eq(usageRecords.sessionId, sessionId))
+      .where(
+        and(
+          eq(usageRecords.sessionId, sessionId),
+          isNull(usageRecords.reviewId),
+        ),
+      )
       .groupBy(usageRecords.model)
       .all();
     return Object.fromEntries(

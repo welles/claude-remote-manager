@@ -7,6 +7,12 @@ import type {
 import type { AccountLimits } from './limits';
 import type { PreviewDto, PreviewStopper } from './previews';
 import type { RepositoryAdditionCall } from './repository-additions';
+import type {
+  ReviewEffort,
+  ReviewFinding,
+  ReviewOutcome,
+  ReviewTrigger,
+} from './reviews';
 import type { ShownFileDto } from './shown-files';
 import type {
   GitPushAnalysis,
@@ -459,8 +465,47 @@ export interface SetupResultEvent extends SessionEventBase {
   outputTail: string | null;
 }
 
+/**
+ * An independent review of the session's changes started (see
+ * `reviews.ts`). Stored; `review.finished` with the same `reviewId`
+ * follows (also after a server restart: as `cancelled`).
+ */
+export interface ReviewStartedEvent extends SessionEventBase {
+  type: 'review.started';
+  reviewId: string;
+  trigger: ReviewTrigger;
+  model: string;
+  effort: ReviewEffort;
+  /** Changed files the reviewer was given, over all repositories. */
+  fileCount: number;
+  /** `owner/name` of the repositories with changes. */
+  repositories: string[];
+}
+
+/**
+ * An independent review ended. With findings, the app sent them to Claude
+ * as a message of its own (`messageId`), queued while a turn ran.
+ */
+export interface ReviewFinishedEvent extends SessionEventBase {
+  type: 'review.finished';
+  reviewId: string;
+  outcome: ReviewOutcome;
+  /** The reviewer's overall assessment, one or two sentences. */
+  summary: string | null;
+  findings: ReviewFinding[];
+  /** Why it failed. */
+  error: string | null;
+  durationMs: number;
+  /** The reviewer's usage (also counted in the session's usage). */
+  usage: UsageTotals | null;
+  /** The app's message to Claude with the findings; `null` without. */
+  messageId: string | null;
+}
+
 export type SessionEvent =
   | UserMessageEvent
+  | ReviewStartedEvent
+  | ReviewFinishedEvent
   | AssistantDeltaEvent
   | AssistantTextEvent
   | ToolCallEvent

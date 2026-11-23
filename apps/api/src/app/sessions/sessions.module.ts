@@ -111,6 +111,9 @@ import { SlashCommandsService } from './slash-commands.service';
   ],
   exports: [
     SessionsService,
+    SessionDiffService,
+    UsageRepository,
+    AgentRunner,
     ViewerPresence,
     SessionRepository,
     SessionGitService,

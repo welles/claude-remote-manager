@@ -18,6 +18,7 @@ import type {
 import { GitHubApi } from '../github/github-api';
 import { errorMessage } from '../repositories/repositories-api';
 import { NotificationSettings } from './notification-settings';
+import { ReviewSettings } from '../reviews/review-settings';
 import { SettingsApi } from './settings-api';
 import { RouterLink } from '@angular/router';
 import { AppIcon } from '../ui/icon';
@@ -55,6 +56,7 @@ export function displayVersion(health: HealthResponse): string {
     MatCardModule,
     MatProgressBarModule,
     NotificationSettings,
+    ReviewSettings,
   ],
   templateUrl: './settings-page.html',
 })

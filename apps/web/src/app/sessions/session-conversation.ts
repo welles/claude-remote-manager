@@ -7,6 +7,8 @@ import type {
   SessionDto,
   ShownFileDto,
 } from '@claude-remote-manager/shared-types';
+import { REVIEW_MESSAGE_PREFIX } from '@claude-remote-manager/shared-types';
+import { ReviewCard } from '../reviews/review-card';
 import { MessageImages } from '../attachments/message-images';
 import { FileDiffCard } from '../diffs/file-diff-card';
 import { MessageContext } from '../github-references/message-context';
@@ -67,6 +69,7 @@ export type QueuedItem = Extract<ConversationItem, { kind: 'queued' }>;
     MessageText,
     NgTemplateOutlet,
     PreviewCard,
+    ReviewCard,
     ShownFileCard,
   ],
   templateUrl: './session-conversation.html',
@@ -95,6 +98,11 @@ export class SessionConversation {
 
   /** The items with each run of tool calls folded into a group. */
   protected readonly entries = computed(() => groupTools(this.items()));
+
+  /** What composed an app message: an independent review or the PR automation. */
+  protected appMessageSource(text: string): string {
+    return text.startsWith(REVIEW_MESSAGE_PREFIX) ? 'Review' : 'PR automation';
+  }
 
   protected readonly resolutionText = resolutionText;
   protected readonly questionCard = questionCard;

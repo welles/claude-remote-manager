@@ -1,12 +1,16 @@
 import type {
   CanUseTool,
   ModelInfo,
+  ModelUsage,
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
   SDKMessage,
   SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { SessionPermissionMode } from '@claude-remote-manager/shared-types';
+import type {
+  ReviewEffort,
+  SessionPermissionMode,
+} from '@claude-remote-manager/shared-types';
 import type * as Zod from 'zod';
 
 /** What the app's tool knows about the call. */
@@ -168,6 +172,37 @@ export interface AgentRun {
 }
 
 /**
+ * A one-shot, read-only Claude Code process: an independent review of a
+ * session's changes. It may only read files (`Read`, `Grep`, `Glob`),
+ * starts no MCP server, keeps no transcript and answers in `schema`.
+ */
+export interface AgentReviewOptions {
+  cwd: string;
+  additionalDirectories: string[];
+  model: string;
+  effort: ReviewEffort;
+  /** The task, with the diff. */
+  prompt: string;
+  /** Appended to Claude Code's system prompt. */
+  instructions: string;
+  /** JSON schema of the answer. */
+  schema: Record<string, unknown>;
+  /** Aborts the process. */
+  signal: AbortSignal;
+}
+
+/** What a review process ended with. */
+export interface AgentReviewResult {
+  /** The answer in the schema; `null` when it failed. */
+  output: unknown;
+  /** Why it failed; `null` on success. */
+  error: string | null;
+  /** Cumulative usage per model. */
+  modelUsage: Record<string, ModelUsage>;
+  durationMs: number;
+}
+
+/**
  * Starts Claude Code processes. An abstract class so that it can serve as
  * the Nest injection token and be replaced by a fake in tests.
  */
@@ -182,6 +217,12 @@ export abstract class AgentRunner {
    * request, no transcript) to ask it about the account, and closes it.
    */
   abstract probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T>;
+
+  /**
+   * Runs an independent review to its end (see {@link AgentReviewOptions});
+   * rejects when the process cannot start or is aborted.
+   */
+  abstract review(options: AgentReviewOptions): Promise<AgentReviewResult>;
 }
 
 /** What a probe process can be asked. */

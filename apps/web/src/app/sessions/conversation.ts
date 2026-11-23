@@ -11,6 +11,10 @@ import {
   type PrepareProgressEvent,
   type PreviewDto,
   type PreviewStoppedEvent,
+  type ReviewEffort,
+  type ReviewFinding,
+  type ReviewOutcome,
+  type ReviewTrigger,
   type SessionEvent,
   type SettingsChangedEvent,
   type SetupResultEvent,
@@ -96,6 +100,24 @@ export type ConversationItem =
       references: MessageReference[];
       state: 'queued' | 'withdrawn';
       reason: string | null;
+    }
+  | {
+      /** An independent review: running until `outcome` is set. */
+      kind: 'review';
+      key: string;
+      reviewId: string;
+      trigger: ReviewTrigger;
+      model: string;
+      effort: ReviewEffort;
+      fileCount: number;
+      repositories: string[];
+      outcome: ReviewOutcome | null;
+      summary: string | null;
+      findings: ReviewFinding[];
+      error: string | null;
+      durationMs: number | null;
+      usage: UsageTotals | null;
+      messageId: string | null;
     }
   | { kind: 'settings'; key: string; text: string }
   | { kind: 'notice'; key: string; level: 'info' | 'warning'; text: string }
@@ -519,6 +541,50 @@ export function applyEvent(
           interrupted: event.interrupted,
         },
       ];
+    case 'review.started': {
+      const key = `review:${event.reviewId}`;
+      if (items.some((existing) => existing.key === key)) {
+        return items;
+      }
+      return [
+        ...items,
+        {
+          kind: 'review',
+          key,
+          reviewId: event.reviewId,
+          trigger: event.trigger,
+          model: event.model,
+          effort: event.effort,
+          fileCount: event.fileCount,
+          repositories: event.repositories,
+          outcome: null,
+          summary: null,
+          findings: [],
+          error: null,
+          durationMs: null,
+          usage: null,
+          messageId: null,
+        },
+      ];
+    }
+    case 'review.finished': {
+      const key = `review:${event.reviewId}`;
+      const index = items.findIndex((existing) => existing.key === key);
+      const existing = items[index];
+      if (existing?.kind !== 'review') {
+        return items;
+      }
+      return replaceAt(items, index, {
+        ...existing,
+        outcome: event.outcome,
+        summary: event.summary,
+        findings: event.findings,
+        error: event.error,
+        durationMs: event.durationMs,
+        usage: event.usage,
+        messageId: event.messageId,
+      });
+    }
     case 'notice':
       return [
         ...items,

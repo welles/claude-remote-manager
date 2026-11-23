@@ -4,6 +4,7 @@ import type { PendingRequestSummary } from './pending-requests';
 import type { PullRequestAutomationDto } from './pr-automation';
 import type { PreviewDto } from './previews';
 import type { RepositoryAdditionDto } from './repository-additions';
+import type { SessionReviewDto } from './reviews';
 /**
  * Lifecycle of a session as shown in the UI. The Claude Code process is an
  * internal detail: it is closed when idle or when the server stops and
@@ -425,6 +426,11 @@ export interface SessionDto {
    * history readable); `null` while it is not.
    */
   archivedAt: string | null;
+  /**
+   * Independent reviews: the session's settings and the review running
+   * now (see `SessionReviewDto`). Absent from older servers.
+   */
+  review?: SessionReviewDto;
 }
 
 /** A repository a new session works on. */

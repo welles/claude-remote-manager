@@ -1,4 +1,7 @@
-import type { GitPushAnalysis } from '@claude-remote-manager/shared-types';
+import type {
+  GitPushAnalysis,
+  RunningReviewDto,
+} from '@claude-remote-manager/shared-types';
 
 /** Switches of a pull request's automation; `undefined` keeps one. */
 export interface PullRequestAutomationSwitches {
@@ -75,6 +78,18 @@ export class SessionAutomationHooks {
 
   /** The owner sent the session a message (not the app). */
   ownerMessage: ((sessionId: string) => void) | null = null;
+
+  /**
+   * The independent review running in the session, for `SessionDto.review`
+   * (set by the reviews service).
+   */
+  runningReview: ((sessionId: string) => RunningReviewDto | null) | null = null;
+
+  /**
+   * Whether an independent review runs in the session or auto-review is
+   * about to start one: the PR automation waits (no run, no merge).
+   */
+  reviewBusy: ((sessionId: string) => boolean) | null = null;
 
   /**
    * The tool `set_pr_automation`: switches autofix, automerge or autoclose

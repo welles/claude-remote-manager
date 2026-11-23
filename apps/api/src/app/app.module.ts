@@ -14,6 +14,7 @@ import { HealthController } from './health/health.controller';
 import { LimitsModule } from './limits/limits.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrAutomationModule } from './pr-automation/pr-automation.module';
+import { ReviewsModule } from './reviews/reviews.module';
 import { RepositoriesModule } from './repositories/repositories.module';
 import {
   REQUEST_GUARD_EXEMPT_ROUTES,
@@ -44,6 +45,7 @@ const webRoot = resolve(process.env.WEB_ROOT || join(__dirname, 'public'));
     SessionsModule,
     NotificationsModule,
     PrAutomationModule,
+    ReviewsModule,
     SearchModule,
     UsageModule,
     ...(existsSync(webRoot)

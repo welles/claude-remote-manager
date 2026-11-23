@@ -3,7 +3,7 @@
 } @for (item of entries(); track item.key) { @switch (item.kind) { @case
 ('user') {
 <!-- prettier-ignore -->
-<div class="user-message wrap-anywhere" [class]="item.origin === 'app' ? 'self-stretch border-l-2 border-outline-variant py-0.5 pl-2.5 type-body-medium text-on-surface-variant' : 'max-w-[86%] self-end rounded-[10px_10px_2px_10px] bg-surface-container-high px-3 py-2 type-body-large'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="block type-label-small whitespace-normal" data-testid="app-message-label">Sent by the app · PR automation</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" [showRepository]="multiRepository()" /></div>
+<div class="user-message wrap-anywhere" [class]="item.origin === 'app' ? 'self-stretch border-l-2 border-outline-variant py-0.5 pl-2.5 type-body-medium text-on-surface-variant' : 'max-w-[86%] self-end rounded-[10px_10px_2px_10px] bg-surface-container-high px-3 py-2 type-body-large'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="block type-label-small whitespace-normal" data-testid="app-message-label">Sent by the app · {{ appMessageSource(item.text) }}</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" [showRepository]="multiRepository()" /></div>
 @if (item.contextLength) {
 <app-message-context
   [sessionId]="sessionId()"
@@ -170,6 +170,12 @@
   class="-mt-1"
   [preview]="current(item.preview)"
   (embed)="embed.emit($event)"
+/>
+} @case ('review') {
+<app-review-card
+  [item]="item"
+  [sessionId]="sessionId()"
+  [runningId]="session()?.review?.running?.id ?? null"
 />
 } @case ('settings') {
 <!-- prettier-ignore -->

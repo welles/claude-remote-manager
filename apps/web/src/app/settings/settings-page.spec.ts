@@ -89,6 +89,14 @@ describe('SettingsPage', () => {
     http.expectOne('/api/settings').flush(settings);
     http.expectOne('/api/github/status').flush(github);
     http.expectOne('/api/notifications').flush(notificationStatus());
+    http
+      .expectOne('/api/settings/review')
+      .flush({ model: 'claude-fable-5-2', effort: 'high', maxAutoRounds: 3 });
+    http.expectOne('/api/models').flush({
+      models: [],
+      source: 'fallback',
+      updatedAt: null,
+    });
     const healthRequest = http.expectOne('/api/health');
     if (server) {
       healthRequest.flush(server);
@@ -229,5 +237,73 @@ describe('SettingsPage', () => {
     expect(displayVersion(health({ version: '1.2.3' }))).toBe('1.2.3');
     expect(displayVersion(health())).toBe('sha-0123456');
     expect(displayVersion(health({ commit: null }))).toBe('0.0.0');
+  });
+});
+
+describe('SettingsPage review settings', () => {
+  let http: HttpTestingController;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [SettingsPage],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
+    }).compileComponents();
+    http = TestBed.inject(HttpTestingController);
+  });
+  afterEach(() => http.verify());
+
+  it('shows the reviewer defaults and saves a change', async () => {
+    const fixture = TestBed.createComponent(SettingsPage);
+    fixture.detectChanges();
+    http.expectOne('/api/settings').flush({
+      gitAuthorName: null,
+      gitAuthorEmail: null,
+      timeZone: 'UTC',
+    });
+    http.expectOne('/api/github/status').flush(status());
+    http.expectOne('/api/notifications').flush(notificationStatus());
+    http.expectOne('/api/health').flush(health());
+    http
+      .expectOne('/api/settings/review')
+      .flush({ model: 'claude-fable-5-2', effort: 'high', maxAutoRounds: 3 });
+    http.expectOne('/api/models').flush({
+      models: [
+        {
+          value: 'opus',
+          label: 'Opus 5.5',
+          description: '',
+          resolvedModel: 'claude-opus-5-5',
+        },
+      ],
+      source: 'claude-code',
+      updatedAt: null,
+    });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const element = fixture.nativeElement as HTMLElement;
+    const card = element.querySelector(
+      '[data-testid="review-settings-card"]',
+    ) as HTMLElement;
+    expect(words(card)).toContain('Fable 5.2');
+    expect(words(card)).toContain('High');
+    const rounds = card.querySelector(
+      '[data-testid="review-default-rounds"]',
+    ) as HTMLInputElement;
+    expect(rounds.value).toBe('3');
+    rounds.value = '5';
+    rounds.dispatchEvent(new Event('change'));
+    const request = http.expectOne('/api/settings/review');
+    expect(request.request.method).toBe('PUT');
+    expect(request.request.body).toEqual({ maxAutoRounds: 5 });
+    request.flush({
+      model: 'claude-fable-5-2',
+      effort: 'high',
+      maxAutoRounds: 5,
+    });
   });
 });

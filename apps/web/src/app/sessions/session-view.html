@@ -401,6 +401,16 @@
       </p>
       }
     </section>
+    @if (hasRepositories()) {
+    <section class="panel-section app-compact" id="details-review">
+      <h3 class="app-section-label">Independent review</h3>
+      <app-session-review-panel
+        [session]="s"
+        [enabled]="connected()"
+        (changed)="session.set($event)"
+      />
+    </section>
+    }
     <section class="panel-section" id="details-usage">
       <h3 class="app-section-label">Usage</h3>
       <p

@@ -1,3 +1,4 @@
+import { SessionReviewPanel } from '../reviews/session-review-panel';
 import { AppDatePipe, formatClock } from '../ui/dates';
 import { AppBanner } from '../ui/banner';
 import { AppIcon } from '../ui/icon';
@@ -126,6 +127,7 @@ const MENTION_TOKEN = /^@(?:"[^"\n]{1,4096}"|[^\s"]{1,4096})$/;
     SessionDirectories,
     SessionGitPanel,
     SessionPreviews,
+    SessionReviewPanel,
     TodoPanel,
   ],
   templateUrl: './session-view.html',
