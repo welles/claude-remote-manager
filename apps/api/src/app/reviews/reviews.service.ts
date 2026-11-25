@@ -304,8 +304,9 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     };
     const abort = new AbortController();
     this.active.set(record.id, { dto, abort });
-    // The session shows the review as running before its card appears.
-    this.sessions.publishUpdate(record.id);
+    // The session shows the review as running (and waits for it once its
+    // turn is over) before its card appears.
+    this.sessions.reviewChanged(record.id);
     this.sessions.recordEvent(record.id, {
       type: 'review.started',
       reviewId: dto.id,
@@ -343,7 +344,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const session = this.sessions.get(sessionId);
-    this.sessions.publishUpdate(sessionId);
+    this.sessions.reviewChanged(sessionId);
     if (session.review?.mode === 'turn' && this.isTurnOver(session)) {
       void this.autoReview(sessionId);
     }

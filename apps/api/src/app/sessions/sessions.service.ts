@@ -876,19 +876,30 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Publishes the current state of a session after a change made outside
-   * this service (push, pull request, an independent review that started
-   * or ended); with a process, a changed status also as `session.status`.
+   * this service (push, pull request).
    */
   publishUpdate(id: string): void {
+    const record = this.sessions.get(id);
+    if (record) {
+      this.updates.next(this.toDto(record));
+    }
+  }
+
+  /**
+   * An independent review of the session started or ended: a session whose
+   * turn is over waits for it (`background`, `Reviewing`) or no longer.
+   * Publishes the status (with a process also as `session.status`), else
+   * the session.
+   */
+  reviewChanged(id: string): void {
     const record = this.sessions.get(id);
     if (!record) {
       return;
     }
     const live = this.live.get(id);
-    if (live && this.publishStatus(live)) {
-      return;
+    if (!live || !this.publishStatus(live)) {
+      this.updates.next(this.toDto(record));
     }
-    this.updates.next(this.toDto(record));
   }
 
   /**
