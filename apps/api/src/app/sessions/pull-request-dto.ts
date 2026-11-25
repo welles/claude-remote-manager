@@ -47,7 +47,9 @@ export function pullRequestDto(pull: PullRequestRecord): PullRequestDto {
     },
     checks: pull.checks ?? null,
     mergeQueue:
-      pull.mergeQueuedSha && pull.state === 'open'
+      pull.mergeQueuedSha &&
+      pull.mergeQueuedSha === pull.headSha &&
+      pull.state === 'open'
         ? {
             since: (pull.mergeQueuedAt ?? pull.syncedAt).toISOString(),
             position: pull.mergeQueuePosition,
