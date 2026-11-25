@@ -65,7 +65,12 @@ export interface FakePullRequest {
   /** The base branch requires a merge queue: direct merges are refused. */
   requiresMergeQueue?: boolean;
   /** Its merge queue entry while it is in the queue. */
-  queueEntry?: { position: number; state: string; groupSha: string } | null;
+  queueEntry?: {
+    position: number;
+    state: string;
+    groupSha: string;
+    enqueuedAt?: string;
+  } | null;
   /** Removals from the merge queue (timeline), oldest first. */
   queueRemovals?: { at: string; reason: string; headSha: string }[];
 }
@@ -1060,6 +1065,7 @@ export class FakeGitHub {
       ? {
           position: entry.position,
           state: entry.state,
+          enqueuedAt: entry.enqueuedAt ?? null,
           headCommit: { oid: entry.groupSha },
         }
       : null;
@@ -1149,6 +1155,7 @@ export class FakeGitHub {
       position,
       state: 'QUEUED',
       groupSha: 'c'.repeat(40),
+      enqueuedAt: new Date().toISOString(),
     };
     this.enqueued.push({ number: pull.number, sha: pull.headSha });
     return json(200, {
