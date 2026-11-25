@@ -232,6 +232,60 @@ describe('ReviewsService', () => {
     ]);
   });
 
+  it('leaves a turn running during a review, and what Claude waits for comes first', async () => {
+    const session = await idleSession();
+    await commitFile(session.cwd, 'work.txt', 'changed');
+    await reviews.start(session.id);
+    const setWaiting = async (reason?: string) => {
+      const tool = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'set_waiting_state',
+      );
+      if (!tool) {
+        throw new Error('set_waiting_state is missing');
+      }
+      await tool.handler(
+        { waiting_on: 'work', ...(reason ? { reason } : {}) },
+        { toolUseId: 'toolu_wait' },
+      );
+    };
+
+    await turn(session.id, async () => {
+      expect(harness.service.get(session.id)).toMatchObject({
+        status: 'running',
+        waitingFor: null,
+        waitingReason: null,
+      });
+      await setWaiting('CI of PR #1');
+    });
+    expect(harness.service.get(session.id)).toMatchObject({
+      waitingFor: 'background',
+      waitingReason: 'CI of PR #1',
+    });
+
+    // `work` without a reason: the review is what it waits for.
+    await turn(session.id, () => setWaiting());
+    expect(harness.service.get(session.id)).toMatchObject({
+      waitingFor: 'background',
+      waitingReason: 'Reviewing',
+    });
+  });
+
+  it('publishes a review that starts once, as a status change', async () => {
+    const session = await idleSession();
+    await commitFile(session.cwd, 'work.txt', 'changed');
+    const updates: SessionDto[] = [];
+    const subscription = harness.service.updates$.subscribe((update) => {
+      if (update.id === session.id) {
+        updates.push(update);
+      }
+    });
+    await reviews.start(session.id);
+    subscription.unsubscribe();
+    expect(
+      updates.map((update) => [update.waitingFor, update.waitingReason]),
+    ).toEqual([['background', 'Reviewing']]);
+  });
+
   it('uses the model and effort chosen for the session', async () => {
     const session = await idleSession();
     await commitFile(session.cwd, 'work.txt', 'changed');
