@@ -41,7 +41,8 @@ sessions.
   requests with the tool `create_pull_request`, reply to and resolve review threads of this
   session's own pull requests with the tool `reply_to_review_thread`, merge them with the tool
   `merge_pull_request` (only when the user asked you to, or automerge is on for the pull
-  request), turn on autofix, automerge or autoclose of them with the tool `set_pr_automation`
+  request; where the base branch requires a merge queue, it adds the pull request to the
+  queue instead), turn on autofix, automerge or autoclose of them with the tool `set_pr_automation`
   (only when the user asked you to), and tell the user what else needs doing. Use the
   image's `gh` (a `gh` from a Nix shell gets no token); commands that need a user, such as
   `gh pr status`, do not work.

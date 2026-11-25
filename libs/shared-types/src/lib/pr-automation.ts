@@ -15,7 +15,8 @@
  *   removed, except clones with work that is not on GitHub;
  * - automerge (only with autofix): the app merges the pull request itself
  *   once its head commit passed all checks, is approved and no review
- *   thread is unresolved (rebase, else squash, else a merge commit);
+ *   thread is unresolved (rebase, else squash, else a merge commit; where
+ *   the base branch requires a merge queue, it adds it to the queue);
  *   Claude can pause it for the owner's decision, which the owner's next
  *   message lifts.
  */
@@ -24,14 +25,30 @@
  * What started an autofix run; `ready`: the session was told that the
  * pull request passed all checks and is approved (no attempt); `conflict`:
  * the pull request has merge conflicts with its base branch (failed checks
- * and feedback may come along).
+ * and feedback may come along); `queue`: the merge queue removed the
+ * pull request without merging it.
  */
 export type AutofixTrigger =
   | 'ci'
   | 'review'
   | 'ci+review'
   | 'conflict'
+  | 'queue'
   | 'ready';
+
+/**
+ * A pull request in its base branch's merge queue, added by the app
+ * (automerge) or by Claude (`merge_pull_request`): GitHub merges it once
+ * the queue's checks pass.
+ */
+export interface MergeQueueDto {
+  /** When it was added. */
+  since: string;
+  /** 1-based place in the queue as last read, `null` if unknown. */
+  position: number | null;
+  /** GitHub's state of the entry (`QUEUED`, `AWAITING_CHECKS`, ...). */
+  state: string | null;
+}
 
 export interface PullRequestAutomationDto {
   autofix: boolean;

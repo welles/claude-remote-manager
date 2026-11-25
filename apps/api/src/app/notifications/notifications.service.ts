@@ -239,6 +239,33 @@ export class NotificationsService implements OnModuleDestroy {
     });
   }
 
+  /**
+   * A merge queue removed a pull request of the session without merging
+   * it, and no autofix run works on it.
+   */
+  notifyMergeQueueRemoval(
+    sessionId: string,
+    pullRequest: PullRequestDto,
+    detail: string,
+  ): boolean {
+    const session = this.sessionOrNull(sessionId);
+    return this.notify({
+      type: 'merge_queue',
+      key: notificationKeys.mergeQueue(pullRequest.id),
+      sessionId,
+      title: `Removed from the merge queue: ${pullRequestLabel(pullRequest)}`,
+      body: [
+        shorten(detail, 160),
+        session ? sessionContext(session) : shorten(pullRequest.title, 80),
+      ].join('\n'),
+      path: `/sessions/${sessionId}`,
+      requestId: null,
+      actions: [],
+      urgent: false,
+      at: Date.now(),
+    });
+  }
+
   /** PR automation: a pull request of the session was merged or closed. */
   notifyPullRequestClosed(
     sessionId: string,

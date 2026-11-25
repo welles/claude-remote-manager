@@ -839,7 +839,10 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         'passed, nobody requests changes, there are no new reviews or comments to handle and ' +
         'no review thread is unresolved; otherwise the user is asked as the permission mode ' +
         'says. Without method: rebase, else squash, a merge commit only when neither is ' +
-        'possible. GitHub may still refuse (conflict, branch protection, draft).',
+        'possible. GitHub may still refuse (conflict, branch protection, draft). Where the ' +
+        "base branch requires a merge queue, it adds the pull request to the queue's end " +
+        "instead (the queue's settings decide the method) and GitHub merges it once the " +
+        "queue's checks pass; if the queue removes it, the session manager tells you.",
       inputSchema: (z) => ({
         repository: z
           .string()
@@ -903,6 +906,15 @@ export class SessionAgentSupportService extends SessionAgentSupport {
                   : null,
             },
           );
+          if (outcome.kind === 'queued') {
+            const place =
+              outcome.position === null
+                ? ''
+                : ` at position ${outcome.position}`;
+            return {
+              text: `${outcome.already ? 'Already in' : 'Added to'} the merge queue: ${outcome.pullRequest} at ${outcome.sha.slice(0, 12)}${place}. Its base branch requires a merge queue, so GitHub merges it once the queue's checks pass (the queue decides the method). It is not merged yet: the session manager tells you when it is merged, or if the queue removes it.`,
+            };
+          }
           return {
             text: `Merged ${outcome.pullRequest} at ${outcome.sha.slice(0, 12)} (${outcome.method === 'merge' ? 'merge commit' : outcome.method}).`,
           };

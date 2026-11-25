@@ -415,6 +415,21 @@ export const pullRequests = sqliteTable(
     automergeWaiting: text('automerge_waiting'),
     /** Head commit for which the owner was told that automerge is stuck. */
     automergeNotifiedSha: text('automerge_notified_sha'),
+    // --- Merge queue (only what the app or Claude added) -----------------
+    /** Head commit added to the base branch's merge queue; null: not in it. */
+    mergeQueuedSha: text('merge_queued_sha'),
+    mergeQueuedAt: timestamp('merge_queued_at'),
+    /** Place and GitHub's state of the entry as last read. */
+    mergeQueuePosition: integer('merge_queue_position'),
+    mergeQueueState: text('merge_queue_state'),
+    /** The commit the queue tests (merge group), as last read. */
+    mergeQueueGroupSha: text('merge_queue_group_sha'),
+    /**
+     * The queue removed the pull request without merging it: its head
+     * commit then and GitHub's reason, until the automation handled it.
+     */
+    mergeQueueRemovedSha: text('merge_queue_removed_sha'),
+    mergeQueueRemovedReason: text('merge_queue_removed_reason'),
     /** CI checks of the head commit as last read (for the view only). */
     checks: text('checks', { mode: 'json' }).$type<PullRequestChecksDto>(),
   },

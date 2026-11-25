@@ -62,6 +62,12 @@ export interface FakePullRequest {
    */
   mergeable?: boolean | null;
   mergeableState?: string;
+  /** The base branch requires a merge queue: direct merges are refused. */
+  requiresMergeQueue?: boolean;
+  /** Its merge queue entry while it is in the queue. */
+  queueEntry?: { position: number; state: string; groupSha: string } | null;
+  /** Removals from the merge queue (timeline), oldest first. */
+  queueRemovals?: { at: string; reason: string; headSha: string }[];
 }
 
 /** An issue or pull request for references (`#12`). */
@@ -243,6 +249,8 @@ export class FakeGitHub {
   allowedMergeMethods = new Set(['rebase', 'squash', 'merge']);
   /** Merges done: pull request number and method. */
   readonly merges: { number: number; method: string; sha: string }[] = [];
+  /** Pull requests added to a merge queue: number and expected head. */
+  readonly enqueued: { number: number; sha: string }[] = [];
   /** Head commit GitHub reports for a new pull request's branch. */
   headSha: (repository: FakeRepository, head: string) => string = () =>
     'a'.repeat(40);
@@ -954,6 +962,15 @@ export class FakeGitHub {
     if (body.query?.includes('resolveReviewThread')) {
       return this.resolveThread(auth, variables.threadId ?? '');
     }
+    if (body.query?.includes('enqueuePullRequest')) {
+      return this.enqueue(
+        auth,
+        body.variables as { pullRequestId?: string; expectedHeadOid?: string },
+      );
+    }
+    if (body.query?.includes('isInMergeQueue')) {
+      return this.mergeQueueQuery(auth, variables);
+    }
     const found = this.repositoryByName(
       variables.owner ?? '',
       variables.name ?? '',
@@ -1037,6 +1054,135 @@ export class FakeGitHub {
     });
   }
 
+  private fakeQueueEntry(pull: FakePullRequest) {
+    const entry = pull.queueEntry;
+    return entry
+      ? {
+          position: entry.position,
+          state: entry.state,
+          headCommit: { oid: entry.groupSha },
+        }
+      : null;
+  }
+
+  /** GraphQL: a pull request's merge queue entry and removals. */
+  private mergeQueueQuery(
+    auth: RecordedRequest['auth'],
+    variables: { owner?: string; name?: string; number?: number },
+  ): Response {
+    const found = this.repositoryByName(
+      variables.owner ?? '',
+      variables.name ?? '',
+    );
+    const pull = this.pulls.find(
+      (entry) =>
+        entry.repositoryId === found?.repository.id &&
+        entry.number === variables.number,
+    );
+    if (!found || !pull) {
+      return json(200, { data: { repository: { pullRequest: null } } });
+    }
+    if (!this.allows(auth, found.repository, 'pull_requests', 'read')) {
+      return json(200, {
+        data: { repository: null },
+        errors: [{ message: 'Resource not accessible by integration' }],
+      });
+    }
+    const removals = pull.queueRemovals ?? [];
+    return json(200, {
+      data: {
+        repository: {
+          pullRequest: {
+            id: `PR_${found.repository.id}_${pull.number}`,
+            headRefOid: pull.headSha,
+            isInMergeQueue: !!pull.queueEntry,
+            mergeQueueEntry: this.fakeQueueEntry(pull),
+            timelineItems: {
+              nodes: removals.slice(-1).map((removal) => ({
+                createdAt: removal.at,
+                reason: removal.reason,
+                beforeCommit: { oid: removal.headSha },
+              })),
+            },
+          },
+        },
+      },
+    });
+  }
+
+  /** GraphQL `enqueuePullRequest`. */
+  private enqueue(
+    auth: RecordedRequest['auth'],
+    variables: { pullRequestId?: string; expectedHeadOid?: string },
+  ): Response {
+    const match = /^PR_(\d+)_(\d+)$/.exec(variables.pullRequestId ?? '');
+    const pull = match
+      ? this.pulls.find(
+          (entry) =>
+            entry.repositoryId === Number(match[1]) &&
+            entry.number === Number(match[2]),
+        )
+      : undefined;
+    const repository = this.installations
+      .flatMap((installation) => installation.repositories)
+      .find((entry) => entry.id === pull?.repositoryId);
+    if (!pull || !repository) {
+      return json(200, {
+        errors: [{ message: 'Could not resolve to a PullRequest' }],
+      });
+    }
+    if (
+      !this.allows(auth, repository, 'pull_requests', 'write') ||
+      !this.allows(auth, repository, 'contents', 'write')
+    ) {
+      return json(200, {
+        errors: [{ message: 'Resource not accessible by integration' }],
+      });
+    }
+    if (variables.expectedHeadOid !== pull.headSha) {
+      return json(200, {
+        errors: [{ message: 'The expected head OID does not match' }],
+      });
+    }
+    const position = this.pulls.filter((entry) => entry.queueEntry).length + 1;
+    pull.queueEntry = {
+      position,
+      state: 'QUEUED',
+      groupSha: 'c'.repeat(40),
+    };
+    this.enqueued.push({ number: pull.number, sha: pull.headSha });
+    return json(200, {
+      data: {
+        enqueuePullRequest: { mergeQueueEntry: this.fakeQueueEntry(pull) },
+      },
+    });
+  }
+
+  /** The merge queue merges a pull request that is in it. */
+  mergeFromQueue(number: number): void {
+    const pull = this.pulls.find((entry) => entry.number === number);
+    if (!pull?.queueEntry) {
+      throw new Error(`#${number} is not in the merge queue`);
+    }
+    pull.queueEntry = null;
+    pull.state = 'closed';
+    pull.merged = true;
+    this.merges.push({ number, method: 'queue', sha: pull.headSha });
+  }
+
+  /** The merge queue removes a pull request without merging it. */
+  removeFromQueue(number: number, reason: string, at = new Date()): void {
+    const pull = this.pulls.find((entry) => entry.number === number);
+    if (!pull?.queueEntry) {
+      throw new Error(`#${number} is not in the merge queue`);
+    }
+    pull.queueEntry = null;
+    pull.queueRemovals = [
+      ...(pull.queueRemovals ?? []),
+      { at: at.toISOString(), reason, headSha: pull.headSha },
+    ];
+  }
+
   /** `PUT /repos/{owner}/{repo}/pulls/{number}/merge`. */
   private mergeRoute(request: RecordedRequest): Response | undefined {
     const { method, path, auth } = request;
@@ -1074,6 +1220,12 @@ export class FakeGitHub {
     }
     if (pull.state !== 'open') {
       return json(405, { message: 'Pull Request is not mergeable' });
+    }
+    if (pull.requiresMergeQueue) {
+      return json(405, {
+        message:
+          'Repository rule violations found\n\nChanges must be made through the merge queue',
+      });
     }
     if (body.sha && body.sha !== pull.headSha) {
       return json(409, {

@@ -97,6 +97,36 @@ export const MERGE_METHODS: readonly MergeMethod[] = [
   'merge',
 ];
 
+/** What {@link GitHubService.mergePullRequest} did. */
+export type MergeResult =
+  | { kind: 'merged'; method: MergeMethod }
+  /** Added to the merge queue (`already`: it was in it with this head). */
+  | ({ kind: 'queued'; already: boolean } & MergeQueueEntryInfo);
+
+/** A pull request's entry in a merge queue. */
+export interface MergeQueueEntryInfo {
+  /** 1-based place in the queue, `null` if GitHub did not say. */
+  position: number | null;
+  /** GitHub's `MergeQueueEntryState` (`QUEUED`, `AWAITING_CHECKS`, ...). */
+  state: string | null;
+  /** The commit the queue tests (its merge group), when known. */
+  groupSha: string | null;
+}
+
+/** See {@link GitHubService.mergeQueueState}. */
+export interface MergeQueueState {
+  /** The entry while the pull request is in a merge queue. */
+  entry: MergeQueueEntryInfo | null;
+  /** The latest removal from a merge queue, if any. */
+  lastRemoval: {
+    at: Date;
+    /** GitHub's reason, e.g. `CI_FAILURE`, `MERGE_CONFLICT`, `MANUAL`. */
+    reason: string | null;
+    /** The pull request's head commit when it was removed. */
+    headSha: string | null;
+  } | null;
+}
+
 export interface PullRequestInfo {
   number: number;
   url: string;
@@ -228,6 +258,45 @@ const RESOLVE_REVIEW_THREAD_MUTATION = `mutation($threadId: ID!) {
   }
 }`;
 
+const MERGE_QUEUE_ENTRY_FIELDS = 'position state headCommit { oid }';
+
+const MERGE_QUEUE_LOOKUP_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      headRefOid
+      isInMergeQueue
+      mergeQueueEntry { ${MERGE_QUEUE_ENTRY_FIELDS} }
+    }
+  }
+}`;
+
+const ENQUEUE_PULL_REQUEST_MUTATION = `mutation($pullRequestId: ID!, $expectedHeadOid: GitObjectID!) {
+  enqueuePullRequest(input: { pullRequestId: $pullRequestId, expectedHeadOid: $expectedHeadOid }) {
+    mergeQueueEntry { ${MERGE_QUEUE_ENTRY_FIELDS} }
+  }
+}`;
+
+const MERGE_QUEUE_STATE_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      isInMergeQueue
+      mergeQueueEntry { ${MERGE_QUEUE_ENTRY_FIELDS} }
+      timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) {
+        nodes {
+          ... on RemovedFromMergeQueueEvent { createdAt reason beforeCommit { oid } }
+        }
+      }
+    }
+  }
+}`;
+
+interface RawMergeQueueEntry {
+  position?: number | null;
+  state?: string | null;
+  headCommit?: { oid?: string | null } | null;
+}
+
 interface GraphQLResponse<T> {
   data?: T | null;
   errors?: { message?: string }[];
@@ -263,6 +332,39 @@ interface RawActivity {
   ref?: string;
   timestamp?: string;
 }
+
+type RawMergeQueueLookup = GraphQLResponse<{
+  repository?: {
+    pullRequest?: {
+      id?: string;
+      headRefOid?: string;
+      isInMergeQueue?: boolean;
+      mergeQueueEntry?: RawMergeQueueEntry | null;
+    } | null;
+  } | null;
+}>;
+
+type RawEnqueue = GraphQLResponse<{
+  enqueuePullRequest?: {
+    mergeQueueEntry?: RawMergeQueueEntry | null;
+  } | null;
+}>;
+
+type RawMergeQueueState = GraphQLResponse<{
+  repository?: {
+    pullRequest?: {
+      isInMergeQueue?: boolean;
+      mergeQueueEntry?: RawMergeQueueEntry | null;
+      timelineItems?: {
+        nodes?: ({
+          createdAt?: string | null;
+          reason?: string | null;
+          beforeCommit?: { oid?: string | null } | null;
+        } | null)[];
+      } | null;
+    } | null;
+  } | null;
+}>;
 
 type RawResolveThread = GraphQLResponse<{
   resolveReviewThread?: {
@@ -322,6 +424,49 @@ function graphqlData<T>(response: GraphQLResponse<T>, what: string): T {
     throw new Error(`GitHub did not ${what}${message ? `: ${message}` : ''}`);
   }
   return response.data;
+}
+
+function shaOrNull(value: unknown): string | null {
+  return typeof value === 'string' && /^[0-9a-f]{40}$/.test(value)
+    ? value
+    : null;
+}
+
+function queueEntry(
+  raw: RawMergeQueueEntry | null | undefined,
+): MergeQueueEntryInfo {
+  return {
+    position:
+      typeof raw?.position === 'number' && Number.isSafeInteger(raw.position)
+        ? raw.position
+        : null,
+    state: typeof raw?.state === 'string' ? raw.state : null,
+    groupSha: shaOrNull(raw?.headCommit?.oid),
+  };
+}
+
+/**
+ * GitHub refuses a direct merge because the base branch requires a merge
+ * queue (a branch rule or ruleset: 405 "... must be made through the merge
+ * queue").
+ */
+export function mergeQueueRequired(error: unknown): boolean {
+  return (
+    error instanceof GitHubApiError &&
+    error.githubStatus === 405 &&
+    /merge queue/i.test(error.message)
+  );
+}
+
+/** Names the likely missing permission when GitHub refuses the app. */
+function explainQueuePermission(error: unknown): unknown {
+  const text = errorText(error);
+  if (/not accessible by integration/i.test(text)) {
+    return new Error(
+      `${text} (adding to a merge queue may need the GitHub App's repository permission "Merge queues: Read and write")`,
+    );
+  }
+  return error;
 }
 
 /** `owner/name` with both parts URL-encoded. */
@@ -877,6 +1022,11 @@ export class GitHubService implements OnApplicationBootstrap {
    * moved), trying the methods in order: a method the repository does not
    * allow, or a rebase GitHub cannot do, goes on to the next one. Returns
    * the method that merged; other refusals throw ({@link GitHubApiError}).
+   * Where the base branch requires a merge queue (GitHub refuses the merge
+   * as not "through the merge queue"), the pull request is added to the
+   * queue instead, at its end (never `jump`: the owner's decision) and
+   * expecting exactly `sha` as its head; the queue's settings decide the
+   * method then.
    */
   async mergePullRequest(
     installationId: number,
@@ -885,7 +1035,7 @@ export class GitHubService implements OnApplicationBootstrap {
     number: number,
     sha: string,
     methods: readonly MergeMethod[] = MERGE_METHODS,
-  ): Promise<MergeMethod> {
+  ): Promise<MergeResult> {
     const { token } = await this.repositoryToken(installationId, repositoryId, {
       pull_requests: 'write',
       contents: 'write',
@@ -899,8 +1049,14 @@ export class GitHubService implements OnApplicationBootstrap {
           token,
           body: { sha, merge_method: method },
         });
-        return method;
+        return { kind: 'merged', method };
       } catch (error) {
+        if (mergeQueueRequired(error)) {
+          return {
+            kind: 'queued',
+            ...(await this.enqueuePullRequest(token, fullName, number, sha)),
+          };
+        }
         if (
           error instanceof GitHubApiError &&
           error.githubStatus === 405 &&
@@ -913,6 +1069,115 @@ export class GitHubService implements OnApplicationBootstrap {
       }
     }
     throw refusal ?? new Error('No merge method to try');
+  }
+
+  /**
+   * Adds a pull request to its base branch's merge queue (GraphQL
+   * `enqueuePullRequest`), expecting `sha` as its head. A pull request
+   * already in the queue stays where it is (`already`).
+   */
+  private async enqueuePullRequest(
+    token: string,
+    fullName: string,
+    number: number,
+    sha: string,
+  ): Promise<MergeQueueEntryInfo & { already: boolean }> {
+    const [owner, name] = fullName.split('/');
+    const lookup = await this.http.request<RawMergeQueueLookup>({
+      method: 'POST',
+      path: '/graphql',
+      token,
+      body: {
+        query: MERGE_QUEUE_LOOKUP_QUERY,
+        variables: { owner, name, number },
+      },
+    });
+    const pull = graphqlData(
+      lookup.data,
+      'read the pull request for the merge queue',
+    ).repository?.pullRequest;
+    if (!pull?.id) {
+      throw new Error(`GitHub did not find ${fullName}#${number}`);
+    }
+    if (pull.headRefOid !== sha) {
+      throw new Error(
+        `The head commit of ${fullName}#${number} moved (now ${String(pull.headRefOid ?? 'unknown').slice(0, 12)}); it was not added to the merge queue`,
+      );
+    }
+    if (pull.isInMergeQueue) {
+      return { ...queueEntry(pull.mergeQueueEntry), already: true };
+    }
+    try {
+      const response = await this.http.request<RawEnqueue>({
+        method: 'POST',
+        path: '/graphql',
+        token,
+        body: {
+          query: ENQUEUE_PULL_REQUEST_MUTATION,
+          variables: { pullRequestId: pull.id, expectedHeadOid: sha },
+        },
+      });
+      const data = graphqlData(
+        response.data,
+        'add the pull request to the merge queue',
+      );
+      return {
+        ...queueEntry(data.enqueuePullRequest?.mergeQueueEntry),
+        already: false,
+      };
+    } catch (error) {
+      throw explainQueuePermission(error);
+    }
+  }
+
+  /**
+   * Where a pull request stands in its merge queue (GraphQL), and the
+   * latest time it was removed from one, with GitHub's reason.
+   */
+  async mergeQueueState(
+    installationId: number,
+    repositoryId: number,
+    fullName: string,
+    number: number,
+  ): Promise<MergeQueueState> {
+    const { token } = await this.repositoryToken(installationId, repositoryId, {
+      pull_requests: 'read',
+    });
+    const [owner, name] = fullName.split('/');
+    const response = await this.http.request<RawMergeQueueState>({
+      method: 'POST',
+      path: '/graphql',
+      token,
+      body: {
+        query: MERGE_QUEUE_STATE_QUERY,
+        variables: { owner, name, number },
+      },
+    });
+    const pull = graphqlData(
+      response.data,
+      'read the merge queue state of the pull request',
+    ).repository?.pullRequest;
+    if (!pull || typeof pull.isInMergeQueue !== 'boolean') {
+      throw new Error(
+        `GitHub did not say whether ${fullName}#${number} is in a merge queue`,
+      );
+    }
+    const removed = pull.timelineItems?.nodes?.at(-1) ?? null;
+    const removedAt = removed?.createdAt ? new Date(removed.createdAt) : null;
+    return {
+      entry: pull.isInMergeQueue ? queueEntry(pull.mergeQueueEntry) : null,
+      lastRemoval:
+        removed && removedAt && Number.isFinite(removedAt.getTime())
+          ? {
+              at: removedAt,
+              reason:
+                typeof removed.reason === 'string' && removed.reason
+                  ? removed.reason
+                  : null,
+              headSha: shaOrNull(removed.beforeCommit?.oid),
+            }
+          : null,
+    };
   }
 
   /**

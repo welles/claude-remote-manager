@@ -23,6 +23,7 @@ import {
   GitHubService,
   MERGE_METHODS,
   type MergeMethod,
+  type MergeQueueEntryInfo,
 } from '../github/github.service';
 import {
   isGitHubRepository,
@@ -34,6 +35,7 @@ import {
 } from '../repositories/repository.repository';
 import {
   SessionRepository,
+  type PullRequestPatch,
   type PullRequestRecord,
   type SessionDirectoryRecord,
   type SessionRecord,
@@ -45,6 +47,15 @@ const MAX_TITLE_LENGTH = 256;
 const MAX_BODY_LENGTH = 65_536;
 /** Open pull requests are re-read from GitHub at most this often. */
 export const PULL_REQUEST_SYNC_MS = 60_000;
+
+/** A pull request's merge queue fields when it is in no queue. */
+const MERGE_QUEUE_CLEARED = {
+  mergeQueuedSha: null,
+  mergeQueuedAt: null,
+  mergeQueuePosition: null,
+  mergeQueueState: null,
+  mergeQueueGroupSha: null,
+} satisfies PullRequestPatch;
 
 /** A session clone together with its session and repository. */
 export interface SessionClone {
@@ -83,13 +94,22 @@ export interface ReviewThreadReplyOutcome {
 }
 
 /** What {@link SessionGitService.mergePullRequest} did. */
-export interface PullRequestMergeOutcome {
+export type PullRequestMergeOutcome = {
   /** `owner/name#number`. */
   pullRequest: string;
-  method: MergeMethod;
-  /** The head commit that was merged. */
+  /** The head commit that was merged or added to the merge queue. */
   sha: string;
-}
+} & (
+  | { kind: 'merged'; method: MergeMethod }
+  /** Added to the base branch's merge queue (`already`: it was in it). */
+  | { kind: 'queued'; already: boolean; position: number | null }
+);
+
+/**
+ * A removal from the merge queue counts for an entry when GitHub dated it
+ * no earlier than this before the app added the pull request (clock skew).
+ */
+const QUEUE_REMOVAL_SKEW_MS = 60_000;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -424,10 +444,20 @@ export class SessionGitService {
       `${repository.owner}/${repository.name}`,
       pull.number,
     );
+    // A merged or closed pull request is in no queue any more.
+    const queue: PullRequestPatch = !pull.mergeQueuedSha
+      ? {}
+      : info.state === 'open'
+        ? await this.readMergeQueue(pull, repository)
+        : MERGE_QUEUE_CLEARED;
     const changed =
       pull.state !== info.state ||
       pull.title !== info.title ||
-      pull.draft !== info.draft;
+      pull.draft !== info.draft ||
+      (queue.mergeQueuedSha !== undefined &&
+        queue.mergeQueuedSha !== pull.mergeQueuedSha) ||
+      (queue.mergeQueuePosition !== undefined &&
+        queue.mergeQueuePosition !== pull.mergeQueuePosition);
     // Reading the same state again does not move the session up the list.
     const touch = changed || pull.headSha !== info.headSha;
     this.sessions.updatePullRequest(
@@ -444,6 +474,7 @@ export class SessionGitService {
         closedAt: info.closedAt,
         mergedAt: info.mergedAt,
         syncedAt: new Date(),
+        ...queue,
       },
       { touch },
     );
@@ -457,6 +488,119 @@ export class SessionGitService {
       this.refreshed.next(updated);
     }
     return updated;
+  }
+
+  /**
+   * Where a pull request the app or Claude added to a merge queue stands
+   * now: its entry (place, state, merge group), or that the queue removed
+   * it without merging it (its head commit then and GitHub's reason, for
+   * the PR automation to handle). A removal GitHub has not listed yet, or
+   * an error reading it, changes nothing: the next read looks again (a
+   * merge by the queue shows as the pull request's state).
+   */
+  private async readMergeQueue(
+    pull: PullRequestRecord,
+    repository: RepositoryRecord & {
+      githubInstallationId: number;
+      githubRepositoryId: number;
+    },
+  ): Promise<PullRequestPatch> {
+    try {
+      const read = await this.github.mergeQueueState(
+        repository.githubInstallationId,
+        repository.githubRepositoryId,
+        `${repository.owner}/${repository.name}`,
+        pull.number,
+      );
+      if (read.entry) {
+        return {
+          mergeQueuePosition: read.entry.position,
+          mergeQueueState: read.entry.state,
+          mergeQueueGroupSha:
+            read.entry.groupSha ?? pull.mergeQueueGroupSha ?? null,
+        };
+      }
+      const queuedAt = pull.mergeQueuedAt?.getTime() ?? 0;
+      const removal = read.lastRemoval;
+      if (
+        !removal ||
+        removal.at.getTime() < queuedAt - QUEUE_REMOVAL_SKEW_MS ||
+        // Merged: the pull request's state shows it with the next read.
+        /^(?:MERGE|ALREADY_MERGED)$/i.test(removal.reason ?? '')
+      ) {
+        return {};
+      }
+      return {
+        ...MERGE_QUEUE_CLEARED,
+        mergeQueueRemovedSha: removal.headSha ?? pull.mergeQueuedSha,
+        mergeQueueRemovedReason: removal.reason ?? 'UNKNOWN',
+        // Kept for the checks of the merge group.
+        mergeQueueGroupSha: pull.mergeQueueGroupSha,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Could not read the merge queue state of ${pull.repositoryName}#${pull.number}: ${errorText(error)}`,
+      );
+      return {};
+    }
+  }
+
+  /** Records that a pull request is in its base branch's merge queue. */
+  private recordQueued(
+    pull: PullRequestRecord,
+    sha: string,
+    entry: MergeQueueEntryInfo,
+    already: boolean,
+  ): void {
+    this.sessions.updatePullRequest(pull.id, {
+      mergeQueuedSha: sha,
+      mergeQueuedAt:
+        already && pull.mergeQueuedSha === sha && pull.mergeQueuedAt
+          ? pull.mergeQueuedAt
+          : new Date(),
+      mergeQueuePosition: entry.position,
+      mergeQueueState: entry.state,
+      mergeQueueGroupSha: entry.groupSha,
+      mergeQueueRemovedSha: null,
+      mergeQueueRemovedReason: null,
+    });
+    this.changes.next(pull.sessionId);
+  }
+
+  /**
+   * Merges a pull request with an installation token, exactly at `sha`
+   * (see {@link GitHubService.mergePullRequest}); where the base branch
+   * requires a merge queue, it is added to the queue and recorded so.
+   */
+  async mergeOrEnqueue(
+    pull: PullRequestRecord,
+    repository: RepositoryRecord & {
+      githubInstallationId: number;
+      githubRepositoryId: number;
+    },
+    sha: string,
+    methods: readonly MergeMethod[] = MERGE_METHODS,
+  ): Promise<
+    | { kind: 'merged'; method: MergeMethod }
+    | { kind: 'queued'; already: boolean; position: number | null }
+  > {
+    const result = await this.github.mergePullRequest(
+      repository.githubInstallationId,
+      repository.githubRepositoryId,
+      `${repository.owner}/${repository.name}`,
+      pull.number,
+      sha,
+      methods,
+    );
+    if (result.kind === 'merged') {
+      return result;
+    }
+    this.recordQueued(pull, sha, result, result.already);
+    return {
+      kind: 'queued',
+      already: result.already,
+      position: result.position,
+    };
   }
 
   /**
@@ -636,23 +780,35 @@ export class SessionGitService {
         `The head commit of ${fullName}#${number} is not known`,
       );
     }
-    const method = await this.github.mergePullRequest(
-      repository.githubInstallationId,
-      repository.githubRepositoryId,
-      fullName,
-      number,
+    if (
+      current.mergeQueuedSha &&
+      current.mergeQueuedSha === sha &&
+      !options.sha
+    ) {
+      // Asking again does not move it: say where it is.
+      return {
+        pullRequest: `${fullName}#${number}`,
+        sha,
+        kind: 'queued',
+        already: true,
+        position: current.mergeQueuePosition,
+      };
+    }
+    const result = await this.mergeOrEnqueue(
+      current,
+      repository,
       sha,
       options.method ? [options.method] : MERGE_METHODS,
     );
     try {
       await this.refreshPullRequest(pull.id);
     } catch (error) {
-      // Merged all the same; polling records it later.
+      // Merged (or queued) all the same; polling records it later.
       this.logger.warn(
         `Could not read ${fullName}#${number} after merging it: ${errorText(error)}`,
       );
     }
-    return { pullRequest: `${fullName}#${number}`, method, sha };
+    return { pullRequest: `${fullName}#${number}`, sha, ...result };
   }
 
   /**
