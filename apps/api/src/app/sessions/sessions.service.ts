@@ -5006,7 +5006,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Logs and publishes the status when what clients see changed. Returns
-   * whether it did.
+   * whether it published an update (also one for a changed summary of the
+   * pending requests only), so that callers do not send the same again.
    */
   private publishStatus(live: LiveSession): boolean {
     const record = this.requireRecord(live.id);
@@ -5019,6 +5020,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         // session list says what it waits for.
         live.publishedPending = pending;
         this.updates.next(this.toDto(record));
+        return true;
       }
       return false;
     }
