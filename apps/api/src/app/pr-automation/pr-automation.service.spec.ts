@@ -2348,7 +2348,10 @@ describe('PrAutomationService', () => {
 
         await harness.sessionGit.refreshPullRequest(pull.id);
         await harness.sessionGit.refreshPullRequest(pull.id);
+        await harness.sessionGit.refreshPullRequest(pull.id);
+        // Three quick reads are not enough: GitHub may list it later.
         expect(record(pull).mergeQueuedSha).not.toBeNull();
+        harness.sessionGit.queueAbsentMs = 0;
         await automation.check(pull.id);
 
         expect(record(pull).mergeQueuedSha).toBeNull();

@@ -143,8 +143,20 @@ export interface SessionPush {
 export class SessionGitService {
   private readonly logger = new Logger(SessionGitService.name);
   private readonly locks = new KeyedMutex();
-  /** Reads in a row that found a queued pull request in no queue. */
-  private readonly queueAbsent = new Map<number, number>();
+  /**
+   * Per pull request and queued commit: reads in a row that found it in no
+   * queue without a removal listed, and when the first of them was.
+   */
+  private readonly queueAbsent = new Map<
+    number,
+    { key: string; reads: number; since: number }
+  >();
+  /**
+   * How long a queued pull request must be seen in no queue (besides
+   * {@link QUEUE_ABSENT_READS} reads) before it counts as removed: GitHub
+   * may list the merge or the removal a little later.
+   */
+  queueAbsentMs = 5 * 60_000;
   private readonly changes = new Subject<string>();
   private readonly closed = new Subject<PullRequestRecord>();
   private readonly refreshed = new Subject<PullRequestRecord>();
@@ -458,6 +470,9 @@ export class SessionGitService {
       : info.state === 'open'
         ? await this.readMergeQueue(pull, repository, info.headSha)
         : MERGE_QUEUE_CLEARED;
+    if (queue.mergeQueuedSha === null) {
+      this.queueAbsent.delete(pull.id);
+    }
     // Reads run concurrently: only the one that saw the entry as it is
     // stored may change it (a slower read must not bring back a removal
     // that was handled meanwhile, or undo a new enqueue).
@@ -473,9 +488,11 @@ export class SessionGitService {
       pull.title !== info.title ||
       pull.draft !== info.draft ||
       (queue.mergeQueuedSha !== undefined &&
-        queue.mergeQueuedSha !== pull.mergeQueuedSha) ||
-      (queue.mergeQueuePosition !== undefined &&
-        queue.mergeQueuePosition !== pull.mergeQueuePosition);
+        queue.mergeQueuedSha !== pull.mergeQueuedSha);
+    // A new place in the queue is shown, but moves nothing up the list.
+    const moved =
+      queue.mergeQueuePosition !== undefined &&
+      queue.mergeQueuePosition !== pull.mergeQueuePosition;
     // Reading the same state again does not move the session up the list.
     const touch = changed || pull.headSha !== info.headSha;
     this.sessions.updatePullRequest(
@@ -497,7 +514,7 @@ export class SessionGitService {
       { touch },
     );
     const updated = this.sessions.pullRequest(pull.id) ?? null;
-    if (changed) {
+    if (changed || moved) {
       this.changes.next(pull.sessionId);
     }
     if (updated && updated.state !== 'open') {
@@ -551,10 +568,16 @@ export class SessionGitService {
         // Not in the queue, and no removal listed (yet): after a push the
         // queued commit is gone in any case (GitHub drops it); otherwise
         // the next reads look again, a few times.
-        const absent = (this.queueAbsent.get(pull.id) ?? 0) + 1;
+        const key = `${pull.mergeQueuedSha}:${pull.mergeQueuedAt?.getTime() ?? ''}`;
+        const before = this.queueAbsent.get(pull.id);
+        const absent =
+          before?.key === key
+            ? { ...before, reads: before.reads + 1 }
+            : { key, reads: 1, since: Date.now() };
         if (
           (headSha === null || headSha === pull.mergeQueuedSha) &&
-          absent < QUEUE_ABSENT_READS
+          (absent.reads < QUEUE_ABSENT_READS ||
+            Date.now() - absent.since < this.queueAbsentMs)
         ) {
           this.queueAbsent.set(pull.id, absent);
           return {};
@@ -597,6 +620,7 @@ export class SessionGitService {
     entry: MergeQueueEntryInfo,
     already: boolean,
   ): void {
+    this.queueAbsent.delete(pull.id);
     this.sessions.updatePullRequest(pull.id, {
       mergeQueuedSha: sha,
       // GitHub's time where it says (removals are dated by GitHub).
@@ -827,20 +851,6 @@ export class SessionGitService {
       throw new ConflictException(
         `The head commit of ${fullName}#${number} is not known`,
       );
-    }
-    if (
-      current.mergeQueuedSha &&
-      current.mergeQueuedSha === sha &&
-      !options.sha
-    ) {
-      // Asking again does not move it: say where it is.
-      return {
-        pullRequest: `${fullName}#${number}`,
-        sha,
-        kind: 'queued',
-        already: true,
-        position: current.mergeQueuePosition,
-      };
     }
     const result = await this.mergeOrEnqueue(
       current,
