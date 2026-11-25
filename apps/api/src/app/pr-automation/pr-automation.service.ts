@@ -278,6 +278,8 @@ export class PrAutomationService
   private readonly again = new Set<number>();
   /** Pull requests whose check found the session busy. */
   private readonly deferred = new Set<number>();
+  /** Queue removals without autofix the owner was told about (pull:sha). */
+  private readonly queueRemovalsTold = new Set<string>();
   /** Pull requests closed while a turn ran: their close wakes nobody. */
   private readonly closedInTurn = new Set<number>();
   /** Whether the first poll looked for closes left unhandled. */
@@ -1042,6 +1044,13 @@ export class PrAutomationService
       } else if (threads) {
         this.giveUp(current, triggers, 'unresolved review threads');
       }
+      if (triggers.dequeued) {
+        // No ready message for the removed head commit either.
+        this.records.updatePullRequest(pull.id, {
+          autofixReadySha: triggers.headSha,
+        });
+        return;
+      }
       if (!triggers.ready) {
         return;
       }
@@ -1205,6 +1214,16 @@ export class PrAutomationService
     }
     // GitHub's state decides (a retried request may have merged already).
     const after = await this.sessionGit.refreshPullRequest(pull.id);
+    if (
+      !method &&
+      after?.state === 'open' &&
+      after.headSha !== null &&
+      after.headSha !== headSha
+    ) {
+      // A push came in between: the new head commit is checked as usual.
+      this.mergeRetries.delete(`${pull.id}:${headSha}`);
+      return { kind: 'blocked' };
+    }
     if (method || after?.state === 'merged') {
       this.mergeRetries.delete(`${pull.id}:${headSha}`);
       this.records.updatePullRequest(pull.id, { automergeWaiting: null });
@@ -1572,29 +1591,37 @@ export class PrAutomationService
     }
     const reason = queueReason(current.mergeQueueRemovedReason);
     const name = `${current.repositoryName}#${current.number}`;
-    const ownerReason = ownerQueueReason(current.mergeQueueRemovedReason);
+    const key = `${current.id}:${current.mergeQueueRemovedSha}`;
+    if (!this.queueRemovalsTold.has(key)) {
+      // The owner learns it at once (once per removal).
+      this.queueRemovalsTold.add(key);
+      const ownerReason = ownerQueueReason(current.mergeQueueRemovedReason);
+      const detail = `The merge queue of ${current.baseBranch} removed ${name} without merging it (${ownerReason}).`;
+      this.sessions.recordEvent(current.sessionId, {
+        type: 'notice',
+        level: 'warning',
+        text: detail,
+      });
+      this.notifications.notifyMergeQueueRemoval(
+        current.sessionId,
+        pullRequestDto(current),
+        detail,
+      );
+      this.sessions.publishUpdate(current.sessionId);
+    }
+    const session = this.records.get(current.sessionId);
+    if (session && !turnIsOver(this.sessions.get(session.id))) {
+      // Claude may still say it goes on by itself in this turn: decided
+      // when the turn is over.
+      this.deferred.add(current.id);
+      return;
+    }
+    this.queueRemovalsTold.delete(key);
     this.records.updatePullRequest(current.id, {
       mergeQueueRemovedSha: null,
       mergeQueueRemovedReason: null,
     });
-    const detail = `The merge queue of ${current.baseBranch} removed ${name} without merging it (${ownerReason}).`;
-    this.sessions.recordEvent(current.sessionId, {
-      type: 'notice',
-      level: 'warning',
-      text: detail,
-    });
-    this.notifications.notifyMergeQueueRemoval(
-      current.sessionId,
-      pullRequestDto(this.records.pullRequest(current.id) ?? current),
-      detail,
-    );
-    this.sessions.publishUpdate(current.sessionId);
-    const session = this.records.get(current.sessionId);
-    if (
-      !session ||
-      !turnIsOver(this.sessions.get(session.id)) ||
-      !this.sessions.claudeGoesOn(session.id)
-    ) {
+    if (!session || !this.sessions.claudeGoesOn(session.id)) {
       return;
     }
     this.sessions.releaseClaudeWait(session.id);
