@@ -227,6 +227,14 @@ export function ownerQueueReason(reason: string | null | undefined): string {
   return line.length > 200 ? `${line.slice(0, 200)}…` : line || plain;
 }
 
+/**
+ * One removal from a merge queue: the pull request, the commit and when it
+ * was added (a later enqueue of the same commit is another removal).
+ */
+function removalKey(pull: PullRequestRecord): string {
+  return `${pull.id}:${pull.mergeQueueRemovedSha}:${pull.mergeQueuedAt?.getTime() ?? ''}`;
+}
+
 /** Conclusions (and status states) of checks that passed. */
 const PASSED_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
 
@@ -278,7 +286,10 @@ export class PrAutomationService
   private readonly again = new Set<number>();
   /** Pull requests whose check found the session busy. */
   private readonly deferred = new Set<number>();
-  /** Queue removals without autofix the owner was told about (pull:sha). */
+  /**
+   * Queue removals already noted in the history (see {@link removalKey}),
+   * until they are handled.
+   */
   private readonly queueRemovalsTold = new Set<string>();
   /** Pull requests closed while a turn ran: their close wakes nobody. */
   private readonly closedInTurn = new Set<number>();
@@ -1591,7 +1602,7 @@ export class PrAutomationService
     }
     const reason = queueReason(current.mergeQueueRemovedReason);
     const name = `${current.repositoryName}#${current.number}`;
-    const key = `${current.id}:${current.mergeQueueRemovedSha}`;
+    const key = removalKey(current);
     if (!this.queueRemovalsTold.has(key)) {
       // The owner learns it at once (once per removal).
       this.queueRemovalsTold.add(key);
@@ -1956,8 +1967,11 @@ export class PrAutomationService
         ? `Told the session that ${pull.repositoryName}#${pull.number} is ready to merge`
         : `Autofix run ${attempt}/${current.autofixMaxAttempts} for ${pull.repositoryName}#${pull.number} (${trigger})`,
     );
-    if (triggers.dequeued) {
-      // Also when a conflict run handles it.
+    const removal = triggers.dequeued ? removalKey(current) : null;
+    if (triggers.dequeued && removal && !this.queueRemovalsTold.has(removal)) {
+      // Also when a conflict run handles it; once, also when the run
+      // cannot start now and is tried again.
+      this.queueRemovalsTold.add(removal);
       this.sessions.recordEvent(pull.sessionId, {
         type: 'notice',
         level: 'warning',
@@ -1987,6 +2001,9 @@ export class PrAutomationService
       );
       this.sessions.publishUpdate(pull.sessionId);
       return;
+    }
+    if (removal) {
+      this.queueRemovalsTold.delete(removal);
     }
     // Marked running from here until the turn ends (a very short turn may
     // have ended already).

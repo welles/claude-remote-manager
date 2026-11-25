@@ -111,6 +111,8 @@ export interface MergeQueueEntryInfo {
   state: string | null;
   /** The commit the queue tests (its merge group), when known. */
   groupSha: string | null;
+  /** When GitHub added it (GitHub's clock), when known. */
+  enqueuedAt: Date | null;
 }
 
 /** See {@link GitHubService.mergeQueueState}. */
@@ -258,7 +260,7 @@ const RESOLVE_REVIEW_THREAD_MUTATION = `mutation($threadId: ID!) {
   }
 }`;
 
-const MERGE_QUEUE_ENTRY_FIELDS = 'position state headCommit { oid }';
+const MERGE_QUEUE_ENTRY_FIELDS = 'position state enqueuedAt headCommit { oid }';
 
 const MERGE_QUEUE_LOOKUP_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -294,6 +296,7 @@ const MERGE_QUEUE_STATE_QUERY = `query($owner: String!, $name: String!, $number:
 interface RawMergeQueueEntry {
   position?: number | null;
   state?: string | null;
+  enqueuedAt?: string | null;
   headCommit?: { oid?: string | null } | null;
 }
 
@@ -426,6 +429,14 @@ function graphqlData<T>(response: GraphQLResponse<T>, what: string): T {
   return response.data;
 }
 
+function validDate(value: unknown): Date | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
 function shaOrNull(value: unknown): string | null {
   return typeof value === 'string' && /^[0-9a-f]{40}$/.test(value)
     ? value
@@ -442,6 +453,7 @@ function queueEntry(
         : null,
     state: typeof raw?.state === 'string' ? raw.state : null,
     groupSha: shaOrNull(raw?.headCommit?.oid),
+    enqueuedAt: validDate(raw?.enqueuedAt),
   };
 }
 

@@ -2308,6 +2308,54 @@ describe('PrAutomationService', () => {
         expect(record(pull).mergeQueueRemovedSha).toBeNull();
       });
 
+      it('tells the owner of a second removal of the same commit in one turn', async () => {
+        const { session, pull } = await sessionWithPullRequest();
+        fakePull(pull.number).requiresMergeQueue = true;
+        const enqueue = () =>
+          harness.sessionGit.mergePullRequest(
+            session.id,
+            repositoryId,
+            pull.number,
+            { sha: null, method: null },
+          );
+        await enqueue();
+        await harness.service.sendMessage(session.id, { text: 'Go on' });
+        await waitFor(() =>
+          harness.runner.last.sent.some((m) => m.text === 'Go on'),
+        );
+        harness.github.removeFromQueue(
+          pull.number,
+          'CI_FAILURE',
+          new Date(Date.now() + 1000),
+        );
+        await automation.check(pull.id);
+        expect(notifications.queueRemovals).toHaveLength(1);
+
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        await enqueue();
+        harness.github.removeFromQueue(
+          pull.number,
+          'CI_FAILURE',
+          new Date(Date.now() + 2000),
+        );
+        await automation.check(pull.id);
+        expect(notifications.queueRemovals).toHaveLength(2);
+      });
+
+      it('counts a pull request as removed after a few reads in no queue without a removal', async () => {
+        const { pull } = await queuedPull();
+        fakePull(pull.number).queueEntry = null;
+
+        await harness.sessionGit.refreshPullRequest(pull.id);
+        await harness.sessionGit.refreshPullRequest(pull.id);
+        expect(record(pull).mergeQueuedSha).not.toBeNull();
+        await automation.check(pull.id);
+
+        expect(record(pull).mergeQueuedSha).toBeNull();
+        expect(appMessages()).toHaveLength(1);
+        expect(record(pull).autofixLastTrigger).toBe('queue');
+      });
+
       it('lets Claude not add a removed head commit again without asking', async () => {
         const { session, pull, head } = await queuedPull();
         harness.github.removeFromQueue(pull.number, 'CI_FAILURE');

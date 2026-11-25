@@ -2020,7 +2020,9 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   commit and the session gets no ready message for it. The queue's merge is seen like any
   other merge (notification, autoclose, wake). When the queue removes it without merging it
   (the latest `RemovedFromMergeQueueEvent` after the enqueue, with GitHub's reason; a removal
-  not listed yet changes nothing until the next read, except after a push): if the head commit
+  dated by GitHub against the time GitHub gives for the enqueue; a removal not listed yet
+  changes nothing until the next read, except after a push, and three reads in a row that find
+  it in no queue count as a removal with an unknown reason): if the head commit
   changed since the app added it (a push), the history only says so and automerge adds the new head commit once it is ready.
   Otherwise, as for failed checks (the owner's decision): with autofix an Autofix run starts
   (trigger `queue`, an attempt) with the reason in the app's text (only GitHub's enum names,

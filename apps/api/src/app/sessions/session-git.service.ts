@@ -18,7 +18,7 @@ import { optionalString, requireObject } from '../common/validation';
 import { GitError } from '../git/git-runner';
 import { GitService, isValidBranchName } from '../git/git.service';
 import { KeyedMutex } from '../git/keyed-mutex';
-import { GitHubApiError } from '../github/github-errors';
+import { GitHubApiError, GitHubRateLimitError } from '../github/github-errors';
 import {
   GitHubService,
   MERGE_METHODS,
@@ -111,6 +111,12 @@ export type PullRequestMergeOutcome = {
  */
 const QUEUE_REMOVAL_SKEW_MS = 10_000;
 
+/**
+ * Reads in a row that find a pull request in no merge queue, with the same
+ * head and no removal listed, before it counts as removed (reason unknown).
+ */
+const QUEUE_ABSENT_READS = 3;
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -137,6 +143,8 @@ export interface SessionPush {
 export class SessionGitService {
   private readonly logger = new Logger(SessionGitService.name);
   private readonly locks = new KeyedMutex();
+  /** Reads in a row that found a queued pull request in no queue. */
+  private readonly queueAbsent = new Map<number, number>();
   private readonly changes = new Subject<string>();
   private readonly closed = new Subject<PullRequestRecord>();
   private readonly refreshed = new Subject<PullRequestRecord>();
@@ -524,6 +532,7 @@ export class SessionGitService {
         pull.number,
       );
       if (read.entry) {
+        this.queueAbsent.delete(pull.id);
         return {
           mergeQueuePosition: read.entry.position,
           mergeQueueState: read.entry.state,
@@ -541,17 +550,28 @@ export class SessionGitService {
       ) {
         // Not in the queue, and no removal listed (yet): after a push the
         // queued commit is gone in any case (GitHub drops it); otherwise
-        // the next read looks again.
-        return headSha !== null && headSha !== pull.mergeQueuedSha
-          ? {
-              ...MERGE_QUEUE_CLEARED,
-              mergeQueueRemovedSha: pull.mergeQueuedSha,
-              mergeQueueRemovedReason: 'UNKNOWN',
-            }
-          : {};
+        // the next reads look again, a few times.
+        const absent = (this.queueAbsent.get(pull.id) ?? 0) + 1;
+        if (
+          (headSha === null || headSha === pull.mergeQueuedSha) &&
+          absent < QUEUE_ABSENT_READS
+        ) {
+          this.queueAbsent.set(pull.id, absent);
+          return {};
+        }
+        this.queueAbsent.delete(pull.id);
+        return {
+          ...MERGE_QUEUE_CLEARED,
+          mergeQueuedAt: pull.mergeQueuedAt,
+          mergeQueueRemovedSha: pull.mergeQueuedSha,
+          mergeQueueRemovedReason: 'UNKNOWN',
+        };
       }
+      this.queueAbsent.delete(pull.id);
       return {
         ...MERGE_QUEUE_CLEARED,
+        // Kept: tells this removal from a later one of the same commit.
+        mergeQueuedAt: pull.mergeQueuedAt,
         // The commit the app added: compared with the head to tell a push
         // (GitHub's `beforeCommit` is not documented as the head).
         mergeQueueRemovedSha: pull.mergeQueuedSha,
@@ -560,6 +580,9 @@ export class SessionGitService {
         mergeQueueGroupSha: pull.mergeQueueGroupSha,
       };
     } catch (error) {
+      if (error instanceof GitHubRateLimitError) {
+        throw error;
+      }
       this.logger.warn(
         `Could not read the merge queue state of ${pull.repositoryName}#${pull.number}: ${errorText(error)}`,
       );
@@ -576,10 +599,12 @@ export class SessionGitService {
   ): void {
     this.sessions.updatePullRequest(pull.id, {
       mergeQueuedSha: sha,
+      // GitHub's time where it says (removals are dated by GitHub).
       mergeQueuedAt:
-        already && pull.mergeQueuedSha === sha && pull.mergeQueuedAt
+        entry.enqueuedAt ??
+        (already && pull.mergeQueuedSha === sha && pull.mergeQueuedAt
           ? pull.mergeQueuedAt
-          : new Date(),
+          : new Date()),
       mergeQueuePosition: entry.position,
       mergeQueueState: entry.state,
       mergeQueueGroupSha: entry.groupSha,
