@@ -2217,6 +2217,10 @@ describe('PrAutomationService', () => {
           '1 failed check(s) of that merge group',
         );
         expect(messages[0].context?.text).toContain('name="integration"');
+        expect(messages[0].text).toContain(
+          'does not add this head commit to the merge queue again',
+        );
+        expect(messages[0].text).not.toContain('the app merges it by itself');
         expect(record(pull)).toMatchObject({
           autofixAttempts: 1,
           autofixLastTrigger: 'queue',
@@ -2357,6 +2361,71 @@ describe('PrAutomationService', () => {
         expect(record(pull).mergeQueuedSha).toBeNull();
         expect(appMessages()).toHaveLength(1);
         expect(record(pull).autofixLastTrigger).toBe('queue');
+      });
+
+      it('tries the new head commit when a push comes in during the enqueue', async () => {
+        const { session, pull } = await sessionWithPullRequest();
+        fakePull(pull.number).requiresMergeQueue = true;
+        enableAutomerge(session.id, pull);
+        green(pull);
+        harness.github.intercept = (request) => {
+          if (request.method === 'PUT' && request.path.endsWith('/merge')) {
+            fakePull(pull.number).headSha = sha('f');
+          }
+          return undefined;
+        };
+
+        await automation.check(pull.id);
+
+        expect(harness.github.enqueued).toHaveLength(0);
+        expect(record(pull)).toMatchObject({
+          automergeFailedSha: null,
+          mergeQueuedSha: null,
+        });
+        expect(notifications.automerge).toHaveLength(0);
+      });
+
+      it('names the permission when GitHub refuses the enqueue to the app', async () => {
+        const { session, pull } = await sessionWithPullRequest();
+        fakePull(pull.number).requiresMergeQueue = true;
+        enableAutomerge(session.id, pull);
+        const head = green(pull);
+        harness.github.intercept = (request) =>
+          request.path === '/graphql' &&
+          (request.body as { query?: string }).query?.includes(
+            'enqueuePullRequest',
+          )
+            ? new Response(
+                JSON.stringify({
+                  errors: [
+                    { message: 'Resource not accessible by integration' },
+                  ],
+                }),
+                {
+                  status: 200,
+                  headers: { 'content-type': 'application/json' },
+                },
+              )
+            : undefined;
+
+        await automation.check(pull.id);
+
+        expect(record(pull).automergeFailedSha).toBe(head);
+        expect(notifications.automerge).toHaveLength(1);
+        expect(notifications.automerge[0].detail).toContain(
+          '"Merge queues: Read and write"',
+        );
+      });
+
+      it('takes no removal for a merge by the queue', async () => {
+        const { pull } = await queuedPull();
+        harness.github.removeFromQueue(pull.number, 'MERGE');
+
+        await automation.check(pull.id);
+
+        expect(record(pull).mergeQueuedSha).not.toBeNull();
+        expect(record(pull).mergeQueueRemovedSha).toBeNull();
+        expect(appMessages()).toHaveLength(0);
       });
 
       it('lets Claude not add a removed head commit again without asking', async () => {

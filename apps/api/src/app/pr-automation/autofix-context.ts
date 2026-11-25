@@ -484,7 +484,11 @@ export function autofixMessage(input: {
       ? 'If the failure is unrelated to this pull request, cannot be fixed here, or a comment asks for something you should not do, do not change code for it: explain why instead.'
       : null,
     also && also !== 'ci' ? THREAD_REPLIES : null,
-    input.automerge ? automergeText({ state: 'on' }, input.branch) : null,
+    input.automerge
+      ? queue
+        ? 'Automerge is on for this pull request, but it does not add this head commit to the merge queue again: only a new head commit (a push of a fix), the user turning automerge off and on, or merge_pull_request when the user asks you to. If no change is needed here, tell the user so, and that the pull request waits for them to add it again.'
+        : automergeText({ state: 'on' }, input.branch)
+      : null,
   ]
     .filter(Boolean)
     .join('\n\n');
