@@ -1100,7 +1100,9 @@ export class GitHubService implements OnApplicationBootstrap {
       throw new Error(`GitHub did not find ${fullName}#${number}`);
     }
     if (pull.headRefOid !== sha) {
-      throw new Error(
+      // Like a direct merge's 409: the new head commit is tried later.
+      throw new GitHubApiError(
+        409,
         `The head commit of ${fullName}#${number} moved (now ${String(pull.headRefOid ?? 'unknown').slice(0, 12)}); it was not added to the merge queue`,
       );
     }

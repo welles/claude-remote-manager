@@ -2258,6 +2258,56 @@ describe('PrAutomationService', () => {
         );
       });
 
+      it('sends no ready message after a removal at the attempt limit, and notifies once', async () => {
+        const { session, pull, head } = await queuedPull();
+        automation.update(session.id, pull.id, { maxAttempts: 1 });
+        harness.sessions.updatePullRequest(pull.id, { autofixAttempts: 1 });
+        harness.github.removeFromQueue(pull.number, 'CI_FAILURE');
+
+        await automation.check(pull.id);
+
+        expect(readyMessages()).toHaveLength(0);
+        expect(appMessages()).toHaveLength(0);
+        expect(notifications.gaveUp).toHaveLength(1);
+        expect(notifications.queueRemovals).toHaveLength(0);
+        expect(record(pull)).toMatchObject({
+          autofixReadySha: head,
+          mergeQueueRemovedSha: null,
+          automergeFailedSha: head,
+        });
+      });
+
+      it('wakes Claude after its turn when the queue removed the pull request during it', async () => {
+        const { session, pull } = await sessionWithPullRequest();
+        fakePull(pull.number).requiresMergeQueue = true;
+        await harness.sessionGit.mergePullRequest(
+          session.id,
+          repositoryId,
+          pull.number,
+          { sha: null, method: null },
+        );
+        await harness.service.sendMessage(session.id, { text: 'Wait for it' });
+        await waitFor(() =>
+          harness.runner.last.sent.some((m) => m.text === 'Wait for it'),
+        );
+        harness.github.removeFromQueue(pull.number, 'MERGE_CONFLICT');
+
+        await automation.check(pull.id);
+        // The owner knows at once; Claude's turn still runs.
+        expect(notifications.queueRemovals).toHaveLength(1);
+        expect(record(pull).mergeQueueRemovedSha).not.toBeNull();
+
+        await setWaiting('work');
+        harness.runner.last.emit(resultMessage(30, 0.03));
+        await waitFor(() =>
+          harness.runner.runs.some((run) =>
+            run.sent.some((m) => m.text.startsWith('The merge queue removed')),
+          ),
+        );
+        expect(notifications.queueRemovals).toHaveLength(1);
+        expect(record(pull).mergeQueueRemovedSha).toBeNull();
+      });
+
       it('lets Claude not add a removed head commit again without asking', async () => {
         const { session, pull, head } = await queuedPull();
         harness.github.removeFromQueue(pull.number, 'CI_FAILURE');

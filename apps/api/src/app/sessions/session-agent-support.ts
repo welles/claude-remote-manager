@@ -912,7 +912,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
                 ? ''
                 : ` at position ${outcome.position}`;
             return {
-              text: `${outcome.already ? 'Already in' : 'Added to'} the merge queue: ${outcome.pullRequest} at ${outcome.sha.slice(0, 12)}${place}. Its base branch requires a merge queue, so GitHub merges it once the queue's checks pass (the queue decides the method). It is not merged yet: the session manager tells you when it is merged, or if the queue removes it.`,
+              text: `${outcome.already ? 'Already in' : 'Added to'} the merge queue: ${outcome.pullRequest} at ${outcome.sha.slice(0, 12)}${place}. Its base branch requires a merge queue, so GitHub merges it once the queue's checks pass (the queue decides the method). It is not merged yet. If you wait for it, say so with set_waiting_state "work": the session manager then wakes you when it is merged or the queue removes it (the user is notified of a removal in any case).`,
             };
           }
           return {

@@ -2020,8 +2020,8 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   commit and the session gets no ready message for it. The queue's merge is seen like any
   other merge (notification, autoclose, wake). When the queue removes it without merging it
   (the latest `RemovedFromMergeQueueEvent` after the enqueue, with GitHub's reason; a removal
-  not listed yet changes nothing until the next read): if the head commit changed since (a
-  push), the history only says so and automerge adds the new head commit once it is ready.
+  not listed yet changes nothing until the next read, except after a push): if the head commit
+  changed since the app added it (a push), the history only says so and automerge adds the new head commit once it is ready.
   Otherwise, as for failed checks (the owner's decision): with autofix an Autofix run starts
   (trigger `queue`, an attempt) with the reason in the app's text (only GitHub's enum names,
   in plain words) and the failed checks of the merge group's commit (with job logs) as
@@ -2029,7 +2029,8 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   the next head commit or turning it off and on tries again) and no ready message follows for
   it. At the attempt limit, and without autofix, the history says so and the owner is notified
   ("Removed from merge queue"); without autofix Claude is also woken if it said it goes on by
-  itself. Whether the GitHub App needs the repository permission "Merge queues" for
+  itself (after the end of a turn during which the removal came). Adding the same commit again
+  (with approval) makes an earlier removal moot. Whether the GitHub App needs the repository permission "Merge queues" for
   `enqueuePullRequest` is not documented by GitHub; a refusal "not accessible by integration"
   names it in the error.
 - **Known limit (decided)**: green checks, no change requests and the resolved threads are

@@ -552,7 +552,9 @@ export class SessionGitService {
       }
       return {
         ...MERGE_QUEUE_CLEARED,
-        mergeQueueRemovedSha: removal.headSha ?? pull.mergeQueuedSha,
+        // The commit the app added: compared with the head to tell a push
+        // (GitHub's `beforeCommit` is not documented as the head).
+        mergeQueueRemovedSha: pull.mergeQueuedSha,
         mergeQueueRemovedReason: removal.reason ?? 'UNKNOWN',
         // Kept for the checks of the merge group.
         mergeQueueGroupSha: pull.mergeQueueGroupSha,
@@ -581,11 +583,9 @@ export class SessionGitService {
       mergeQueuePosition: entry.position,
       mergeQueueState: entry.state,
       mergeQueueGroupSha: entry.groupSha,
-      // A removal of another commit is moot now; one of this commit that
-      // was not handled yet stays (the automation handles it).
-      ...(pull.mergeQueueRemovedSha !== sha
-        ? { mergeQueueRemovedSha: null, mergeQueueRemovedReason: null }
-        : {}),
+      // Back in the queue: an earlier removal is moot.
+      mergeQueueRemovedSha: null,
+      mergeQueueRemovedReason: null,
     });
     this.changes.next(pull.sessionId);
   }
