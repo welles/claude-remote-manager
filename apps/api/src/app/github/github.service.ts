@@ -1154,8 +1154,10 @@ export class GitHubService implements OnApplicationBootstrap {
     fullName: string,
     number: number,
   ): Promise<MergeQueueState> {
+    // The entry and the removal name commits: contents too.
     const { token } = await this.repositoryToken(installationId, repositoryId, {
       pull_requests: 'read',
+      contents: 'read',
     });
     const [owner, name] = fullName.split('/');
     const response = await this.http.request<RawMergeQueueState>({

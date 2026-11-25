@@ -1088,7 +1088,11 @@ export class FakeGitHub {
     if (!found || !pull) {
       return json(200, { data: { repository: { pullRequest: null } } });
     }
-    if (!this.allows(auth, found.repository, 'pull_requests', 'read')) {
+    if (
+      !this.allows(auth, found.repository, 'pull_requests', 'read') ||
+      // The entry and the removal name commits.
+      !this.allows(auth, found.repository, 'contents', 'read')
+    ) {
       return json(200, {
         data: { repository: null },
         errors: [{ message: 'Resource not accessible by integration' }],
