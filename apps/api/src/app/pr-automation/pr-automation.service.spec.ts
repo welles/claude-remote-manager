@@ -2258,6 +2258,39 @@ describe('PrAutomationService', () => {
         );
       });
 
+      it('lets Claude not add a removed head commit again without asking', async () => {
+        const { session, pull, head } = await queuedPull();
+        harness.github.removeFromQueue(pull.number, 'CI_FAILURE');
+        // Read before the automation handled it (e.g. the session was busy).
+        await harness.sessionGit.refreshPullRequest(pull.id);
+        expect(record(pull).mergeQueueRemovedSha).toBe(head);
+
+        expect(
+          await automation.mayMergeUnasked(
+            session.id,
+            repositoryId,
+            pull.number,
+          ),
+        ).toBeNull();
+      });
+
+      it('forgets the entry after a push even when GitHub lists no removal yet', async () => {
+        const { session, pull } = await queuedPull();
+        fakePull(pull.number).queueEntry = null;
+        fakePull(pull.number).headSha = sha('e');
+
+        await automation.check(pull.id);
+
+        expect(record(pull)).toMatchObject({
+          mergeQueuedSha: null,
+          mergeQueueRemovedSha: null,
+        });
+        expect(appMessages()).toHaveLength(0);
+        expect(notices(session.id).at(-1)).toContain(
+          'left the merge queue: its head commit changed',
+        );
+      });
+
       it('tells the owner when the queue removes a pull request without autofix', async () => {
         const { session, pull } = await sessionWithPullRequest();
         fakePull(pull.number).requiresMergeQueue = true;

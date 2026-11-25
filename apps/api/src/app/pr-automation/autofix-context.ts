@@ -216,9 +216,19 @@ export function autofixContext(input: {
   ready?: boolean;
   /** Unresolved review threads that keep automerge from merging. */
   threads?: ReviewThread[];
+  /** GitHub's own words for a removal from the merge queue. */
+  queueRemoval?: string;
 }): UntrustedContext {
   const threads = input.threads ?? [];
-  const items = [
+  const items: UntrustedItem[] = [
+    ...(input.queueRemoval
+      ? [
+          {
+            attributes: { kind: 'merge-queue-removal' },
+            content: cut(input.queueRemoval, AUTOFIX_LIMITS.summary).text,
+          },
+        ]
+      : []),
     ...input.failed.map(checkItem),
     ...input.feedback.slice(-AUTOFIX_LIMITS.comments).map(reviewItem),
     ...threads.slice(0, AUTOFIX_LIMITS.comments).map(threadItem),
@@ -245,6 +255,9 @@ export function autofixContext(input: {
     });
   }
   const what = [
+    input.queueRemoval
+      ? "GitHub's reason for the removal from the merge queue"
+      : null,
     input.failed.length > 0 ? 'the CI checks that failed' : null,
     input.feedback.length > 0 ? 'new review feedback and comments' : null,
     threads.length > 0 ? 'the unresolved review threads' : null,

@@ -213,6 +213,20 @@ export function queueReason(reason: string | null | undefined): string {
     : 'unknown reason';
 }
 
+/**
+ * GitHub's reason for the owner's eyes (history, notifications): plain
+ * words for an enum name, else GitHub's text, on one line and shortened.
+ * Never for texts that go to Claude (see {@link queueReason}).
+ */
+export function ownerQueueReason(reason: string | null | undefined): string {
+  const plain = queueReason(reason);
+  if (plain !== 'unknown reason' || !reason || reason === 'UNKNOWN') {
+    return plain;
+  }
+  const line = reason.replace(/\s+/g, ' ').trim();
+  return line.length > 200 ? `${line.slice(0, 200)}…` : line || plain;
+}
+
 /** Conclusions (and status states) of checks that passed. */
 const PASSED_CONCLUSIONS = new Set(['success', 'neutral', 'skipped']);
 
@@ -997,23 +1011,26 @@ export class PrAutomationService
     const threads = merge?.kind === 'threads' ? merge : null;
     if (current.autofixAttempts >= current.autofixMaxAttempts) {
       if (triggers.dequeued) {
-        // No run for it: the owner is told (also when autofix gave up
+        // No run for it: the history says so, and the owner is told once
+        // (by the give-up notification below, or now when autofix gave up
         // before).
         this.records.updatePullRequest(pull.id, {
           mergeQueueRemovedSha: null,
           mergeQueueRemovedReason: null,
         });
-        const detail = `The merge queue of ${pull.baseBranch} removed ${pull.repositoryName}#${pull.number} without merging it (${queueReason(triggers.dequeued.reason)}); autofix is at its attempt limit.`;
+        const detail = `The merge queue of ${pull.baseBranch} removed ${pull.repositoryName}#${pull.number} without merging it (${ownerQueueReason(triggers.dequeued.reason)}); autofix is at its attempt limit.`;
         this.sessions.recordEvent(pull.sessionId, {
           type: 'notice',
           level: 'warning',
           text: detail,
         });
-        this.notifications.notifyMergeQueueRemoval(
-          pull.sessionId,
-          pullRequestDto(current),
-          detail,
-        );
+        if (current.autofixGaveUpAt) {
+          this.notifications.notifyMergeQueueRemoval(
+            pull.sessionId,
+            pullRequestDto(current),
+            detail,
+          );
+        }
       }
       if (
         triggers.failed.length > 0 ||
@@ -1273,7 +1290,11 @@ export class PrAutomationService
       !pull.automerge ||
       pull.automergeHeldAt ||
       pull.draft ||
-      !pull.headSha
+      !pull.headSha ||
+      // GitHub refused this head commit, or the merge queue removed it
+      // (handled or not): automerge does not try it again by itself.
+      pull.automergeFailedSha === pull.headSha ||
+      pull.mergeQueueRemovedSha === pull.headSha
     ) {
       return null;
     }
@@ -1551,11 +1572,12 @@ export class PrAutomationService
     }
     const reason = queueReason(current.mergeQueueRemovedReason);
     const name = `${current.repositoryName}#${current.number}`;
+    const ownerReason = ownerQueueReason(current.mergeQueueRemovedReason);
     this.records.updatePullRequest(current.id, {
       mergeQueueRemovedSha: null,
       mergeQueueRemovedReason: null,
     });
-    const detail = `The merge queue of ${current.baseBranch} removed ${name} without merging it (${reason}).`;
+    const detail = `The merge queue of ${current.baseBranch} removed ${name} without merging it (${ownerReason}).`;
     this.sessions.recordEvent(current.sessionId, {
       type: 'notice',
       level: 'warning',
@@ -1605,7 +1627,7 @@ export class PrAutomationService
     }
     this.records.updatePullRequest(pull.id, {
       automergeFailedSha: headSha,
-      automergeFailure: `the merge queue removed it (${queueReason(reason)})`,
+      automergeFailure: `the merge queue removed it (${ownerQueueReason(reason)})`,
     });
     this.sessions.publishUpdate(pull.sessionId);
   }
@@ -1701,7 +1723,7 @@ export class PrAutomationService
       (triggers.conflict
         ? `merge conflicts with ${pull.baseBranch}`
         : triggers.dequeued
-          ? `the merge queue removed it (${queueReason(triggers.dequeued.reason)})`
+          ? `the merge queue removed it (${ownerQueueReason(triggers.dequeued.reason)})`
           : triggers.failed.length > 0
             ? `${triggers.failed.length} check(s) failed again`
             : 'new reviews or comments');
@@ -1856,8 +1878,18 @@ export class PrAutomationService
                 : undefined,
           });
     const failed = [...triggers.failed, ...(triggers.dequeued?.failed ?? [])];
+    // GitHub's reason in its own words, when it is not a plain enum name.
+    const rawQueueReason =
+      triggers.dequeued &&
+      queueReason(triggers.dequeued.reason) === 'unknown reason' &&
+      triggers.dequeued.reason !== 'UNKNOWN'
+        ? triggers.dequeued.reason
+        : undefined;
     const untrusted =
-      failed.length > 0 || feedback.length > 0 || threads.length > 0
+      failed.length > 0 ||
+      feedback.length > 0 ||
+      threads.length > 0 ||
+      rawQueueReason !== undefined
         ? autofixContext({
             repository: pull.repositoryName,
             number: pull.number,
@@ -1865,6 +1897,7 @@ export class PrAutomationService
             feedback,
             ready: trigger === 'ready',
             threads,
+            queueRemoval: rawQueueReason,
           })
         : undefined;
     const now = new Date();
@@ -1896,11 +1929,12 @@ export class PrAutomationService
         ? `Told the session that ${pull.repositoryName}#${pull.number} is ready to merge`
         : `Autofix run ${attempt}/${current.autofixMaxAttempts} for ${pull.repositoryName}#${pull.number} (${trigger})`,
     );
-    if (trigger === 'queue' && triggers.dequeued) {
+    if (triggers.dequeued) {
+      // Also when a conflict run handles it.
       this.sessions.recordEvent(pull.sessionId, {
         type: 'notice',
         level: 'warning',
-        text: `The merge queue of ${pull.baseBranch} removed ${pull.repositoryName}#${pull.number} without merging it (${queueReason(triggers.dequeued.reason)}).`,
+        text: `The merge queue of ${pull.baseBranch} removed ${pull.repositoryName}#${pull.number} without merging it (${ownerQueueReason(triggers.dequeued.reason)}).`,
       });
     }
     try {

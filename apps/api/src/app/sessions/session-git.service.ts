@@ -109,7 +109,7 @@ export type PullRequestMergeOutcome = {
  * A removal from the merge queue counts for an entry when GitHub dated it
  * no earlier than this before the app added the pull request (clock skew).
  */
-const QUEUE_REMOVAL_SKEW_MS = 60_000;
+const QUEUE_REMOVAL_SKEW_MS = 10_000;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -445,11 +445,21 @@ export class SessionGitService {
       pull.number,
     );
     // A merged or closed pull request is in no queue any more.
-    const queue: PullRequestPatch = !pull.mergeQueuedSha
+    let queue: PullRequestPatch = !pull.mergeQueuedSha
       ? {}
       : info.state === 'open'
-        ? await this.readMergeQueue(pull, repository)
+        ? await this.readMergeQueue(pull, repository, info.headSha)
         : MERGE_QUEUE_CLEARED;
+    // Reads run concurrently: only the one that saw the entry as it is
+    // stored may change it (a slower read must not bring back a removal
+    // that was handled meanwhile, or undo a new enqueue).
+    const stored = this.sessions.pullRequest(pull.id);
+    if (
+      stored?.mergeQueuedSha !== pull.mergeQueuedSha ||
+      stored?.mergeQueuedAt?.getTime() !== pull.mergeQueuedAt?.getTime()
+    ) {
+      queue = {};
+    }
     const changed =
       pull.state !== info.state ||
       pull.title !== info.title ||
@@ -504,6 +514,7 @@ export class SessionGitService {
       githubInstallationId: number;
       githubRepositoryId: number;
     },
+    headSha: string | null,
   ): Promise<PullRequestPatch> {
     try {
       const read = await this.github.mergeQueueState(
@@ -528,7 +539,16 @@ export class SessionGitService {
         // Merged: the pull request's state shows it with the next read.
         /^(?:MERGE|ALREADY_MERGED)$/i.test(removal.reason ?? '')
       ) {
-        return {};
+        // Not in the queue, and no removal listed (yet): after a push the
+        // queued commit is gone in any case (GitHub drops it); otherwise
+        // the next read looks again.
+        return headSha !== null && headSha !== pull.mergeQueuedSha
+          ? {
+              ...MERGE_QUEUE_CLEARED,
+              mergeQueueRemovedSha: pull.mergeQueuedSha,
+              mergeQueueRemovedReason: 'UNKNOWN',
+            }
+          : {};
       }
       return {
         ...MERGE_QUEUE_CLEARED,
@@ -561,8 +581,11 @@ export class SessionGitService {
       mergeQueuePosition: entry.position,
       mergeQueueState: entry.state,
       mergeQueueGroupSha: entry.groupSha,
-      mergeQueueRemovedSha: null,
-      mergeQueueRemovedReason: null,
+      // A removal of another commit is moot now; one of this commit that
+      // was not handled yet stays (the automation handles it).
+      ...(pull.mergeQueueRemovedSha !== sha
+        ? { mergeQueueRemovedSha: null, mergeQueueRemovedReason: null }
+        : {}),
     });
     this.changes.next(pull.sessionId);
   }
