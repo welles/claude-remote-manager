@@ -82,7 +82,10 @@ describe('ReviewsService', () => {
     return harness.service.get(created.id);
   };
 
-  /** A turn of Claude that ends after `work` ran. */
+  /**
+   * A turn of Claude that ends after `work` ran (waiting for a review that
+   * runs then, or for the next message).
+   */
   const turn = async (
     sessionId: string,
     work: () => Promise<unknown> = async () => undefined,
@@ -91,9 +94,7 @@ describe('ReviewsService', () => {
     await waitFor(() => harness.service.get(sessionId).status === 'running');
     await work();
     harness.runner.last.emit(resultMessage(10, 0.01));
-    await waitFor(
-      () => harness.service.get(sessionId).waitingFor === 'message',
-    );
+    await waitFor(() => harness.service.get(sessionId).status === 'waiting');
   };
 
   const reviewEvents = <T extends 'review.started' | 'review.finished'>(
@@ -192,6 +193,13 @@ describe('ReviewsService', () => {
     const session = await idleSession();
     await commitFile(session.cwd, 'work.txt', 'changed');
     await reviews.start(session.id);
+    // The session waits for the review instead of showing ready.
+    expect(harness.service.get(session.id)).toMatchObject({
+      status: 'waiting',
+      waitingFor: 'background',
+      waitingReason: 'Reviewing',
+    });
+    expect(harness.service.acceptsAppMessage(session.id)).toBe(true);
     harness.runner.reviews[0].finish({
       output: { summary: 'Looks right.', findings: [] },
     });
@@ -203,7 +211,25 @@ describe('ReviewsService', () => {
     });
     await flush();
     expect(findingMessages()).toEqual([]);
-    expect(harness.service.get(session.id).status).toBe('waiting');
+    expect(harness.service.get(session.id)).toMatchObject({
+      status: 'waiting',
+      waitingFor: 'message',
+      waitingReason: null,
+    });
+    // The history shows the wait and its end.
+    expect(
+      harness.events
+        .filter(
+          (envelope) =>
+            envelope.sessionId === session.id &&
+            envelope.event.type === 'session.status',
+        )
+        .slice(-2)
+        .map((envelope) => envelope.event),
+    ).toMatchObject([
+      { type: 'session.status', status: 'waiting', waitingFor: 'background' },
+      { type: 'session.status', status: 'waiting', waitingFor: 'message' },
+    ]);
   });
 
   it('uses the model and effort chosen for the session', async () => {

@@ -569,6 +569,9 @@ export function setupFailedNotice(repositories: string[]): string {
   );
 }
 
+/** What a session shows it waits for while an independent review runs. */
+export const REVIEW_WAIT_LABEL = 'Reviewing';
+
 /**
  * Phase of waiting for the CI of a pull request: `running` while its head
  * commit's checks run (or are about to start right after a push);
@@ -873,13 +876,19 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Publishes the current state of a session after a change made outside
-   * this service (push, pull request).
+   * this service (push, pull request, an independent review that started
+   * or ended); with a process, a changed status also as `session.status`.
    */
   publishUpdate(id: string): void {
     const record = this.sessions.get(id);
-    if (record) {
-      this.updates.next(this.toDto(record));
+    if (!record) {
+      return;
     }
+    const live = this.live.get(id);
+    if (live && this.publishStatus(live)) {
+      return;
+    }
+    this.updates.next(this.toDto(record));
   }
 
   /**
@@ -4162,21 +4171,35 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * What the session waits for, while it shows `background`: what Claude
-   * said (`set_waiting_state` with `work`), else the CI of its pull
-   * requests (`CI of #12`) unless background tasks are what it waits for
-   * (the client shows their number).
+   * said (`set_waiting_state` with `work`), else the independent review
+   * that runs (`Reviewing`), else the CI of its pull requests (`CI of
+   * #12`) unless background tasks are what it waits for (the client shows
+   * their number).
    */
   private waitingReason(record: SessionRecord): string | null {
     if (this.effectiveStatus(record).waitingFor !== 'background') {
       return null;
     }
     const live = this.live.get(record.id);
+    const review = this.reviewRuns(record.id) ? REVIEW_WAIT_LABEL : null;
     if (live?.claudeWait?.on === 'work') {
-      return live.claudeWait.reason ?? this.ciWaitLabel(record);
+      return live.claudeWait.reason ?? review ?? this.ciWaitLabel(record);
+    }
+    if (review) {
+      return review;
     }
     return live && this.waitsForBackground(live)
       ? null
       : this.ciWaitLabel(record);
+  }
+
+  /**
+   * Whether an independent review of the session runs: a session whose
+   * turn is over waits for it (`background`, `Reviewing`) instead of
+   * showing ready, as its findings go to Claude.
+   */
+  private reviewRuns(sessionId: string): boolean {
+    return !!this.automation?.runningReview?.(sessionId);
   }
 
   /**
@@ -4467,7 +4490,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * now: the session waits for a message, or only because Claude said it
    * goes on by itself (`set_waiting_state` with `work`, e.g. "CI of PR #12")
    * while no background task of it still runs or is about to report back,
-   * or only for the CI of its pull requests. Claude may well be waiting for
+   * or only for the CI of its pull requests or an independent review (its
+   * findings come as such a message). Claude may well be waiting for
    * exactly what the app brings.
    */
   acceptsAppMessage(sessionId: string): boolean {
@@ -4487,7 +4511,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     const live = this.live.get(sessionId);
     if (!live || !this.waitsForBackground(live)) {
-      // Only the CI of its pull requests.
+      // Only the CI of its pull requests or an independent review.
       return true;
     }
     return (
@@ -4971,7 +4995,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           : record.pendingMessage
             ? 'setup'
             : this.waitsForBackgroundById(record.id) ||
-                this.ciWaitLabel(record) !== null
+                this.ciWaitLabel(record) !== null ||
+                this.reviewRuns(record.id)
               ? 'background'
               : 'message',
       };
