@@ -115,6 +115,28 @@ describe('SessionGitPanel', () => {
     expect(state?.classList).not.toContain('tone-open');
   });
 
+  it('shows that an open pull request is in the merge queue, with its place', async () => {
+    const { all, element } = await render(
+      githubSession({
+        pullRequests: [
+          pull({
+            mergeQueue: {
+              since: '2026-01-01T11:00:00.000Z',
+              position: 2,
+              state: 'AWAITING_CHECKS',
+            },
+          }),
+        ],
+      }),
+    );
+    expect(all('pull-request-queue')).toEqual(['In queue #2']);
+    expect(
+      element
+        .querySelector('[data-testid="pull-request-queue"]')
+        ?.getAttribute('title'),
+    ).toContain('In the merge queue of main');
+  });
+
   it('shows the checks of an open pull request, folded into one line', async () => {
     const { element, all, click } = await render(
       githubSession({

@@ -46,5 +46,13 @@ export function pullRequestDto(pull: PullRequestRecord): PullRequestDto {
       lastTrigger: (pull.autofixLastTrigger as AutofixTrigger | null) ?? null,
     },
     checks: pull.checks ?? null,
+    mergeQueue:
+      pull.mergeQueuedSha && pull.state === 'open'
+        ? {
+            since: (pull.mergeQueuedAt ?? pull.syncedAt).toISOString(),
+            position: pull.mergeQueuePosition,
+            state: pull.mergeQueueState,
+          }
+        : null,
   };
 }

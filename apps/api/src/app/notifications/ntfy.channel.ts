@@ -20,6 +20,7 @@ const TAGS: Record<NotificationEventType, string> = {
   failed: 'x',
   autofix_gave_up: 'wrench',
   automerge: 'question',
+  merge_queue: 'leftwards_arrow_with_hook',
   pull_request_closed: 'twisted_rightwards_arrows',
 };
 

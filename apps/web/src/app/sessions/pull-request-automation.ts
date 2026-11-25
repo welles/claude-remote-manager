@@ -20,6 +20,7 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
   review: 'review feedback',
   'ci+review': 'failed checks and review feedback',
   conflict: 'merge conflicts',
+  queue: 'removal from the merge queue',
   ready: 'ready to merge',
 };
 
@@ -165,9 +166,9 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
           class="my-0.5 type-body-small text-on-surface-variant"
           data-testid="automerge-info"
         >
-          Automerge merges (rebase, else squash, else merge commit) once all
-          checks pass, the head commit is approved and no review thread is
-          unresolved.
+          Automerge merges (rebase, else squash, else merge commit; through the
+          merge queue where the base branch requires one) once all checks pass,
+          nobody requests changes and no review thread is unresolved.
         </p>
       }
     }

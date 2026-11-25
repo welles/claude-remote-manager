@@ -158,6 +158,8 @@ function transientMergeFailure(error: unknown): boolean {
 /** What an automerge attempt came to. */
 type AutomergeOutcome =
   | { kind: 'merged' }
+  /** Added to the base branch's merge queue (or in it already). */
+  | { kind: 'queued' }
   /** Unresolved review threads (all of them; `counting`: by those who count). */
   | { kind: 'threads'; count: number; counting: ReviewThread[] }
   /** Held, a draft, refused before, or the session got busy. */
@@ -192,6 +194,23 @@ interface Triggers {
   conflicting: boolean;
   /** At the attempt limit: feedback left out, the review time kept. */
   limited?: boolean;
+  /**
+   * The merge queue removed the pull request without merging its head
+   * commit: GitHub's reason, and the failed checks of the commit the queue
+   * tested (its merge group), when known.
+   */
+  dequeued?: { reason: string; failed: FailedCheck[] } | null;
+}
+
+/**
+ * GitHub's reason for removing a pull request from a merge queue, readable
+ * (`CI_FAILURE` → "ci failure"); anything but such a name is "unknown
+ * reason", so that only plain words reach the app's own texts.
+ */
+export function queueReason(reason: string | null | undefined): string {
+  return reason && /^[A-Z][A-Z_]{0,40}$/.test(reason) && reason !== 'UNKNOWN'
+    ? reason.toLowerCase().replace(/_/g, ' ')
+    : 'unknown reason';
 }
 
 /** Conclusions (and status states) of checks that passed. */
@@ -764,7 +783,10 @@ export class PrAutomationService
       .filter(
         (pull) =>
           pull.state === 'open' &&
-          (pull.autofix || pull.autoclose || event === 'pull_request'),
+          (pull.autofix ||
+            pull.autoclose ||
+            pull.mergeQueuedSha !== null ||
+            event === 'pull_request'),
       );
     for (const pull of candidates) {
       this.schedule(pull.id, this.timing.debounceMs);
@@ -869,8 +891,17 @@ export class PrAutomationService
     if (!this.github.configured || this.stopped) {
       return;
     }
-    const pull = await this.sessionGit.refreshPullRequest(pullRequestId);
-    if (!pull || pull.state !== 'open' || !pull.autofix) {
+    const refreshed = await this.sessionGit.refreshPullRequest(pullRequestId);
+    if (!refreshed || refreshed.state !== 'open') {
+      return;
+    }
+    if (refreshed.mergeQueueRemovedSha && !refreshed.autofix) {
+      // Without autofix the owner (and Claude, if it waits) is told.
+      await this.queueRemovalWithoutAutofix(refreshed);
+      return;
+    }
+    const pull = this.queueLeftByPush(refreshed);
+    if (!pull.autofix) {
       return;
     }
     if (pull.mergeConflict === null && pull.headSha) {
@@ -900,8 +931,20 @@ export class PrAutomationService
       return;
     }
     const triggers = await this.triggers(pull, repository);
+    const queued =
+      pull.mergeQueuedSha !== null && pull.mergeQueuedSha === triggers.headSha;
+    if (queued) {
+      // In the merge queue: GitHub merges it, nothing to tell or merge.
+      triggers.ready = false;
+    }
     let merge: AutomergeOutcome | null = null;
-    if (pull.automerge) {
+    if (triggers.dequeued && triggers.headSha) {
+      // A run for the removal (failed checks and feedback come along);
+      // automerge does not add this head commit again.
+      this.noteQueueRemoval(pull, triggers.headSha, triggers.dequeued.reason);
+    } else if (pull.automerge && queued) {
+      this.setWaiting(pull.id, null);
+    } else if (pull.automerge) {
       if (triggers.conflicting) {
         // GitHub would refuse the merge: the branch is rebased first.
         this.setWaiting(
@@ -920,7 +963,7 @@ export class PrAutomationService
           this.setWaiting(pull.id, 'no checks reported for the head commit');
         } else {
           merge = await this.automerge(pull, repository, triggers.headSha);
-          if (merge.kind === 'merged') {
+          if (merge.kind === 'merged' || merge.kind === 'queued') {
             return;
           }
         }
@@ -933,6 +976,7 @@ export class PrAutomationService
       triggers.failed.length === 0 &&
       triggers.feedback.length === 0 &&
       !triggers.conflict &&
+      !triggers.dequeued &&
       !triggers.ready;
     if (
       merge?.kind === 'threads' &&
@@ -952,10 +996,30 @@ export class PrAutomationService
     }
     const threads = merge?.kind === 'threads' ? merge : null;
     if (current.autofixAttempts >= current.autofixMaxAttempts) {
+      if (triggers.dequeued) {
+        // No run for it: the owner is told (also when autofix gave up
+        // before).
+        this.records.updatePullRequest(pull.id, {
+          mergeQueueRemovedSha: null,
+          mergeQueueRemovedReason: null,
+        });
+        const detail = `The merge queue of ${pull.baseBranch} removed ${pull.repositoryName}#${pull.number} without merging it (${queueReason(triggers.dequeued.reason)}); autofix is at its attempt limit.`;
+        this.sessions.recordEvent(pull.sessionId, {
+          type: 'notice',
+          level: 'warning',
+          text: detail,
+        });
+        this.notifications.notifyMergeQueueRemoval(
+          pull.sessionId,
+          pullRequestDto(current),
+          detail,
+        );
+      }
       if (
         triggers.failed.length > 0 ||
         triggers.feedback.length > 0 ||
-        triggers.conflict
+        triggers.conflict ||
+        triggers.dequeued
       ) {
         this.giveUp(current, triggers);
       } else if (threads) {
@@ -974,6 +1038,7 @@ export class PrAutomationService
           failed: [],
           feedback: [],
           conflict: false,
+          dequeued: null,
           limited: true,
         },
         threads,
@@ -1097,13 +1162,24 @@ export class PrAutomationService
     let method: MergeMethod | null = null;
     let failure: unknown = null;
     try {
-      method = await this.github.mergePullRequest(
-        repositoryRecord.githubInstallationId,
-        repositoryRecord.githubRepositoryId,
-        repository.fullName,
-        pull.number,
+      const result = await this.sessionGit.mergeOrEnqueue(
+        current,
+        repositoryRecord,
         headSha,
       );
+      if (result.kind === 'queued') {
+        this.mergeRetries.delete(`${pull.id}:${headSha}`);
+        this.records.updatePullRequest(pull.id, { automergeWaiting: null });
+        this.sessions.recordEvent(pull.sessionId, {
+          type: 'notice',
+          level: 'info',
+          text: `Automerge ${result.already ? 'found' : 'added'} ${name} at ${headSha.slice(0, 7)} ${result.already ? 'in' : 'to'} the merge queue of ${pull.baseBranch}${result.position === null ? '' : ` (position ${result.position})`}: all checks passed, nobody requests changes and no review thread is unresolved. GitHub merges it once the queue's checks pass.`,
+        });
+        this.logger.log(`Automerge added ${name} to the merge queue`);
+        this.sessions.publishUpdate(pull.sessionId);
+        return { kind: 'queued' };
+      }
+      method = result.method;
     } catch (error) {
       if (error instanceof GitHubRateLimitError) {
         throw error;
@@ -1357,6 +1433,13 @@ export class PrAutomationService
     const conflicting = pull.mergeConflict === true && headSha !== null;
     const conflict = conflicting && headSha !== pull.autofixConflictSha;
     const ready = passed && !conflicting && headSha !== pull.autofixReadySha;
+    const dequeued =
+      headSha !== null && pull.mergeQueueRemovedSha === headSha
+        ? {
+            reason: pull.mergeQueueRemovedReason ?? 'UNKNOWN',
+            failed: await this.mergeGroupFailures(pull, repository),
+          }
+        : null;
     const key = `${pull.id}:${headSha}`;
     this.forgetWaiting(pull.id, key);
     if (pending.length === 0) {
@@ -1379,6 +1462,7 @@ export class PrAutomationService
           headSha,
           conflict,
           conflicting,
+          dequeued,
         };
       }
     }
@@ -1393,7 +1477,137 @@ export class PrAutomationService
       headSha,
       conflict,
       conflicting,
+      dequeued,
     };
+  }
+
+  /**
+   * The failed checks of the commit a merge queue tested for the pull
+   * request (its merge group), when the app saw it; none when unknown or
+   * unreadable.
+   */
+  private async mergeGroupFailures(
+    pull: PullRequestRecord,
+    repository: FeedbackRepository,
+  ): Promise<FailedCheck[]> {
+    if (!pull.mergeQueueGroupSha) {
+      return [];
+    }
+    try {
+      const checks = await this.feedback.checks(
+        repository,
+        pull.mergeQueueGroupSha,
+      );
+      return failedChecks(checks).map((check) => ({ check, log: null }));
+    } catch (error) {
+      if (error instanceof GitHubRateLimitError) {
+        throw error;
+      }
+      this.logger.warn(
+        `Could not read the checks of the merge group of ${pull.repositoryName}#${pull.number}: ${errorText(error)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * A pull request whose head commit changed after the merge queue took it
+   * (GitHub removes it then): nothing failed, the history says so, and
+   * automerge adds the new head commit once it is ready. Returns the
+   * pull request as stored now.
+   */
+  private queueLeftByPush(pull: PullRequestRecord): PullRequestRecord {
+    if (
+      !pull.mergeQueueRemovedSha ||
+      pull.mergeQueueRemovedSha === pull.headSha
+    ) {
+      return pull;
+    }
+    this.records.updatePullRequest(pull.id, {
+      mergeQueueRemovedSha: null,
+      mergeQueueRemovedReason: null,
+    });
+    this.sessions.recordEvent(pull.sessionId, {
+      type: 'notice',
+      level: 'info',
+      text: `${pull.repositoryName}#${pull.number} left the merge queue: its head commit changed since it was added.`,
+    });
+    this.sessions.publishUpdate(pull.sessionId);
+    return this.records.pullRequest(pull.id) ?? pull;
+  }
+
+  /**
+   * The merge queue removed a pull request without autofix without merging
+   * it: the history says so, the owner is notified, and Claude is woken if
+   * it said it goes on by itself (`set_waiting_state` "work") and its turn
+   * is over.
+   */
+  private async queueRemovalWithoutAutofix(
+    pull: PullRequestRecord,
+  ): Promise<void> {
+    const current = this.queueLeftByPush(pull);
+    if (!current.mergeQueueRemovedSha) {
+      return;
+    }
+    const reason = queueReason(current.mergeQueueRemovedReason);
+    const name = `${current.repositoryName}#${current.number}`;
+    this.records.updatePullRequest(current.id, {
+      mergeQueueRemovedSha: null,
+      mergeQueueRemovedReason: null,
+    });
+    const detail = `The merge queue of ${current.baseBranch} removed ${name} without merging it (${reason}).`;
+    this.sessions.recordEvent(current.sessionId, {
+      type: 'notice',
+      level: 'warning',
+      text: detail,
+    });
+    this.notifications.notifyMergeQueueRemoval(
+      current.sessionId,
+      pullRequestDto(this.records.pullRequest(current.id) ?? current),
+      detail,
+    );
+    this.sessions.publishUpdate(current.sessionId);
+    const session = this.records.get(current.sessionId);
+    if (
+      !session ||
+      !turnIsOver(this.sessions.get(session.id)) ||
+      !this.sessions.claudeGoesOn(session.id)
+    ) {
+      return;
+    }
+    this.sessions.releaseClaudeWait(session.id);
+    try {
+      await this.sessions.sendMessage(session.id, {
+        text: `The merge queue removed ${name} without merging it (${reason}). You said you go on by yourself: look at why with read-only commands (e.g. the runs of its merge group), fix what belongs to this pull request, and tell the user what needs their decision.`,
+        origin: 'app',
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Could not wake ${session.id} after ${name} left the merge queue: ${errorText(error)}`,
+      );
+      this.sessions.wakeFailed(session.id);
+    }
+  }
+
+  /**
+   * The merge queue removed the head commit of a pull request with
+   * autofix: automerge does not add it again (as when GitHub refuses a
+   * merge), only the next head commit or turning it off and on.
+   */
+  private noteQueueRemoval(
+    pull: PullRequestRecord,
+    headSha: string,
+    reason: string,
+  ): void {
+    this.setWaiting(pull.id, null);
+    if (!pull.automerge || pull.automergeFailedSha === headSha) {
+      return;
+    }
+    this.records.updatePullRequest(pull.id, {
+      automergeFailedSha: headSha,
+      automergeFailure: `the merge queue removed it (${queueReason(reason)})`,
+    });
+    this.sessions.publishUpdate(pull.sessionId);
   }
 
   /** Drops what waited for other commits of a pull request than `keep`. */
@@ -1486,9 +1700,11 @@ export class PrAutomationService
       because ??
       (triggers.conflict
         ? `merge conflicts with ${pull.baseBranch}`
-        : triggers.failed.length > 0
-          ? `${triggers.failed.length} check(s) failed again`
-          : 'new reviews or comments');
+        : triggers.dequeued
+          ? `the merge queue removed it (${queueReason(triggers.dequeued.reason)})`
+          : triggers.failed.length > 0
+            ? `${triggers.failed.length} check(s) failed again`
+            : 'new reviews or comments');
     const updated = this.records.pullRequest(pull.id) ?? pull;
     this.sessions.recordEvent(pull.sessionId, {
       type: 'notice',
@@ -1513,7 +1729,10 @@ export class PrAutomationService
   ): Promise<void> {
     // Logs of failed GitHub Actions jobs (the job ID is the check run ID).
     let logs = 0;
-    for (const failed of triggers.failed) {
+    for (const failed of [
+      ...triggers.failed,
+      ...(triggers.dequeued?.failed ?? []),
+    ]) {
       const { check } = failed;
       if (
         check.kind === 'check_run' &&
@@ -1546,7 +1765,7 @@ export class PrAutomationService
       return;
     }
     // Failed checks and feedback; with merge conflicts they come along.
-    const also: Exclude<AutofixTrigger, 'ready' | 'conflict'> | null =
+    const also: Exclude<AutofixTrigger, 'ready' | 'conflict' | 'queue'> | null =
       triggers.failed.length > 0 && triggers.feedback.length > 0
         ? 'ci+review'
         : triggers.failed.length > 0
@@ -1556,9 +1775,11 @@ export class PrAutomationService
             : null;
     const trigger: AutofixTrigger = triggers.conflict
       ? 'conflict'
-      : triggers.ready
-        ? 'ready'
-        : (also ?? 'review');
+      : triggers.dequeued
+        ? 'queue'
+        : triggers.ready
+          ? 'ready'
+          : (also ?? 'review');
     // Unresolved threads go along with a ready message of automerge.
     const threads =
       trigger === 'ready' && current.automerge && !triggers.limited
@@ -1624,13 +1845,23 @@ export class PrAutomationService
               trigger === 'conflict'
                 ? { base: current.baseBranch, also }
                 : undefined,
+            queue:
+              trigger === 'queue' && triggers.dequeued
+                ? {
+                    base: current.baseBranch,
+                    reason: queueReason(triggers.dequeued.reason),
+                    groupChecks: triggers.dequeued.failed.length,
+                    also,
+                  }
+                : undefined,
           });
+    const failed = [...triggers.failed, ...(triggers.dequeued?.failed ?? [])];
     const untrusted =
-      triggers.failed.length > 0 || feedback.length > 0 || threads.length > 0
+      failed.length > 0 || feedback.length > 0 || threads.length > 0
         ? autofixContext({
             repository: pull.repositoryName,
             number: pull.number,
-            failed: triggers.failed,
+            failed,
             feedback,
             ready: trigger === 'ready',
             threads,
@@ -1648,7 +1879,14 @@ export class PrAutomationService
       ...(trigger === 'conflict'
         ? { autofixConflictSha: triggers.headSha }
         : {}),
-      ...(trigger === 'ready' ? { autofixReadySha: triggers.headSha } : {}),
+      // After a removal from the merge queue the run says it all: no
+      // ready message for this head commit later.
+      ...(trigger === 'ready' || trigger === 'queue'
+        ? { autofixReadySha: triggers.headSha }
+        : {}),
+      ...(triggers.dequeued
+        ? { mergeQueueRemovedSha: null, mergeQueueRemovedReason: null }
+        : {}),
       ...(newest && !triggers.limited
         ? { autofixReviewsAfter: new Date(newest) }
         : {}),
@@ -1658,6 +1896,13 @@ export class PrAutomationService
         ? `Told the session that ${pull.repositoryName}#${pull.number} is ready to merge`
         : `Autofix run ${attempt}/${current.autofixMaxAttempts} for ${pull.repositoryName}#${pull.number} (${trigger})`,
     );
+    if (trigger === 'queue' && triggers.dequeued) {
+      this.sessions.recordEvent(pull.sessionId, {
+        type: 'notice',
+        level: 'warning',
+        text: `The merge queue of ${pull.baseBranch} removed ${pull.repositoryName}#${pull.number} without merging it (${queueReason(triggers.dequeued.reason)}).`,
+      });
+    }
     try {
       await this.sessions.sendMessage(pull.sessionId, {
         text,
@@ -1673,6 +1918,8 @@ export class PrAutomationService
         autofixConflictSha: current.autofixConflictSha,
         autofixReadySha: current.autofixReadySha,
         autofixReviewsAfter: current.autofixReviewsAfter,
+        mergeQueueRemovedSha: current.mergeQueueRemovedSha,
+        mergeQueueRemovedReason: current.mergeQueueRemovedReason,
       });
       this.logger.warn(
         `The autofix run for ${pull.repositoryName}#${pull.number} could not start: ${errorText(error)}`,

@@ -1,7 +1,7 @@
 import type { SessionEnvironmentDto } from './environments';
 import type { MessageReferenceRequest } from './github-references';
 import type { PendingRequestSummary } from './pending-requests';
-import type { PullRequestAutomationDto } from './pr-automation';
+import type { MergeQueueDto, PullRequestAutomationDto } from './pr-automation';
 import type { PreviewDto } from './previews';
 import type { RepositoryAdditionDto } from './repository-additions';
 import type { SessionReviewDto } from './reviews';
@@ -276,6 +276,11 @@ export interface PullRequestDto {
    * absent from older servers) until they were read.
    */
   checks?: PullRequestChecksDto | null;
+  /**
+   * In the merge queue of its base branch (only when the app or Claude
+   * added it); `null` (or absent from older servers) otherwise.
+   */
+  mergeQueue?: MergeQueueDto | null;
 }
 
 /**

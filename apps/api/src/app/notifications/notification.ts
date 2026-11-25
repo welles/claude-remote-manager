@@ -37,6 +37,7 @@ export const notificationKeys = {
   pullRequest: (pullRequestId: number) => `pr-${pullRequestId}`,
   autofix: (pullRequestId: number) => `autofix-${pullRequestId}`,
   automerge: (pullRequestId: number) => `automerge-${pullRequestId}`,
+  mergeQueue: (pullRequestId: number) => `merge-queue-${pullRequestId}`,
 };
 
 /**

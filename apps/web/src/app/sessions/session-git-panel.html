@@ -145,6 +145,22 @@
           data-testid="pull-request-state"
           >{{ isDraft ? 'Draft' : stateLabels[pull.state] }}</span
         >
+        @if (pull.state === 'open' && pull.mergeQueue; as queue) {
+        <span
+          class="badge tone-draft"
+          [title]="
+            'In the merge queue of ' +
+            pull.baseBranch +
+            ' since ' +
+            (queue.since | appDate) +
+            (queue.state ? ' (' + queue.state + ')' : '') +
+            ': GitHub merges it once the queue\'s checks pass'
+          "
+          data-testid="pull-request-queue"
+          >In queue{{ queue.position === null ? '' : ' #' + queue.position
+          }}</span
+        >
+        }
         <a
           class="min-w-0 flex-[1_1_0] wrap-anywhere"
           [href]="pull.url"

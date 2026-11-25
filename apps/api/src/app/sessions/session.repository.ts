@@ -131,6 +131,13 @@ export type PullRequestPatch = Partial<
       | 'automergeFailure'
       | 'automergeWaiting'
       | 'automergeNotifiedSha'
+      | 'mergeQueuedSha'
+      | 'mergeQueuedAt'
+      | 'mergeQueuePosition'
+      | 'mergeQueueState'
+      | 'mergeQueueGroupSha'
+      | 'mergeQueueRemovedSha'
+      | 'mergeQueueRemovedReason'
     >
 >;
 
@@ -636,7 +643,14 @@ export class SessionRepository {
     return this.pullRequestsWhere(
       and(
         eq(pullRequests.state, 'open'),
-        or(eq(pullRequests.autofix, true), eq(pullRequests.autoclose, true)),
+        or(
+          eq(pullRequests.autofix, true),
+          eq(pullRequests.autoclose, true),
+          // In a merge queue (or just removed from one): followed until
+          // it is merged or the removal was handled.
+          isNotNull(pullRequests.mergeQueuedSha),
+          isNotNull(pullRequests.mergeQueueRemovedSha),
+        ),
       ),
     );
   }

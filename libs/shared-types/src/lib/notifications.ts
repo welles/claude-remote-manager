@@ -14,6 +14,8 @@
  * - `autofix_gave_up`: the PR automation stopped after its attempt limit;
  * - `automerge`: automerge waits for the owner's decision, GitHub refused
  *   the merge, or review threads nobody works on keep it from merging;
+ * - `merge_queue`: a merge queue removed a pull request of the session
+ *   without merging it, and no autofix run works on it;
  * - `pull_request_closed`: a pull request of the session was merged or
  *   closed.
  */
@@ -24,6 +26,7 @@ export type NotificationEventType =
   | 'failed'
   | 'autofix_gave_up'
   | 'automerge'
+  | 'merge_queue'
   | 'pull_request_closed';
 
 export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
@@ -33,6 +36,7 @@ export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
   'failed',
   'autofix_gave_up',
   'automerge',
+  'merge_queue',
   'pull_request_closed',
 ];
 
@@ -75,6 +79,11 @@ export const NOTIFICATION_EVENT_INFO: Record<
     label: 'Automerge needs you',
     description:
       'Claude asked for your decision before merging, GitHub refused the merge, or review threads nobody works on keep it waiting.',
+  },
+  merge_queue: {
+    label: 'Removed from merge queue',
+    description:
+      'The merge queue removed a pull request without merging it (failed checks, a conflict, or by hand) and no autofix run works on it.',
   },
   pull_request_closed: {
     label: 'Pull request merged or closed',

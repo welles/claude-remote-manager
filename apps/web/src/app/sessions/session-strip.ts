@@ -65,6 +65,11 @@ export type DetailSection =
         <span class="badge tone-{{ state }}" data-testid="strip-pr-state">{{
           state
         }}</span>
+        @if (p.state === 'open' && p.mergeQueue) {
+          <span class="text-on-surface-variant" data-testid="strip-pr-queue"
+            >· in queue</span
+          >
+        }
         @if (p.automation.autofix && p.state === 'open') {
           <span class="text-on-surface-variant">· autofix</span>
         }

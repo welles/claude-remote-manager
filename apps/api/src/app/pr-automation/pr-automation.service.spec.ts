@@ -66,6 +66,19 @@ class RecordingNotifications {
     this.closed.push({ sessionId, pull, note });
     return true;
   }
+  readonly queueRemovals: {
+    sessionId: string;
+    pull: PullRequestDto;
+    detail: string;
+  }[] = [];
+  notifyMergeQueueRemoval(
+    sessionId: string,
+    pull: PullRequestDto,
+    detail: string,
+  ) {
+    this.queueRemovals.push({ sessionId, pull, detail });
+    return true;
+  }
 }
 
 class RecordingDevServers extends DevServers {
@@ -2120,6 +2133,174 @@ describe('PrAutomationService', () => {
         harness.service.get(session.id).pullRequests[0].automation.automerge
           .waiting,
       ).toBe('merge conflicts with main');
+    });
+
+    describe('with a merge queue', () => {
+      const notices = (sessionId: string) =>
+        harness
+          .eventsOfType(sessionId, 'notice')
+          .map((event) => (event as { text: string }).text);
+
+      const queuedPull = async () => {
+        const result = await sessionWithPullRequest();
+        fakePull(result.pull.number).requiresMergeQueue = true;
+        enableAutomerge(result.session.id, result.pull);
+        const head = green(result.pull);
+        await automation.check(result.pull.id);
+        return { ...result, head };
+      };
+
+      it('adds the pull request to the merge queue once, instead of merging it', async () => {
+        const { session, pull, head } = await queuedPull();
+
+        expect(harness.github.merges).toHaveLength(0);
+        expect(harness.github.enqueued).toEqual([
+          { number: pull.number, sha: head },
+        ]);
+        // One merge attempt per method would be wrong: the queue decides.
+        expect(harness.github.requestsTo('PUT', /\/merge$/)).toHaveLength(1);
+        expect(record(pull)).toMatchObject({
+          mergeQueuedSha: head,
+          mergeQueuePosition: 1,
+          mergeQueueState: 'QUEUED',
+          automergeFailedSha: null,
+        });
+        expect(
+          harness.service.get(session.id).pullRequests[0].mergeQueue,
+        ).toMatchObject({ position: 1, state: 'QUEUED' });
+        expect(notices(session.id).at(-1)).toContain(
+          'Automerge added alice/app#1',
+        );
+        expect(readyMessages()).toHaveLength(0);
+        expect(notifications.automerge).toHaveLength(0);
+
+        // In the queue: nothing more to do.
+        await automation.check(pull.id);
+        expect(harness.github.enqueued).toHaveLength(1);
+        expect(readyMessages()).toHaveLength(0);
+      });
+
+      it('handles the merge by the queue like any merge', async () => {
+        const { pull } = await queuedPull();
+        harness.github.mergeFromQueue(pull.number);
+
+        await automation.check(pull.id);
+        await waitFor(() => notifications.closed.length === 1);
+
+        expect(record(pull)).toMatchObject({
+          state: 'merged',
+          mergeQueuedSha: null,
+        });
+      });
+
+      it('starts an autofix run when the queue removes it, with the failed checks of the merge group', async () => {
+        const { session, pull, head } = await queuedPull();
+        harness.github.checkRuns.set(sha('c'), [
+          {
+            id: 77,
+            name: 'integration',
+            status: 'completed',
+            conclusion: 'failure',
+            app: 'github-actions',
+          },
+        ]);
+        harness.github.removeFromQueue(pull.number, 'CI_FAILURE');
+
+        await automation.check(pull.id);
+
+        const messages = appMessages();
+        expect(messages).toHaveLength(1);
+        expect(messages[0].text).toContain(
+          "removed it without merging it (GitHub's reason: ci failure)",
+        );
+        expect(messages[0].text).toContain(
+          '1 failed check(s) of that merge group',
+        );
+        expect(messages[0].context?.text).toContain('name="integration"');
+        expect(record(pull)).toMatchObject({
+          autofixAttempts: 1,
+          autofixLastTrigger: 'queue',
+          mergeQueuedSha: null,
+          mergeQueueRemovedSha: null,
+          automergeFailedSha: head,
+          // The head commit's own checks were not what failed.
+          autofixCiHandledSha: null,
+        });
+        expect(notices(session.id)).toContain(
+          'The merge queue of main removed alice/app#1 without merging it (ci failure).',
+        );
+
+        // Not added again for the same head commit.
+        harness.runner.last.emit(resultMessage(20, 0.02));
+        await waitFor(() => !record(pull).autofixRunning);
+        await automation.check(pull.id);
+        expect(harness.github.enqueued).toHaveLength(1);
+        expect(appMessages()).toHaveLength(1);
+        expect(readyMessages()).toHaveLength(0);
+      });
+
+      it('only notes a removal after the head commit changed', async () => {
+        const { session, pull } = await queuedPull();
+        harness.github.removeFromQueue(pull.number, 'UNKNOWN');
+        fakePull(pull.number).headSha = sha('d');
+
+        await automation.check(pull.id);
+
+        expect(appMessages()).toHaveLength(0);
+        expect(notifications.queueRemovals).toHaveLength(0);
+        expect(record(pull)).toMatchObject({
+          mergeQueuedSha: null,
+          mergeQueueRemovedSha: null,
+          automergeFailedSha: null,
+        });
+        expect(notices(session.id).at(-1)).toContain(
+          'left the merge queue: its head commit changed',
+        );
+      });
+
+      it('tells the owner when the queue removes a pull request without autofix', async () => {
+        const { session, pull } = await sessionWithPullRequest();
+        fakePull(pull.number).requiresMergeQueue = true;
+        const outcome = await harness.sessionGit.mergePullRequest(
+          session.id,
+          repositoryId,
+          pull.number,
+          { sha: null, method: null },
+        );
+        expect(outcome).toMatchObject({ kind: 'queued', already: false });
+        // Asked again: it stays where it is.
+        expect(
+          await harness.sessionGit.mergePullRequest(
+            session.id,
+            repositoryId,
+            pull.number,
+            { sha: null, method: null },
+          ),
+        ).toMatchObject({ kind: 'queued', already: true, position: 1 });
+        expect(harness.github.enqueued).toHaveLength(1);
+        // Followed by polling without any switch.
+        expect(
+          harness.sessions.automatedOpenPullRequests().map((entry) => entry.id),
+        ).toContain(pull.id);
+
+        harness.github.removeFromQueue(pull.number, 'MERGE_CONFLICT');
+        await automation.check(pull.id);
+
+        expect(notifications.queueRemovals).toMatchObject([
+          {
+            detail:
+              'The merge queue of main removed alice/app#1 without merging it (merge conflict).',
+          },
+        ]);
+        expect(appMessages()).toHaveLength(0);
+        expect(record(pull)).toMatchObject({
+          mergeQueuedSha: null,
+          mergeQueueRemovedSha: null,
+        });
+        expect(
+          harness.sessions.automatedOpenPullRequests().map((entry) => entry.id),
+        ).not.toContain(pull.id);
+      });
     });
   });
 

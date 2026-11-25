@@ -1173,6 +1173,7 @@ switchable per event on the Settings page (stored in `app_settings`):
 | Session failed                | the session failed, or a setup script failed and the first message is held back                            | the session continues                    |
 | Autofix gave up               | the PR automation reached its attempt limit (reported by the PR automation)                                | –                                        |
 | Automerge needs you           | Claude asked for the owner's decision, GitHub refused the merge, or threads stay open that no run works on | –                                        |
+| Removed from merge queue      | a merge queue removed a pull request without merging it, and no autofix run works on it                    | –                                        |
 | Pull request merged or closed | a pull request of the session was merged or closed (reported by the PR automation)                         | –                                        |
 
 Ending a session ("End session") notifies nobody. Notifications carry the session title and
@@ -1387,6 +1388,9 @@ its branches and tags, and points the existing session clones' `origin` there (s
   (`automerge_held_at`, `automerge_hold_reason`: Claude's question), the head commit GitHub
   refused to merge and why, what a ready head commit waits for
   (`automerge_waiting`), and the head commit the owner was told about stuck threads for;
+  for merge queues: the head commit the app or Claude added (`merge_queued_sha`, when, place,
+  GitHub's entry state, the merge group's commit) and a removal waiting to be handled (head
+  commit and GitHub's reason);
   `checks`: the CI checks of the head commit as last read, for the view (JSON).
 - `sessions.autoclosed_at`: when autoclose ended the session; clones still `ready`
   afterwards were kept because they hold work that is not on GitHub.
@@ -1759,7 +1763,9 @@ Both work two ways:
    of the session are merged with the tool `merge_pull_request` (repository, pull request,
    optional `method`): the API merges exactly the head commit (`PUT .../pulls/{number}/merge`
    with `sha`; without `method` rebase, else squash, else a merge commit, as automerge does)
-   with an installation token for that repository, and records the merge at once. Other pull
+   with an installation token for that repository, and records the merge at once. Where the
+   base branch requires a merge queue it adds the pull request to the queue instead and says
+   so (see [Automerge](#automerge), merge queues); `method` does not apply then. Other pull
    requests are refused. It asks as the permission mode says (the dialog shows the pull
    request and the method). When automerge is on for the pull request, a PreToolUse hook lets
    it run unasked (before the mode and rules) if the pull request is ready as automerge sees
@@ -2001,6 +2007,31 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   files the app may not merge), the head commit and GitHub's reason are stored, the history says so, the owner is
   notified once, and the session's ready message says it was refused. A new head commit, or
   turning automerge off and on, tries again.
+- **Merge queues**: where the base branch requires a merge queue (a branch rule or
+  ruleset; GitHub refuses the direct merge with 405 "... through the merge queue"), automerge
+  and Claude's `merge_pull_request` add the pull request to the queue instead (GraphQL
+  `enqueuePullRequest` with `expectedHeadOid` set to the checked head commit; at the end of
+  the queue, never `jump`: the owner's decision); the queue's settings decide the method. A
+  pull request already in the queue stays where it is. The app stores the queued head commit
+  (`merge_queued_sha`), and while it is set reads the entry with each read of the pull
+  request (GraphQL `mergeQueueEntry`: place, state, the merge group's commit) and follows the
+  pull request by polling and webhooks even without autofix or autoclose. The view shows "In
+  queue #2" and the history notes the enqueue; automerge does nothing more for that head
+  commit and the session gets no ready message for it. The queue's merge is seen like any
+  other merge (notification, autoclose, wake). When the queue removes it without merging it
+  (the latest `RemovedFromMergeQueueEvent` after the enqueue, with GitHub's reason; a removal
+  not listed yet changes nothing until the next read): if the head commit changed since (a
+  push), the history only says so and automerge adds the new head commit once it is ready.
+  Otherwise, as for failed checks (the owner's decision): with autofix an Autofix run starts
+  (trigger `queue`, an attempt) with the reason in the app's text (only GitHub's enum names,
+  in plain words) and the failed checks of the merge group's commit (with job logs) as
+  untrusted context; automerge does not add that head commit again (as for a refused merge,
+  the next head commit or turning it off and on tries again) and no ready message follows for
+  it. At the attempt limit, and without autofix, the history says so and the owner is notified
+  ("Removed from merge queue"); without autofix Claude is also woken if it said it goes on by
+  itself. Whether the GitHub App needs the repository permission "Merge queues" for
+  `enqueuePullRequest` is not documented by GitHub; a refusal "not accessible by integration"
+  names it in the error.
 - **Known limit (decided)**: green checks, no change requests and the resolved threads are
   the gate (approval is not needed), and the owner's own approval counts where reviews are
   required. Sessions run as the owner's user, with the owner's GitHub

@@ -183,6 +183,13 @@
       "when": 1795464350484,
       "tag": "0025_drop_auto_review",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1795637176348,
+      "tag": "0026_pr_merge_queue",
+      "breakpoints": true
     }
   ]
 }
