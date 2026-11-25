@@ -322,6 +322,11 @@ describe('ReviewsService', () => {
       messageId: null,
     });
     expect(() => reviews.cancel(session.id)).toThrow('No review');
+    // Ready again once it is over.
+    await waitFor(
+      () => harness.service.get(session.id).waitingFor === 'message',
+    );
+    expect(harness.service.get(session.id).waitingReason).toBeNull();
   });
 
   it('reports a reviewer that gives no usable answer', async () => {
