@@ -50,7 +50,8 @@ export type SessionStatus =
  *   (`backgroundTasks` says how many), or Claude said it waits for
  *   something (`waitingReason`, see the tool `set_waiting_state`); or the
  *   app goes on with what the CI of one of the session's open pull requests
- *   brings (`waitingReason` `CI of #12`). A message can be sent meanwhile.
+ *   brings (`waitingReason` `CI of #12`) or an independent review of the
+ *   session that runs (`Reviewing`). A message can be sent meanwhile.
  * - `limit`: the subscription's usage limit (5-hour or weekly window)
  *   ended the last turn; the app continues the session by itself once the
  *   limit has reset (`limitResumesAt`). Messages sent meanwhile are queued
@@ -361,9 +362,10 @@ export interface SessionDto {
   backgroundTasks?: number;
   /**
    * With `waitingFor: 'background'`: what Claude said it waits for (e.g.
-   * "CI of PR #12"), when it did, else the CI of its pull requests it
-   * waits for ("CI of #12") unless background tasks are what it waits
-   * for; `null` otherwise. Absent from older servers.
+   * "CI of PR #12"), when it did, else `Reviewing` while an independent
+   * review runs, else the CI of its pull requests it waits for ("CI of
+   * #12") unless background tasks are what it waits for; `null`
+   * otherwise. Absent from older servers.
    */
   waitingReason?: string | null;
   /**

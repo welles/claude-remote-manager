@@ -333,7 +333,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   without `message` in between; `waitingReason` is then `CI of #12`, a message or an app
   message can still be sent, the process may still be closed for idleness, and such sessions
   are polled for the checks of those pull requests like viewed ones; "finished" is notified
-  once per turn, not when such a wait began without a turn); `limit`, the subscription's usage limit
+  once per turn, not when such a wait began without a turn; also `background`, with
+  `waitingReason` `Reviewing` unless Claude gave its own, while an independent review of the
+  session runs); `limit`, the subscription's usage limit
   (5-hour or weekly window) ended the last turn (Claude Code's `rate_limit` error): the session
   continues by itself once the limit has reset, see [Usage limit](#usage-limit)), `finished`
   (ended with "End session", `POST /api/sessions/:id/end` or the `session.end` frame) and
