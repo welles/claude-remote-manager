@@ -189,6 +189,35 @@ describe('PrAutomationService', () => {
       (pull) => pull.repositoryId === remote.id && pull.number === number,
     ) as (typeof harness.github.pulls)[number];
 
+  /** A second clone of the repository with a pull request of its own. */
+  const secondPullRequest = async (sessionId: string) => {
+    const tool = harness.runner.last.options.tools?.find(
+      (entry) => entry.name === 'add_branch',
+    );
+    if (!tool) {
+      throw new Error('no add_branch tool');
+    }
+    const result = await tool.handler(
+      { reason: 'Second fix' },
+      { toolUseId: 'tool-branch' },
+    );
+    expect(result.isError).toBe(false);
+    const directory = harness.service
+      .get(sessionId)
+      .directories.at(-1) as SessionDto['directories'][number];
+    const branch = directory.branch as string;
+    await commitFile(directory.path, 'second.txt', 'two');
+    await harness.sessionGit.push(sessionId, repositoryId, branch);
+    const pull = await harness.sessionGit.createPullRequest(
+      sessionId,
+      repositoryId,
+      { title: 'Second' },
+      'claude',
+      branch,
+    );
+    return { path: directory.path, branch, pull };
+  };
+
   const enableAutofix = (sessionId: string, pull: PullRequestDto) =>
     automation.update(sessionId, pull.id, { autofix: true });
 
@@ -675,7 +704,7 @@ describe('PrAutomationService', () => {
           await claudeGoesOn(session.id);
           await runCi(pull, 'failure');
           await waitFor(() => ciWakes().length === 1);
-          expect(ciWakes()[0]).toContain('1 of 1 checks did not pass');
+          expect(ciWakes()[0]).toContain('1 of 1 check did not pass');
         });
 
         it('wakes Claude when autofix has nothing to tell about green CI', async () => {
@@ -705,6 +734,67 @@ describe('PrAutomationService', () => {
           await new Promise((resolve) => setTimeout(resolve, 50));
           expect(ciWakes()).toHaveLength(0);
           expect(harness.service.get(session.id).waitingFor).toBe('message');
+        });
+
+        it('wakes Claude once for the CI of two pull requests, naming both', async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          await claudeGoesOn(session.id);
+          const second = await secondPullRequest(session.id);
+          const runsOf = (head: string, id: number) => {
+            const runs = [
+              {
+                id,
+                name: 'test',
+                status: 'in_progress' as const,
+                conclusion: null as string | null,
+                app: 'github-actions',
+              },
+            ];
+            harness.github.checkRuns.set(head, runs);
+            return runs;
+          };
+          const first = runsOf(fakePull(pull.number).headSha, 61);
+          const other = runsOf(fakePull(second.pull.number).headSha, 62);
+          await checksView.read(pull.id);
+          await checksView.read(second.pull.id);
+          first[0] = {
+            ...first[0],
+            status: 'completed',
+            conclusion: 'success',
+          } as never;
+          await checksView.read(pull.id);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          expect(ciWakes()).toHaveLength(0);
+          other[0] = {
+            ...other[0],
+            status: 'completed',
+            conclusion: 'failure',
+          } as never;
+          await checksView.read(second.pull.id);
+          await waitFor(() => ciWakes().length === 1);
+          expect(ciWakes()[0]).toContain(`alice/app#${pull.number} at`);
+          expect(ciWakes()[0]).toContain(`alice/app#${second.pull.number} at`);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          expect(ciWakes()).toHaveLength(1);
+        });
+
+        it('does not wake Claude for CI it saw in a turn that started meanwhile', async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          await claudeGoesOn(session.id);
+          const other = jest
+            .spyOn(harness.service, 'waitsForCi')
+            .mockReturnValue(true);
+          await runCi(pull, 'success');
+          // The automation looked; the wake waits for the other CI.
+          await waitFor(
+            () => harness.service.ciWaitPhase(session.id, pull.id) === null,
+          );
+          // The user writes: Claude sees the CI in this turn.
+          await claudeGoesOn(session.id);
+          other.mockRestore();
+          harness.service.publishUpdate(session.id);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          expect(ciWakes()).toHaveLength(0);
         });
 
         it('wakes Claude only once no other CI of the session runs', async () => {
@@ -3439,35 +3529,6 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       const fake = fakePull(number);
       fake.state = 'closed';
       fake.merged = true;
-    };
-
-    /** A second clone of the repository with a pull request of its own. */
-    const secondPullRequest = async (sessionId: string) => {
-      const tool = harness.runner.last.options.tools?.find(
-        (entry) => entry.name === 'add_branch',
-      );
-      if (!tool) {
-        throw new Error('no add_branch tool');
-      }
-      const result = await tool.handler(
-        { reason: 'Second fix' },
-        { toolUseId: 'tool-branch' },
-      );
-      expect(result.isError).toBe(false);
-      const directory = harness.service
-        .get(sessionId)
-        .directories.at(-1) as SessionDto['directories'][number];
-      const branch = directory.branch as string;
-      await commitFile(directory.path, 'second.txt', 'two');
-      await harness.sessionGit.push(sessionId, repositoryId, branch);
-      const pull = await harness.sessionGit.createPullRequest(
-        sessionId,
-        repositoryId,
-        { title: 'Second' },
-        'claude',
-        branch,
-      );
-      return { path: directory.path, branch, pull };
     };
 
     it('works on two pull requests of one repository in their own clones', async () => {
