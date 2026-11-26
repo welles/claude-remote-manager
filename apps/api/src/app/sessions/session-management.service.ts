@@ -693,8 +693,9 @@ export class SessionManagementService {
         ].join(', '),
       );
     }
+    let rest: string | null;
     try {
-      await this.removeDirectory(record, directory);
+      rest = await this.removeDirectory(record, directory);
     } catch (error) {
       return outcome(
         'failed',
@@ -708,18 +709,30 @@ export class SessionManagementService {
         loss.clean
           ? 'removed'
           : `removed (lost ${describeLoss(loss, directory.kind === 'scratch')})`,
+        ...(rest
+          ? [
+              `but files were left over (${rest}); remove them under Workspace cleanup`,
+            ]
+          : []),
       ].join(', '),
     );
   }
 
+  /**
+   * Removes a clone or scratch directory and marks it removed. When deleting
+   * started but files are left (IncompleteRemovalError), it is unusable all
+   * the same: it counts as removed (the rest shows among the workspace's
+   * directories without session), and the error text is returned.
+   */
   private async removeDirectory(
     record: SessionRecord,
     directory: SessionDirectoryRecord,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const rule: WorkspaceRule =
       directory.kind === 'scratch'
         ? scratchRule(record.slug)
         : cloneRule(record.slug);
+    let rest: string | null = null;
     try {
       await this.entries.remove(
         directory.path,
@@ -727,18 +740,16 @@ export class SessionManagementService {
         this.records.directoryPathsExcept(record.id),
       );
     } catch (error) {
-      if (error instanceof IncompleteRemovalError) {
-        // Its content is gone in part: unusable, and the rest shows among
-        // the workspace's directories without session.
-        this.records.updateDirectory(record.id, directory.position, {
-          state: 'removed',
-        });
+      if (!(error instanceof IncompleteRemovalError)) {
+        throw error;
       }
-      throw error;
+      this.logger.warn(error.message);
+      rest = error.message;
     }
     this.records.updateDirectory(record.id, directory.position, {
       state: 'removed',
     });
+    return rest;
   }
 
   /** Removes `sessions/<slug>/<owner>` and `sessions/<slug>` once empty. */

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import {
   PROCESS_LAUNCHER,
@@ -160,6 +160,8 @@ export function isInside(inner: string, outer: string): boolean {
  */
 @Injectable()
 export class WorkspaceEntries {
+  private readonly logger = new Logger(WorkspaceEntries.name);
+
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Optional()
@@ -263,12 +265,24 @@ export class WorkspaceEntries {
     if (!this.launcher.separated) {
       return;
     }
-    await this.run('session', process.execPath, [
-      stopProcessesScript(),
-      String(STOP_PROCESSES_GRACE_MS),
-      String(process.pid),
-      path,
-    ]).catch(() => undefined);
+    try {
+      const output = await this.run('session', process.execPath, [
+        stopProcessesScript(),
+        String(STOP_PROCESSES_GRACE_MS),
+        String(process.pid),
+        path,
+      ]);
+      const stopped = (JSON.parse(output) as { stopped?: number[] }).stopped;
+      if (stopped && stopped.length > 0) {
+        this.logger.log(
+          `Stopped processes in ${path} before removing it: ${JSON.stringify(stopped)}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not stop the processes in ${path}: ${(error as Error).message}`,
+      );
+    }
   }
 
   /**

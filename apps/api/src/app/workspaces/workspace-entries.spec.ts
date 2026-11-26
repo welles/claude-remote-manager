@@ -10,9 +10,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ProcessLauncher } from '../common/process-isolation';
 import type { AppConfig } from '../config/app-config';
+import { waitFor } from '../sessions/testing/fake-agent';
 import {
   checkLexical,
   cloneRule,
@@ -195,20 +198,87 @@ describe('WorkspaceEntries', () => {
     );
   });
 
-  it('tells when deleting started but files are left', async () => {
+  // Root deletes in read-only directories all the same.
+  const asRoot = process.getuid?.() === 0;
+
+  (asRoot ? it.skip : it)(
+    'tells when deleting started but files are left',
+    async () => {
+      const path = clone('s1');
+      const stuck = join(path, 'web', '.vite');
+      mkdirSync(stuck, { recursive: true });
+      writeFileSync(join(stuck, 'deps.json'), '{}');
+      chmodSync(stuck, 0o555);
+      try {
+        await expect(entries.remove(path, cloneRule('s1'))).rejects.toThrow(
+          IncompleteRemovalError,
+        );
+        expect(existsSync(join(path, '.git'))).toBe(false);
+        expect(existsSync(join(stuck, 'deps.json'))).toBe(true);
+      } finally {
+        chmodSync(stuck, 0o755);
+      }
+    },
+  );
+
+  it('stops what runs in the clone first, with separate users, but spares Claude Code', async () => {
+    // Separate users as far as WorkspaceEntries can tell, but every
+    // command runs as this user: the stop script runs for real.
+    const launcher = {
+      separated: true,
+      command: (_role: string, command: string, args: readonly string[]) => ({
+        command,
+        args: [...args],
+      }),
+      environment: () => ({ ...process.env }),
+    } as unknown as ProcessLauncher;
+    const separated = new WorkspaceEntries(
+      { sessionsDir, scratchDir } as AppConfig,
+      launcher,
+    );
     const path = clone('s1');
-    const stuck = join(path, 'web', '.vite');
-    mkdirSync(stuck, { recursive: true });
-    writeFileSync(join(stuck, 'deps.json'), '{}');
-    chmodSync(stuck, 0o555);
+    mkdirSync(join(path, 'web'));
+    // Like Claude Code (a direct child of the API, here of this test
+    // process) running a dev server in its Bash tool that keeps writing
+    // a cache into the clone.
+    const writer =
+      "const fs = require('fs'); setInterval(() => fs.mkdirSync('node_modules/.vite/deps', { recursive: true }), 5)";
+    let server = 0;
+    const claude = spawn(
+      'sh',
+      ['-c', `"${process.execPath}" -e "${writer}" & echo $! ; wait`],
+      { cwd: join(path, 'web'), stdio: ['ignore', 'pipe', 'ignore'] },
+    );
     try {
-      await expect(entries.remove(path, cloneRule('s1'))).rejects.toThrow(
-        IncompleteRemovalError,
+      server = await new Promise<number>((resolve) =>
+        claude.stdout?.once('data', (data: Buffer) =>
+          resolve(Number(data.toString().trim())),
+        ),
       );
-      expect(existsSync(join(path, '.git'))).toBe(false);
-      expect(existsSync(join(stuck, 'deps.json'))).toBe(true);
+      await waitFor(() => existsSync(join(path, 'web', 'node_modules')));
+
+      expect(await separated.remove(path, cloneRule('s1'))).toBe(true);
+      expect(existsSync(path)).toBe(false);
+      await waitFor(() => {
+        try {
+          process.kill(server, 0);
+          return false;
+        } catch {
+          return true; // stopped
+        }
+      });
+      // The shell standing in for Claude Code was spared; it ends once
+      // its child is gone.
+      await waitFor(() => claude.exitCode !== null);
     } finally {
-      chmodSync(stuck, 0o755);
+      claude.kill('SIGKILL');
+      if (server) {
+        try {
+          process.kill(server, 'SIGKILL');
+        } catch {
+          // stopped already
+        }
+      }
     }
   });
 

@@ -595,7 +595,15 @@ export class SessionWorkspaceService {
         await this.createClone(session, directory, tagged);
       } catch (error) {
         const message = errorText(error);
-        await this.removeAddedClone(session, directory);
+        const path = directory.path;
+        // Marked failed either way; what is left shows among the
+        // workspace's directories without session.
+        await this.removeAddedClone(session, directory).catch(
+          (removal: unknown) =>
+            this.logger.error(
+              `Removing the failed clone ${path} failed: ${errorText(removal)}`,
+            ),
+        );
         session = this.sessions.updateDirectory(sessionId, position, {
           state: 'failed',
           additionState: 'failed',

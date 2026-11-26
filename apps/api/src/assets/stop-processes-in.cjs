@@ -76,10 +76,13 @@ for (const entry of fs.readdirSync('/proc')) {
   }
 }
 
+// A process that ended but was not reaped yet (zombie, state Z) is gone.
 const alive = (pid) => {
   try {
-    process.kill(pid, 0);
-    return true;
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return (
+      stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3) !== 'Z'
+    );
   } catch {
     return false;
   }
