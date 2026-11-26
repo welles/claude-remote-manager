@@ -903,7 +903,8 @@ preparation, leftovers) goes through `WorkspaceEntries`
    `node_modules/.vite`) while the directory is deleted, and `rmdir` would fail. If it still
    fails, stopping and deleting are tried once more; then the removal reports
    `IncompleteRemovalError`. Its content is gone at least in part, so the clone counts as
-   removed all the same (the notice names what was left), and the rest appears under
+   removed all the same (after its pull request, autoclose, session cleanup and deleting; the
+   notice or the cleanup result names what was left), and the rest appears under
    [Leftovers](#leftovers). In `single-user` mode nothing is stopped.
 
 Tested with hostile layouts (symlinked clone and parent directories, links to outside files,
