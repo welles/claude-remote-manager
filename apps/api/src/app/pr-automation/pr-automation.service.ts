@@ -891,16 +891,20 @@ export class PrAutomationService
         // them (a run started is a turn by now).
         const pull = this.records.pullRequest(pullRequestId);
         if (pull) {
-          const settled =
-            this.sessions.ciWaitPhase(pull.sessionId, pull.id) === 'settling';
-          this.sessions.endCiSettling(pull.sessionId, pull.id);
-          if (settled) {
-            // Nothing took the session's turn over (a run, a merge):
-            // Claude may wait for exactly this CI.
+          if (
+            this.sessions.ciWaitPhase(pull.sessionId, pull.id) === 'settling'
+          ) {
+            // Noted before the wait ends: its end may publish the session,
+            // and the wake then has to name this pull request too.
             const told = this.ciSettled.get(pull.sessionId) ?? new Set();
             told.add(pull.id);
             this.ciSettled.set(pull.sessionId, told);
-            await this.wakeAfterCi(pull.sessionId);
+          }
+          this.sessions.endCiSettling(pull.sessionId, pull.id);
+          if (this.ciSettled.has(pull.sessionId)) {
+            // Nothing took the session's turn over (a run, a merge):
+            // Claude may wait for exactly this CI.
+            this.wakeAfterCiLater(pull.sessionId);
           }
         }
       }
@@ -1907,6 +1911,8 @@ export class PrAutomationService
    */
   private sessionChanged(session: SessionDto): void {
     if (!turnIsOver(session)) {
+      // Claude sees its CI in this turn: no wake for it later.
+      this.ciSettled.delete(session.id);
       return;
     }
     // Closes whose autoclose waited for the end of the turn.
@@ -1937,7 +1943,7 @@ export class PrAutomationService
     if (this.ciSettled.has(session.id)) {
       // CI that settled before the other CI, background tasks or a review
       // of the session ended.
-      void this.wakeAfterCi(session.id);
+      this.wakeAfterCiLater(session.id);
     }
   }
 
@@ -2438,6 +2444,14 @@ export class PrAutomationService
    * or closed meanwhile are left out. When Claude's turn started or its
    * wait ran out meanwhile, nothing is sent.
    */
+  private wakeAfterCiLater(sessionId: string): void {
+    this.wakeAfterCi(sessionId).catch((error: unknown) =>
+      this.logger.warn(
+        `Waking ${sessionId} after its CI failed: ${errorText(error)}`,
+      ),
+    );
+  }
+
   private async wakeAfterCi(sessionId: string): Promise<void> {
     const pending = this.ciSettled.get(sessionId);
     if (!pending) {
@@ -2452,8 +2466,13 @@ export class PrAutomationService
       this.ciSettled.delete(sessionId);
       return;
     }
-    if (this.sessions.waitsForCi(sessionId) || !this.idle(session)) {
-      // Again when the session changes (`sessionChanged`).
+    if (
+      this.sessions.waitsForCi(sessionId) ||
+      !this.idle(session) ||
+      [...pending].some((id) => this.deferred.has(id))
+    ) {
+      // Again when the session changes (`sessionChanged`), or after the
+      // deferred check of a pull request (its autofix run may come first).
       return;
     }
     const lines: string[] = [];
@@ -2480,7 +2499,7 @@ export class PrAutomationService
       const outcome =
         passed === checks.length
           ? `all ${checks.length} check${checks.length === 1 ? '' : 's'} passed`
-          : `${checks.length - passed} of ${checks.length} checks did not pass`;
+          : `${checks.length - passed} of ${checks.length} check${checks.length === 1 ? '' : 's'} did not pass`;
       lines.push(
         `- ${pull.repositoryName}#${pull.number} at ${pull.headSha.slice(0, 7)}: ${outcome}`,
       );
