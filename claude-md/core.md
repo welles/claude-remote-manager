@@ -51,7 +51,7 @@
 - The findings come as a message of the app. Check each against the code: fix the ones that
   hold, and say briefly why for the others.
 - If the tool refuses (reviews turned off for the session, a review already runs, nothing new
-  to review, too many rounds with findings), go on without it. If `request_review` is not
+  to review), go on without it. If `request_review` is not
   available, reviews are not offered here.
 
 ## Previews of dev servers

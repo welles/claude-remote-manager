@@ -19,9 +19,6 @@ export const REVIEW_EFFORTS: readonly ReviewEffort[] = [
 /** The reviewer's model unless the settings say otherwise. */
 export const DEFAULT_REVIEW_MODEL = 'claude-fable-5-2';
 export const DEFAULT_REVIEW_EFFORT: ReviewEffort = 'high';
-/** Auto-review rounds with findings in a row before auto-review stops. */
-export const DEFAULT_AUTO_REVIEW_ROUNDS = 3;
-export const MAX_AUTO_REVIEW_ROUNDS = 20;
 
 /**
  * The app's review settings (`GET`/`PUT /api/settings/review`), for every
@@ -31,12 +28,6 @@ export interface ReviewDefaults {
   /** Model name or alias. */
   model: string;
   effort: ReviewEffort;
-  /**
-   * Rounds with findings in a row of reviews that started by themselves
-   * (auto-review, Claude's requests), after which both wait for the
-   * user's next message (1 to {@link MAX_AUTO_REVIEW_ROUNDS}).
-   */
-  maxAutoRounds: number;
 }
 
 /** Body of `PUT /api/settings/review`; absent fields stay. */
@@ -114,12 +105,6 @@ export interface SessionReviewDto {
   mode: ReviewMode;
   model: string | null;
   effort: ReviewEffort | null;
-  /**
-   * Rounds with findings in a row of reviews that started by themselves
-   * (auto-review and Claude's requests) since the user's last message (or
-   * the last review without findings).
-   */
-  autoRounds: number;
   /** The review running now, if any. */
   running: RunningReviewDto | null;
 }

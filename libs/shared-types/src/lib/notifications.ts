@@ -11,7 +11,6 @@
  * - `stalled`: a running turn produced no event for the stall time;
  * - `failed`: the session failed (or its setup script, so that the first
  *   message is held back);
- * - `autofix_gave_up`: the PR automation stopped after its attempt limit;
  * - `automerge`: automerge waits for the owner's decision, GitHub refused
  *   the merge, or review threads nobody works on keep it from merging;
  * - `merge_queue`: a merge queue removed a pull request of the session
@@ -24,7 +23,6 @@ export type NotificationEventType =
   | 'turn_finished'
   | 'stalled'
   | 'failed'
-  | 'autofix_gave_up'
   | 'automerge'
   | 'merge_queue'
   | 'pull_request_closed';
@@ -34,7 +32,6 @@ export const NOTIFICATION_EVENT_TYPES: readonly NotificationEventType[] = [
   'turn_finished',
   'stalled',
   'failed',
-  'autofix_gave_up',
   'automerge',
   'merge_queue',
   'pull_request_closed',
@@ -69,11 +66,6 @@ export const NOTIFICATION_EVENT_INFO: Record<
     label: 'Session failed',
     description:
       'Claude Code ended with an error, or a setup script failed and the first message is held back.',
-  },
-  autofix_gave_up: {
-    label: 'Autofix gave up',
-    description:
-      'The PR automation reached its attempt limit and stopped fixing.',
   },
   automerge: {
     label: 'Automerge needs you',

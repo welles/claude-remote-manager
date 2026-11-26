@@ -680,22 +680,15 @@ describe('notifications', () => {
           failure: null,
           waiting: null,
         },
-        attempts: 3,
-        maxAttempts: 3,
-        gaveUp: true,
         running: false,
         lastRunAt: null,
         lastTrigger: null,
       },
     };
     expect(service.notifyPullRequestClosed(session.id, pullRequest)).toBe(true);
-    expect(
-      service.notifyAutofixGaveUp(session.id, pullRequest, 3, 'CI test failed'),
-    ).toBe(true);
     await service.settled();
     expect(push.payloads('show').map((p) => [p.tag, p.title])).toEqual([
       ['pr-7', 'Merged: acme/app#12'],
-      ['autofix-7', 'Autofix gave up: acme/app#12'],
     ]);
   });
 });

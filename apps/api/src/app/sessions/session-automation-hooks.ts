@@ -94,7 +94,7 @@ export class SessionAutomationHooks {
   /**
    * The tool `request_review`: Claude asks for an independent review of
    * the session's changes. Returns what Claude is told; throws when it is
-   * refused (mode off, a review runs, nothing new to review, round limit).
+   * refused (mode off, a review runs, nothing new to review).
    */
   requestReview: ((sessionId: string) => Promise<string>) | null = null;
 

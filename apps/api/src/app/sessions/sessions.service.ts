@@ -613,7 +613,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private readonly events = new Subject<SessionEventEnvelope>();
   private readonly updates = new Subject<SessionDto>();
   private readonly deletions = new Subject<string>();
-  private readonly ownerMessages = new Subject<string>();
   /** CI the sessions wait for, by session and pull request ID. */
   private readonly ciWaits = new Map<string, Map<number, CiWait>>();
   /** Timers of the sessions the usage limit stopped, by session. */
@@ -655,8 +654,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   readonly updates$ = this.updates.asObservable();
   /** IDs of sessions deleted for good. */
   readonly deletions$ = this.deletions.asObservable();
-  /** IDs of sessions the owner sent a message (not the app). */
-  readonly ownerMessages$ = this.ownerMessages.asObservable();
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -1014,7 +1011,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     });
     // The owner answered: automerge waits no longer for their decision.
     this.automation?.ownerMessage?.(sessionId);
-    this.ownerMessages.next(sessionId);
   }
 
   /**
@@ -3728,8 +3724,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         'later as a message of the app. End your turn after calling it, or say with ' +
         'set_waiting_state "work" that you wait for the review. It is refused when the ' +
         'user turned reviews off for this session, it has no repository, a review already ' +
-        'runs, nothing changed since the last review, or reviews found issues too many ' +
-        'times in a row.',
+        'runs, or nothing changed since the last review.',
       inputSchema: () => ({}),
       handler: async () => {
         const request = this.automation?.requestReview;
@@ -5617,7 +5612,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         mode: record.reviewMode,
         model: record.reviewModel,
         effort: record.reviewEffort,
-        autoRounds: record.autoReviewRounds,
         running: this.automation?.runningReview?.(record.id) ?? null,
       },
     };

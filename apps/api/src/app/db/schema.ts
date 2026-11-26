@@ -208,8 +208,8 @@ export const sessions = sqliteTable('sessions', {
   reviewModel: text('review_model'),
   reviewEffort: text('review_effort').$type<ReviewEffort>(),
   /**
-   * Auto-review rounds with findings in a row since the user's last
-   * message or the last review without findings.
+   * Unused since reviews have no round limit (2026-11-26); kept because
+   * published migrations are never changed.
    */
   autoReviewRounds: integer('auto_review_rounds').notNull().default(0),
   /** Fingerprint of the session diff the last review was given. */
@@ -382,11 +382,15 @@ export const pullRequests = sqliteTable(
     autoclose: integer('autoclose', { mode: 'boolean' })
       .notNull()
       .default(false),
-    /** Autofix runs allowed for this pull request. */
+    /**
+     * Unused since autofix has no attempt limit (2026-11-26); kept because
+     * published migrations are never changed: the limit, the runs started
+     * and when the limit stopped a run.
+     */
     autofixMaxAttempts: integer('autofix_max_attempts').notNull().default(3),
-    /** Autofix runs started so far (reset only by the user). */
+    /** Unused, see {@link autofixMaxAttempts}. */
     autofixAttempts: integer('autofix_attempts').notNull().default(0),
-    /** When the limit stopped a run and the user was told; cleared on reset. */
+    /** Unused, see {@link autofixMaxAttempts}. */
     autofixGaveUpAt: timestamp('autofix_gave_up_at'),
     /** Head commit whose failed checks a run was started for already. */
     autofixCiHandledSha: text('autofix_ci_handled_sha'),

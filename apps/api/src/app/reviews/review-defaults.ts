@@ -1,10 +1,8 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import {
-  DEFAULT_AUTO_REVIEW_ROUNDS,
   DEFAULT_REVIEW_EFFORT,
   DEFAULT_REVIEW_MODEL,
-  MAX_AUTO_REVIEW_ROUNDS,
   REVIEW_EFFORTS,
   type ReviewDefaults,
   type ReviewEffort,
@@ -64,7 +62,7 @@ export class ReviewDefaultsStore {
       .get();
     const stored = (row?.value ?? {}) as Record<string, unknown>;
     const model = stored['model'];
-    const rounds = stored['maxAutoRounds'];
+    // A stored `maxAutoRounds` (the former round limit) is ignored.
     return {
       model:
         typeof model === 'string' && MODEL_PATTERN.test(model)
@@ -73,13 +71,6 @@ export class ReviewDefaultsStore {
       effort: isReviewEffort(stored['effort'])
         ? stored['effort']
         : DEFAULT_REVIEW_EFFORT,
-      maxAutoRounds:
-        typeof rounds === 'number' &&
-        Number.isInteger(rounds) &&
-        rounds >= 1 &&
-        rounds <= MAX_AUTO_REVIEW_ROUNDS
-          ? rounds
-          : DEFAULT_AUTO_REVIEW_ROUNDS,
     };
   }
 
@@ -94,20 +85,6 @@ export class ReviewDefaultsStore {
     }
     if (body['effort'] !== undefined) {
       next.effort = requireReviewEffort(body['effort'], 'effort');
-    }
-    if (body['maxAutoRounds'] !== undefined) {
-      const rounds = body['maxAutoRounds'];
-      if (
-        typeof rounds !== 'number' ||
-        !Number.isInteger(rounds) ||
-        rounds < 1 ||
-        rounds > MAX_AUTO_REVIEW_ROUNDS
-      ) {
-        throw new BadRequestException(
-          `maxAutoRounds must be a whole number from 1 to ${MAX_AUTO_REVIEW_ROUNDS}`,
-        );
-      }
-      next.maxAutoRounds = rounds;
     }
     this.db
       .insert(appSettings)

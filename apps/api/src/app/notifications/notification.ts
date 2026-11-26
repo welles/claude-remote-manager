@@ -35,7 +35,6 @@ export const notificationKeys = {
   stall: (sessionId: string) => `stall-${sessionId}`,
   failed: (sessionId: string) => `failed-${sessionId}`,
   pullRequest: (pullRequestId: number) => `pr-${pullRequestId}`,
-  autofix: (pullRequestId: number) => `autofix-${pullRequestId}`,
   automerge: (pullRequestId: number) => `automerge-${pullRequestId}`,
   mergeQueue: (pullRequestId: number) => `merge-queue-${pullRequestId}`,
 };

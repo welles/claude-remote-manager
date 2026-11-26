@@ -90,8 +90,7 @@ export function deviceLabel(userAgent: string | undefined): string {
  * sent about a session that an active client shows (see ViewerPresence).
  *
  * Other parts of the app report their events here; the PR automation
- * (`pr-automation/`) calls {@link notifyAutofixGaveUp},
- * {@link notifyAutomerge} and {@link notifyPullRequestClosed}.
+ * (`pr-automation/`) calls {@link notifyAutomerge} and {@link notifyPullRequestClosed}.
  */
 @Injectable()
 export class NotificationsService implements OnModuleDestroy {
@@ -178,34 +177,6 @@ export class NotificationsService implements OnModuleDestroy {
     while (this.queues.size > 0) {
       await Promise.all(this.queues.values());
     }
-  }
-
-  /**
-   * PR automation: autofix stopped after its attempt limit for this pull
-   * request. `reason`: what kept failing, shortened in the notification.
-   */
-  notifyAutofixGaveUp(
-    sessionId: string,
-    pullRequest: PullRequestDto,
-    attempts: number,
-    reason: string | null = null,
-  ): boolean {
-    const session = this.sessionOrNull(sessionId);
-    return this.notify({
-      type: 'autofix_gave_up',
-      key: notificationKeys.autofix(pullRequest.id),
-      sessionId,
-      title: `Autofix gave up: ${pullRequestLabel(pullRequest)}`,
-      body: [
-        `${attempts} attempt${attempts === 1 ? '' : 's'}${reason ? `: ${shorten(reason, 120)}` : ''}`,
-        session ? sessionContext(session) : shorten(pullRequest.title, 80),
-      ].join('\n'),
-      path: `/sessions/${sessionId}`,
-      requestId: null,
-      actions: [],
-      urgent: false,
-      at: Date.now(),
-    });
   }
 
   /**

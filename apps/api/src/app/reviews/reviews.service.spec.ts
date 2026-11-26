@@ -375,7 +375,6 @@ describe('ReviewsService', () => {
         output: { summary: null, findings: [finding] },
       });
       await waitFor(() => findingMessages().length === 1);
-      expect(harness.service.get(session.id).review?.autoRounds).toBe(1);
     });
 
     it('tells Claude when the review it asked for found nothing or failed', async () => {
@@ -461,8 +460,7 @@ describe('ReviewsService', () => {
       expect(harness.runner.reviews).toHaveLength(0);
     });
 
-    it('refuses when reviews are off, nothing is new, or the rounds are used up', async () => {
-      defaults.update({ maxAutoRounds: 1 });
+    it('refuses when reviews are off or nothing is new, and has no round limit', async () => {
       const session = await idleSession();
       await harness.service.sendMessage(session.id, { text: 'Go on' });
       await waitFor(() => harness.service.get(session.id).status === 'running');
@@ -483,23 +481,23 @@ describe('ReviewsService', () => {
         output: { summary: null, findings: [finding] },
       });
       await waitFor(() => !harness.hooks.reviewBusy?.(session.id));
+      // Rounds with findings in a row do not stop further requests.
       await commitFile(session.cwd, 'work.txt', 'third');
-      await expect(request()).rejects.toThrow('until the user writes');
+      await request();
+      expect(harness.runner.reviews).toHaveLength(3);
     });
   });
 
   describe('auto-review', () => {
-    it('checks the mode, starts the rounds over on a change and reviews at once when switched on after a turn', async () => {
+    it('checks the mode and reviews at once when switched on after a turn', async () => {
       const session = await idleSession();
       expect(() =>
         reviews.updateSession(session.id, {
           mode: 'sometimes' as unknown as 'turn',
         }),
       ).toThrow('mode must be one of');
-      harness.sessions.update(session.id, { autoReviewRounds: 2 });
       await commitFile(session.cwd, 'work.txt', 'changed');
       reviews.updateSession(session.id, { mode: 'turn' });
-      expect(harness.service.get(session.id).review?.autoRounds).toBe(0);
       await waitFor(() => harness.runner.reviews.length === 1);
       expect(harness.service.get(session.id).review?.running?.trigger).toBe(
         'auto',
@@ -535,8 +533,7 @@ describe('ReviewsService', () => {
       expect(harness.runner.reviews).toHaveLength(1);
     });
 
-    it('stops after the round limit until the user writes', async () => {
-      defaults.update({ maxAutoRounds: 1 });
+    it('keeps reviewing after rounds with findings, without a limit', async () => {
       const session = await idleSession();
       reviews.updateSession(session.id, { mode: 'turn' });
       await turn(session.id, () => commitFile(session.cwd, 'work.txt', 'one'));
@@ -547,27 +544,14 @@ describe('ReviewsService', () => {
       // The findings start Claude's fixing turn.
       await waitFor(() => findingMessages().length === 1);
       await waitFor(() => harness.service.get(session.id).status === 'running');
-      expect(harness.service.get(session.id).review?.autoRounds).toBe(1);
-      expect(
-        harness.events.some(
-          (envelope) =>
-            envelope.event.type === 'notice' &&
-            envelope.event.text.includes('pause until your next message'),
-        ),
-      ).toBe(true);
+      // The fixing turn changed the diff: the next review follows.
       await commitFile(session.cwd, 'work.txt', 'two');
       harness.runner.last.emit(resultMessage(10, 0.01));
-      await waitFor(
-        () => harness.service.get(session.id).waitingFor === 'message',
-      );
-      await flush();
-      expect(harness.runner.reviews).toHaveLength(1);
-
-      // The user writes: the rounds start over.
-      await harness.service.send(session.id, { text: 'Thanks' });
-      expect(harness.service.get(session.id).review?.autoRounds).toBe(0);
-      harness.runner.last.emit(resultMessage(10, 0.01));
       await waitFor(() => harness.runner.reviews.length === 2);
+      harness.runner.reviews[1].finish({
+        output: { summary: null, findings: [finding] },
+      });
+      await waitFor(() => findingMessages().length === 2);
     });
     it('reviews a diff that changed while a manual review ran, once that one ends', async () => {
       const session = await idleSession();

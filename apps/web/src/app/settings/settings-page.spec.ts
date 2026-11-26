@@ -91,7 +91,7 @@ describe('SettingsPage', () => {
     http.expectOne('/api/notifications').flush(notificationStatus());
     http
       .expectOne('/api/settings/review')
-      .flush({ model: 'claude-fable-5-2', effort: 'high', maxAutoRounds: 3 });
+      .flush({ model: 'claude-fable-5-2', effort: 'high' });
     http.expectOne('/api/models').flush({
       models: [],
       source: 'fallback',
@@ -256,7 +256,7 @@ describe('SettingsPage review settings', () => {
   });
   afterEach(() => http.verify());
 
-  it('shows the reviewer defaults and saves a change', async () => {
+  it('shows the reviewer defaults without a round limit', async () => {
     const fixture = TestBed.createComponent(SettingsPage);
     fixture.detectChanges();
     http.expectOne('/api/settings').flush({
@@ -269,7 +269,7 @@ describe('SettingsPage review settings', () => {
     http.expectOne('/api/health').flush(health());
     http
       .expectOne('/api/settings/review')
-      .flush({ model: 'claude-fable-5-2', effort: 'high', maxAutoRounds: 3 });
+      .flush({ model: 'claude-fable-5-2', effort: 'high' });
     http.expectOne('/api/models').flush({
       models: [
         {
@@ -291,19 +291,9 @@ describe('SettingsPage review settings', () => {
     ) as HTMLElement;
     expect(words(card)).toContain('Fable 5.2');
     expect(words(card)).toContain('High');
-    const rounds = card.querySelector(
-      '[data-testid="review-default-rounds"]',
-    ) as HTMLInputElement;
-    expect(rounds.value).toBe('3');
-    rounds.value = '5';
-    rounds.dispatchEvent(new Event('change'));
-    const request = http.expectOne('/api/settings/review');
-    expect(request.request.method).toBe('PUT');
-    expect(request.request.body).toEqual({ maxAutoRounds: 5 });
-    request.flush({
-      model: 'claude-fable-5-2',
-      effort: 'high',
-      maxAutoRounds: 5,
-    });
+    // No round limit any more.
+    expect(
+      card.querySelector('[data-testid="review-default-rounds"]'),
+    ).toBeNull();
   });
 });
