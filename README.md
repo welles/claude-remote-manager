@@ -895,6 +895,16 @@ preparation, leftovers) goes through `WorkspaceEntries`
    make it delete what the session user or the unprivileged API user could delete anyway, and
    `rmdir` of a symlink fails. Symlinks and hard links inside a clone are removed as links;
    their targets stay. In `single-user` development everything runs as the developer.
+5. **What runs in it**: with `PROCESS_ISOLATION=separate-users`, a helper run as the session
+   user (`stop-processes-in.cjs`) first stops that user's processes whose working directory
+   lies in the directory (SIGTERM, SIGKILL after 5 s), except the API's direct children (the
+   Claude Code processes, which the app ends or restarts itself). Dev servers, watchers and
+   test runners Claude left running would otherwise write files again (such as
+   `node_modules/.vite`) while the directory is deleted, and `rmdir` would fail. If it still
+   fails, stopping and deleting are tried once more; then the removal reports
+   `IncompleteRemovalError`. Its content is gone at least in part, so the clone counts as
+   removed all the same (the notice names what was left), and the rest appears under
+   [Leftovers](#leftovers). In `single-user` mode nothing is stopped.
 
 Tested with hostile layouts (symlinked clone and parent directories, links to outside files,
 database paths pointing elsewhere, a prefix-named sibling, a file where a directory belongs).

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { Inject, Injectable, Optional } from '@nestjs/common';
@@ -45,6 +46,18 @@ export class UnsafePathError extends Error {
   }
 }
 
+/**
+ * Deleting started but the directory could not be removed completely: its
+ * content is gone, at least in part (a clone is no longer usable), and
+ * what is left must be removed later.
+ */
+export class IncompleteRemovalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IncompleteRemovalError';
+  }
+}
+
 /** What a directory holds, read as the session user. */
 export interface DirectoryContents {
   /** Disk usage in bytes (hard links within the directory counted once). */
@@ -60,6 +73,21 @@ export interface DirectoryContents {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const COMMAND_TIMEOUT_MS = 10 * 60_000;
 const MAX_BUFFER = 32 * 1024 * 1024;
+/** How long processes in a removed directory get to end after SIGTERM. */
+export const STOP_PROCESSES_GRACE_MS = 5000;
+export const STOP_PROCESSES_SCRIPT = 'stop-processes-in.cjs';
+
+function stopProcessesScript(): string {
+  const candidates = [
+    join(__dirname, 'assets', STOP_PROCESSES_SCRIPT),
+    join(__dirname, '..', '..', 'assets', STOP_PROCESSES_SCRIPT),
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) {
+    throw new Error(`${STOP_PROCESSES_SCRIPT} not found`);
+  }
+  return found;
+}
 
 /**
  * Checks that `path` is a directory the app may delete under `rule`, from
@@ -126,6 +154,9 @@ export function isInside(inner: string, outer: string): boolean {
  * after the check is removed as a link or makes `rmdir` fail; whatever a
  * race could reach is only what those unprivileged users could delete
  * anyway. In `single-user` mode all of it runs as the API's user.
+ *
+ * Before deleting, the session user's processes that run in the directory
+ * are stopped (see {@link WorkspaceEntries.remove}).
  */
 @Injectable()
 export class WorkspaceEntries {
@@ -180,6 +211,13 @@ export class WorkspaceEntries {
    * Removes the directory `path` with everything in it (see the class
    * comment). `protectedPaths` (directories other sessions use) must not
    * lie inside it. Resolves `false` if it did not exist.
+   *
+   * With separate users, the session user's processes that run in it (dev
+   * servers, watchers Claude started) are stopped first, except Claude
+   * Code itself: they would write files again while it is deleted. If it
+   * still cannot be removed, stopping and deleting are tried once more;
+   * then {@link IncompleteRemovalError} tells that its content is gone, at
+   * least in part.
    */
   async remove(
     path: string,
@@ -196,17 +234,41 @@ export class WorkspaceEntries {
       );
     }
     const args = ['-P', path, '-xdev', '-mindepth', '1', '-delete'];
-    // Errors are expected here (what the other user owns); `rmdir` decides.
-    await this.run('session', 'find', args).catch(() => undefined);
-    await this.run('api', 'find', args).catch(() => undefined);
-    try {
-      await this.run('api', 'rmdir', ['--', path]);
-    } catch (error) {
-      throw new Error(
-        `${path} could not be removed completely: ${(error as Error).message}`,
-      );
+    let failure = 'unknown error';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await this.stopProcessesIn(path);
+      // Errors are expected here (what the other user owns); `rmdir` decides.
+      await this.run('session', 'find', args).catch(() => undefined);
+      await this.run('api', 'find', args).catch(() => undefined);
+      try {
+        await this.run('api', 'rmdir', ['--', path]);
+        return true;
+      } catch (error) {
+        failure = (error as Error).message;
+      }
     }
-    return true;
+    throw new IncompleteRemovalError(
+      `${path} could not be removed completely: ${failure}`,
+    );
+  }
+
+  /**
+   * Stops the session user's processes whose working directory lies in
+   * `path` (SIGTERM, then SIGKILL), except the API's direct children: the
+   * Claude Code processes, which the app ends or restarts itself. Only with
+   * separate users: in `single-user` mode they might be any program of the
+   * developer's. A failure only means that removing may leave files.
+   */
+  private async stopProcessesIn(path: string): Promise<void> {
+    if (!this.launcher.separated) {
+      return;
+    }
+    await this.run('session', process.execPath, [
+      stopProcessesScript(),
+      String(STOP_PROCESSES_GRACE_MS),
+      String(process.pid),
+      path,
+    ]).catch(() => undefined);
   }
 
   /**
