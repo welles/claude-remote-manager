@@ -1314,7 +1314,7 @@ describe('SessionView', () => {
         event({
           type: 'user.message',
           id: 'u2',
-          text: 'Autofix, attempt 1 of 3',
+          text: 'Autofix: pull request alice/app#1',
           origin: 'app',
         }),
       ],

@@ -919,7 +919,7 @@ describe('PrAutomationService', () => {
       const context = messages[0].context?.text ?? '';
       expect(context).toContain('No open findings.');
       expect(context).toContain('Summary: looks good.');
-      // The bot's comment may ask for changes: an attempt.
+      // The bot's comment may ask for changes: it goes along with the run.
       expect(record(pull)).toMatchObject({
         autofixLastTrigger: 'ready',
         autofixReadySha: head,
@@ -2393,7 +2393,7 @@ describe('PrAutomationService', () => {
       return fake.headSha;
     };
 
-    it('starts one rebase run per head commit, which counts as an attempt', async () => {
+    it('starts one rebase run per head commit', async () => {
       const { session, pull } = await sessionWithPullRequest();
       enableAutofix(session.id, pull);
       // Not computed yet: nothing to do.

@@ -144,7 +144,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
   updateSession(sessionId: string, request: unknown): SessionDto {
     const body = requireObject(request) as Record<string, unknown> &
       UpdateSessionReviewRequest;
-    const record = this.requireRecord(sessionId);
+    this.requireRecord(sessionId);
     const patch: Partial<
       Pick<SessionRecord, 'reviewMode' | 'reviewModel' | 'reviewEffort'>
     > = {};
@@ -207,7 +207,8 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Claude's tool `request_review`: starts a review unless the session's
-   * mode is off, one runs, or nothing changed since the last review. Returns what Claude is told; throws with the
+   * mode is off, one runs, or nothing changed since the last review.
+   * Returns what Claude is told; throws with the
    * reason when it is refused.
    */
   async requestByClaude(sessionId: string): Promise<string> {
