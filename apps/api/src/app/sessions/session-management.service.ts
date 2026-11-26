@@ -121,6 +121,8 @@ interface Described {
 @Injectable()
 export class SessionManagementService {
   private readonly logger = new Logger(SessionManagementService.name);
+  /** Cleanup outcomes of directories whose deleting left files. */
+  private readonly leftovers = new WeakSet<CleanupOutcome>();
   private readonly locks = new KeyedMutex();
 
   constructor(
@@ -586,11 +588,12 @@ export class SessionManagementService {
     if (lines.length > 0) {
       this.sessions.recordEvent(record.id, {
         type: 'notice',
-        level: [...outcomes, ...remoteBranches].some(
-          (outcome) => outcome.result === 'failed',
-        )
-          ? 'warning'
-          : 'info',
+        level:
+          [...outcomes, ...remoteBranches].some(
+            (outcome) => outcome.result === 'failed',
+          ) || outcomes.some((outcome) => this.leftovers.has(outcome))
+            ? 'warning'
+            : 'info',
         text: `Cleanup: ${lines.join('; ')}.${removed.length > 0 ? ' The session can be read but no longer continued.' : ''}`,
       });
     }
@@ -702,7 +705,7 @@ export class SessionManagementService {
         [...steps, `could not be removed (${errorText(error)})`].join(', '),
       );
     }
-    return outcome(
+    const removedOutcome = outcome(
       'removed',
       [
         ...steps,
@@ -716,6 +719,10 @@ export class SessionManagementService {
           : []),
       ].join(', '),
     );
+    if (rest) {
+      this.leftovers.add(removedOutcome);
+    }
+    return removedOutcome;
   }
 
   /**

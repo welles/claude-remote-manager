@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, normalize, relative, sep } from 'node:path';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
@@ -87,6 +87,19 @@ function stopProcessesScript(): string {
     throw new Error(`${STOP_PROCESSES_SCRIPT} not found`);
   }
   return found;
+}
+
+/** Names in a directory, sorted; `null` if it cannot be read. */
+async function entryNames(path: string): Promise<string[] | null> {
+  try {
+    return (await readdir(path)).sort();
+  } catch {
+    return null;
+  }
+}
+
+function sameNames(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((name, index) => name === b[index]);
 }
 
 /**
@@ -219,7 +232,8 @@ export class WorkspaceEntries {
    * Code itself: they would write files again while it is deleted. If it
    * still cannot be removed, stopping and deleting are tried once more;
    * then {@link IncompleteRemovalError} tells that its content is gone, at
-   * least in part.
+   * least in part (its top-level entries changed; if they did not, nothing
+   * was deleted and a plain error says so: the directory stays usable).
    */
   async remove(
     path: string,
@@ -236,6 +250,8 @@ export class WorkspaceEntries {
       );
     }
     const args = ['-P', path, '-xdev', '-mindepth', '1', '-delete'];
+    // What it held at the top, to tell whether deleting ran at all.
+    const before = await entryNames(path);
     let failure = 'unknown error';
     for (let attempt = 0; attempt < 2; attempt++) {
       await this.stopProcessesIn(path);
@@ -248,6 +264,12 @@ export class WorkspaceEntries {
       } catch (error) {
         failure = (error as Error).message;
       }
+    }
+    const after = await entryNames(path);
+    if (before !== null && after !== null && sameNames(before, after)) {
+      // Nothing was deleted (e.g. the commands could not be started): the
+      // directory is as it was and stays usable.
+      throw new Error(`${path} could not be removed: ${failure}`);
     }
     throw new IncompleteRemovalError(
       `${path} could not be removed completely: ${failure}`,

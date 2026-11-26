@@ -282,6 +282,29 @@ describe('WorkspaceEntries', () => {
     }
   });
 
+  it('keeps a clone intact and says so when deleting could not run at all', async () => {
+    // Every command fails to start.
+    const broken = {
+      separated: false,
+      command: () => ({ command: join(base, 'no-such-command'), args: [] }),
+      environment: () => ({ ...process.env }),
+    } as unknown as ProcessLauncher;
+    const entriesWithoutCommands = new WorkspaceEntries(
+      { sessionsDir, scratchDir } as AppConfig,
+      broken,
+    );
+    const path = clone('s1');
+
+    const error = await entriesWithoutCommands
+      .remove(path, cloneRule('s1'))
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(IncompleteRemovalError);
+    expect((error as Error).message).toContain('could not be removed');
+    expect(existsSync(join(path, '.git', 'objects', 'abc'))).toBe(true);
+  });
+
   it('removes a scratch directory only under the scratch root', async () => {
     const path = join(scratchDir, 's1');
     mkdirSync(join(path, 'sub'), { recursive: true });
