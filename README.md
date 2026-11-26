@@ -329,9 +329,14 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   commit run (at most 60 minutes after they were first read), for a minute after a push to its
   branch (noted right after Claude's `git push`, before GitHub reports the new head) or a new
   head commit until GitHub lists its checks (a repository without CI therefore shows it for a
-  minute after each push), and with autofix after they settled until the PR
-  automation looked at them (at most 2 minutes), so that its run or ready message follows
-  without `message` in between; `waitingReason` is then `CI of #12`, a message or an app
+  minute after each push), and with autofix (or while Claude said `work`) after they settled
+  until the PR automation looked at them (at most 2 minutes), so that its run, ready message
+  or wake follows without `message` in between. CI that settled while Claude said `work`,
+  passed or not, wakes Claude with an app message naming each such pull request's head commit
+  and how many checks passed, once no CI of the session runs any more and an app message may
+  start a turn (no background task or review to report first), unless a run, ready message
+  or merge started a turn, or the pull request is in a merge queue (its merge wakes Claude);
+  `waitingReason` is then `CI of #12`, a message or an app
   message can still be sent, the process may still be closed for idleness, and such sessions
   are polled for the checks of those pull requests like viewed ones; "finished" is notified
   once per turn, not when such a wait began without a turn; also `background`, with

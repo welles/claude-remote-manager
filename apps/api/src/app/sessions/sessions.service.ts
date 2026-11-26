@@ -4952,6 +4952,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Whether the session waits for the CI of one of its open pull requests. */
+  waitsForCi(sessionId: string): boolean {
+    const record = this.sessions.get(sessionId);
+    return !!record && this.ciWaitLabel(record) !== null;
+  }
+
   /** Sessions that wait for CI of one of their pull requests. */
   ciWaitingSessions(): string[] {
     return [...this.ciWaits.keys()].filter((sessionId) => {

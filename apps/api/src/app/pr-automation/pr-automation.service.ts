@@ -291,6 +291,11 @@ export class PrAutomationService
    * until they are handled.
    */
   private readonly queueRemovalsTold = new Set<string>();
+  /**
+   * Pull requests per session whose CI settled while Claude said it goes on
+   * by itself, until it is woken (see {@link wakeAfterCi}).
+   */
+  private readonly ciSettled = new Map<string, Set<number>>();
   /** Pull requests closed while a turn ran: their close wakes nobody. */
   private readonly closedInTurn = new Set<number>();
   /** Whether the first poll looked for closes left unhandled. */
@@ -906,7 +911,17 @@ export class PrAutomationService
         // them (a run started is a turn by now).
         const pull = this.records.pullRequest(pullRequestId);
         if (pull) {
+          const settled =
+            this.sessions.ciWaitPhase(pull.sessionId, pull.id) === 'settling';
           this.sessions.endCiSettling(pull.sessionId, pull.id);
+          if (settled) {
+            // Nothing took the session's turn over (a run, a merge):
+            // Claude may wait for exactly this CI.
+            const told = this.ciSettled.get(pull.sessionId) ?? new Set();
+            told.add(pull.id);
+            this.ciSettled.set(pull.sessionId, told);
+            await this.wakeAfterCi(pull.sessionId);
+          }
         }
       }
     })();
@@ -2050,6 +2065,11 @@ export class PrAutomationService
     if (changed) {
       this.sessions.publishUpdate(session.id);
     }
+    if (this.ciSettled.has(session.id)) {
+      // CI that settled before the other CI, background tasks or a review
+      // of the session ended.
+      void this.wakeAfterCi(session.id);
+    }
   }
 
   /**
@@ -2536,6 +2556,82 @@ export class PrAutomationService
     this.sessions.publishUpdate(session.id);
     if (wake && !autoclose) {
       await this.wakeAfterClose(session.id, pull);
+    }
+  }
+
+  /**
+   * Claude said it goes on by itself (`set_waiting_state` "work") and the
+   * CI of its pull requests settled (passed or not) without a run, ready
+   * message or merge taking the turn over: it is woken with the outcome,
+   * once no CI of the session runs any more (one wake for all), and only
+   * when an app message may start a turn (no background task or review
+   * still to report). Pull requests in a merge queue (the merge wakes it)
+   * or closed meanwhile are left out. When Claude's turn started or its
+   * wait ran out meanwhile, nothing is sent.
+   */
+  private async wakeAfterCi(sessionId: string): Promise<void> {
+    const pending = this.ciSettled.get(sessionId);
+    if (!pending) {
+      return;
+    }
+    if (!this.sessions.claudeGoesOn(sessionId)) {
+      this.ciSettled.delete(sessionId);
+      return;
+    }
+    const session = this.records.get(sessionId);
+    if (!session) {
+      this.ciSettled.delete(sessionId);
+      return;
+    }
+    if (this.sessions.waitsForCi(sessionId) || !this.idle(session)) {
+      // Again when the session changes (`sessionChanged`).
+      return;
+    }
+    const lines: string[] = [];
+    for (const pull of session.pullRequests) {
+      if (
+        !pending.has(pull.id) ||
+        pull.state !== 'open' ||
+        !pull.headSha ||
+        (pull.mergeQueuedSha !== null && pull.mergeQueuedSha === pull.headSha)
+      ) {
+        continue;
+      }
+      const checks =
+        pull.checks?.headSha === pull.headSha ? pull.checks.checks : [];
+      if (
+        checks.length === 0 ||
+        checks.some((check) => check.state === 'pending')
+      ) {
+        continue;
+      }
+      const passed = checks.filter((check) =>
+        PASSED_CONCLUSIONS.has(check.state),
+      ).length;
+      const outcome =
+        passed === checks.length
+          ? `all ${checks.length} check${checks.length === 1 ? '' : 's'} passed`
+          : `${checks.length - passed} of ${checks.length} checks did not pass`;
+      lines.push(
+        `- ${pull.repositoryName}#${pull.number} at ${pull.headSha.slice(0, 7)}: ${outcome}`,
+      );
+    }
+    this.ciSettled.delete(sessionId);
+    if (lines.length === 0) {
+      return;
+    }
+    // Synchronously, before any await: a close or another check at the
+    // same time finds no wait left and sends no second wake.
+    this.sessions.releaseClaudeWait(sessionId);
+    const text = `The CI of your pull request${lines.length === 1 ? '' : 's'} finished:\n${lines.join('\n')}\nYou said you go on by yourself: continue with what comes next. Look at checks that did not pass with read-only commands (e.g. gh pr checks, gh run view --log-failed) and fix what belongs to the pull request.`;
+    try {
+      await this.sessions.sendMessage(sessionId, { text, origin: 'app' });
+      this.logger.log(`Woke ${sessionId}: CI finished`);
+    } catch (error) {
+      this.logger.warn(
+        `Could not wake ${sessionId} after its CI finished: ${errorText(error)}`,
+      );
+      this.sessions.wakeFailed(sessionId);
     }
   }
 
