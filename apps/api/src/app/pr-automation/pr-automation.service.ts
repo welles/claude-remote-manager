@@ -296,6 +296,11 @@ export class PrAutomationService
    * by itself, until it is woken (see {@link wakeAfterCi}).
    */
   private readonly ciSettled = new Map<string, Set<number>>();
+  /**
+   * Pull requests whose run or ready message this check started: their
+   * settled CI went to Claude with it and is not noted for a wake.
+   */
+  private readonly ciTold = new Set<number>();
   /** Pull requests closed while a turn ran: their close wakes nobody. */
   private readonly closedInTurn = new Set<number>();
   /** Whether the first poll looked for closes left unhandled. */
@@ -911,14 +916,16 @@ export class PrAutomationService
         // them (a run started is a turn by now).
         const pull = this.records.pullRequest(pullRequestId);
         if (pull) {
+          const told = this.ciTold.delete(pull.id);
           if (
+            !told &&
             this.sessions.ciWaitPhase(pull.sessionId, pull.id) === 'settling'
           ) {
             // Noted before the wait ends: its end may publish the session,
             // and the wake then has to name this pull request too.
-            const told = this.ciSettled.get(pull.sessionId) ?? new Set();
-            told.add(pull.id);
-            this.ciSettled.set(pull.sessionId, told);
+            const noted = this.ciSettled.get(pull.sessionId) ?? new Set();
+            noted.add(pull.id);
+            this.ciSettled.set(pull.sessionId, noted);
           }
           this.sessions.endCiSettling(pull.sessionId, pull.id);
           if (this.ciSettled.has(pull.sessionId)) {
@@ -2023,6 +2030,7 @@ export class PrAutomationService
     }
     // The run (or ready message) tells Claude about this pull request's CI.
     this.ciSettled.get(pull.sessionId)?.delete(pull.id);
+    this.ciTold.add(pull.id);
     if (removal) {
       this.queueRemovalsTold.delete(removal);
     }
