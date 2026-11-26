@@ -6,7 +6,10 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { commitFile, git } from '../git/testing/git-fixtures';
-import { WorkspaceEntries } from '../workspaces/workspace-entries';
+import {
+  IncompleteRemovalError,
+  WorkspaceEntries,
+} from '../workspaces/workspace-entries';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import { SessionManagementService } from './session-management.service';
 import { SessionRemoteBranches } from './session-remote-branches';
@@ -153,6 +156,40 @@ describe('SessionManagementService', () => {
       });
       expect(removed.outcomes[0]).toMatchObject({ result: 'removed' });
       expect(existsSync(session.cwd)).toBe(false);
+    });
+
+    it('counts a clone as removed when deleting it left files, with a warning', async () => {
+      const session = await endedSession();
+      const spy = jest
+        .spyOn(WorkspaceEntries.prototype, 'remove')
+        .mockRejectedValue(
+          new IncompleteRemovalError(
+            `${session.cwd} could not be removed completely: Directory not empty`,
+          ),
+        );
+      let result: Awaited<ReturnType<typeof cleanup>>;
+      try {
+        result = await cleanup(session.id, { position: 0, action: 'discard' });
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(result.outcomes[0]).toMatchObject({
+        result: 'removed',
+        message: expect.stringContaining('files were left over'),
+      });
+      expect(result.session.directories[0].state).toBe('removed');
+      const notice = new SessionEventRepository(harness.db)
+        .list(session.id)
+        .map(({ event }) => event)
+        .find(
+          (event) =>
+            event.type === 'notice' && event.text.startsWith('Cleanup'),
+        );
+      expect(notice).toMatchObject({
+        level: 'warning',
+        text: expect.stringContaining('no longer continued'),
+      });
     });
 
     it('discards a dirty clone only after the loss was accepted', async () => {

@@ -43,21 +43,25 @@ const inside = (cwd) => {
   const plain = cwd.endsWith(DELETED) ? cwd.slice(0, -DELETED.length) : cwd;
   return plain === directory || plain.startsWith(`${directory}/`);
 };
-const parentOf = (pid) => {
+// Fields of /proc/<pid>/stat from the third on (state, ppid, ...; the
+// start time, field 22, at index 19); null if the process is gone. The
+// command name in parentheses may contain anything; fields follow the last
+// ')'.
+const statOf = (pid) => {
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-    // The command name in parentheses may contain anything; fields follow
-    // the last ')'.
-    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-    return Number(fields[1]);
+    return stat.slice(stat.lastIndexOf(')') + 2).split(' ');
   } catch {
-    return -1;
+    return null;
   }
 };
 
 const uid = process.getuid();
 const own = new Set([process.pid, process.ppid]);
 const pids = [];
+// Start time of each found process: a pid reused by another process during
+// the grace period is not signalled.
+const started = new Map();
 for (const entry of fs.readdirSync('/proc')) {
   if (!/^\d+$/.test(entry) || own.has(Number(entry))) {
     continue;
@@ -71,23 +75,25 @@ for (const entry of fs.readdirSync('/proc')) {
   } catch {
     continue; // gone, or not readable
   }
-  if (inside(cwd) && parentOf(entry) !== spared) {
+  const fields = statOf(entry);
+  if (fields && inside(cwd) && Number(fields[1]) !== spared) {
     pids.push(Number(entry));
+    started.set(Number(entry), fields[19]);
   }
 }
 
-// A process that ended but was not reaped yet (zombie, state Z) is gone.
+// Still the process found: not ended, not a zombie (state Z, ended but not
+// reaped yet), and not another process that got its pid.
 const alive = (pid) => {
-  try {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-    return (
-      stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3) !== 'Z'
-    );
-  } catch {
-    return false;
-  }
+  const fields = statOf(pid);
+  return (
+    fields !== null && fields[0] !== 'Z' && fields[19] === started.get(pid)
+  );
 };
 for (const pid of pids) {
+  if (!alive(pid)) {
+    continue;
+  }
   try {
     process.kill(pid, 'SIGTERM');
   } catch {

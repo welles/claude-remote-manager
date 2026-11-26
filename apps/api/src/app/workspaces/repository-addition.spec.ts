@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionDto } from '@claude-remote-manager/shared-types';
@@ -17,6 +17,8 @@ import {
   waitFor,
 } from '../sessions/testing/fake-agent';
 import { WorkspaceHarness } from './testing/workspace-harness';
+import { SessionWorkspaceService } from './session-workspace.service';
+import { WorkspaceEntries } from './workspace-entries';
 
 describe('adding repositories to a running session', () => {
   let harness: WorkspaceHarness;
@@ -180,6 +182,45 @@ describe('adding repositories to a running session', () => {
     await expect(
       harness.service.addRepository(session.id, { repositoryId: lib.id }),
     ).rejects.toThrow('archived');
+  });
+
+  it('marks a failed addition failed even when removing its clone fails', async () => {
+    const { session } = await idleSession();
+    const lib = await harness.addRepository('acme', 'lib');
+    // The clone fails after its directory exists, and removing it fails.
+    const path = clonePath(session, 'acme', 'lib');
+    const clone = jest
+      .spyOn(
+        SessionWorkspaceService.prototype as unknown as {
+          createClone: () => Promise<void>;
+        },
+        'createClone',
+      )
+      .mockImplementation(() => {
+        mkdirSync(path, { recursive: true });
+        return Promise.reject(new Error('Branch missing does not exist'));
+      });
+    const spy = jest
+      .spyOn(WorkspaceEntries.prototype, 'remove')
+      .mockRejectedValue(new Error('disk on fire'));
+    try {
+      await harness.service.addRepository(session.id, {
+        repositoryId: lib.id,
+        baseBranch: 'missing',
+      });
+      await settled(session.id);
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      clone.mockRestore();
+    }
+    expect(added(session.id)).toMatchObject({
+      state: 'failed',
+      addition: {
+        state: 'failed',
+        error: expect.stringContaining('Branch missing does not exist'),
+      },
+    });
   });
 
   it('leaves nothing behind when the clone fails; the session stays usable, retry and remove work', async () => {
