@@ -1,4 +1,7 @@
-import type { MessageReference } from '@claude-remote-manager/shared-types';
+import type {
+  MessageReference,
+  SessionDto,
+} from '@claude-remote-manager/shared-types';
 import { TestBed } from '@angular/core/testing';
 import { MessageText, messageSegments } from './message-text';
 import { referenceQuery } from './reference-autocomplete';
@@ -8,6 +11,7 @@ import {
   optionsOf,
   qualifyReference,
   resolveBare,
+  sessionGitHubRepositories,
   type DetailState,
 } from './references';
 
@@ -198,6 +202,24 @@ describe('GitHub references in the web app', () => {
       // The caret after "(" moves with the first #12 only.
       caret: 9 + 'acme/lib'.length,
     });
+  });
+
+  it('names a repository with several clones once', () => {
+    const clone = (fullName: string, github = true) => ({
+      repository: { fullName, github },
+    });
+    const session = {
+      directories: [
+        clone('acme/app'),
+        clone('acme/lib'),
+        clone('acme/app'),
+        clone('local/notes', false),
+      ],
+    } as unknown as SessionDto;
+    expect(sessionGitHubRepositories(session)).toEqual([
+      'acme/app',
+      'acme/lib',
+    ]);
   });
 
   it('resolves #12 to the repository that has it, or asks', () => {

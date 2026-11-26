@@ -77,16 +77,11 @@ describe('DraftReferences', () => {
     }
   };
 
-  const create = (repositories: string[], offered = false) => {
+  const create = (repositories: string[], offered = signal(false)) => {
     const text = signal('');
     const options = signal<ReadonlyMap<string, ReferenceOptions>>(new Map());
     const references = runInInjectionContext(TestBed.inject(Injector), () => {
-      return new DraftReferences(
-        text,
-        () => repositories,
-        options,
-        () => offered,
-      );
+      return new DraftReferences(text, () => repositories, options, offered);
     });
     const type = (value: string) => {
       text.set(value);
@@ -99,9 +94,10 @@ describe('DraftReferences', () => {
     return { references, type, text };
   };
 
-  it('does not ask about a #12 of an offered text and leaves it out', () => {
+  it('does not ask about a #12 of an offered text until it is taken', () => {
     existing = new Set(['acme/app#12', 'acme/lib#12', 'acme/lib#7']);
-    const { references, type } = create(['acme/app', 'acme/lib'], true);
+    const offered = signal(true);
+    const { references, type } = create(['acme/app', 'acme/lib'], offered);
     type('Fix #12 like #7');
     answer();
     expect(references.unresolved()).toBe(false);
@@ -109,16 +105,16 @@ describe('DraftReferences', () => {
     expect(references.requests('Fix #12 like #7')).toEqual([
       { token: '#7', repository: 'acme/lib', number: 7 },
     ]);
-  });
 
-  it('treats further clones of one repository as that one', () => {
-    existing = new Set(['acme/app#12']);
-    const { references, type } = create(['acme/app', 'acme/app', 'acme/app']);
-    type('Check #12');
-    answer();
-    expect(references.unresolved()).toBe(false);
-    expect(references.requests('Check #12')).toEqual([
-      { token: '#12', repository: 'acme/app', number: 12 },
+    // Taken into the input, the same text asks.
+    offered.set(false);
+    TestBed.tick();
+    expect(references.unresolved()).toBe(true);
+    vi.advanceTimersByTime(400);
+    TestBed.tick();
+    expect(references.entries().map((entry) => entry.kind)).toEqual([
+      'ambiguous',
+      'chip',
     ]);
   });
 

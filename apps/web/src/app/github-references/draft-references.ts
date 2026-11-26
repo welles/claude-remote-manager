@@ -41,23 +41,28 @@ export type DraftReferenceEntry =
  * that repository; `#12` in a session with one repository to that one, with
  * several to the one that has it. When several have it, the user chooses
  * (the text then says `owner/repo#12`), and until then the message cannot
- * be sent. Create it in a component's field initializer.
+ * be sent; a text that is only offered (the prompt suggestion) goes
+ * without that reference instead. Create it in a component's field
+ * initializer.
  */
 export class DraftReferences {
   private readonly details = inject(ReferenceDetails);
-  /** The text once typing paused, so partial numbers are not looked up. */
-  private readonly settled: Signal<string>;
+  /**
+   * The text (and whether it is offered) once typing paused, so partial
+   * numbers are not looked up.
+   */
+  private readonly settled: Signal<{ text: string; offered: boolean }>;
   /**
    * What the bare `#12` of the settled text refer to (several
    * repositories): every number that could be sent is looked up.
    */
   private readonly bare = computed(() => {
-    const repositories = this.distinctRepositories();
+    const repositories = this.repositories();
     const resolutions = new Map<number, BareResolution>();
     if (repositories.length < 2) {
       return resolutions;
     }
-    for (const number of bareNumbers(this.settled())) {
+    for (const number of bareNumbers(this.settled().text)) {
       resolutions.set(
         number,
         resolveBare(
@@ -77,31 +82,32 @@ export class DraftReferences {
    * prompt suggestion) is left out instead of asking.
    */
   readonly entries = computed<DraftReferenceEntry[]>(() =>
-    this.choosable(this.resolve(this.settled(), this.bare())).map(
-      (reference): DraftReferenceEntry => {
-        const { resolution, request, key } = reference;
-        if (resolution?.status === 'ambiguous') {
-          return {
-            kind: 'ambiguous',
-            key,
-            number: request.number,
-            candidates: resolution.candidates,
-          };
-        }
-        const pending = resolution?.status === 'pending';
+    this.choosable(
+      this.resolve(this.settled().text, this.bare()),
+      this.settled().offered,
+    ).map((reference): DraftReferenceEntry => {
+      const { resolution, request, key } = reference;
+      if (resolution?.status === 'ambiguous') {
         return {
-          kind: 'chip',
+          kind: 'ambiguous',
           key,
-          pending,
-          chip: draftChip(
-            request,
-            pending
-              ? { status: 'loading' }
-              : this.details.get(request.repository, request.number)(),
-          ),
+          number: request.number,
+          candidates: resolution.candidates,
         };
-      },
-    ),
+      }
+      const pending = resolution?.status === 'pending';
+      return {
+        kind: 'chip',
+        key,
+        pending,
+        chip: draftChip(
+          request,
+          pending
+            ? { status: 'loading' }
+            : this.details.get(request.repository, request.number)(),
+        ),
+      };
+    }),
   );
 
   /**
@@ -110,7 +116,7 @@ export class DraftReferences {
    * message waits.
    */
   readonly unresolved = computed(() =>
-    this.choosable(this.resolve(this.text(), this.bare())).some(
+    this.choosable(this.resolve(this.text(), this.bare()), this.offered()).some(
       ({ resolution }) =>
         resolution !== null && resolution.status !== 'resolved',
     ),
@@ -130,33 +136,33 @@ export class DraftReferences {
     private readonly offered: () => boolean = () => false,
   ) {
     this.settled = toSignal(
-      toObservable(computed(() => this.text())).pipe(debounceTime(400)),
-      { initialValue: '' },
+      toObservable(
+        computed(() => ({ text: this.text(), offered: this.offered() })),
+      ).pipe(debounceTime(400)),
+      { initialValue: { text: '', offered: false } },
     );
   }
 
   /** The references to send with `text` (once {@link unresolved} is false). */
   requests(text: string): MessageReferenceRequest[] {
-    return this.choosable(this.resolve(text, this.bare())).map(({ request }) => {
-      const { comments, diff, ...rest } = request;
-      return {
-        ...rest,
-        ...(comments ? { comments: true } : {}),
-        ...(diff ? { diff: true } : {}),
-      };
-    });
+    return this.choosable(this.resolve(text, this.bare()), this.offered()).map(
+      ({ request }) => {
+        const { comments, diff, ...rest } = request;
+        return {
+          ...rest,
+          ...(comments ? { comments: true } : {}),
+          ...(diff ? { diff: true } : {}),
+        };
+      },
+    );
   }
-
-  /** The repositories, each once (further clones name one again). */
-  private readonly distinctRepositories = computed(() => [
-    ...new Set(this.repositories()),
-  ]);
 
   /** Leaves out the ambiguous references of an offered text. */
   private choosable<T extends { resolution: BareResolution | null }>(
     references: T[],
+    offered: boolean,
   ): T[] {
-    return this.offered()
+    return offered
       ? references.filter(
           ({ resolution }) => resolution?.status !== 'ambiguous',
         )
@@ -177,7 +183,7 @@ export class DraftReferences {
     request: Required<MessageReferenceRequest>;
     resolution: BareResolution | null;
   }[] {
-    const repositories = this.distinctRepositories();
+    const repositories = this.repositories();
     const options = this.options();
     const several = repositories.length > 1;
     const seen = new Set<string>();
