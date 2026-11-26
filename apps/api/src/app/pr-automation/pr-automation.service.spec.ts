@@ -613,6 +613,98 @@ describe('PrAutomationService', () => {
         );
         expect(appMessages()).toHaveLength(0);
       });
+
+      describe('when Claude said it goes on by itself', () => {
+        /** Messages that woke Claude after its CI finished. */
+        const ciWakes = () =>
+          harness.runner.runs.flatMap((run) =>
+            run.sent
+              .map((message) => message.text)
+              .filter((text) => text.startsWith('The CI of your pull request')),
+          );
+
+        /** CI of the pull request's head commit runs, then ends with `conclusion`. */
+        const runCi = async (pull: PullRequestDto, conclusion: string) => {
+          const head = fakePull(pull.number).headSha;
+          const runs = [
+            {
+              id: 53,
+              name: 'test',
+              status: 'in_progress' as const,
+              conclusion: null as string | null,
+              app: 'github-actions',
+            },
+          ];
+          harness.github.checkRuns.set(head, runs);
+          await checksView.read(pull.id);
+          runs[0] = { ...runs[0], status: 'completed', conclusion } as never;
+          await checksView.read(pull.id);
+          return head;
+        };
+
+        it('wakes Claude when the CI of a pull request without autofix passed', async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          await claudeGoesOn(session.id);
+          const head = await runCi(pull, 'success');
+          await waitFor(() => ciWakes().length === 1);
+          expect(ciWakes()[0]).toContain(
+            `alice/app#${pull.number} at ${head.slice(0, 7)}: all 1 check passed`,
+          );
+          expect(harness.service.get(session.id).status).toBe('running');
+        });
+
+        it('wakes Claude when the CI of a pull request without autofix failed', async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          await claudeGoesOn(session.id);
+          await runCi(pull, 'failure');
+          await waitFor(() => ciWakes().length === 1);
+          expect(ciWakes()[0]).toContain('1 of 1 checks did not pass');
+        });
+
+        it('wakes Claude when autofix has nothing to tell about green CI', async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          enableAutofix(session.id, pull);
+          await claudeGoesOn(session.id);
+          await runCi(pull, 'success');
+          // Not approved, without automerge: no ready message, but a wake.
+          await waitFor(() => ciWakes().length === 1);
+          expect(appMessages()).toHaveLength(0);
+        });
+
+        it('leaves failed CI with autofix to the autofix run', async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          enableAutofix(session.id, pull);
+          await claudeGoesOn(session.id);
+          await runCi(pull, 'failure');
+          await waitFor(() => appMessages().length === 1);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          expect(ciWakes()).toHaveLength(0);
+        });
+
+        it("does not wake Claude when it said it is the user's turn", async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          await claudeGoesOn(session.id, 'user');
+          await runCi(pull, 'success');
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          expect(ciWakes()).toHaveLength(0);
+          expect(harness.service.get(session.id).waitingFor).toBe('message');
+        });
+
+        it('wakes Claude only once no other CI of the session runs', async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          await claudeGoesOn(session.id);
+          // Another wait for CI of the session (as for a second pull request).
+          const other = jest
+            .spyOn(harness.service, 'waitsForCi')
+            .mockReturnValue(true);
+          await runCi(pull, 'success');
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          expect(ciWakes()).toHaveLength(0);
+          other.mockRestore();
+          harness.service.publishUpdate(session.id);
+          await waitFor(() => ciWakes().length === 1);
+        });
+      });
     });
 
     it('waits while background tasks of Claude still run', async () => {

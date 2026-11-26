@@ -196,9 +196,10 @@ interface ScheduledRead {
  * (`SessionsService.setCiWait`): while the head commit's checks run (at
  * most {@link PullRequestChecksTiming.runningWindowMs}), and for {@link
  * PullRequestChecksTiming.ciStartMs} after a new head commit without
- * checks yet. Once they settled on a pull request with autofix, the wait
+ * checks yet. Once they settled on a pull request with autofix, or while
+ * Claude said it goes on by itself (`set_waiting_state` "work"), the wait
  * goes on until the PR automation looked at them (`settled$`), so that a
- * run or ready message follows without `Ready` in between.
+ * run, ready message or wake follows without `Ready` in between.
  */
 @Injectable()
 export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
@@ -217,8 +218,9 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
   private readonly headRetries = new Set<ReturnType<typeof setTimeout>>();
   private readonly settled = new Subject<number>();
   /**
-   * Pull requests with autofix whose checks settled while the session
-   * waited for them: the PR automation should look now.
+   * Pull requests whose checks settled while the session waited for them,
+   * with autofix or while Claude goes on by itself: the PR automation
+   * should look now.
    */
   readonly settled$ = this.settled.asObservable();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -641,7 +643,12 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
           ? { phase: 'running', untilMs: firstAt + this.timing.ciStartMs }
           : null,
       );
-    } else if (pull.autofix && phase === 'running') {
+    } else if (
+      phase === 'running' &&
+      (pull.autofix || this.sessions.claudeGoesOn(pull.sessionId))
+    ) {
+      // The PR automation looks first: a run, a ready message, or a wake
+      // of Claude, who said it goes on by itself.
       this.sessions.setCiWait(pull.sessionId, pull.id, {
         phase: 'settling',
         untilMs: now + this.timing.ciSettleMs,
