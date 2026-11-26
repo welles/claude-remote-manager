@@ -165,6 +165,12 @@
   [file]="item.file"
   (open)="openFile.emit($event)"
 />
+} @case ('commits') {
+<app-commits-card
+  [commits]="item.commits"
+  [sessionId]="sessionId()"
+  [showRepository]="multiRepository()"
+/>
 } @case ('preview') {
 <app-preview-card
   class="-mt-1"
@@ -365,6 +371,14 @@
     [class]="item.nested ? 'ml-3 border-l-2 border-outline-variant pl-2.5' : ''"
     [file]="file"
     (open)="openFile.emit($event)"
+  />
+  } @for (commits of item.commits; track commits.seq) {
+  <app-commits-card
+    class="-mt-1"
+    [class.ml-3]="item.nested"
+    [commits]="commits"
+    [sessionId]="sessionId()"
+    [showRepository]="multiRepository()"
   />
   } @for (preview of item.previews; track preview.id) {
   <app-preview-card

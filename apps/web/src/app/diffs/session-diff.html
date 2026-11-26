@@ -76,94 +76,64 @@ repository.path; let r = $index) {
     </p>
     }
   </header>
-  @if (repository.state !== 'ok') {
+  @if (repository.commits?.length) {
+  <details class="my-1" open data-testid="commit-list">
+    <summary class="cursor-pointer type-title-small">
+      {{ repository.commitCount }} {{ repository.commitCount === 1 ? 'commit' :
+      'commits' }}
+    </summary>
+    <ul class="my-1 list-none p-0">
+      @for (commit of repository.commits; track commit.sha) {
+      <li class="flex items-baseline gap-2 py-0.5" data-testid="listed-commit">
+        <code class="flex-none text-[12px] text-on-surface-variant"
+          >{{ commit.sha.slice(0, 7) }}</code
+        >
+        @if (linkCommits()) {
+        <a
+          class="min-w-0 flex-1 truncate"
+          [routerLink]="[]"
+          [queryParams]="commitQuery(repository.repositoryId, repository.branch, commit.sha)"
+          [title]="commit.subject"
+          >{{ commit.subject || '(no message)' }}</a
+        >
+        } @else {
+        <span class="min-w-0 flex-1 truncate" [title]="commit.subject"
+          >{{ commit.subject || '(no message)' }}</span
+        >
+        }
+        <span class="flex-none whitespace-nowrap type-body-small">
+          @if (commit.parents.length > 1) {
+          <span class="text-on-surface-variant">merge</span>
+          } @else {
+          <span class="text-diff-add">+{{ commit.additions }}</span>
+          <span class="text-diff-del">−{{ commit.deletions }}</span>
+          }
+          <span class="text-on-surface-variant">
+            · {{ commit.authoredAt | appDate: 'relative' }}</span
+          >
+        </span>
+      </li>
+      }
+    </ul>
+    @if ((repository.commitCount ?? 0) > repository.commits!.length) {
+    <p class="my-1 hint-text">
+      Showing the newest {{ repository.commits!.length }}.
+    </p>
+    }
+  </details>
+  } @if (repository.state !== 'ok') {
   <p class="text-error">{{ repository.message }}</p>
   } @else if (repository.files.length === 0) {
   <p class="my-1 text-on-surface-variant wrap-anywhere">No changes.</p>
   } @else {
-  <ul class="my-2 list-none p-0" data-testid="file-list">
-    @for (file of repository.files; track $index; let f = $index) {
-    <li class="flex items-baseline gap-2 py-0.5">
-      <span
-        class="w-[1.5ch] font-mono text-[12px]/none font-semibold {{ letterTones[file.status] }}"
-        [title]="file.status.replace('_', ' ')"
-        >{{ letters[file.status] }}</span
-      >
-      <a
-        class="min-w-0 flex-1 wrap-anywhere whitespace-pre-wrap"
-        [href]="'#' + anchor(r, f)"
-        (click)="jump($event, anchor(r, f))"
-        >@if (file.oldPath) {<span class="text-on-surface-variant"
-          >{{ file.oldPath }} → </span
-        >}{{ file.path }}</a
-      >
-      <span class="whitespace-nowrap type-body-small">
-        @if (file.binary) { binary } @else {
-        <span class="text-diff-add">+{{ file.additions }}</span>
-        <span class="text-diff-del">−{{ file.deletions }}</span>
-        }
-      </span>
-    </li>
-    }
-  </ul>
-  @if (repository.fileCount > repository.files.length) {
-  <p
-    class="my-1 text-on-surface-variant wrap-anywhere"
-    data-testid="files-limited"
-  >
-    Showing {{ repository.files.length }} of {{ repository.fileCount }} changed
-    files.
-  </p>
-  } @for (file of repository.files; track $index; let f = $index) { @let
-  shownFile = shown(repository, file);
-  <details
-    class="my-2 border-t border-outline-variant pt-1"
-    open
-    [id]="anchor(r, f)"
-    data-testid="file-diff"
-  >
-    <summary class="flex items-baseline gap-2 py-0.5 cursor-pointer">
-      <span
-        class="w-[1.5ch] font-mono text-[12px]/none font-semibold {{ letterTones[file.status] }}"
-        >{{ letters[file.status] }}</span
-      >
-      <code class="min-w-0 flex-1 wrap-anywhere whitespace-pre-wrap"
-        >@if (file.oldPath) {<span class="text-on-surface-variant"
-          >{{ file.oldPath }} → </span
-        >}{{ file.path }}</code
-      >
-      @if (!file.binary) {
-      <span class="whitespace-nowrap type-body-small"
-        ><span class="text-diff-add">+{{ file.additions }}</span>
-        <span class="text-diff-del">−{{ file.deletions }}</span></span
-      >
-      }
-    </summary>
-    @if (shownFile.content === 'included') {
-    <app-diff-view [diff]="shownFile" [layout]="layout()" />
-    } @else {
-    <p
-      class="my-1 text-on-surface-variant wrap-anywhere"
-      data-testid="file-left-out"
-    >
-      {{ shownFile.content === 'too_large' ? 'This file has too many changed
-      lines to show here.' : 'Left out: the diff reached its size limit.' }}
-      @let state = fileState().get(fileKey(repository, file)); @if (state ===
-      undefined) {
-      <button
-        matButton
-        (click)="load(repository, file)"
-        data-testid="load-file"
-      >
-        Show this file
-      </button>
-      } @else if (state === null) { Loading… } @else {
-      <span class="text-error">{{ state }}</span>
-      }
-    </p>
-    }
-  </details>
-  } }
+  <app-diff-files
+    [files]="repository.files"
+    [fileCount]="repository.fileCount"
+    [layout]="layout()"
+    [idPrefix]="'diff-' + r"
+    [loader]="loader(repository)"
+  />
+  }
 </section>
 } @empty {
 <p class="my-1 text-on-surface-variant wrap-anywhere">

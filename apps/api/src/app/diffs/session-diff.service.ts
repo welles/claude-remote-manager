@@ -9,12 +9,15 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import type {
-  DiffComparison,
-  RepositoryDiff,
-  SessionDiffFile,
-  SessionDiffLimits,
-  SessionDiffResponse,
+import {
+  MAX_LISTED_COMMITS,
+  type CommitDiffResponse,
+  type CommitSummary,
+  type DiffComparison,
+  type RepositoryDiff,
+  type SessionDiffFile,
+  type SessionDiffLimits,
+  type SessionDiffResponse,
 } from '@claude-remote-manager/shared-types';
 import { isRetiredClone } from '@claude-remote-manager/shared-types';
 import {
@@ -33,6 +36,12 @@ import {
   type FilePatch,
   type RawChange,
 } from './git-diff-parser';
+import {
+  COMMIT_ID,
+  listCommits,
+  readCommit,
+  type CloneGit,
+} from './commit-log';
 
 export const SESSION_DIFF_LIMITS: SessionDiffLimits = {
   maxFiles: 1000,
@@ -53,6 +62,12 @@ export const STALE_INDEX_MINUTES = 10;
  * detected, no colors.
  */
 const DIFF_OPTIONS = ['--no-ext-diff', '--no-textconv', '--no-color', '-M'];
+
+/** Environment of the diff of a commit: paths literal, no index locks. */
+const COMMIT_DIFF_ENV = {
+  GIT_OPTIONAL_LOCKS: '0',
+  GIT_LITERAL_PATHSPECS: '1',
+};
 
 class Budget {
   used = 0;
@@ -127,14 +142,7 @@ export class SessionDiffService {
         `Repository ${repositoryId} is not part of session ${sessionId}`,
       );
     }
-    for (const value of [path, oldPath]) {
-      if (
-        value !== null &&
-        (!value || value.includes('\0') || value.length > 4096)
-      ) {
-        throw new BadRequestException('Invalid path');
-      }
-    }
+    checkPaths(path, oldPath);
     const { files, message } = await this.diffClone(
       directory,
       new Budget(
@@ -188,13 +196,192 @@ export class SessionDiffService {
     }
     try {
       const result = await this.diffClone(directory, budget, null, false);
-      return { ...base, ...result, state: 'ok', message: null };
+      const commits = await this.commitsSince(
+        directory,
+        result.headCommit,
+        result.comparison,
+      );
+      return { ...base, ...result, ...commits, state: 'ok', message: null };
     } catch (error) {
       return {
         ...base,
         message: `git could not compute the diff: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
+  }
+
+  /**
+   * One commit of a session clone with its diff against its first parent
+   * (a root commit: against the empty tree); with `path`, only that file,
+   * with the larger single-file limit. Any commit the clone has can be
+   * shown, also one a rebase replaced.
+   */
+  async commitDiff(
+    sessionId: string,
+    repositoryId: string,
+    branch: string | null,
+    sha: string,
+  ): Promise<CommitDiffResponse> {
+    const directory = this.readyClone(sessionId, repositoryId, branch);
+    const git = this.cloneGit(directory);
+    const commit = await this.requireCommit(git, sha);
+    const parent = commit.parents[0] ?? null;
+    const budget = new Budget(
+      this.limits.maxFileLines,
+      this.limits.maxTotalLines,
+    );
+    const { changes, patches } = await this.runDiff(
+      directory.path,
+      COMMIT_DIFF_ENV,
+      [
+        'diff',
+        ...DIFF_OPTIONS,
+        '--raw',
+        '--numstat',
+        '-p',
+        '-z',
+        parent ?? (await emptyTree(git)),
+        commit.sha,
+      ],
+      budget,
+      'drop',
+    );
+    const listed = changes.slice(0, this.limits.maxFiles);
+    return {
+      repositoryId,
+      repository: directory.repositoryName ?? directory.path,
+      branch: directory.branch,
+      commit: {
+        ...commit,
+        fileCount: changes.length,
+        additions: changes.reduce((sum, change) => sum + change.additions, 0),
+        deletions: changes.reduce((sum, change) => sum + change.deletions, 0),
+      },
+      parent,
+      files: listed.map((change, position) =>
+        diffFile(change, patches[position], budget.perFile),
+      ),
+      fileCount: changes.length,
+      limits: this.limits,
+    };
+  }
+
+  /** One file of a commit's diff, with the larger single-file limit. */
+  async commitFileDiff(
+    sessionId: string,
+    repositoryId: string,
+    branch: string | null,
+    sha: string,
+    path: string,
+    oldPath: string | null,
+  ): Promise<SessionDiffFile> {
+    checkPaths(path, oldPath);
+    const directory = this.readyClone(sessionId, repositoryId, branch);
+    const git = this.cloneGit(directory);
+    const commit = await this.requireCommit(git, sha);
+    const budget = new Budget(
+      this.limits.maxSingleFileLines,
+      this.limits.maxSingleFileLines,
+    );
+    const { changes, patches } = await this.runDiff(
+      directory.path,
+      COMMIT_DIFF_ENV,
+      [
+        'diff',
+        ...DIFF_OPTIONS,
+        '--raw',
+        '--numstat',
+        '-p',
+        '-z',
+        commit.parents[0] ?? (await emptyTree(git)),
+        commit.sha,
+        '--',
+        ...(oldPath ? [oldPath, path] : [path]),
+      ],
+      budget,
+      'truncate',
+    );
+    const position = changes.findIndex(
+      (entry) =>
+        entry.path === path && (oldPath === null || entry.oldPath === oldPath),
+    );
+    if (position < 0) {
+      throw new NotFoundException(`${path} has no changes in this commit`);
+    }
+    return diffFile(changes[position], patches[position], budget.perFile);
+  }
+
+  /**
+   * The commits of a clone since what its diff compares against, newest
+   * first (none without a comparison, or when git fails).
+   */
+  private async commitsSince(
+    directory: SessionDirectoryRecord,
+    headCommit: string | null,
+    comparison: DiffComparison | null,
+  ): Promise<{ commits: CommitSummary[]; commitCount: number }> {
+    if (!headCommit || !comparison || !COMMIT_ID.test(headCommit)) {
+      return { commits: [], commitCount: 0 };
+    }
+    try {
+      const { commits, count } = await listCommits(
+        this.cloneGit(directory),
+        headCommit,
+        [comparison.commit],
+        MAX_LISTED_COMMITS,
+      );
+      return { commits, commitCount: count };
+    } catch {
+      return { commits: [], commitCount: 0 };
+    }
+  }
+
+  /** A ready clone of the session, or a 404. */
+  private readyClone(
+    sessionId: string,
+    repositoryId: string,
+    branch: string | null,
+  ): SessionDirectoryRecord {
+    const record = this.sessions.get(sessionId);
+    const directory = record
+      ? cloneOf(record.directories, repositoryId, branch)
+      : undefined;
+    if (!record || !directory) {
+      throw new NotFoundException(
+        `Repository ${repositoryId} is not part of session ${sessionId}`,
+      );
+    }
+    if (directory.state !== 'ready') {
+      throw new NotFoundException(
+        `The clone is not available (${directory.state}).`,
+      );
+    }
+    return directory;
+  }
+
+  /** git in a session clone, as the session user. */
+  private cloneGit(directory: SessionDirectoryRecord): CloneGit {
+    return (args) =>
+      runGit(args, {
+        cwd: directory.path,
+        launcher: this.launcher,
+        as: 'session',
+        timeoutMs: DIFF_TIMEOUT_MS,
+      });
+  }
+
+  private async requireCommit(
+    git: CloneGit,
+    sha: string,
+  ): Promise<CommitSummary> {
+    if (!COMMIT_ID.test(sha)) {
+      throw new BadRequestException('sha must be a full commit ID');
+    }
+    const commit = await readCommit(git, sha).catch(() => null);
+    if (!commit) {
+      throw new NotFoundException(`The clone has no commit ${sha}`);
+    }
+    return commit;
   }
 
   /** The diff of a clone (optionally of some paths only). */
@@ -491,6 +678,23 @@ export class SessionDiffService {
       child.on('close', (code) => resolve(code === 0));
     });
   }
+}
+
+/** Paths of a single-file diff: not empty, no NUL, not too long. */
+function checkPaths(path: string, oldPath: string | null): void {
+  for (const value of [path, oldPath]) {
+    if (
+      value !== null &&
+      (!value || value.includes('\0') || value.length > 4096)
+    ) {
+      throw new BadRequestException('Invalid path');
+    }
+  }
+}
+
+/** The empty tree of the clone's hash algorithm (for root commits). */
+async function emptyTree(git: CloneGit): Promise<string> {
+  return (await git(['hash-object', '-t', 'tree', '/dev/null'])).trim();
 }
 
 /**

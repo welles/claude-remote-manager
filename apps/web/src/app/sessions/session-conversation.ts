@@ -10,6 +10,7 @@ import type {
 import { REVIEW_MESSAGE_PREFIX } from '@claude-remote-manager/shared-types';
 import { ReviewCard } from '../reviews/review-card';
 import { MessageImages } from '../attachments/message-images';
+import { CommitsCard } from '../diffs/commits-card';
 import { FileDiffCard } from '../diffs/file-diff-card';
 import { MessageContext } from '../github-references/message-context';
 import { MessageText } from '../github-references/message-text';
@@ -58,6 +59,7 @@ export type QueuedItem = Extract<ConversationItem, { kind: 'queued' }>;
   imports: [
     AppBanner,
     AppIcon,
+    CommitsCard,
     DecimalPipe,
     FileDiffCard,
     KeyValuePipe,
