@@ -17,7 +17,10 @@ import type { NotificationsService } from '../notifications/notifications.servic
 import { SessionEventRepository } from '../sessions/session-event.repository';
 import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import { ViewerPresence } from '../sessions/viewer-presence';
-import { WorkspaceEntries } from '../workspaces/workspace-entries';
+import {
+  IncompleteRemovalError,
+  WorkspaceEntries,
+} from '../workspaces/workspace-entries';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import { PrAutomationService } from './pr-automation.service';
 import { PullRequestChecksService } from './pull-request-checks.service';
@@ -3755,6 +3758,54 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       await waitFor(() => harness.runner.runs.length > runs);
       expect(harness.runner.last.options.cwd).toBe(second.path);
       expect(harness.runner.last.sent.at(-1)?.note).toBeUndefined();
+    }, 20_000);
+
+    it('counts a clone as removed when deleting it left files, and moves Claude away', async () => {
+      const { session, clone } = await sessionWithPullRequest();
+      const second = await secondPullRequest(session.id);
+      const switcher = harness.runner.last.options.tools?.find(
+        (entry) => entry.name === 'switch_directory',
+      );
+      if (!switcher) {
+        throw new Error('no switch_directory tool');
+      }
+      const switched = await switcher.handler(
+        { branch: second.branch },
+        { toolUseId: 't1' },
+      );
+      expect(switched.isError ? switched.text : null).toBeNull();
+      const spy = jest
+        .spyOn(WorkspaceEntries.prototype, 'remove')
+        .mockRejectedValue(
+          new IncompleteRemovalError(
+            `${second.path} could not be removed completely: Directory not empty`,
+          ),
+        );
+      const notice = () =>
+        new SessionEventRepository(harness.db)
+          .list(session.id)
+          .map((stored) => stored.event)
+          .find(
+            (event) =>
+              event.type === 'notice' && event.text.includes('left over'),
+          );
+      try {
+        merge(second.pull.number);
+        await automation.check(second.pull.id);
+        await waitFor(() => notice() !== undefined);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(notice()).toMatchObject({
+        level: 'warning',
+        text: expect.stringContaining(`removed the clone of alice/app`),
+      });
+      const after = harness.service.get(session.id);
+      expect(after.cwd).toBe(clone);
+      expect(after.directories.at(-1)).toMatchObject({
+        state: 'removed',
+        addition: { state: 'retired' },
+      });
     }, 20_000);
 
     it("waits with removing the working directory's clone while background tasks keep the process", async () => {

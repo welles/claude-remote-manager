@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -15,6 +16,7 @@ import type { AppConfig } from '../config/app-config';
 import {
   checkLexical,
   cloneRule,
+  IncompleteRemovalError,
   scratchRule,
   UnsafePathError,
   WorkspaceEntries,
@@ -191,6 +193,23 @@ describe('WorkspaceEntries', () => {
     await expect(entries.remove(path, rule, [path])).rejects.toThrow(
       UnsafePathError,
     );
+  });
+
+  it('tells when deleting started but files are left', async () => {
+    const path = clone('s1');
+    const stuck = join(path, 'web', '.vite');
+    mkdirSync(stuck, { recursive: true });
+    writeFileSync(join(stuck, 'deps.json'), '{}');
+    chmodSync(stuck, 0o555);
+    try {
+      await expect(entries.remove(path, cloneRule('s1'))).rejects.toThrow(
+        IncompleteRemovalError,
+      );
+      expect(existsSync(join(path, '.git'))).toBe(false);
+      expect(existsSync(join(stuck, 'deps.json'))).toBe(true);
+    } finally {
+      chmodSync(stuck, 0o755);
+    }
   });
 
   it('removes a scratch directory only under the scratch root', async () => {

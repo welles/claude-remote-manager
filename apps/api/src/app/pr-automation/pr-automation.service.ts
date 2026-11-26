@@ -1,5 +1,9 @@
 import { readdir, rmdir } from 'node:fs/promises';
-import { cloneRule, WorkspaceEntries } from '../workspaces/workspace-entries';
+import {
+  cloneRule,
+  IncompleteRemovalError,
+  WorkspaceEntries,
+} from '../workspaces/workspace-entries';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   BadRequestException,
@@ -130,6 +134,11 @@ export const PR_AUTOMATION_TIMING = Symbol('PR_AUTOMATION_TIMING');
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Notice text for clones whose deleting left files (see `removeClone`). */
+function leftoversNote(errors: string[]): string {
+  return `Files were left over (${errors.join('; ')}); remove them under Workspace cleanup.`;
 }
 
 /** Characters of Claude's question kept with a hold. */
@@ -2603,6 +2612,7 @@ export class PrAutomationService
     }
     const kept: string[] = [];
     const details: string[] = [];
+    const leftovers: string[] = [];
     for (const directory of session.directories) {
       if (directory.kind !== 'clone' || directory.state !== 'ready') {
         continue;
@@ -2626,7 +2636,10 @@ export class PrAutomationService
         continue;
       }
       if (lossIsEmpty(loss)) {
-        await this.removeClone(session, directory);
+        const rest = await this.removeClone(session, directory);
+        if (rest) {
+          leftovers.push(rest);
+        }
       } else {
         kept.push(name);
         details.push(`${name}: ${describeLoss(loss)}`);
@@ -2634,13 +2647,14 @@ export class PrAutomationService
     }
     await this.removeEmptyParents(session);
     const what = `${pull.repositoryName}#${pull.number} was ${pull.state}`;
+    const rest = leftovers.length > 0 ? ` ${leftoversNote(leftovers)}` : '';
     this.sessions.recordEvent(session.id, {
       type: 'notice',
-      level: kept.length > 0 ? 'warning' : 'info',
+      level: kept.length > 0 || leftovers.length > 0 ? 'warning' : 'info',
       text:
         kept.length > 0
-          ? `${what}. Autoclose ended the session and removed its clones, but kept ${kept.length === 1 ? 'one' : kept.length} with work that is not on GitHub (${details.join('; ')}). Delete ${kept.length === 1 ? 'it' : 'them'} in the session view when you no longer need ${kept.length === 1 ? 'it' : 'them'}.`
-          : `${what}. Autoclose ended the session and removed its clones.`,
+          ? `${what}. Autoclose ended the session and removed its clones, but kept ${kept.length === 1 ? 'one' : kept.length} with work that is not on GitHub (${details.join('; ')}). Delete ${kept.length === 1 ? 'it' : 'them'} in the session view when you no longer need ${kept.length === 1 ? 'it' : 'them'}.${rest}`
+          : `${what}. Autoclose ended the session and removed its clones.${rest}`,
     });
     return kept;
   }
@@ -2677,13 +2691,14 @@ export class PrAutomationService
       // again. The close is handled already, so the clone stays.
       detail = 'a turn started meanwhile';
     }
+    let rest: string | null = null;
     const finish = () => {
       this.sessions.recordEvent(session.id, {
         type: 'notice',
-        level: detail === null ? 'info' : 'warning',
+        level: detail === null && rest === null ? 'info' : 'warning',
         text:
           detail === null
-            ? `${what}: removed ${name} (${directory.path}).`
+            ? `${what}: removed ${name} (${directory.path}).${rest ? ` ${leftoversNote([rest])}` : ''}`
             : `${what}: kept ${name} (${directory.path}): ${detail}.`,
       });
       this.logger.log(
@@ -2712,7 +2727,8 @@ export class PrAutomationService
     });
     await this.sessions.holdMessagesWhile(session.id, async () => {
       try {
-        await this.removeClone(session, directory);
+        // Leftovers: the clone is gone all the same (removed).
+        rest = await this.removeClone(session, directory);
         await this.removeEmptyParents(session);
       } catch (error) {
         detail = `removing it failed (${errorText(error)})`;
@@ -2818,12 +2834,12 @@ export class PrAutomationService
       throw new ConflictException('End the session before deleting its clones');
     }
     const directory = this.requireClone(session, repositoryId, branch);
-    await this.removeClone(session, directory);
+    const rest = await this.removeClone(session, directory);
     await this.removeEmptyParents(session);
     this.sessions.recordEvent(sessionId, {
       type: 'notice',
-      level: 'info',
-      text: `The clone of ${directory.repositoryName} on ${directory.branch} was deleted.`,
+      level: rest ? 'warning' : 'info',
+      text: `The clone of ${directory.repositoryName} on ${directory.branch} was deleted.${rest ? ` ${leftoversNote([rest])}` : ''}`,
     });
     this.sessions.publishUpdate(sessionId);
     return this.sessions.get(sessionId);
@@ -2831,18 +2847,35 @@ export class PrAutomationService
 
   // -------------------------------------------------------------------------
 
+  /**
+   * Removes a clone (stopping what runs in it first, see
+   * {@link WorkspaceEntries.remove}). When deleting started but files are
+   * left, the clone is unusable all the same: it counts as removed (its
+   * rest shows among the workspace's directories without session), and
+   * the error text is returned.
+   */
   private async removeClone(
     session: SessionRecord,
     directory: SessionDirectoryRecord,
-  ): Promise<void> {
-    await new WorkspaceEntries(this.config, this.git.launcher).remove(
-      directory.path,
-      cloneRule(session.slug),
-      this.otherSessionPaths(session.id),
-    );
+  ): Promise<string | null> {
+    let rest: string | null = null;
+    try {
+      await new WorkspaceEntries(this.config, this.git.launcher).remove(
+        directory.path,
+        cloneRule(session.slug),
+        this.otherSessionPaths(session.id),
+      );
+    } catch (error) {
+      if (!(error instanceof IncompleteRemovalError)) {
+        throw error;
+      }
+      this.logger.warn(error.message);
+      rest = error.message;
+    }
     this.records.updateDirectory(session.id, directory.position, {
       state: 'removed',
     });
+    return rest;
   }
 
   /** Directories of other sessions, which a removal must never reach. */

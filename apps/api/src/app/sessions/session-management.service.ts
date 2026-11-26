@@ -41,6 +41,7 @@ import {
 import { ShownFilesService } from '../shown-files/shown-files.service';
 import {
   cloneRule,
+  IncompleteRemovalError,
   scratchRule,
   WorkspaceEntries,
   type WorkspaceRule,
@@ -719,11 +720,22 @@ export class SessionManagementService {
       directory.kind === 'scratch'
         ? scratchRule(record.slug)
         : cloneRule(record.slug);
-    await this.entries.remove(
-      directory.path,
-      rule,
-      this.records.directoryPathsExcept(record.id),
-    );
+    try {
+      await this.entries.remove(
+        directory.path,
+        rule,
+        this.records.directoryPathsExcept(record.id),
+      );
+    } catch (error) {
+      if (error instanceof IncompleteRemovalError) {
+        // Its content is gone in part: unusable, and the rest shows among
+        // the workspace's directories without session.
+        this.records.updateDirectory(record.id, directory.position, {
+          state: 'removed',
+        });
+      }
+      throw error;
+    }
     this.records.updateDirectory(record.id, directory.position, {
       state: 'removed',
     });
