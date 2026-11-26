@@ -2560,8 +2560,24 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const live = this.live.get(sessionId);
     if (live) {
       this.append(live, event);
-    } else if (this.sessions.get(sessionId)) {
-      this.storedEvents.add(sessionId, event, { uuid: null, userId: null });
+    } else {
+      const record = this.sessions.get(sessionId);
+      if (!record) {
+        return;
+      }
+      // Masked as the live log would (e.g. commit messages Claude wrote).
+      let mask = NO_MASKING;
+      try {
+        mask = this.environments?.masker(record.environmentId) ?? NO_MASKING;
+      } catch (error) {
+        this.logger.warn(
+          `Could not read the environment secrets of ${sessionId}: ${String(error)}`,
+        );
+      }
+      this.storedEvents.add(sessionId, maskEvent(mask, event), {
+        uuid: null,
+        userId: null,
+      });
     }
   }
 

@@ -51,7 +51,10 @@ export interface CommitDiffResponse {
   /** `owner/name`. */
   repository: string;
   branch: string | null;
-  /** The commit; its `files` hold the stats of all files listed below. */
+  /**
+   * The commit, with the totals of the whole diff; its `files` are empty
+   * (the files are listed below).
+   */
   commit: CommitSummary;
   /**
    * What the commit is compared with: its first parent, or `null` for a

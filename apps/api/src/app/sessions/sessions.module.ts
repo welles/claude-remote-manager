@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { AttachmentsModule } from '../attachments/attachments.module';
 import { GitHubReferencesModule } from '../github-references/github-references.module';
 import { MessageContextRepository } from './message-context.repository';
@@ -56,6 +56,8 @@ import { ModelsController } from './models.controller';
 import { ModelsService } from './models.service';
 import { SlashCommandsController } from './slash-commands.controller';
 import { SlashCommandsService } from './slash-commands.service';
+
+const logger = new Logger('SessionsModule');
 
 @Module({
   imports: [
@@ -151,9 +153,15 @@ export class SessionsModule {
     sessions.events$.subscribe(({ sessionId, event }) =>
       commits.observe(sessionId, event),
     );
-    commits.added$.subscribe(({ sessionId, event }) =>
-      sessions.recordEvent(sessionId, event),
-    );
+    commits.added$.subscribe(({ sessionId, event }) => {
+      try {
+        sessions.recordEvent(sessionId, event);
+      } catch (error) {
+        logger.warn(
+          `Could not record new commits of ${sessionId}: ${String(error)}`,
+        );
+      }
+    });
     // Pushes and pull requests change what the session view shows.
     git.changes$.subscribe((id) => sessions.publishUpdate(id));
     // Limits are also read when no session runs (see LimitsService).

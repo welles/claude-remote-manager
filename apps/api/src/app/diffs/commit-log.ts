@@ -21,14 +21,17 @@ const LOG_OPTIONS = [
   'log',
   '--no-show-signature',
   '-z',
-  '--numstat',
-  '-M',
   '--no-ext-diff',
   '--no-textconv',
   '--no-color',
   '--no-mailmap',
   '--format=%x1e%H%x00%P%x00%an%x00%aI%x00%B',
 ];
+/** With file stats (renames detected). */
+const STAT_OPTIONS = ['--numstat', '-M'];
+
+/** Longest message body kept (the rest is cut, marked). */
+export const MAX_COMMIT_BODY = 20_000;
 
 const NUMSTAT = /^(\d+|-)\t(\d+|-)\t(.*)$/s;
 
@@ -84,7 +87,7 @@ export function parseCommitLog(output: string): CommitSummary[] {
       sha,
       parents: parents.split(' ').filter(Boolean),
       subject: (newline < 0 ? message : message.slice(0, newline)).trim(),
-      body: newline < 0 ? '' : message.slice(newline + 1).trim(),
+      body: cutBody(newline < 0 ? '' : message.slice(newline + 1).trim()),
       authorName,
       authoredAt: isoDate(authoredAt),
       files: [],
@@ -95,6 +98,12 @@ export function parseCommitLog(output: string): CommitSummary[] {
     commits.push(current);
   }
   return commits;
+}
+
+function cutBody(body: string): string {
+  return body.length > MAX_COMMIT_BODY
+    ? `${body.slice(0, MAX_COMMIT_BODY)}\n[… cut]`
+    : body;
 }
 
 /** git's strict ISO date as UTC ISO 8601 (as given if it cannot be read). */
@@ -113,6 +122,7 @@ export async function listCommits(
   head: string,
   exclude: string[],
   limit: number,
+  { stats = true }: { stats?: boolean } = {},
 ): Promise<{ commits: CommitSummary[]; count: number }> {
   const revisions = [head, ...exclude.map((rev) => `^${rev}`)];
   const count = Number(
@@ -122,12 +132,18 @@ export async function listCommits(
     return { commits: [], count: 0 };
   }
   const commits = parseCommitLog(
-    await git([...LOG_OPTIONS, `--max-count=${limit}`, ...revisions, '--']),
+    await git([
+      ...LOG_OPTIONS,
+      ...(stats ? STAT_OPTIONS : []),
+      `--max-count=${limit}`,
+      ...revisions,
+      '--',
+    ]),
   );
   return { commits, count: Math.max(count, commits.length) };
 }
 
-/** One commit by its full ID. */
+/** One commit by its full ID, without file stats. */
 export async function readCommit(
   git: CloneGit,
   sha: string,
