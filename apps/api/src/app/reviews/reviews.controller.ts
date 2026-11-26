@@ -26,7 +26,7 @@ import { ReviewsService } from './reviews.service';
 export class ReviewsController {
   constructor(private readonly reviews: ReviewsService) {}
 
-  /** The app's review settings (model, effort, auto-review rounds). */
+  /** The app's review settings (model, effort). */
   @Get('settings/review')
   defaults(): ReviewDefaults {
     return this.reviews.getDefaults();
