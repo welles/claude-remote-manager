@@ -634,7 +634,9 @@ bare `#`. Choosing inserts `#12` when the session has one GitHub repository, els
 `owner/repo#12`. With several, a typed `#12` means the repository that has that number; when
 several have it, the input lists them (title and state) instead of a chip, choosing one writes
 `owner/repo#12`, and the message cannot be sent until that is settled (nor while the number is
-still being looked up); when none has it or GitHub cannot answer, it means the first. Chips
+still being looked up); a suggestion sent as offered goes without such a reference instead
+(taken into the input, it asks as usual). Several clones of one repository count as one. When
+none has it or GitHub cannot answer, it means the first. Chips
 then show `repo#12`, in the input and the history. Every reference in the text becomes a chip above the input
 (title, state as colour: open, draft, merged, closed; "not found" or "unavailable" when
 GitHub cannot answer); its preview has author, labels, branch and size of a pull request, the
