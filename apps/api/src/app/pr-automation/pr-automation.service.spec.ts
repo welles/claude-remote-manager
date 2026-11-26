@@ -727,6 +727,39 @@ describe('PrAutomationService', () => {
           expect(ciWakes()).toHaveLength(0);
         });
 
+        it('leaves failed CI with autofix to the run that waited for background tasks', async () => {
+          harness.service.backgroundReportGraceMs = 30;
+          const { session, pull } = await sessionWithPullRequest();
+          enableAutofix(session.id, pull);
+          const tasks = (...ids: string[]) =>
+            ({
+              type: 'system',
+              subtype: 'background_tasks_changed',
+              tasks: ids.map((id) => ({
+                task_id: id,
+                task_type: 'local_agent',
+                description: id,
+              })),
+            }) as never;
+          await harness.service.sendMessage(session.id, { text: 'Push it' });
+          await setWaitingState({ waiting_on: 'work', reason: 'CI of #1' });
+          harness.runner.last.emit(tasks('agent'), resultMessage(30, 0.03));
+          await waitFor(
+            () => harness.service.get(session.id).backgroundTasks === 1,
+          );
+          await runCi(pull, 'failure');
+          await waitFor(
+            () => harness.service.ciWaitPhase(session.id, pull.id) === null,
+          );
+          expect(appMessages()).toHaveLength(0);
+
+          // The task ends without a turn for its report: the run comes.
+          harness.runner.last.emit(tasks());
+          await waitFor(() => appMessages().length === 1);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          expect(ciWakes()).toHaveLength(0);
+        });
+
         it("does not wake Claude when it said it is the user's turn", async () => {
           const { session, pull } = await sessionWithPullRequest();
           await claudeGoesOn(session.id, 'user');
