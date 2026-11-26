@@ -708,6 +708,15 @@ describe('PrAutomationService', () => {
           await waitFor(() => appMessages().length === 1);
           await new Promise((resolve) => setTimeout(resolve, 50));
           expect(ciWakes()).toHaveLength(0);
+          // The run's turn ends with work (e.g. a flaky check, nothing to
+          // push): the CI it brought wakes nobody again.
+          await setWaiting('work');
+          harness.runner.last.emit(resultMessage(40, 0.04));
+          await waitFor(
+            () => harness.service.get(session.id).waitingFor === 'background',
+          );
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          expect(ciWakes()).toHaveLength(0);
         });
 
         it('leaves failed CI with autofix to the run that waited for background tasks', async () => {
