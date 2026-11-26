@@ -11,9 +11,10 @@ import {
   git,
   gitSandbox,
 } from '../git/testing/git-fixtures';
+import * as gitRunner from '../git/git-runner';
 import { RepositoryRepository } from '../repositories/repository.repository';
 import { SessionRepository } from '../sessions/session.repository';
-import { parseCommitLog } from './commit-log';
+import { MAX_COMMIT_BODY, parseCommitLog } from './commit-log';
 import { SessionCommitsService } from './session-commits.service';
 
 type Added = Omit<CommitsAddedEvent, 'seq' | 'at'>;
@@ -240,6 +241,52 @@ describe('SessionCommitsService', () => {
     expect((await check()).map((event) => event.commits[0].subject)).toEqual([
       'After',
     ]);
+  });
+
+  it('only notes the branch when the commit seen last is gone', async () => {
+    await commitFile(repo, 'a.txt', 'a\n', 'Mine');
+    sessions.setObservedHead('s1', 0, 'f'.repeat(40));
+
+    expect(await check()).toEqual([]);
+    expect(sessions.observedHeads('s1').get(0)).toBe(
+      await git(repo, 'rev-parse', 'HEAD'),
+    );
+  });
+
+  it('lists the commits without their files when git cannot list those', async () => {
+    const head = await commitFile(repo, 'a.txt', 'a\n', 'Mine');
+    const original = gitRunner.runGit;
+    const spy = jest
+      .spyOn(gitRunner, 'runGit')
+      .mockImplementation((args, options) =>
+        args.includes('--numstat')
+          ? Promise.reject(new Error('timed out'))
+          : original(args, options),
+      );
+    try {
+      const [event] = await check();
+      expect(event.commits).toEqual([
+        expect.objectContaining({ sha: head, subject: 'Mine', files: [] }),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('cuts very long message bodies', async () => {
+    await writeFile(join(repo, 'a.txt'), 'a');
+    await git(repo, 'add', '.');
+    await git(
+      repo,
+      'commit',
+      '--quiet',
+      '-m',
+      `Long\n\n${'x'.repeat(MAX_COMMIT_BODY + 10)}`,
+    );
+    const [event] = await check();
+    expect(event.commits[0].body).toBe(
+      `${'x'.repeat(MAX_COMMIT_BODY)}\n[… cut]`,
+    );
   });
 
   it('skips clones that are not ready and survives a missing clone', async () => {

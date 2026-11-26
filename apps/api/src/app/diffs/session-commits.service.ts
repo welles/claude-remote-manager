@@ -3,6 +3,7 @@ import { Subject } from 'rxjs';
 import {
   isRetiredClone,
   MAX_LISTED_COMMITS,
+  type CommitSummary,
   type CommitsAddedEvent,
   type SessionEvent,
   type SessionEventInput,
@@ -130,30 +131,36 @@ export class SessionCommitsService {
    */
   check(sessionId: string, toolUseId: string | null): Promise<void> {
     return this.mutex.run(sessionId, async () => {
-      const record = this.sessions.get(sessionId);
-      if (!record) {
-        return;
-      }
-      const observed = this.sessions.observedHeads(sessionId);
-      for (const directory of record.directories) {
-        if (!watched(directory)) {
-          continue;
+      try {
+        const record = this.sessions.get(sessionId);
+        if (!record) {
+          return;
         }
-        try {
-          const event = await this.checkDirectory(
-            sessionId,
-            directory,
-            observed.get(directory.position) ?? null,
-            toolUseId,
-          );
-          if (event) {
-            this.added.next({ sessionId, event });
+        const observed = this.sessions.observedHeads(sessionId);
+        for (const directory of record.directories) {
+          if (!watched(directory)) {
+            continue;
           }
-        } catch (error) {
-          this.logger.warn(
-            `Could not look for new commits in ${directory.path}: ${String(error)}`,
-          );
+          try {
+            const event = await this.checkDirectory(
+              sessionId,
+              directory,
+              observed.get(directory.position) ?? null,
+              toolUseId,
+            );
+            if (event) {
+              this.added.next({ sessionId, event });
+            }
+          } catch (error) {
+            this.logger.warn(
+              `Could not look for new commits in ${directory.path}: ${String(error)}`,
+            );
+          }
         }
+      } catch (error) {
+        this.logger.warn(
+          `Could not look for new commits of ${sessionId}: ${String(error)}`,
+        );
       }
     });
   }
@@ -175,28 +182,24 @@ export class SessionCommitsService {
     if (!head || head === observed) {
       return null;
     }
-    if (observed === '') {
-      // A directory from before the app looked: only note where it is.
-      this.sessions.setObservedHead(sessionId, directory.position, head);
-      return null;
-    }
     const candidate = observed ?? directory.baseCommit;
     const previous =
       candidate && COMMIT_ID.test(candidate)
         ? await verify(git, candidate)
         : null;
+    if (observed !== null && previous === null) {
+      // A directory from before the app looked (`''`), or the commit seen
+      // last is gone: what is new cannot be told, only note where it is.
+      this.sessions.setObservedHead(sessionId, directory.position, head);
+      return null;
+    }
     const base = directory.baseBranch
       ? await verify(git, `refs/remotes/origin/${directory.baseBranch}`)
       : null;
     const exclude = [previous, base].filter(
       (commit): commit is string => commit !== null,
     );
-    const { commits, count } = await listCommits(
-      git,
-      head,
-      exclude,
-      MAX_LISTED_COMMITS,
-    );
+    const { commits, count } = await this.list(git, head, exclude);
     const rewritten =
       previous !== null && !(await isAncestor(git, previous, head));
     // Noted only once listed: a look that fails is repeated next time.
@@ -216,6 +219,28 @@ export class SessionCommitsService {
       commits,
       commitCount: count,
     };
+  }
+
+  /**
+   * The new commits; when git cannot list them with their file stats (too
+   * large: timeout, output limit), without, so the same range is not tried
+   * again and again.
+   */
+  private async list(
+    git: CloneGit,
+    head: string,
+    exclude: string[],
+  ): Promise<{ commits: CommitSummary[]; count: number }> {
+    try {
+      return await listCommits(git, head, exclude, MAX_LISTED_COMMITS);
+    } catch (error) {
+      this.logger.warn(
+        `Listing new commits with their files failed, listing them without: ${String(error)}`,
+      );
+      return listCommits(git, head, exclude, MAX_LISTED_COMMITS, {
+        stats: false,
+      });
+    }
   }
 }
 

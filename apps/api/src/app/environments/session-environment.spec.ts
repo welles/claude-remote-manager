@@ -151,6 +151,40 @@ describe('sessions with an environment', () => {
     await waitFor(() => !existsSync(file));
   });
 
+  it('masks events recorded for a session that is not in memory', () => {
+    const env = environment();
+    harness.sessions.create({
+      id: 'idle-1',
+      title: null,
+      model: null,
+      permissionMode: 'default',
+      status: 'finished',
+      slug: 'idle-1',
+      pendingMessage: null,
+      environmentId: env.id,
+      directories: [
+        {
+          path: '/tmp/idle-1',
+          kind: 'scratch',
+          repositoryId: null,
+          branch: null,
+          baseBranch: null,
+          state: 'ready',
+          setupStatus: 'none',
+        },
+      ],
+    });
+    harness.service.recordEvent('idle-1', {
+      type: 'notice',
+      level: 'info',
+      text: `Committed ${SECRET}`,
+    });
+    const stored = new SessionEventRepository(harness.db).list('idle-1');
+    expect(stored.map((entry) => entry.event)).toEqual([
+      { type: 'notice', level: 'info', text: 'Committed ***' },
+    ]);
+  });
+
   it('reruns a failed setup script of the environment', async () => {
     const env = environment('exit 3');
     const session = await harness.service.create({
