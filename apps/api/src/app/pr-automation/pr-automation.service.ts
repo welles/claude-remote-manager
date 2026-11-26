@@ -2021,6 +2021,8 @@ export class PrAutomationService
       this.sessions.publishUpdate(pull.sessionId);
       return;
     }
+    // The run (or ready message) tells Claude about this pull request's CI.
+    this.ciSettled.get(pull.sessionId)?.delete(pull.id);
     if (removal) {
       this.queueRemovalsTold.delete(removal);
     }
@@ -2042,8 +2044,6 @@ export class PrAutomationService
    */
   private sessionChanged(session: SessionDto): void {
     if (!turnIsOver(session)) {
-      // Claude sees its CI in this turn: no wake for it later.
-      this.ciSettled.delete(session.id);
       return;
     }
     // Closes whose autoclose waited for the end of the turn.
@@ -2572,8 +2572,10 @@ export class PrAutomationService
    * once no CI of the session runs any more (one wake for all), and only
    * when an app message may start a turn (no background task or review
    * still to report). Pull requests in a merge queue (the merge wakes it)
-   * or closed meanwhile are left out. When Claude's turn started or its
-   * wait ran out meanwhile, nothing is sent.
+   * or closed meanwhile are left out. CI that settled during a turn is
+   * kept until the turn is over: it wakes Claude if the turn ended with
+   * "work" (owner's decision; Claude may have seen it already). When the
+   * session waits for the user, nothing is sent.
    */
   private wakeAfterCiLater(sessionId: string): void {
     this.wakeAfterCi(sessionId).catch((error: unknown) =>
@@ -2588,12 +2590,16 @@ export class PrAutomationService
     if (!pending) {
       return;
     }
-    if (!this.sessions.claudeGoesOn(sessionId)) {
+    const session = this.records.get(sessionId);
+    if (!session) {
       this.ciSettled.delete(sessionId);
       return;
     }
-    const session = this.records.get(sessionId);
-    if (!session) {
+    if (!turnIsOver(this.sessions.get(sessionId))) {
+      // Decided when the turn is over (`sessionChanged`).
+      return;
+    }
+    if (!this.sessions.claudeGoesOn(sessionId)) {
       this.ciSettled.delete(sessionId);
       return;
     }
