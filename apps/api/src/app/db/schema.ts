@@ -318,6 +318,13 @@ export const sessionDirectories = sqliteTable(
      * branch, base branch): the app says so with the next message.
      */
     announce: integer('announce', { mode: 'boolean' }).notNull().default(false),
+    /**
+     * Commit of the session branch when the app last looked for new
+     * commits (shown in the history as `commits.added`). `null`: not looked
+     * yet, new commits count from `base_commit`; `''` (directories from
+     * before this column): the first look only notes the commit.
+     */
+    observedHead: text('observed_head'),
   },
   (table) => [
     uniqueIndex('session_directories_session_position').on(

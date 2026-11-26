@@ -17,6 +17,7 @@ export const STORED_EVENT_TYPES: ReadonlySet<SessionEventInput['type']> =
     'tool.diff',
     'tool.by_app',
     'file.shown',
+    'commits.added',
     'permission.request',
     'permission.resolved',
     'permission.denied',

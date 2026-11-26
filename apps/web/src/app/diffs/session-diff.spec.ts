@@ -4,6 +4,7 @@ import {
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import type {
   RepositoryDiff,
   SessionDiffFile,
@@ -12,6 +13,7 @@ import type {
 import { words } from '../testing/text';
 import { DiffLayoutPreference } from './diff-layout';
 import { SessionDiff } from './session-diff';
+import { commitSummary } from './testing/commits';
 import { fileDiff } from './testing/file-diffs';
 
 const file = (overrides: Partial<SessionDiffFile> = {}): SessionDiffFile => ({
@@ -60,14 +62,19 @@ describe('SessionDiff', () => {
   let fixture: ComponentFixture<SessionDiff>;
   let http: HttpTestingController;
 
-  const render = async (diff: SessionDiffResponse) => {
+  const render = async (diff: SessionDiffResponse, linkCommits = false) => {
     TestBed.configureTestingModule({
       imports: [SessionDiff],
-      providers: [provideHttpClient(), provideHttpClientTesting()],
+      providers: [
+        provideHttpClient(),
+        provideHttpClientTesting(),
+        provideRouter([]),
+      ],
     });
     http = TestBed.inject(HttpTestingController);
     fixture = TestBed.createComponent(SessionDiff);
     fixture.componentRef.setInput('sessionId', 's1');
+    fixture.componentRef.setInput('linkCommits', linkCommits);
     fixture.detectChanges();
     http.expectOne('/api/sessions/s1/diff').flush(diff);
     await fixture.whenStable();
@@ -128,6 +135,35 @@ describe('SessionDiff', () => {
     expect(
       sections[0].querySelector('[data-testid="comparison-fallback"]'),
     ).toBeNull();
+  });
+
+  it('lists the commits of each repository, linked to their diffs', async () => {
+    const merge = commitSummary({
+      sha: 'c'.repeat(40),
+      parents: ['a'.repeat(40), 'b'.repeat(40)],
+      subject: 'Merge main',
+      files: [],
+    });
+    const element = await render(
+      response([
+        repository({
+          commits: [merge, commitSummary({ subject: '' })],
+          commitCount: 3,
+        }),
+        repository({ repositoryId: 'r2', commits: [], commitCount: 0 }),
+      ]),
+      true,
+    );
+    const lists = element.querySelectorAll('[data-testid="commit-list"]');
+    expect(lists).toHaveLength(1);
+    const rows = lists[0].querySelectorAll('[data-testid="listed-commit"]');
+    expect(words(rows[0])).toMatch(/^ccccccc Merge main merge · /);
+    expect(words(rows[1])).toMatch(/^1a2b3c4 \(no message\) \+3 −1 · /);
+    expect(words(lists[0])).toContain('3 commits');
+    expect(words(lists[0])).toContain('Showing the newest 2.');
+    expect(rows[1].querySelector('a')?.getAttribute('href')).toBe(
+      '/?repository=r1&branch=claude%2Fx&commit=' + commitSummary().sha,
+    );
   });
 
   it('says when it compares with the start commit, and why', async () => {

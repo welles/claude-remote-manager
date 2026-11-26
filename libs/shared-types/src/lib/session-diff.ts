@@ -1,3 +1,4 @@
+import type { CommitSummary } from './commits';
 import type { FileDiff } from './diffs';
 
 /*
@@ -65,6 +66,14 @@ export interface RepositoryDiff {
   fileCount: number;
   additions: number;
   deletions: number;
+  /**
+   * Commits of the session since {@link comparison} (`HEAD` not reachable
+   * from it), newest first, at most `MAX_LISTED_COMMITS` (absent from older
+   * servers).
+   */
+  commits?: CommitSummary[];
+  /** All such commits, also those beyond the limit. */
+  commitCount?: number;
 }
 
 export interface SessionDiffLimits {

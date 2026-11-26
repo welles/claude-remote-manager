@@ -4,6 +4,7 @@ import {
   SET_WAITING_STATE_TOOL_NAME,
   type AssistantDraft,
   type AttachmentDto,
+  type CommitsAddedEvent,
   type FileDiff,
   type MessageReference,
   type PermissionRequestEvent,
@@ -69,6 +70,8 @@ export type ConversationItem =
       shown: ShownFileDto[];
       /** Previews the call exposed (`expose_port`), as they were then. */
       previews: PreviewDto[];
+      /** New commits found on session branches after the call. */
+      commits: CommitsAddedEvent[];
       /**
        * Set when the app carried the call out itself (autofix: git add,
        * commit, push), with the real outcome.
@@ -80,6 +83,12 @@ export type ConversationItem =
       kind: 'file';
       key: string;
       file: ShownFileDto;
+    }
+  | {
+      /** New commits found without a known tool call (end of a turn). */
+      kind: 'commits';
+      key: string;
+      commits: CommitsAddedEvent;
     }
   | {
       /** A preview exposed without a known tool call, as it was then. */
@@ -238,6 +247,11 @@ const replaceAt = <T>(items: T[], index: number, item: T): T[] => [
   ...items.slice(index + 1),
 ];
 
+/** Identifies one report of new commits (a branch reaching a commit). */
+function commitsKey(event: CommitsAddedEvent): string {
+  return `commits:${event.repositoryId ?? event.repository}:${event.branch}:${event.head}`;
+}
+
 /**
  * Applies a session event to the conversation. Returns a new array when
  * something changed (so signals notice), otherwise the same one.
@@ -322,6 +336,7 @@ export function applyEvent(
         diff: existing?.kind === 'tool' ? existing.diff : null,
         shown: existing?.kind === 'tool' ? existing.shown : [],
         previews: existing?.kind === 'tool' ? existing.previews : [],
+        commits: existing?.kind === 'tool' ? existing.commits : [],
         byApp: existing?.kind === 'tool' ? existing.byApp : null,
       };
       return index >= 0 ? replaceAt(items, index, item) : [...items, item];
@@ -388,6 +403,26 @@ export function applyEvent(
         { kind: 'file', key: `file:${event.file.id}`, file: event.file },
       ];
     }
+    case 'commits.added': {
+      const index = event.toolUseId
+        ? items.findIndex((item) => item.key === `tool:${event.toolUseId}`)
+        : -1;
+      const existing = items[index];
+      const key = commitsKey(event);
+      if (existing?.kind === 'tool') {
+        if (existing.commits.some((known) => commitsKey(known) === key)) {
+          return items;
+        }
+        return replaceAt(items, index, {
+          ...existing,
+          commits: [...existing.commits, event],
+        });
+      }
+      if (items.some((item) => item.key === key)) {
+        return items;
+      }
+      return [...items, { kind: 'commits', key, commits: event }];
+    }
     case 'preview.exposed': {
       const index = event.toolUseId
         ? items.findIndex((item) => item.key === `tool:${event.toolUseId}`)
@@ -443,6 +478,7 @@ export function applyEvent(
           diff: null,
           shown: [],
           previews: [],
+          commits: [],
           byApp: null,
         },
       ];
@@ -471,6 +507,7 @@ export function applyEvent(
           diff: null,
           shown: [],
           previews: [],
+          commits: [],
           byApp: null,
         },
       ];

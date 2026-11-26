@@ -487,6 +487,36 @@ export class SessionRepository {
   }
 
   /**
+   * Commit of each directory's session branch when the app last looked for
+   * new commits, by position (see `observed_head` in the schema).
+   */
+  observedHeads(sessionId: string): Map<number, string | null> {
+    const rows = this.db
+      .select({
+        position: sessionDirectories.position,
+        observedHead: sessionDirectories.observedHead,
+      })
+      .from(sessionDirectories)
+      .where(eq(sessionDirectories.sessionId, sessionId))
+      .all();
+    return new Map(rows.map((row) => [row.position, row.observedHead]));
+  }
+
+  /** Notes the commit the app saw last (does not touch `updated_at`). */
+  setObservedHead(sessionId: string, position: number, head: string): void {
+    this.db
+      .update(sessionDirectories)
+      .set({ observedHead: head })
+      .where(
+        and(
+          eq(sessionDirectories.sessionId, sessionId),
+          eq(sessionDirectories.position, position),
+        ),
+      )
+      .run();
+  }
+
+  /**
    * Adds a repository's clone to a session that exists already, after its
    * other directories (state `pending`, addition `preparing`). Fails on the
    * unique index when the repository is part of the session already.

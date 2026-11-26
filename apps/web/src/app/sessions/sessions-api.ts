@@ -6,6 +6,7 @@ import type {
   BrowseResponse,
   BrowsedFileDto,
   CleanupChoice,
+  CommitDiffResponse,
   RemoteBranchChoice,
   CleanupPreview,
   CleanupResult,
@@ -200,6 +201,42 @@ export class SessionsApi {
       {
         params: {
           repositoryId,
+          path,
+          ...(oldPath ? { oldPath } : {}),
+          ...(branch ? { branch } : {}),
+        },
+      },
+    );
+  }
+
+  /** One commit of a session clone with its diff against its parent. */
+  commitDiff(
+    sessionId: string,
+    repositoryId: string,
+    branch: string | null,
+    sha: string,
+  ): Observable<CommitDiffResponse> {
+    return this.http.get<CommitDiffResponse>(
+      `${sessionPath(sessionId)}/diff/commit`,
+      { params: { repositoryId, sha, ...(branch ? { branch } : {}) } },
+    );
+  }
+
+  /** One file of a commit's diff, with the larger single-file limit. */
+  commitFileDiff(
+    sessionId: string,
+    repositoryId: string,
+    branch: string | null,
+    sha: string,
+    path: string,
+    oldPath: string | null,
+  ): Observable<SessionDiffFile> {
+    return this.http.get<SessionDiffFile>(
+      `${sessionPath(sessionId)}/diff/commit/file`,
+      {
+        params: {
+          repositoryId,
+          sha,
           path,
           ...(oldPath ? { oldPath } : {}),
           ...(branch ? { branch } : {}),

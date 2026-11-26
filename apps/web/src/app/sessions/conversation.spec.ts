@@ -17,6 +17,7 @@ import { groupPreparation } from './preparation';
 import { fileDiff } from '../diffs/testing/file-diffs';
 import { shownFile } from '../shown-files/testing/shown-file';
 import { preview } from '../previews/testing/preview';
+import { commitsAdded } from '../diffs/testing/commits';
 import {
   permissionRequest,
   permissionResolved,
@@ -256,6 +257,37 @@ describe('conversation', () => {
     expect(items).toEqual([
       expect.objectContaining({ key: 'tool:t1', shown: [file] }),
       { kind: 'file', key: 'file:f2', file: shownFile({ id: 'f2' }) },
+    ]);
+  });
+
+  it('puts new commits on their tool call, or on their own after a turn', () => {
+    const added = commitsAdded();
+    const later = { ...added, toolUseId: null, head: 'b'.repeat(40) };
+    const items = buildConversation([
+      event({
+        type: 'tool.call',
+        messageId: 'm',
+        toolUseId: 't1',
+        name: 'Bash',
+        input: { command: 'git commit -m x' },
+        parentToolUseId: null,
+      }),
+      event(added),
+      // Repeated: once.
+      event(added),
+      event(later),
+      event(later),
+    ]);
+    expect(items).toEqual([
+      expect.objectContaining({
+        key: 'tool:t1',
+        commits: [expect.objectContaining({ head: added.head })],
+      }),
+      {
+        kind: 'commits',
+        key: `commits:r1:claude/x:${'b'.repeat(40)}`,
+        commits: expect.objectContaining({ toolUseId: null }),
+      },
     ]);
   });
 

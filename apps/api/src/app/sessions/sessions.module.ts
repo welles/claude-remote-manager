@@ -31,6 +31,7 @@ import { SessionWorkspaceService } from '../workspaces/session-workspace.service
 import { SetupScriptRunner } from '../workspaces/setup-script-runner';
 import { SessionDiffController } from '../diffs/session-diff.controller';
 import { SessionDiffService } from '../diffs/session-diff.service';
+import { SessionCommitsService } from '../diffs/session-commits.service';
 import { FileMentionsService } from '../files/file-mentions.service';
 import { RunningDirectories } from './running-directories';
 import {
@@ -104,6 +105,7 @@ import { SlashCommandsService } from './slash-commands.service';
     SetupScriptRunner,
     SessionFileAccess,
     SessionDiffService,
+    SessionCommitsService,
     FileMentionsService,
     RunningDirectories,
     { provide: AgentRunner, useClass: SdkAgentRunner },
@@ -129,6 +131,7 @@ export class SessionsModule {
     runner: AgentRunner,
     shownFiles: ShownFilesService,
     previews: PreviewsService,
+    commits: SessionCommitsService,
   ) {
     // Files shown by the app's tool belong in the session's log.
     shownFiles.shown$.subscribe(({ sessionId, toolUseId, file }) =>
@@ -143,6 +146,14 @@ export class SessionsModule {
       sessions.previewsChanged(id);
       sessions.publishUpdate(id);
     });
+    // New commits on session branches show in the history, on the tool
+    // call that made them.
+    sessions.events$.subscribe(({ sessionId, event }) =>
+      commits.observe(sessionId, event),
+    );
+    commits.added$.subscribe(({ sessionId, event }) =>
+      sessions.recordEvent(sessionId, event),
+    );
     // Pushes and pull requests change what the session view shows.
     git.changes$.subscribe((id) => sessions.publishUpdate(id));
     // Limits are also read when no session runs (see LimitsService).

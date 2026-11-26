@@ -1,7 +1,7 @@
 import { Component, inject, input, signal, type OnInit } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-import { AppIcon } from '../ui/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { RouterLink } from '@angular/router';
 import type {
   RepositoryDiff,
   SessionDiffFile,
@@ -9,43 +9,31 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { SessionsApi } from '../sessions/sessions-api';
+import { AppDatePipe } from '../ui/dates';
+import { AppIcon } from '../ui/icon';
+import { commitQuery } from './commit-links';
+import { DiffFiles } from './diff-files';
 import { DiffLayoutPreference } from './diff-layout';
 import type { DiffLayout } from './diff-rows';
-import { DiffView } from './diff-view';
-
-const STATUS_LETTERS: Record<SessionDiffFile['status'], string> = {
-  added: 'A',
-  modified: 'M',
-  deleted: 'D',
-  renamed: 'R',
-  copied: 'C',
-  type_changed: 'T',
-};
-
-/** The colour of a status letter. */
-const STATUS_TONES: Record<SessionDiffFile['status'], string> = {
-  added: 'text-diff-add',
-  modified: '',
-  deleted: 'text-diff-del',
-  renamed: 'text-secondary',
-  copied: 'text-secondary',
-  type_changed: '',
-};
-
-/** Key of a file within the session diff. */
-const fileKey = (repository: RepositoryDiff, file: SessionDiffFile) =>
-  `${repository.repositoryId}\u0000${repository.branch ?? ''}\u0000${file.oldPath ?? ''}\u0000${file.path}`;
 
 /**
  * Everything a session changed against the commit each of its clones
- * started from: per repository a file list (status, path, line counts) and
- * each file's diff, unified or side by side (the viewer's choice is kept).
- * Files left out of the response for their size are loaded on request.
- * Used by the session's changes page and the cleanup of sessions.
+ * started from: per repository its commits (each linking to its own diff),
+ * a file list (status, path, line counts) and each file's diff, unified or
+ * side by side (the viewer's choice is kept). Files left out of the
+ * response for their size are loaded on request. Used by the session's
+ * changes page and the cleanup of sessions.
  */
 @Component({
   selector: 'app-session-diff',
-  imports: [DiffView, MatButtonModule, AppIcon, MatProgressBarModule],
+  imports: [
+    AppDatePipe,
+    AppIcon,
+    DiffFiles,
+    MatButtonModule,
+    MatProgressBarModule,
+    RouterLink,
+  ],
   templateUrl: './session-diff.html',
   host: { class: 'flex min-w-0 flex-col gap-3' },
 })
@@ -54,18 +42,14 @@ export class SessionDiff implements OnInit {
   private readonly preference = inject(DiffLayoutPreference);
 
   readonly sessionId = input.required<string>();
+  /** Link each commit to its diff (not in dialogs). */
+  readonly linkCommits = input(false);
 
   protected readonly layout = this.preference.layout;
   protected readonly diff = signal<SessionDiffResponse | null>(null);
   protected readonly loading = signal(false);
   protected readonly error = signal<string | null>(null);
-  /** Files loaded on their own, by key. */
-  protected readonly loaded = signal(new Map<string, SessionDiffFile>());
-  /** Files being loaded, or that failed to load (message). */
-  protected readonly fileState = signal(new Map<string, string | null>());
-  protected readonly letters = STATUS_LETTERS;
-  protected readonly letterTones = STATUS_TONES;
-  protected readonly fileKey = fileKey;
+  protected readonly commitQuery = commitQuery;
 
   ngOnInit(): void {
     this.refresh();
@@ -77,8 +61,6 @@ export class SessionDiff implements OnInit {
     this.api.diff(this.sessionId()).subscribe({
       next: (diff) => {
         this.diff.set(diff);
-        this.loaded.set(new Map());
-        this.fileState.set(new Map());
         this.loading.set(false);
       },
       error: (error: unknown) => {
@@ -92,51 +74,15 @@ export class SessionDiff implements OnInit {
     this.preference.set(layout);
   }
 
-  /** The file with its content, if it was loaded on its own. */
-  protected shown(
-    repository: RepositoryDiff,
-    file: SessionDiffFile,
-  ): SessionDiffFile {
-    return this.loaded().get(fileKey(repository, file)) ?? file;
-  }
-
-  protected load(repository: RepositoryDiff, file: SessionDiffFile): void {
-    const key = fileKey(repository, file);
-    this.fileState.update((states) => new Map(states).set(key, null));
-    this.api
-      .fileDiff(
+  /** Loads one file of a repository's diff left out for its size. */
+  protected loader(repository: RepositoryDiff) {
+    return (file: SessionDiffFile) =>
+      this.api.fileDiff(
         this.sessionId(),
         repository.repositoryId,
         file.path,
         file.oldPath,
         repository.branch,
-      )
-      .subscribe({
-        next: (loaded) => {
-          this.loaded.update((files) => new Map(files).set(key, loaded));
-          this.fileState.update((states) => {
-            const next = new Map(states);
-            next.delete(key);
-            return next;
-          });
-        },
-        error: (error: unknown) =>
-          this.fileState.update((states) =>
-            new Map(states).set(
-              key,
-              errorMessage(error, 'The diff of this file could not be loaded.'),
-            ),
-          ),
-      });
-  }
-
-  /** Element ID of a file's diff, for the links of the file list. */
-  protected anchor(repositoryIndex: number, fileIndex: number): string {
-    return `diff-${repositoryIndex}-${fileIndex}`;
-  }
-
-  protected jump(event: Event, id: string): void {
-    event.preventDefault();
-    document.getElementById(id)?.scrollIntoView({ block: 'start' });
+      );
   }
 }

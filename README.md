@@ -16,8 +16,9 @@ clones of one or more repositories (or in a scratch directory) and stream to the
 where Claude's approval requests, questions and plans are answered; model and permission mode
 are chosen per session and switchable while it runs; messages sent while Claude works are
 queued; Claude's task list, the context window and the account's plan limits are shown; every
-file change appears as a diff in the history and in approvals, and a changes page shows the
-whole session's diff per repository and file, a files page its directories (changed files
+file change appears as a diff in the history and in approvals, new commits as a card on the
+tool call that made them, and a changes page shows the whole session's diff and commits per
+repository and file (each commit with its own diff), a files page its directories (changed files
 marked); images can be attached to messages, files of the
 session referenced with `@`, Claude Code's slash commands and skills completed after `/`,
 Claude Code's suggested next message as placeholder of the input (Tab takes it, Send sends it),
@@ -471,7 +472,8 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
 `GET /api/repositories/:id/branches`, `GET /api/github/status`, `GET /api/github/repositories`,
 `GET /api/settings`,
 `GET /api/models`, `GET /api/limits`, `GET /api/health`, `GET /api/sessions/:id/diff`,
-`GET /api/sessions/:id/diff/file`, `GET /api/sessions/:id/files`, `POST /api/attachments`,
+`GET /api/sessions/:id/diff/file`, `GET /api/sessions/:id/diff/commit`,
+`GET /api/sessions/:id/diff/commit/file`, `GET /api/sessions/:id/files`, `POST /api/attachments`,
 `GET /api/attachments/:id`, `GET /api/shown-files/:id`, `GET /api/shown-files/:id/content`,
 `GET /api/shown-files/:id/live`, `GET /api/github/references`,
 `GET /api/github/references/:owner/:repo/:number`,
@@ -518,6 +520,19 @@ REST: `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`,
   so any file name works. Limits: 1000 files listed per repository, 3000 diff lines per file
   and 20000 in total; files left out are marked `too_large` or `omitted` and loaded one at a
   time (`GET /api/sessions/:id/diff/file?repositoryId=&path=&oldPath=`, up to 20000 lines).
+  Each repository also lists its commits since that comparison (newest 50, `commits`,
+  `commitCount`).
+- Commits: after every tool call that may move a branch (not reads, searches or file edits),
+  after the app's own autofix commits and at the end of every turn, the app compares each
+  clone's session branch with the commit it saw last (`session_directories.observed_head`;
+  new clones start from their base commit, clones from before only note where they are) and
+  stores what is new as a `commits.added` event on that tool call: the commits reachable from
+  the branch but neither from that commit nor from `origin/<base branch>`, so a rebase shows
+  the commits it rewrote (`rewritten`) and a merge of the base branch only its merge commit,
+  newest first, at most 50 with up to 50 file stats each. One commit's diff against its first
+  parent (a root commit: the empty tree) comes from
+  `GET /api/sessions/:id/diff/commit?repositoryId=&branch=&sha=` (full commit IDs only, any
+  commit the clone still has) with the same limits, a left-out file from `…/diff/commit/file`.
   The web app shows it on the session's changes page (`/sessions/:id/changes`), unified or
   side by side (kept per browser; unified by default on narrow screens); the cleanup dialog
   links to it ("Review the changes first").

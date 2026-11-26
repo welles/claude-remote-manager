@@ -1,4 +1,5 @@
 import type { AttachmentDto } from './attachments';
+import type { CommitSummary } from './commits';
 import type { FileDiff, ToolDiffSource } from './diffs';
 import type {
   MessageReference,
@@ -175,6 +176,36 @@ export interface FileShownEvent extends SessionEventBase {
   /** The tool call it belongs to, when known. */
   toolUseId: string | null;
   file: ShownFileDto;
+}
+
+/**
+ * New commits appeared on a session branch: found by the app after a tool
+ * call (`toolUseId`, the call that most likely made them; a background
+ * command's commits may show on a later call) or at the end of a turn
+ * (`toolUseId: null`). Covers everything new on the branch: commits,
+ * amends, rebases, merges, cherry-picks. Commits that are on the base
+ * branch as the clone knows it (`origin/<base branch>`) do not count.
+ * Stored.
+ */
+export interface CommitsAddedEvent extends SessionEventBase {
+  type: 'commits.added';
+  toolUseId: string | null;
+  repositoryId: string | null;
+  /** `owner/name` of the repository, or the directory's path. */
+  repository: string;
+  branch: string;
+  /** Commit of the branch before; `null` when not known. */
+  previousHead: string | null;
+  head: string;
+  /**
+   * The branch was rewritten (amend, rebase, reset): the previous commit is
+   * not part of the new history.
+   */
+  rewritten: boolean;
+  /** The new commits, newest first, at most `MAX_LISTED_COMMITS`. */
+  commits: CommitSummary[];
+  /** All new commits, also those beyond the limit. */
+  commitCount: number;
 }
 
 /**
@@ -513,6 +544,7 @@ export type SessionEvent =
   | ToolDiffEvent
   | ToolByAppEvent
   | FileShownEvent
+  | CommitsAddedEvent
   | PreviewExposedEvent
   | PreviewStoppedEvent
   | PermissionRequestEvent

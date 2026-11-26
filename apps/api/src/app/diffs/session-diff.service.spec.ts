@@ -697,3 +697,162 @@ describe('SessionDiffService against the base branch', () => {
     });
   });
 });
+
+describe('SessionDiffService commits', () => {
+  let sandbox: ReturnType<typeof gitSandbox>;
+  let db: AppDatabase;
+  let sessions: SessionRepository;
+  let service: SessionDiffService;
+  let upstream: string;
+  let clone: string;
+  let start: string;
+
+  beforeEach(async () => {
+    sandbox = gitSandbox('crm-session-diff-commits-');
+    db = openDatabase(':memory:');
+    sessions = new SessionRepository(db);
+    service = new SessionDiffService(sessions);
+    upstream = join(sandbox.dir, 'upstream');
+    start = await createOrigin(upstream);
+    clone = join(sandbox.dir, 'sessions', 's1', 'acme', 'app');
+    await git(sandbox.dir, 'clone', '--quiet', '--', upstream, clone);
+    await git(clone, 'switch', '--quiet', '-c', 'claude/s1');
+    new RepositoryRepository(db).create({
+      id: 'r-app',
+      owner: 'acme',
+      name: 'app',
+      cloneUrl: upstream,
+      localPath: join(sandbox.dir, 'repos', 'app'),
+      setupScript: null,
+    });
+    sessions.create({
+      id: 's1',
+      title: null,
+      model: null,
+      permissionMode: 'default',
+      status: 'waiting',
+      slug: 's1',
+      pendingMessage: null,
+      directories: [
+        {
+          path: clone,
+          kind: 'clone',
+          repositoryId: 'r-app',
+          branch: 'claude/s1',
+          baseBranch: 'main',
+          state: 'ready',
+          setupStatus: 'none',
+        },
+      ],
+    });
+    sessions.updateDirectory('s1', 0, { baseCommit: start });
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    sandbox.cleanup();
+  });
+
+  it('lists the session commits since the merge base, newest first', async () => {
+    const first = await commitFile(clone, 'a.txt', 'a\n', 'First');
+    await commitFile(upstream, 'upstream.txt', 'theirs\n');
+    await git(clone, 'fetch', '--quiet', 'origin');
+    await git(clone, 'merge', '--quiet', '--no-edit', 'origin/main');
+    const merge = await git(clone, 'rev-parse', 'HEAD');
+    // Uncommitted work is no commit.
+    await writeFile(join(clone, 'wip.txt'), 'wip\n');
+
+    const [repository] = (await service.sessionDiff('s1')).repositories;
+    expect(repository.commitCount).toBe(2);
+    expect(repository.commits?.map((commit) => commit.sha)).toEqual([
+      merge,
+      first,
+    ]);
+    expect(repository.commits?.[1]).toMatchObject({
+      subject: 'First',
+      files: [{ path: 'a.txt', additions: 1, deletions: 0 }],
+    });
+  });
+
+  it('shows the diff of one commit against its parent', async () => {
+    await writeFile(join(clone, 'README.md'), '# Test\n\nMore.\n');
+    await writeFile(join(clone, 'new.txt'), 'new\n');
+    await git(clone, 'add', '.');
+    await git(clone, 'commit', '--quiet', '-m', 'Change two files\n\nWhy.');
+    const sha = await git(clone, 'rev-parse', 'HEAD');
+    // A later commit and uncommitted work do not show.
+    await commitFile(clone, 'later.txt', 'later\n');
+    await writeFile(join(clone, 'new.txt'), 'changed again\n');
+
+    const diff = await service.commitDiff('s1', 'r-app', null, sha);
+    expect(diff).toMatchObject({
+      repositoryId: 'r-app',
+      repository: 'acme/app',
+      branch: 'claude/s1',
+      parent: start,
+      fileCount: 2,
+      commit: {
+        sha,
+        subject: 'Change two files',
+        body: 'Why.',
+        fileCount: 2,
+        additions: 3,
+        deletions: 0,
+      },
+    });
+    expect(
+      diff.files.map((file) => ({
+        path: file.path,
+        status: file.status,
+        lines: file.hunks.flatMap((hunk) => hunk.lines),
+      })),
+    ).toEqual([
+      {
+        path: 'README.md',
+        status: 'modified',
+        lines: [' # Test', '+', '+More.'],
+      },
+      { path: 'new.txt', status: 'added', lines: ['+new'] },
+    ]);
+
+    const file = await service.commitFileDiff(
+      's1',
+      'r-app',
+      'claude/s1',
+      sha,
+      'new.txt',
+      null,
+    );
+    expect(file).toMatchObject({ path: 'new.txt', content: 'included' });
+    await expect(
+      service.commitFileDiff('s1', 'r-app', null, sha, 'later.txt', null),
+    ).rejects.toThrow('later.txt has no changes in this commit');
+  });
+
+  it('diffs a root commit against the empty tree', async () => {
+    const diff = await service.commitDiff('s1', 'r-app', null, start);
+    expect(diff.parent).toBeNull();
+    expect(diff.files.map((file) => `${file.status} ${file.path}`)).toEqual([
+      'added README.md',
+    ]);
+  });
+
+  it('rejects commit IDs that are not full IDs or not in the clone', async () => {
+    await expect(
+      service.commitDiff('s1', 'r-app', null, 'HEAD'),
+    ).rejects.toThrow('sha must be a full commit ID');
+    await expect(
+      service.commitDiff('s1', 'r-app', null, '--output=/tmp/x'),
+    ).rejects.toThrow('sha must be a full commit ID');
+    await expect(
+      service.commitDiff('s1', 'r-app', null, 'a'.repeat(40)),
+    ).rejects.toThrow(`The clone has no commit ${'a'.repeat(40)}`);
+    await expect(
+      service.commitDiff('s1', 'r-other', null, start),
+    ).rejects.toThrow('Repository r-other is not part of session s1');
+    sessions.updateDirectory('s1', 0, { state: 'removed' });
+    await expect(
+      service.commitDiff('s1', 'r-app', null, start),
+    ).rejects.toThrow('The clone is not available (removed).');
+  });
+});
