@@ -52,7 +52,7 @@ export class DraftReferences {
    * repositories): every number that could be sent is looked up.
    */
   private readonly bare = computed(() => {
-    const repositories = this.repositories();
+    const repositories = this.distinctRepositories();
     const resolutions = new Map<number, BareResolution>();
     if (repositories.length < 2) {
       return resolutions;
@@ -71,9 +71,13 @@ export class DraftReferences {
     return resolutions;
   });
 
-  /** The references as chips, or the choice of repository, in text order. */
+  /**
+   * The references as chips, or the choice of repository, in text order. A
+   * `#12` of several repositories in a text that is only offered (the
+   * prompt suggestion) is left out instead of asking.
+   */
   readonly entries = computed<DraftReferenceEntry[]>(() =>
-    this.resolve(this.settled(), this.bare()).map(
+    this.choosable(this.resolve(this.settled(), this.bare())).map(
       (reference): DraftReferenceEntry => {
         const { resolution, request, key } = reference;
         if (resolution?.status === 'ambiguous') {
@@ -106,7 +110,7 @@ export class DraftReferences {
    * message waits.
    */
   readonly unresolved = computed(() =>
-    this.resolve(this.text(), this.bare()).some(
+    this.choosable(this.resolve(this.text(), this.bare())).some(
       ({ resolution }) =>
         resolution !== null && resolution.status !== 'resolved',
     ),
@@ -116,11 +120,14 @@ export class DraftReferences {
    * @param text the text being written
    * @param repositories the session's GitHub repositories, the main one first
    * @param options comments and diffs chosen per reference
+   * @param offered the text is only offered, not written (the prompt
+   *   suggestion): an ambiguous `#12` is not asked about and not sent
    */
   constructor(
     private readonly text: () => string,
     private readonly repositories: () => string[],
     private readonly options: () => ReadonlyMap<string, ReferenceOptions>,
+    private readonly offered: () => boolean = () => false,
   ) {
     this.settled = toSignal(
       toObservable(computed(() => this.text())).pipe(debounceTime(400)),
@@ -130,7 +137,7 @@ export class DraftReferences {
 
   /** The references to send with `text` (once {@link unresolved} is false). */
   requests(text: string): MessageReferenceRequest[] {
-    return this.resolve(text, this.bare()).map(({ request }) => {
+    return this.choosable(this.resolve(text, this.bare())).map(({ request }) => {
       const { comments, diff, ...rest } = request;
       return {
         ...rest,
@@ -138,6 +145,22 @@ export class DraftReferences {
         ...(diff ? { diff: true } : {}),
       };
     });
+  }
+
+  /** The repositories, each once (further clones name one again). */
+  private readonly distinctRepositories = computed(() => [
+    ...new Set(this.repositories()),
+  ]);
+
+  /** Leaves out the ambiguous references of an offered text. */
+  private choosable<T extends { resolution: BareResolution | null }>(
+    references: T[],
+  ): T[] {
+    return this.offered()
+      ? references.filter(
+          ({ resolution }) => resolution?.status !== 'ambiguous',
+        )
+      : references;
   }
 
   /**
@@ -154,7 +177,7 @@ export class DraftReferences {
     request: Required<MessageReferenceRequest>;
     resolution: BareResolution | null;
   }[] {
-    const repositories = this.repositories();
+    const repositories = this.distinctRepositories();
     const options = this.options();
     const several = repositories.length > 1;
     const seen = new Set<string>();

@@ -262,6 +262,7 @@ export class MessageComposer {
     () => this.referenceText(),
     () => this.githubRepositories(),
     () => this.referenceOptions(),
+    () => this.offering(),
   );
   /** ID of a message being sent again. */
   private reuseId: string | null = null;
