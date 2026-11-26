@@ -74,9 +74,14 @@ export function repositoryName(fullName: string): string {
 export function sessionGitHubRepositories(
   session: SessionDto | null,
 ): string[] {
-  return (session?.directories ?? [])
-    .filter((directory) => directory.repository?.github)
-    .map((directory) => directory.repository?.fullName ?? '');
+  // Further clones of a repository (add_branch) name it once.
+  return [
+    ...new Set(
+      (session?.directories ?? [])
+        .filter((directory) => directory.repository?.github)
+        .map((directory) => directory.repository?.fullName ?? ''),
+    ),
+  ];
 }
 
 /**
