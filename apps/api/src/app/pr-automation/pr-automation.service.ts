@@ -2469,10 +2469,14 @@ export class PrAutomationService
     if (
       this.sessions.waitsForCi(sessionId) ||
       !this.idle(session) ||
-      [...pending].some((id) => this.deferred.has(id))
+      [...pending].some(
+        (id) =>
+          this.deferred.has(id) || this.timers.has(id) || this.checking.has(id),
+      )
     ) {
       // Again when the session changes (`sessionChanged`), or after the
-      // deferred check of a pull request (its autofix run may come first).
+      // check of a pull request that is deferred, scheduled or running:
+      // its autofix run, ready message or merge comes first.
       return;
     }
     const lines: string[] = [];
