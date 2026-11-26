@@ -196,8 +196,9 @@ interface ScheduledRead {
  * (`SessionsService.setCiWait`): while the head commit's checks run (at
  * most {@link PullRequestChecksTiming.runningWindowMs}), and for {@link
  * PullRequestChecksTiming.ciStartMs} after a new head commit without
- * checks yet. Once they settled on a pull request with autofix, or while
- * Claude said it goes on by itself (`set_waiting_state` "work"), the wait
+ * checks yet. Once they settled on a pull request with autofix, during a
+ * turn, or while Claude said it goes on by itself (`set_waiting_state`
+ * "work"), the wait
  * goes on until the PR automation looked at them (`settled$`), so that a
  * run, ready message or wake follows without `Ready` in between.
  */
@@ -645,10 +646,13 @@ export class PullRequestChecksService implements OnModuleInit, OnModuleDestroy {
       );
     } else if (
       phase === 'running' &&
-      (pull.autofix || this.sessions.claudeGoesOn(pull.sessionId))
+      (pull.autofix ||
+        this.records.get(pull.sessionId)?.status === 'running' ||
+        this.sessions.claudeGoesOn(pull.sessionId))
     ) {
       // The PR automation looks first: a run, a ready message, or a wake
-      // of Claude, who said it goes on by itself.
+      // of Claude, who said (or may still say in its turn) that it goes
+      // on by itself.
       this.sessions.setCiWait(pull.sessionId, pull.id, {
         phase: 'settling',
         untilMs: now + this.timing.ciSettleMs,

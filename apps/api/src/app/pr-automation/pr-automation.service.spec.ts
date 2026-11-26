@@ -794,21 +794,40 @@ describe('PrAutomationService', () => {
           expect(ciWakes()).toHaveLength(1);
         });
 
-        it('does not wake Claude for CI it saw in a turn that started meanwhile', async () => {
-          const { session, pull } = await sessionWithPullRequest();
-          await claudeGoesOn(session.id);
-          const other = jest
-            .spyOn(harness.service, 'waitsForCi')
-            .mockReturnValue(true);
-          await runCi(pull, 'success');
-          // The automation looked; the wake waits for the other CI.
+        /** CI settles during a turn, which then ends with `on`. */
+        const ciDuringTurn = async (
+          sessionId: string,
+          pull: PullRequestDto,
+          on: 'work' | 'user',
+        ) => {
+          await harness.service.sendMessage(sessionId, { text: 'Push it' });
           await waitFor(
-            () => harness.service.ciWaitPhase(session.id, pull.id) === null,
+            () => harness.service.get(sessionId).status === 'running',
           );
-          // The user writes: Claude sees the CI in this turn.
-          await claudeGoesOn(session.id);
-          other.mockRestore();
-          harness.service.publishUpdate(session.id);
+          await runCi(pull, 'success');
+          // The automation looked while the turn ran.
+          await waitFor(
+            () => harness.service.ciWaitPhase(sessionId, pull.id) === null,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          expect(ciWakes()).toHaveLength(0);
+          await setWaiting(on);
+          harness.runner.last.emit(resultMessage(30, 0.03));
+        };
+
+        it('wakes Claude for CI that finished during its turn once the turn ends with work', async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          await ciDuringTurn(session.id, pull, 'work');
+          await waitFor(() => ciWakes().length === 1);
+          expect(ciWakes()[0]).toContain('all 1 check passed');
+        });
+
+        it("does not wake Claude for CI that finished during a turn that ends with the user's turn", async () => {
+          const { session, pull } = await sessionWithPullRequest();
+          await ciDuringTurn(session.id, pull, 'user');
+          await waitFor(
+            () => harness.service.get(session.id).waitingFor === 'message',
+          );
           await new Promise((resolve) => setTimeout(resolve, 50));
           expect(ciWakes()).toHaveLength(0);
         });
