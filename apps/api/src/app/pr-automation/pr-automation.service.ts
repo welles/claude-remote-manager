@@ -18,7 +18,6 @@ import {
 } from '@nestjs/common';
 import type { Subscription } from 'rxjs';
 import {
-  AUTOFIX_MAX_ATTEMPTS_RANGE,
   type AutofixTrigger,
   type CloneLossReport,
   type GitPushAnalysis,
@@ -201,8 +200,6 @@ interface Triggers {
   conflict: boolean;
   /** GitHub reports merge conflicts (run started for them or not). */
   conflicting: boolean;
-  /** At the attempt limit: feedback left out, the review time kept. */
-  limited?: boolean;
   /**
    * The merge queue removed the pull request without merging its head
    * commit: GitHub's reason, and the failed checks of the commit the queue
@@ -415,7 +412,7 @@ export class PrAutomationService
 
   /**
    * Turns autofix, autoclose or automerge of an open pull request on or
-   * off, sets its attempt limit, or resets its attempt count. Automerge
+   * off. Automerge
    * needs autofix: turning it on turns autofix on, turning autofix off
    * turns it off.
    */
@@ -426,9 +423,7 @@ export class PrAutomationService
   ): SessionDto {
     const body = requireObject(request);
     const pull = this.requirePull(sessionId, pullRequestId);
-    const flag = (
-      name: 'autofix' | 'autoclose' | 'automerge' | 'resetAttempts',
-    ) => {
+    const flag = (name: 'autofix' | 'autoclose' | 'automerge') => {
       const value = body[name];
       if (value !== undefined && typeof value !== 'boolean') {
         throw new BadRequestException(`${name} must be a boolean`);
@@ -438,21 +433,8 @@ export class PrAutomationService
     const autofix = flag('autofix');
     const autoclose = flag('autoclose');
     const automerge = flag('automerge');
-    const reset = flag('resetAttempts');
     if (automerge === true && autofix === false) {
       throw new BadRequestException('Automerge needs autofix');
-    }
-    const max = body['maxAttempts'];
-    if (
-      max !== undefined &&
-      (typeof max !== 'number' ||
-        !Number.isInteger(max) ||
-        max < AUTOFIX_MAX_ATTEMPTS_RANGE.min ||
-        max > AUTOFIX_MAX_ATTEMPTS_RANGE.max)
-    ) {
-      throw new BadRequestException(
-        `maxAttempts must be a whole number from ${AUTOFIX_MAX_ATTEMPTS_RANGE.min} to ${AUTOFIX_MAX_ATTEMPTS_RANGE.max}`,
-      );
     }
     if (
       pull.state !== 'open' &&
@@ -493,17 +475,6 @@ export class PrAutomationService
     }
     if (autoclose !== undefined) {
       patch.autoclose = autoclose;
-    }
-    const attempts = reset ? 0 : pull.autofixAttempts;
-    if (reset) {
-      patch.autofixAttempts = 0;
-    }
-    const limit = (max as number | undefined) ?? pull.autofixMaxAttempts;
-    if (max !== undefined) {
-      patch.autofixMaxAttempts = limit;
-    }
-    if (reset || attempts < limit) {
-      patch.autofixGaveUpAt = null;
     }
     this.records.updatePullRequest(pull.id, patch);
     this.sessions.publishUpdate(sessionId);
@@ -681,7 +652,7 @@ export class PrAutomationService
   /**
    * Continues an Autofix run the usage limit stopped (see
    * `SessionAutomationHooks.continueAutofix`): only for pull requests that
-   * are still open with autofix on; no further attempt is counted.
+   * are still open with autofix on.
    */
   private async continueAutofix(
     sessionId: string,
@@ -714,7 +685,7 @@ export class PrAutomationService
 
   /**
    * Stops a running autofix run of a session: the turn is stopped and
-   * autofix is turned off for its pull request (the attempt still counts).
+   * autofix is turned off for its pull request.
    */
   async stop(sessionId: string): Promise<SessionDto> {
     const session = this.requireSession(sessionId);
@@ -1031,66 +1002,6 @@ export class PrAutomationService
       return;
     }
     const threads = merge?.kind === 'threads' ? merge : null;
-    if (current.autofixAttempts >= current.autofixMaxAttempts) {
-      if (triggers.dequeued) {
-        // No run for it: the history says so, and the owner is told once
-        // (by the give-up notification below, or now when autofix gave up
-        // before).
-        this.records.updatePullRequest(pull.id, {
-          mergeQueueRemovedSha: null,
-          mergeQueueRemovedReason: null,
-        });
-        const detail = `The merge queue of ${pull.baseBranch} removed ${pull.repositoryName}#${pull.number} without merging it (${ownerQueueReason(triggers.dequeued.reason)}); autofix is at its attempt limit.`;
-        this.sessions.recordEvent(pull.sessionId, {
-          type: 'notice',
-          level: 'warning',
-          text: detail,
-        });
-        if (current.autofixGaveUpAt) {
-          this.notifications.notifyMergeQueueRemoval(
-            pull.sessionId,
-            pullRequestDto(current),
-            detail,
-          );
-        }
-      }
-      if (
-        triggers.failed.length > 0 ||
-        triggers.feedback.length > 0 ||
-        triggers.conflict ||
-        triggers.dequeued
-      ) {
-        this.giveUp(current, triggers);
-      } else if (threads) {
-        this.giveUp(current, triggers, 'unresolved review threads');
-      }
-      if (triggers.dequeued) {
-        // No ready message for the removed head commit either.
-        this.records.updatePullRequest(pull.id, {
-          autofixReadySha: triggers.headSha,
-        });
-        return;
-      }
-      if (!triggers.ready) {
-        return;
-      }
-      // The session still learns that the pull request is ready, but
-      // without the feedback (or threads) that would need an attempt.
-      await this.startRun(
-        current,
-        repository,
-        {
-          ...triggers,
-          failed: [],
-          feedback: [],
-          conflict: false,
-          dequeued: null,
-          limited: true,
-        },
-        threads,
-      );
-      return;
-    }
     await this.startRun(current, repository, triggers, threads);
   }
 
@@ -1756,39 +1667,6 @@ export class PrAutomationService
     return { approved, changesRequested: false };
   }
 
-  private giveUp(
-    pull: PullRequestRecord,
-    triggers: Triggers,
-    because?: string,
-  ): void {
-    if (pull.autofixGaveUpAt) {
-      return;
-    }
-    this.records.updatePullRequest(pull.id, { autofixGaveUpAt: new Date() });
-    const reason =
-      because ??
-      (triggers.conflict
-        ? `merge conflicts with ${pull.baseBranch}`
-        : triggers.dequeued
-          ? `the merge queue removed it (${ownerQueueReason(triggers.dequeued.reason)})`
-          : triggers.failed.length > 0
-            ? `${triggers.failed.length} check(s) failed again`
-            : 'new reviews or comments');
-    const updated = this.records.pullRequest(pull.id) ?? pull;
-    this.sessions.recordEvent(pull.sessionId, {
-      type: 'notice',
-      level: 'warning',
-      text: `Autofix reached its limit of ${pull.autofixMaxAttempts} attempt(s) for ${pull.repositoryName}#${pull.number} and starts no further runs (${reason}). Raise the limit or reset the count to let it continue.`,
-    });
-    this.notifications.notifyAutofixGaveUp(
-      pull.sessionId,
-      pullRequestDto(updated),
-      pull.autofixAttempts,
-      reason,
-    );
-    this.sessions.publishUpdate(pull.sessionId);
-  }
-
   private async startRun(
     pull: PullRequestRecord,
     repository: FeedbackRepository,
@@ -1851,16 +1729,9 @@ export class PrAutomationService
           : (also ?? 'review');
     // Unresolved threads go along with a ready message of automerge.
     const threads =
-      trigger === 'ready' && current.automerge && !triggers.limited
+      trigger === 'ready' && current.automerge
         ? (unresolved?.counting ?? [])
         : [];
-    // Telling the session that its pull request is ready (once per head
-    // commit) is no attempt, unless feedback that may ask for changes
-    // (or review threads automerge waits for) come along.
-    const counted =
-      trigger !== 'ready' ||
-      triggers.feedback.length > 0 ||
-      (threads.length > 0 && !triggers.limited);
     const automerge: AutomergeNote | null = !current.automerge
       ? null
       : current.automergeHeldAt
@@ -1869,15 +1740,12 @@ export class PrAutomationService
             current.automergeFailedSha === triggers.headSha
           ? { state: 'refused' }
           : unresolved && trigger === 'ready'
-            ? triggers.limited
-              ? { state: 'limit', count: unresolved.count }
-              : {
-                  state: 'threads',
-                  count: unresolved.count,
-                  counting: unresolved.counting.length,
-                }
+            ? {
+                state: 'threads',
+                count: unresolved.count,
+                counting: unresolved.counting.length,
+              }
             : { state: 'on' };
-    const attempt = current.autofixAttempts + (counted ? 1 : 0);
     const directory = cloneOfPull(session.directories, pull);
     const branch = directory?.branch ?? pull.headBranch;
     const feedback = [...triggers.feedback, ...triggers.approvals].sort(
@@ -1896,8 +1764,6 @@ export class PrAutomationService
                 : feedback.length > 0
                   ? 'approvals'
                   : 'none',
-            attempt: counted ? attempt : null,
-            maxAttempts: current.autofixMaxAttempts,
             approved: triggers.approved,
             automerge,
           })
@@ -1905,8 +1771,6 @@ export class PrAutomationService
             repository: pull.repositoryName,
             number: pull.number,
             trigger,
-            attempt,
-            maxAttempts: current.autofixMaxAttempts,
             headSha: triggers.headSha,
             branch,
             automerge: current.automerge,
@@ -1950,7 +1814,6 @@ export class PrAutomationService
     const now = new Date();
     const newest = feedback.at(-1)?.createdAt;
     this.records.updatePullRequest(pull.id, {
-      autofixAttempts: attempt,
       autofixLastRunAt: now,
       autofixLastTrigger: trigger,
       ...(triggers.failed.length > 0
@@ -1967,14 +1830,12 @@ export class PrAutomationService
       ...(triggers.dequeued
         ? { mergeQueueRemovedSha: null, mergeQueueRemovedReason: null }
         : {}),
-      ...(newest && !triggers.limited
-        ? { autofixReviewsAfter: new Date(newest) }
-        : {}),
+      ...(newest ? { autofixReviewsAfter: new Date(newest) } : {}),
     });
     this.logger.log(
-      trigger === 'ready' && !counted
+      trigger === 'ready'
         ? `Told the session that ${pull.repositoryName}#${pull.number} is ready to merge`
-        : `Autofix run ${attempt}/${current.autofixMaxAttempts} for ${pull.repositoryName}#${pull.number} (${trigger})`,
+        : `Autofix run for ${pull.repositoryName}#${pull.number} (${trigger})`,
     );
     const removal = triggers.dequeued ? removalKey(current) : null;
     if (triggers.dequeued && removal && !this.queueRemovalsTold.has(removal)) {
@@ -1995,9 +1856,8 @@ export class PrAutomationService
         autofixRun: true,
       });
     } catch (error) {
-      // The run did not start: it does not count.
+      // The run did not start: it is tried again later.
       this.records.updatePullRequest(pull.id, {
-        autofixAttempts: current.autofixAttempts,
         autofixCiHandledSha: current.autofixCiHandledSha,
         autofixConflictSha: current.autofixConflictSha,
         autofixReadySha: current.autofixReadySha,

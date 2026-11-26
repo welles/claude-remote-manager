@@ -113,9 +113,6 @@ export type PullRequestPatch = Partial<
       | 'mergeConflict'
       | 'autofix'
       | 'autoclose'
-      | 'autofixMaxAttempts'
-      | 'autofixAttempts'
-      | 'autofixGaveUpAt'
       | 'autofixCiHandledSha'
       | 'autofixConflictSha'
       | 'autofixReadySha'
@@ -182,7 +179,6 @@ export interface SessionRecord {
   reviewMode: ReviewMode;
   reviewModel: string | null;
   reviewEffort: ReviewEffort | null;
-  autoReviewRounds: number;
   reviewedDiff: string | null;
 }
 
@@ -230,7 +226,6 @@ export type SessionPatch = Partial<
     | 'reviewMode'
     | 'reviewModel'
     | 'reviewEffort'
-    | 'autoReviewRounds'
     | 'reviewedDiff'
   >
 >;

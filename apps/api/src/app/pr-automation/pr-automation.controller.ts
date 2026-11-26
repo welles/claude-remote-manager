@@ -27,7 +27,7 @@ import { PrAutomationService } from './pr-automation.service';
 export class PrAutomationController {
   constructor(private readonly automation: PrAutomationService) {}
 
-  /** Switches autofix or autoclose, sets the attempt limit or resets the count. */
+  /** Switches autofix, autoclose or automerge. */
   @Patch('pull-requests/:pullRequestId/automation')
   update(
     @Param('id') id: string,

@@ -6,7 +6,7 @@
  *   continues the session with that content (as untrusted context);
  *   Claude may then push exactly the session branch without asking (the
  *   app pushes it, without force); once the head commit passed all
- *   checks and is approved, the session is told so (no attempt); when
+ *   checks and is approved, the session is told so; when
  *   GitHub reports merge conflicts with the base branch, the session is
  *   asked to rebase onto it and may push the session branch with
  *   `--force-with-lease` without asking (the app pushes it, with a lease);
@@ -23,7 +23,7 @@
 
 /**
  * What started an autofix run; `ready`: the session was told that the
- * pull request passed all checks and is approved (no attempt); `conflict`:
+ * pull request passed all checks and is approved; `conflict`:
  * the pull request has merge conflicts with its base branch (failed checks
  * and feedback may come along); `queue`: the merge queue removed the
  * pull request without merging it.
@@ -54,12 +54,6 @@ export interface PullRequestAutomationDto {
   autofix: boolean;
   autoclose: boolean;
   automerge: AutomergeStateDto;
-  /** Autofix runs started for this pull request (survives restarts). */
-  attempts: number;
-  /** Runs allowed; afterwards the owner is notified instead. */
-  maxAttempts: number;
-  /** The limit stopped a run (cleared by a reset or a higher limit). */
-  gaveUp: boolean;
   /** An autofix run is going on in the session. */
   running: boolean;
   lastRunAt: string | null;
@@ -80,10 +74,6 @@ export interface AutomergeStateDto {
   waiting: string | null;
 }
 
-/** Attempt limits a user may choose. */
-export const AUTOFIX_MAX_ATTEMPTS_RANGE = { min: 1, max: 20 } as const;
-export const AUTOFIX_DEFAULT_MAX_ATTEMPTS = 3;
-
 /**
  * Body of `PATCH /api/sessions/:id/pull-requests/:pullRequestId/automation`;
  * every field is optional.
@@ -96,9 +86,6 @@ export interface UpdatePullRequestAutomationRequest {
    * Turning it on (again) lifts a hold and retries a refused merge.
    */
   automerge?: boolean;
-  maxAttempts?: number;
-  /** Sets the attempt count back to 0. */
-  resetAttempts?: boolean;
 }
 
 /**

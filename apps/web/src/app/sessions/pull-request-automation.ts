@@ -1,5 +1,4 @@
 import { AppDatePipe } from '../ui/dates';
-import { AppIcon } from '../ui/icon';
 import { Component, computed, inject, input, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import {
@@ -7,7 +6,6 @@ import {
   type MatSlideToggleChange,
 } from '@angular/material/slide-toggle';
 import {
-  AUTOFIX_MAX_ATTEMPTS_RANGE,
   type AutofixTrigger,
   type PullRequestDto,
   type UpdatePullRequestAutomationRequest,
@@ -26,13 +24,13 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
 
 /**
  * Autofix, autoclose and automerge of one open pull request: the switches,
- * attempts and limit, what started the last run, Stop while a run goes on,
+ * what started the last run, Stop while a run goes on,
  * and what automerge waits for. Changes arrive back as session updates
  * over the WebSocket.
  */
 @Component({
   selector: 'app-pull-request-automation',
-  imports: [AppDatePipe, AppIcon, MatButtonModule, MatSlideToggleModule],
+  imports: [AppDatePipe, MatButtonModule, MatSlideToggleModule],
   template: `
     @let automation = pull().automation;
     <div
@@ -61,47 +59,6 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
         data-testid="automerge-toggle"
         >Automerge</mat-slide-toggle
       >
-      <span
-        class="type-body-small"
-        [class]="automation.gaveUp ? 'text-error' : 'text-on-surface-variant'"
-        data-testid="autofix-attempts"
-        title="Autofix runs started for this pull request, and the limit"
-      >
-        Attempts {{ automation.attempts }} / {{ automation.maxAttempts }}
-      </span>
-      <span class="-ml-2 inline-flex">
-        <button
-          type="button"
-          class="icon-btn"
-          aria-label="Lower the attempt limit"
-          [disabled]="busy() || automation.maxAttempts <= range.min"
-          (click)="save({ maxAttempts: automation.maxAttempts - 1 })"
-          data-testid="autofix-limit-down"
-        >
-          <app-icon name="minus" />
-        </button>
-        <button
-          type="button"
-          class="icon-btn"
-          aria-label="Raise the attempt limit"
-          [disabled]="busy() || automation.maxAttempts >= range.max"
-          (click)="save({ maxAttempts: automation.maxAttempts + 1 })"
-          data-testid="autofix-limit-up"
-        >
-          <app-icon name="plus" />
-        </button>
-      </span>
-      @if (automation.attempts > 0) {
-        <button
-          matButton
-          type="button"
-          [disabled]="busy()"
-          (click)="save({ resetAttempts: true })"
-          data-testid="autofix-reset"
-        >
-          Reset count
-        </button>
-      }
     </div>
     @if (automation.running) {
       <p
@@ -118,14 +75,6 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
         >
           Stop autofix
         </button>
-      </p>
-    } @else if (automation.gaveUp) {
-      <p
-        class="my-0.5 type-body-small text-error"
-        data-testid="autofix-gave-up"
-      >
-        Limit reached: autofix starts no further runs. Raise the limit or reset
-        the count to continue.
       </p>
     } @else if (automation.lastRunAt) {
       <p
@@ -183,7 +132,6 @@ export class PullRequestAutomation {
   readonly sessionId = input.required<string>();
   readonly pull = input.required<PullRequestDto>();
 
-  protected readonly range = AUTOFIX_MAX_ATTEMPTS_RANGE;
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly trigger = computed(() => {

@@ -18,7 +18,6 @@ const TAGS: Record<NotificationEventType, string> = {
   turn_finished: 'white_check_mark',
   stalled: 'hourglass',
   failed: 'x',
-  autofix_gave_up: 'wrench',
   automerge: 'question',
   merge_queue: 'leftwards_arrow_with_hook',
   pull_request_closed: 'twisted_rightwards_arrows',

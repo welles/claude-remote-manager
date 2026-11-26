@@ -28,24 +28,11 @@ import { PullRequestFeedback } from './pull-request-feedback';
 
 /** Notifications the automation sent. */
 class RecordingNotifications {
-  readonly gaveUp: {
-    sessionId: string;
-    pull: PullRequestDto;
-    attempts: number;
-  }[] = [];
   readonly closed: {
     sessionId: string;
     pull: PullRequestDto;
     note: string | null;
   }[] = [];
-  notifyAutofixGaveUp(
-    sessionId: string,
-    pull: PullRequestDto,
-    attempts: number,
-  ) {
-    this.gaveUp.push({ sessionId, pull, attempts });
-    return true;
-  }
   readonly automerge: {
     sessionId: string;
     pull: PullRequestDto;
@@ -322,7 +309,6 @@ describe('PrAutomationService', () => {
 
       const messages = appMessages();
       expect(messages).toHaveLength(1);
-      expect(messages[0].text).toContain('attempt 1 of 3');
       expect(messages[0].text).toContain('alice/app#1');
       expect(messages[0].text).not.toContain('@');
       const context = messages[0].context?.text ?? '';
@@ -339,7 +325,6 @@ describe('PrAutomationService', () => {
         .find((event) => event.text.startsWith('Autofix'));
       expect(user?.origin).toBe('app');
       expect(record(pull)).toMatchObject({
-        autofixAttempts: 1,
         autofixLastTrigger: 'ci',
         autofixRunning: true,
         autofixCiHandledSha: head,
@@ -347,8 +332,6 @@ describe('PrAutomationService', () => {
       expect(
         harness.service.get(session.id).pullRequests[0].automation,
       ).toMatchObject({
-        attempts: 1,
-        maxAttempts: 3,
         running: true,
         lastTrigger: 'ci',
       });
@@ -416,7 +399,6 @@ describe('PrAutomationService', () => {
       await automation.check(pull.id);
 
       expect(appMessages()).toHaveLength(0);
-      expect(record(pull).autofixAttempts).toBe(0);
     });
 
     it('waits for the other checks of the commit before starting the run', async () => {
@@ -474,7 +456,6 @@ describe('PrAutomationService', () => {
 
       harness.runner.last.emit(resultMessage(30, 0.03));
       await waitFor(() => appMessages().length === 1);
-      expect(record(pull).autofixAttempts).toBe(1);
     });
 
     const setWaitingState = (input: Record<string, unknown>) => {
@@ -512,7 +493,6 @@ describe('PrAutomationService', () => {
       failingCheck(fakePull(pull.number).headSha);
       await automation.check(pull.id);
       expect(appMessages()).toHaveLength(1);
-      expect(record(pull).autofixAttempts).toBe(1);
     });
 
     it('runs a check deferred during the turn once Claude says it waits by itself', async () => {
@@ -697,9 +677,9 @@ describe('PrAutomationService', () => {
       expect(harness.service.get(session.id).status).toBe('running');
     });
 
-    it('stops after the attempt limit, notifies once, and continues after a reset', async () => {
+    it('has no attempt limit: every new failing head commit gets a run', async () => {
       const { session, pull } = await sessionWithPullRequest();
-      automation.update(session.id, pull.id, { autofix: true, maxAttempts: 1 });
+      enableAutofix(session.id, pull);
       const failing = (commit: string, id: number) =>
         harness.github.checkRuns.set(commit, [
           {
@@ -720,31 +700,19 @@ describe('PrAutomationService', () => {
       fakePull(pull.number).headSha = sha('c');
       failing(sha('c'), 52);
       await automation.check(pull.id);
+      expect(appMessages()).toHaveLength(2);
+      harness.runner.last.emit(resultMessage(40, 0.04));
+      await waitFor(() => !record(pull).autofixRunning);
+
+      // And again: still no limit.
+      fakePull(pull.number).headSha = sha('d');
+      failing(sha('d'), 53);
       await automation.check(pull.id);
-
-      expect(appMessages()).toHaveLength(1);
-      expect(notifications.gaveUp).toHaveLength(1);
-      expect(notifications.gaveUp[0].attempts).toBe(1);
-      expect(
-        harness.service.get(session.id).pullRequests[0].automation.gaveUp,
-      ).toBe(true);
-      expect(
-        harness
-          .eventsOfType(session.id, 'notice')
-          .some((event) => event.text.includes('reached its limit')),
-      ).toBe(true);
-
-      automation.update(session.id, pull.id, { resetAttempts: true });
-      expect(
-        harness.service.get(session.id).pullRequests[0].automation,
-      ).toMatchObject({
-        attempts: 0,
-        gaveUp: false,
-      });
-      await waitFor(() => appMessages().length === 2);
+      expect(appMessages()).toHaveLength(3);
+      expect(appMessages()[2].text).not.toContain('attempt');
     });
 
-    it('keeps the attempt count across restarts', async () => {
+    it('ends the running mark of a run cut off by a restart', async () => {
       const { session, pull } = await sessionWithPullRequest();
       harness.github.checkRuns.set(fakePull(pull.number).headSha, [
         {
@@ -757,13 +725,11 @@ describe('PrAutomationService', () => {
       ]);
       enableAutofix(session.id, pull);
       await automation.check(pull.id);
-      expect(record(pull).autofixAttempts).toBe(1);
 
       automation.onModuleDestroy();
       createAutomation();
 
       expect(record(pull)).toMatchObject({
-        autofixAttempts: 1,
         autofixRunning: false,
       });
     });
@@ -859,7 +825,6 @@ describe('PrAutomationService', () => {
       await automation.check(pull.id);
 
       expect(appMessages()).toHaveLength(0);
-      expect(record(pull).autofixAttempts).toBe(0);
     });
 
     it('does nothing with autofix off', async () => {
@@ -955,9 +920,7 @@ describe('PrAutomationService', () => {
       expect(context).toContain('No open findings.');
       expect(context).toContain('Summary: looks good.');
       // The bot's comment may ask for changes: an attempt.
-      expect(messages[0].text).toContain('attempt 1 of 3');
       expect(record(pull)).toMatchObject({
-        autofixAttempts: 1,
         autofixLastTrigger: 'ready',
         autofixReadySha: head,
         autofixRunning: true,
@@ -1003,7 +966,6 @@ describe('PrAutomationService', () => {
       expect(readyMessages()[0].context?.text ?? '').toContain(
         'Summary: no findings.',
       );
-      expect(record(pull).autofixAttempts).toBe(1);
     });
 
     it('counts approvals of people with write access, without context when they wrote nothing', async () => {
@@ -1025,47 +987,6 @@ describe('PrAutomationService', () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].context).toBeFalsy();
       expect(messages[0].text).not.toContain('untrusted context');
-      expect(record(pull).autofixAttempts).toBe(0);
-    });
-
-    it('sends approval text without an attempt, and at the limit leaves feedback to the give-up notice', async () => {
-      trustReviewer();
-      const { session, pull } = await sessionWithPullRequest();
-      const head = fakePull(pull.number).headSha;
-      automation.update(session.id, pull.id, { autofix: true, maxAttempts: 1 });
-      harness.sessions.updatePullRequest(pull.id, { autofixAttempts: 1 });
-      green(head);
-      addReview(pull, {
-        kind: 'review',
-        author: REVIEWER,
-        authorType: 'Bot',
-        state: 'APPROVED',
-        body: 'Fine.',
-        commitId: head,
-      });
-      addReview(pull, {
-        kind: 'comment',
-        author: REVIEWER,
-        authorType: 'Bot',
-        body: 'Nit: rename the helper.',
-      });
-      const before = record(pull).autofixReviewsAfter;
-
-      await automation.check(pull.id);
-
-      const messages = readyMessages();
-      expect(messages).toHaveLength(1);
-      expect(messages[0].text).not.toContain('commit and push');
-      const context = messages[0].context?.text ?? '';
-      expect(context).toContain('Fine.');
-      expect(context).not.toContain('rename the helper');
-      expect(notifications.gaveUp).toHaveLength(1);
-      expect(record(pull)).toMatchObject({
-        autofixAttempts: 1,
-        autofixReadySha: head,
-      });
-      // The feedback stays new for a run after a reset.
-      expect(record(pull).autofixReviewsAfter).toEqual(before);
     });
 
     it('is not ready while a check was cancelled', async () => {
@@ -1207,7 +1128,6 @@ describe('PrAutomationService', () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].context?.text ?? '').toContain('lacks a test');
       expect(record(pull)).toMatchObject({
-        autofixAttempts: 1,
         autofixLastTrigger: 'review',
       });
     });
@@ -1646,7 +1566,6 @@ describe('PrAutomationService', () => {
       // Only threads of reviewers who count go to Claude.
       expect(context).not.toContain('Drive-by remark');
       expect(record(pull)).toMatchObject({
-        autofixAttempts: 1,
         automergeWaiting: '2 unresolved review threads',
       });
       expect(
@@ -1982,7 +1901,7 @@ describe('PrAutomationService', () => {
       expect(harness.github.merges).toHaveLength(0);
     });
 
-    it('gives Claude no threads of people who do not count, and costs no attempt for them', async () => {
+    it('gives Claude no threads of people who do not count', async () => {
       const { session, pull } = await sessionWithPullRequest();
       enableAutomerge(session.id, pull);
       greenAndApproved(pull);
@@ -1999,31 +1918,7 @@ describe('PrAutomationService', () => {
         'none of them by reviewers the app trusts',
       );
       expect(message.context).toBeUndefined();
-      expect(record(pull).autofixAttempts).toBe(0);
       expect(notifications.automerge).toMatchObject([{ kind: 'waiting' }]);
-    });
-
-    it('says so at the attempt limit instead of promising a merge', async () => {
-      const { session, pull } = await sessionWithPullRequest();
-      automation.update(session.id, pull.id, {
-        automerge: true,
-        maxAttempts: 1,
-      });
-      harness.sessions.updatePullRequest(pull.id, { autofixAttempts: 1 });
-      greenAndApproved(pull);
-      threadsOf(pull).push({
-        resolved: false,
-        author: REVIEWER,
-        authorType: 'Bot',
-        body: 'Hint: rename this.',
-      });
-
-      await automation.check(pull.id);
-
-      const message = readyMessages()[0];
-      expect(message.text).toContain('reached its attempt limit');
-      expect(message.context).toBeUndefined();
-      expect(notifications.gaveUp).toHaveLength(1);
     });
 
     it('retries a merge GitHub refused for now (the base branch moved)', async () => {
@@ -2225,7 +2120,6 @@ describe('PrAutomationService', () => {
         );
         expect(messages[0].text).not.toContain('the app merges it by itself');
         expect(record(pull)).toMatchObject({
-          autofixAttempts: 1,
           autofixLastTrigger: 'queue',
           mergeQueuedSha: null,
           mergeQueueRemovedSha: null,
@@ -2263,25 +2157,6 @@ describe('PrAutomationService', () => {
         expect(notices(session.id).at(-1)).toContain(
           'left the merge queue: its head commit changed',
         );
-      });
-
-      it('sends no ready message after a removal at the attempt limit, and notifies once', async () => {
-        const { session, pull, head } = await queuedPull();
-        automation.update(session.id, pull.id, { maxAttempts: 1 });
-        harness.sessions.updatePullRequest(pull.id, { autofixAttempts: 1 });
-        harness.github.removeFromQueue(pull.number, 'CI_FAILURE');
-
-        await automation.check(pull.id);
-
-        expect(readyMessages()).toHaveLength(0);
-        expect(appMessages()).toHaveLength(0);
-        expect(notifications.gaveUp).toHaveLength(1);
-        expect(notifications.queueRemovals).toHaveLength(0);
-        expect(record(pull)).toMatchObject({
-          autofixReadySha: head,
-          mergeQueueRemovedSha: null,
-          automergeFailedSha: head,
-        });
       });
 
       it('wakes Claude after its turn when the queue removed the pull request during it', async () => {
@@ -2543,7 +2418,6 @@ describe('PrAutomationService', () => {
       expect(messages[0].context).toBeUndefined();
       expect(record(pull)).toMatchObject({
         mergeConflict: true,
-        autofixAttempts: 1,
         autofixLastTrigger: 'conflict',
         autofixConflictSha: head,
         autofixRunning: true,
@@ -2574,10 +2448,9 @@ describe('PrAutomationService', () => {
       });
     });
 
-    it('takes failed checks along as context, and gives up at the limit', async () => {
+    it('takes failed checks along as context, and rebases again for a new head commit', async () => {
       const { session, pull } = await sessionWithPullRequest();
       enableAutofix(session.id, pull);
-      automation.update(session.id, pull.id, { maxAttempts: 1 });
       const head = conflicting(pull);
       harness.github.checkRuns.set(head, [
         {
@@ -2603,16 +2476,10 @@ describe('PrAutomationService', () => {
 
       harness.runner.last.emit(resultMessage(20, 0.02));
       await waitFor(() => !record(pull).autofixRunning);
-      // A new head commit that still conflicts: the limit is reached.
+      // A new head commit that still conflicts: another run (no limit).
       fakePull(pull.number).headSha = sha('d');
       await automation.check(pull.id);
-      expect(appMessages()).toHaveLength(1);
-      expect(notifications.gaveUp).toHaveLength(1);
-      expect(
-        harness
-          .eventsOfType(session.id, 'notice')
-          .some((event) => event.text.includes('(merge conflicts with main)')),
-      ).toBe(true);
+      expect(appMessages()).toHaveLength(2);
     });
   });
 
@@ -4180,7 +4047,6 @@ Co-Authored-By: Claude <noreply@anthropic.com>" && git push origin HEAD`,
       expect(harness.service.inAutofixRun(session.id)).toBe(true);
       expect(record(pull)).toMatchObject({
         autofixRunning: true,
-        autofixAttempts: 1,
       });
     });
 

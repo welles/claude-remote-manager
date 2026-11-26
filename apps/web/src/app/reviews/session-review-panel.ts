@@ -97,17 +97,6 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
       </mat-select>
       <mat-hint data-testid="review-mode-hint"
         >{{ modeLabels[review?.mode ?? defaultMode].hint }}
-        @if (review && review.mode !== 'off') {
-          @if (defaults(); as d) {
-            @if (review.autoRounds >= d.maxAutoRounds) {
-              Paused after {{ d.maxAutoRounds }} rounds with findings until you
-              write.
-            } @else if (review.autoRounds > 0) {
-              {{ review.autoRounds }} of {{ d.maxAutoRounds }} rounds with
-              findings.
-            }
-          }
-        }
       </mat-hint>
     </mat-form-field>
     <mat-form-field appearance="outline" subscriptSizing="dynamic">

@@ -1006,8 +1006,7 @@ notification (`turn_finished`) reads "Usage limit: …" with how long until it c
   wait); they go to Claude then, in the running process or a new one that starts with the first
   of them. Without them the app tells Claude that the limit stopped its last turn and has reset,
   to continue where it left off and to check background tasks of that turn first (they may have
-  ended with it). An Autofix run continues as one (no further attempt is counted;
-  it shows as going on again, and Stop Autofix works) if autofix is still on for its pull request
+  ended with it). An Autofix run continues as one (it shows as going on again, and Stop Autofix works) if autofix is still on for its pull request
   and it is open, else as an ordinary turn; with held
   messages it is not continued as such: the user's messages go instead.
 - **The user decides otherwise:** the session view shows a banner with "Continue now"
@@ -1201,7 +1200,6 @@ switchable per event on the Settings page (stored in `app_settings`):
 | Turn finished                 | a turn ended and Claude waits for the next message (not after Stop or a denial)                            | the next turn starts or the session ends |
 | Session hangs                 | a running turn without any event for `SESSION_STALL_MINUTES` (once per stall)                              | activity resumes or the turn ends        |
 | Session failed                | the session failed, or a setup script failed and the first message is held back                            | the session continues                    |
-| Autofix gave up               | the PR automation reached its attempt limit (reported by the PR automation)                                | –                                        |
 | Automerge needs you           | Claude asked for the owner's decision, GitHub refused the merge, or threads stay open that no run works on | –                                        |
 | Removed from merge queue      | a merge queue removed a pull request without merging it, and no autofix run works on it                    | –                                        |
 | Pull request merged or closed | a pull request of the session was merged or closed (reported by the PR automation)                         | –                                        |
@@ -1264,7 +1262,6 @@ derived from its tag; withdrawing it deletes it in the ntfy apps
 (e.g. `HTTP 401: unauthorized`), never with the token.
 
 **For the PR automation**: `NotificationsService` (exported by `NotificationsModule`) has
-`notifyAutofixGaveUp(sessionId, pullRequest, attempts, reason)`,
 `notifyAutomerge(sessionId, pullRequest, kind, detail)` (`held` with Claude's question,
 `failed` with GitHub's reason, `waiting` for threads nobody works on) and
 `notifyPullRequestClosed(sessionId, pullRequest, note)` (merged or closed by
@@ -1411,8 +1408,7 @@ its branches and tags, and points the existing session clones' `origin` there (s
   button or by Claude: number, URL, title, state (`open`, `closed`, `merged`), draft, head and
   base branch, creator (`user`/`claude`), opened/closed/merged times and when the state was
   last read from GitHub (open ones at most once a minute when the session is opened), the
-  head commit, and the PR automation per pull request: `autofix`, `autoclose`, attempts and
-  limit, when the limit stopped a run, the head commit whose failed checks were handled, the
+  head commit, and the PR automation per pull request: `autofix`, `autoclose`, the head commit whose failed checks were handled, the
   time after which reviews are new, the last run and what triggered it, whether a run is
   going on, when the merge or close was handled; for automerge: `automerge`, the hold
   (`automerge_held_at`, `automerge_hold_reason`: Claude's question), the head commit GitHub
@@ -1855,7 +1851,7 @@ repository on GitHub and attach it.
 ## PR automation
 
 Per open pull request of a session the session view (git panel) offers three switches, all
-off by default, with the attempt count and limit, "Reset count", what started the last run,
+off by default, with what started the last run,
 "Stop autofix" while a run goes on, and what automerge waits for
 (`apps/api/src/app/pr-automation`).
 
@@ -1866,7 +1862,7 @@ off by default, with the attempt count and limit, "Reset count", what started th
   pull request; while GitHub computes it, the app looks again after 10 seconds, up to three
   times per head commit), a run asks Claude to rebase onto the latest `origin/<base>`, resolve
   the conflicts and push with `git push --force-with-lease` (see
-  [git during autofix](#git-during-autofix)); once per head commit, counted as an attempt,
+  [git during autofix](#git-during-autofix)); once per head commit,
   with failed checks and feedback of the commit along as context. A commit with merge
   conflicts is never "ready": automerge waits ("merge conflicts with main") instead of
   trying a merge GitHub would refuse.
@@ -1955,9 +1951,7 @@ at a time; one asked for meanwhile runs afterwards.
   (`autofix_ready_sha`). New reviews and comments go along as untrusted context; the message
   asks Claude to address what should be changed, or else to merge with `merge_pull_request`
   if the user asked for that (asked as the session's permission mode says), or to tell the
-  user. Such a message is no attempt unless reviews or comments that may ask for changes
-  come along. At the limit it is sent with the text of approvals only, and the rest gets the
-  usual give-up notice. The last trigger shows as "ready to merge". A check that never
+  user. The last trigger shows as "ready to merge". A check that never
   finishes (a status stuck at `pending`, a job waiting for an environment approval) delays
   feedback by the full 30 minutes and keeps the pull request from being ready. Drafts,
   conflicts or branch protection are not looked at: GitHub may still refuse the merge.
@@ -1968,7 +1962,7 @@ at a time; one asked for meanwhile runs afterwards.
   current then (stale CI results are dropped on the way). The owner's own messages are never
   held back by the automation.
 - **The run**: a message composed by the app (`origin: 'app'`, shown in the history as "Sent
-  by the app · PR automation"): fixed text with the attempt, the repository, the pull request
+  by the app · PR automation"): fixed text with the repository, the pull request
   number, the head commit and the session branch, nothing written by others. The failed
   checks (name, conclusion, output title and summary, and for GitHub Actions jobs an excerpt
   of the job's log: colour codes and timestamps removed, from before the first to after the
@@ -1977,14 +1971,12 @@ at a time; one asked for meanwhile runs afterwards.
   the diff hunk, each at most 4,000 characters, the latest 50) go as untrusted context
   (`SessionsService.sendMessage` with `untrusted`, see [Untrusted content](#github-references-123)),
   at most 60,000 characters with a note on what was left out.
-- **Attempts** are counted per pull request in the database (so they survive restarts) when a
-  run starts; a run that could not start is not counted. Default limit 3, adjustable from 1 to
-  20 per pull request. At the limit no run starts; the owner is notified once
-  (`notifyAutofixGaveUp`) and the history says so. Only the owner resets the count ("Reset
-  count") or raises the limit; turning autofix off and on does not reset it.
-- **Stop autofix** stops the running turn and turns autofix off for that pull request; the
-  attempt counts.
-- **Several pull requests** (one per repository): switches, counts and runs are per pull
+- **No attempt limit** (the owner's decision, 2026-11-26): autofix starts a run for every new
+  trigger (each new failing head commit, new feedback, conflict or queue removal) without
+  counting; once per head commit and trigger as described above. The columns of the former
+  limit (`autofix_max_attempts`, `autofix_attempts`, `autofix_gave_up_at`) stay unused.
+- **Stop autofix** stops the running turn and turns autofix off for that pull request.
+- **Several pull requests** (one per repository): switches and runs are per pull
   request; a session runs one autofix run at a time, the others wait until it is idle again.
 
 ### Automerge
@@ -2007,8 +1999,8 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   says the method is not allowed or the branch cannot be rebased). The merge is then seen like
   any other: notification "Merged", autoclose if on. The history says how it merged.
 - **Findings first**: unresolved threads on a ready head commit go along with the
-  ready message (once per head commit, as untrusted context, only those whose author counts;
-  an attempt only when such threads go along), which asks Claude to fix every finding, also
+  ready message (once per head commit, as untrusted context, only those whose author counts),
+  which asks Claude to fix every finding, also
   hints, commit and push, then reply on each thread with what changed and resolve it with
   `reply_to_review_thread` (the context gives each review comment and thread its
   `comment-id`); findings it does not fix get a reply with the reason and stay unresolved.
@@ -2021,8 +2013,7 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   After a run ends, the pull request is checked again (nothing left may mean ready). When
   threads stay open that no run works on (Claude left them without asking the owner, or none
   of them is by someone who counts, whose text never reaches Claude), the owner is notified
-  once per head commit ("Automerge is stuck"). At the attempt limit the ready message says
-  that the limit stops the work, and the usual give-up notice follows.
+  once per head commit ("Automerge is stuck").
 - **The owner's decision**: when a finding needs the owner (a product or design decision, a
   trade-off, scope, or Claude thinks it is wrong), Claude calls the app's tool
   `request_owner_decision` with its question (offered to sessions with a GitHub clone; never
@@ -2055,11 +2046,11 @@ Automerge works through autofix; turning it on turns autofix on, turning autofix
   it in no queue over at least five minutes count as a removal with an unknown reason): if the head commit
   changed since the app added it (a push), the history only says so and automerge adds the new head commit once it is ready.
   Otherwise, as for failed checks (the owner's decision): with autofix an Autofix run starts
-  (trigger `queue`, an attempt) with the reason in the app's text (only GitHub's enum names,
+  (trigger `queue`) with the reason in the app's text (only GitHub's enum names,
   in plain words) and the failed checks of the merge group's commit (with job logs) as
   untrusted context; automerge does not add that head commit again (as for a refused merge,
   the next head commit or turning it off and on tries again) and no ready message follows for
-  it. At the attempt limit, and without autofix, the history says so and the owner is notified
+  it. Without autofix the history says so and the owner is notified
   ("Removed from merge queue"); without autofix Claude is also woken if it said it goes on by
   itself (after the end of a turn during which the removal came). Adding the same commit again
   (with approval) makes an earlier removal moot. Whether the GitHub App needs the repository permission "Merge queues" for
@@ -2197,8 +2188,8 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
   characters; files beyond that are listed for it to read. Nothing of the conversation goes
   to it.
 - **Settings:** `GET`/`PUT /api/settings/review` (`app_settings` key `review`): model
-  (default `claude-fable-5-2`), effort (default `high`) and the auto-review round limit
-  (default 3), on the Settings page. Per session (`PUT /api/sessions/:id/review-settings`,
+  (default `claude-fable-5-2`), effort (default `high`), on the Settings page (a stored
+  `maxAutoRounds` of the former round limit is ignored). Per session (`PUT /api/sessions/:id/review-settings`,
   in the session's details): the review mode (`sessions.review_mode`), and a model and effort
   of its own (`null`: the app's default).
 - **Starting:** `POST /api/sessions/:id/review` ("Review now" in the session's details) starts
@@ -2215,16 +2206,16 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
   none, or that the review failed or was cancelled (so Claude, waiting before its pull
   request, goes on). `claude-md/core.md` tells Claude to ask after a finished, locally
   checked work package, before a pull request or push. The tool refuses while a review runs,
-  without changes, for a diff already reviewed (same fingerprint as below), at the round
-  limit, without a repository, or with mode `off`.
+  without changes, for a diff already reviewed (same fingerprint as below), without a
+  repository, or with mode `off`.
 - **Auto-review** (mode `turn`): when a session's turn is over (it waits for a message, or
   only for what Claude goes on with by itself) and the fingerprint of its diff's content
   (`sessions.reviewed_diff`; not commits or line numbers, so committing or rebasing reviewed
   changes does not count) changed since the last review, a review starts (also once a review
   ends that ran while the turn ended), also after the turns that fix findings.
-  Rounds with findings of auto-reviews and Claude's requests count
-  (`sessions.auto_review_rounds`); at the limit both pause (a notice in the history) until the
-  owner writes; a review without findings resets the count too.
+  There is no round limit (the owner's decision, 2026-11-26): rounds with findings are not
+  counted (`sessions.auto_review_rounds` stays unused), and reviews go on until one finds
+  nothing or the diff stops changing.
 - **Findings** go to Claude right away as the app's message ("An independent review …",
   shown as "Sent by the app · Review"), queued while a turn runs; the findings themselves go
   along as untrusted context (the reviewer read repository content). Without findings Claude

@@ -7,10 +7,8 @@ import {
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule, type MatSelect } from '@angular/material/select';
 import {
-  MAX_AUTO_REVIEW_ROUNDS,
   REVIEW_EFFORTS,
   type UpdateReviewDefaultsRequest,
 } from '@claude-remote-manager/shared-types';
@@ -22,18 +20,12 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
 
 /**
  * The app's review settings on the Settings page: the reviewer's model and
- * effort for sessions that do not choose their own, and after how many
- * auto-review rounds with findings auto-review pauses.
+ * effort for sessions that do not choose their own.
  */
 @Component({
   selector: 'app-review-settings',
   host: { class: 'app-compact flex flex-col gap-4' },
-  imports: [
-    MatButtonModule,
-    MatFormFieldModule,
-    MatInputModule,
-    MatSelectModule,
-  ],
+  imports: [MatButtonModule, MatFormFieldModule, MatSelectModule],
   template: `
     <p class="m-0 text-on-surface-variant">
       An independent Claude reviews a session's changes, read-only and without
@@ -79,24 +71,6 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
           }
         </mat-select>
       </mat-form-field>
-      <mat-form-field appearance="outline" subscriptSizing="dynamic">
-        <mat-label>Review rounds</mat-label>
-        <input
-          matInput
-          type="number"
-          min="1"
-          [max]="maxRounds"
-          [value]="d.maxAutoRounds"
-          (change)="saveRounds($event)"
-          [disabled]="busy()"
-          data-testid="review-default-rounds"
-        />
-        <mat-hint
-          >Reviews that start by themselves (after a turn, or when Claude asks)
-          pause after this many rounds with findings in a row, until you
-          write.</mat-hint
-        >
-      </mat-form-field>
     }
   `,
 })
@@ -107,7 +81,6 @@ export class ReviewSettings implements OnInit {
 
   protected readonly efforts = REVIEW_EFFORTS;
   protected readonly effortLabels = EFFORT_LABELS;
-  protected readonly maxRounds = MAX_AUTO_REVIEW_ROUNDS;
   private readonly state = inject(ReviewDefaultsState);
   protected readonly defaults = this.state.value;
   protected readonly loadError = computed(() =>
@@ -138,20 +111,6 @@ export class ReviewSettings implements OnInit {
     return () => {
       select.value = value;
     };
-  }
-
-  protected saveRounds(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    const previous = this.defaults()?.maxAutoRounds;
-    const revert = () => {
-      input.value = previous === undefined ? '' : String(previous);
-    };
-    const value = Number(input.value);
-    if (Number.isInteger(value) && value >= 1 && value <= this.maxRounds) {
-      this.save({ maxAutoRounds: value }, revert);
-    } else {
-      revert();
-    }
   }
 
   /** Saves a change; `revert` puts its control back if that fails. */

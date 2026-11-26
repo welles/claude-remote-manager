@@ -201,13 +201,12 @@ describe('SessionGitPanel', () => {
       ...overrides,
     });
 
-    it('switches autofix and autoclose and shows the attempts', async () => {
-      const { fixture, element, all, click } = await render(
-        githubSession({
-          pullRequests: [pull({ automation: automation({ attempts: 1 }) })],
-        }),
+    it('switches autofix, without attempts or a limit', async () => {
+      const { element, all } = await render(
+        githubSession({ pullRequests: [pull()] }),
       );
-      expect(all('autofix-attempts')).toEqual(['Attempts 1 / 3']);
+      expect(all('autofix-attempts')).toEqual([]);
+      expect(all('autofix-limit-up')).toEqual([]);
       (
         element.querySelector(
           '[data-testid="autofix-toggle"] button',
@@ -219,20 +218,6 @@ describe('SessionGitPanel', () => {
       });
       expect(toggle.request.body).toEqual({ autofix: true });
       toggle.flush(githubSession());
-      fixture.detectChanges();
-      await click('autofix-limit-up');
-      const limit = http.expectOne(
-        '/api/sessions/s1/pull-requests/1/automation',
-      );
-      expect(limit.request.body).toEqual({ maxAttempts: 4 });
-      limit.flush(githubSession());
-      fixture.detectChanges();
-      await click('autofix-reset');
-      const reset = http.expectOne(
-        '/api/sessions/s1/pull-requests/1/automation',
-      );
-      expect(reset.request.body).toEqual({ resetAttempts: true });
-      reset.flush(githubSession());
     });
 
     it('shows a running run with what triggered it, and stops it', async () => {
@@ -242,7 +227,6 @@ describe('SessionGitPanel', () => {
             pull({
               automation: automation({
                 autofix: true,
-                attempts: 1,
                 running: true,
                 lastTrigger: 'ci',
                 lastRunAt: '2026-01-01T10:00:00.000Z',
@@ -314,23 +298,6 @@ describe('SessionGitPanel', () => {
       expect(all('automerge-held')[0]).toContain('Keep the old API?');
       show(merging({ enabled: true, failure: 'GitHub: Merge conflict' }));
       expect(all('automerge-failure')[0]).toContain('GitHub: Merge conflict');
-    });
-
-    it('says when the attempt limit was reached', async () => {
-      const { all } = await render(
-        githubSession({
-          pullRequests: [
-            pull({
-              automation: automation({
-                autofix: true,
-                attempts: 3,
-                gaveUp: true,
-              }),
-            }),
-          ],
-        }),
-      );
-      expect(all('autofix-gave-up')[0]).toContain('Limit reached');
     });
 
     it('offers to delete clones autoclose kept', async () => {
