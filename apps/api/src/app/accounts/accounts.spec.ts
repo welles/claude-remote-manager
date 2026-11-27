@@ -13,6 +13,7 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
+import { AccountsService, LOGIN_STALE_MS } from './accounts.service';
 import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import { rawRequest, startTestApp, type TestApp } from '../testing/test-app';
 
@@ -309,5 +310,51 @@ describe('accounts', () => {
       main: false,
     });
     expect((await get()).waitingFor).not.toBe('limit');
+  });
+
+  it('validates a change completely before writing it', async () => {
+    const account = await addAccount('Work', 'work@example.test');
+    const response = await call('PATCH', `/api/accounts/${account.id}`, {
+      name: 'Renamed',
+      isDefault: false,
+    });
+    expect(response.status).toBe(400);
+    expect((await list())[1].name).toBe('Work');
+  });
+
+  it('reads login states again once they are old (a login from a terminal)', async () => {
+    const service = app.app.get(AccountsService);
+    await waitFor(async () => (await list())[0].loggedIn === false);
+    app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+    // Fresh: not read again.
+    service.refreshIfStale(Date.now());
+    expect((await list())[0].loggedIn).toBe(false);
+    service.refreshIfStale(Date.now() + LOGIN_STALE_MS);
+    await waitFor(async () => (await list())[0].loggedIn === true);
+  });
+
+  it('keeps an account a review or probe uses until it is done', async () => {
+    const account = await addAccount('Work', 'work@example.test');
+    const service = app.app.get(AccountsService);
+    const state: { finish: (() => void) | null } = { finish: null };
+    const using = service.withAccount(account.id, (used) => {
+      expect(used.configDir).toBe(join(mainDir, 'crm-accounts', account.id));
+      return new Promise<void>((resolve) => {
+        state.finish = resolve;
+      });
+    });
+    await waitFor(() => state.finish !== null);
+    expect((await call('DELETE', `/api/accounts/${account.id}`)).status).toBe(
+      409,
+    );
+    state.finish?.();
+    await using;
+    expect((await call('DELETE', `/api/accounts/${account.id}`)).status).toBe(
+      204,
+    );
+    // Gone: probes for it fail instead of using another account.
+    await expect(
+      service.withAccount(account.id, async () => 'x', { exact: true }),
+    ).rejects.toThrow();
   });
 });

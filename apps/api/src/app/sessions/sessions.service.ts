@@ -495,6 +495,8 @@ interface LiveSession {
    * the session's.
    */
   accountId: string;
+  /** A process is being started (see {@link launch}). */
+  launching: boolean;
 }
 
 /** How long shutdown waits for Claude Code processes to exit. */
@@ -750,7 +752,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // An account a running process uses cannot be removed.
     this.accounts?.setUsage((accountId) =>
       [...this.live.values()].some(
-        (live) => !!live.run && live.accountId === accountId,
+        (live) =>
+          (!!live.run || live.launching) && live.accountId === accountId,
       ),
     );
     await this.workspaces.rollbackInterruptedAdditions((sessionId, event) =>
@@ -1901,6 +1904,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       rejectedWindow: null,
       limitRetries: 0,
       accountId: this.accountOf(this.sessions.get(id)?.accountId ?? null),
+      launching: false,
     };
   }
 
@@ -2138,6 +2142,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.rejectedWindow = null;
     // A changed secret is masked from this process on.
     live.mask = undefined;
+    live.launching = true;
     try {
       const extras = await this.support.prepare(record);
       // What the user allowed for the session applies to every process.
@@ -2223,6 +2228,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.support.released(live.id);
       this.failRun(live, error);
+    } finally {
+      live.launching = false;
     }
   }
 
@@ -4806,13 +4813,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.scheduleLimitCheck(sessionId);
       return;
     }
-    const limits = this.limits.account(
-      this.accountOf(this.sessions.get(sessionId)?.accountId ?? null),
+    const accountId = this.accountOf(
+      this.sessions.get(sessionId)?.accountId ?? null,
     );
+    const limits = this.limits.account(accountId);
     const read = await limits.readNow();
     const current = this.sessions.get(sessionId)?.limitWait;
     if (!current || current.since !== wait.since || this.shuttingDown) {
       // Continued, cancelled or ended meanwhile.
+      return;
+    }
+    if (
+      this.accountOf(this.sessions.get(sessionId)?.accountId ?? null) !==
+      accountId
+    ) {
+      // Switched to another account meanwhile: its limits decide.
+      this.scheduleLimitCheck(sessionId);
       return;
     }
     const now = Date.now();

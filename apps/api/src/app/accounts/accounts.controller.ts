@@ -23,8 +23,10 @@ import { AccountsService } from './accounts.service';
 export class AccountsController {
   constructor(private readonly accounts: AccountsService) {}
 
+  /** The accounts; login states older than a few minutes are read again. */
   @Get()
   list(): AccountListResponse {
+    this.accounts.refreshIfStale();
     return { accounts: this.accounts.list() };
   }
 

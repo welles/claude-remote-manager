@@ -45,8 +45,13 @@ const done = (header) => process.stdout.write(`${JSON.stringify(header)}\n`);
 const isOwn = (name) =>
   OWN.has(name) || OWN_PREFIXES.some((prefix) => name.startsWith(prefix));
 
-/** Creates a real directory, or checks that one is there (not a symlink). */
-function directory(dir) {
+/**
+ * Creates a directory, or checks that one is there. `followLinks`: a
+ * symlink to a directory counts (the user's own directories, e.g. skills
+ * from a dotfiles repository); without it only a real directory does (the
+ * app's own `crm-accounts` and account directories).
+ */
+function directory(dir, followLinks = false) {
   try {
     fs.mkdirSync(dir, { mode: 0o700 });
   } catch (error) {
@@ -54,7 +59,7 @@ function directory(dir) {
       throw error;
     }
   }
-  const stats = fs.lstatSync(dir);
+  const stats = followLinks ? fs.statSync(dir) : fs.lstatSync(dir);
   if (!stats.isDirectory()) {
     throw new Error(`${dir} is not a directory`);
   }
@@ -89,11 +94,11 @@ function readJson(file) {
 function prepare(mainDir, mainStateFile, id) {
   const root = path.join(mainDir, ACCOUNTS);
   const dir = path.join(root, id);
-  directory(mainDir);
+  directory(mainDir, true);
   directory(root);
   directory(dir);
   for (const name of SHARED_DIRECTORIES) {
-    directory(path.join(mainDir, name));
+    directory(path.join(mainDir, name), true);
   }
   // So that a setting changed in a further account's session lands in the
   // shared file, not in one of its own.

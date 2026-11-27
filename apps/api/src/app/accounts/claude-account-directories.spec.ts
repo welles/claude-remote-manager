@@ -107,6 +107,17 @@ describe('ClaudeAccountDirectories', () => {
     expect(readFileSync(target, 'utf8')).toBe('{"secret":true}');
   });
 
+  it('accepts shared directories that are symlinks to directories', async () => {
+    const dotfiles = join(dir, 'dotfiles-skills');
+    mkdirSync(dotfiles);
+    writeFileSync(join(dotfiles, 'SKILL.md'), 'skill');
+    symlinkSync(dotfiles, join(main, 'skills'));
+    await directories.prepare(ID);
+    expect(readFileSync(join(account(), 'skills', 'SKILL.md'), 'utf8')).toBe(
+      'skill',
+    );
+  });
+
   it('rejects names that are no account IDs', async () => {
     await expect(directories.prepare('../x')).rejects.toThrow(/usage/);
   });

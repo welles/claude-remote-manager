@@ -1050,8 +1050,9 @@ default, move up/down (the order), remove (not the main account).
   (`.claude.json.lock`; the next start copies them). The helper `assets/claude-account-dir.cjs`
   does all of this, and removes a directory, as the session user (through the launcher, like the
   file helper), so the API never writes into directories the sessions control with its own
-  privileges; it refuses a `crm-accounts` that is a symlink and never writes through a symlinked
-  state file. Calls for the same account run one after the other.
+  privileges; it refuses a `crm-accounts` or account directory that is a symlink and never writes
+  through a symlinked state file (the main directory and the shared ones may be symlinks, e.g.
+  skills from a dotfiles repository). Calls for the same account run one after the other.
 - **Processes:** a session's Claude Code, its reviewer, and the probes (models, slash commands,
   plan usage) of an account run with `CLAUDE_CONFIG_DIR` set to the account's directory; only
   the main account gets `CLAUDE_CODE_OAUTH_TOKEN` (it would log every account in as the main
@@ -1061,8 +1062,9 @@ default, move up/down (the order), remove (not the main account).
   `claude auth login --claudeai` as the session user with the account's directory; without a
   terminal it prints the login URL and reads the code from stdin. The UI shows "Open login
   page" and a field for the code (`POST /api/accounts/:id/login/code`), then the result; the
-  login state is read again with `claude auth status` when it ends and at every start of the
-  API. `POST /api/accounts/:id/login` starts a new login (an expired one), `DELETE` cancels it
+  login state is read again with `claude auth status` when it ends, at every start of the API,
+  every 15 minutes and when the accounts are listed and the last read is older than 5 minutes
+  (a login from a terminal, an expired one). `POST /api/accounts/:id/login` starts a new login (an expired one), `DELETE` cancels it
   (after 15 minutes it ends by itself), `POST /api/accounts/:id/logout` runs `claude auth logout`.
   Changes go to all clients as `accounts.changed` (all accounts, with their limits and logins).
 - **Sessions:** `CreateSessionRequest.accountId` chooses the account; without it the default
@@ -1074,8 +1076,10 @@ default, move up/down (the order), remove (not the main account).
   A switch while the session waits for the old account's limit makes the app look at the new
   account's limits at once and continue if it has room. Removing an account
   (`DELETE /api/accounts/:id`: logout, then its directory) moves its sessions to the default
-  account; it is refused (409) while a running Claude Code process of a session uses it.
-  Limits are only read for logged-in accounts.
+  account; it is refused (409) while a Claude Code process of a session (also one starting), a
+  reviewer or a probe uses it, and from its start no process starts with it any more (sessions
+  take the default account). The directory goes first: if that fails, the account stays.
+  Limits are not read for logged-out accounts.
 
 ## Previews of dev servers
 

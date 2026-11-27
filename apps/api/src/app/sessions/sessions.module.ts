@@ -167,10 +167,11 @@ export class SessionsModule {
     // Pushes and pull requests change what the session view shows.
     git.changes$.subscribe((id) => sessions.publishUpdate(id));
     // Limits are also read when no session runs (see LimitsService).
-    limits.setPlanUsageSource(async (accountId) =>
-      runner.probe(
-        (probe) => probe.planUsage(),
-        await accounts.exactAgentAccount(accountId),
+    limits.setPlanUsageSource((accountId) =>
+      accounts.withAccount(
+        accountId,
+        (account) => runner.probe((probe) => probe.planUsage(), account),
+        { exact: true },
       ),
     );
   }

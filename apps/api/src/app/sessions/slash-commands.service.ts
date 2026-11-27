@@ -4,7 +4,7 @@ import type {
   SlashCommandOption,
   SlashCommandsResponse,
 } from '@claude-remote-manager/shared-types';
-import { AgentRunner } from '../agent/agent-runner';
+import { AgentRunner, type AgentProbe } from '../agent/agent-runner';
 import { AccountsService } from '../accounts/accounts.service';
 
 /** How long the user's commands (asked through a probe) are used. */
@@ -121,15 +121,21 @@ export class SlashCommandsService {
     return this.loading;
   }
 
+  /** The commands of the default account's Claude Code. */
+  private probeCommands(): Promise<SlashCommand[]> {
+    const task = (probe: AgentProbe) =>
+      withTimeout(probe.supportedCommands(), PROBE_TIMEOUT_MS);
+    return this.accounts
+      ? this.accounts.withAccount(null, (account) =>
+          this.runner.probe(task, account),
+        )
+      : this.runner.probe(task);
+  }
+
   private async load(): Promise<SlashCommandOption[]> {
     try {
       const commands = uniqueCommands(
-        (
-          await this.runner.probe(
-            (probe) => withTimeout(probe.supportedCommands(), PROBE_TIMEOUT_MS),
-            await this.accounts?.agentAccount(null),
-          )
-        ).map(slashCommandOption),
+        (await this.probeCommands()).map(slashCommandOption),
       );
       this.user = { commands, until: this.now() + USER_COMMANDS_CACHE_MS };
       return commands;

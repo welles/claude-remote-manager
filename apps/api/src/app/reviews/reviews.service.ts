@@ -23,7 +23,7 @@ import type {
   UsageTotals,
 } from '@claude-remote-manager/shared-types';
 import { REVIEW_MODES } from '@claude-remote-manager/shared-types';
-import { AgentRunner } from '../agent/agent-runner';
+import { AgentRunner, type AgentAccount } from '../agent/agent-runner';
 import { AccountsService } from '../accounts/accounts.service';
 import type { UntrustedContext } from '../agent/untrusted-context';
 import { requireObject } from '../common/validation';
@@ -363,20 +363,27 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     }, this.timeoutMs);
     timer.unref?.();
     try {
-      const account = await this.accounts?.agentAccount(record.accountId);
-      const result = await this.runner.review({
-        ...(account
-          ? { account: { configDir: account.configDir, main: account.main } }
-          : {}),
-        cwd: workingDirectory(record),
-        additionalDirectories: additionalDirectories(record),
-        model: dto.model,
-        effort: dto.effort as ReviewEffort,
-        prompt: reviewPrompt(diff),
-        instructions: REVIEWER_INSTRUCTIONS,
-        schema: REVIEW_SCHEMA,
-        signal: abort.signal,
-      });
+      let accountId: string | null = null;
+      const review = (account?: AgentAccount & { id: string }) => {
+        accountId = account?.id ?? null;
+        return this.runner.review({
+          ...(account
+            ? { account: { configDir: account.configDir, main: account.main } }
+            : {}),
+          cwd: workingDirectory(record),
+          additionalDirectories: additionalDirectories(record),
+          model: dto.model,
+          effort: dto.effort as ReviewEffort,
+          prompt: reviewPrompt(diff),
+          instructions: REVIEWER_INSTRUCTIONS,
+          schema: REVIEW_SCHEMA,
+          signal: abort.signal,
+        });
+      };
+      // With the session's account, which stays in use meanwhile.
+      const result = this.accounts
+        ? await this.accounts.withAccount(record.accountId, review)
+        : await review();
       durationMs = result.durationMs;
       const byModel = new UsageTracker().consume(result.modelUsage);
       if (Object.keys(byModel).length > 0) {
@@ -388,7 +395,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
             byModel,
             new Date(),
             dto.id,
-            account?.id ?? null,
+            accountId,
           );
         }
       }

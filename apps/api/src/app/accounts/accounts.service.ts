@@ -38,6 +38,14 @@ export const CLAUDE_ACCOUNT_DIRECTORIES = Symbol('CLAUDE_ACCOUNT_DIRECTORIES');
 
 type AccountRow = typeof accounts.$inferSelect;
 
+/**
+ * How old the login states may get: read again when someone lists the
+ * accounts after this, and in the background every
+ * {@link LOGIN_REFRESH_INTERVAL_MS} (logins from a terminal, expired ones).
+ */
+export const LOGIN_STALE_MS = 5 * 60_000;
+export const LOGIN_REFRESH_INTERVAL_MS = 15 * 60_000;
+
 /** How long a finished login stays visible in the UI. */
 const LOGIN_RESULT_MS = 10 * 60_000;
 const MAX_CODE_LENGTH = 2000;
@@ -62,8 +70,15 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   private readonly logins = new Map<string, LoginState>();
   private readonly changes = new Subject<AccountDto[]>();
   private destroyed = false;
+  private refreshedAt = 0;
+  private refreshing: Promise<void> | null = null;
+  private refreshTimer: NodeJS.Timeout | null = null;
   /** Whether a running process uses an account; set by the sessions. */
   private inUse: (accountId: string) => boolean = () => false;
+  /** Accounts being removed: no process starts with them any more. */
+  /** Short-lived processes (reviews, probes) per account that run now. */
+  private readonly leases = new Map<string, number>();
+  private readonly removing = new Set<string>();
 
   /** Emits all accounts after every change (logins, limits, edits). */
   readonly changes$ = this.changes.asObservable();
@@ -77,11 +92,11 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   ) {
     limits.setAccounts(
       () => this.rows().map((row) => row.id),
-      // Logged-out accounts (also those still logging in) have no limits
-      // to read.
+      // Logged-out accounts have no limits to read.
       () =>
         this.rows()
-          .filter((row) => row.loggedIn === true)
+          // Unknown (`null`) counts: a failed check must not stop them.
+          .filter((row) => row.loggedIn !== false)
           .map((row) => row.id),
     );
     limits.changes$.subscribe(() => this.publish());
@@ -90,11 +105,26 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   /** Reads the login state of every account in the background. */
   onModuleInit(): void {
     void this.refreshAll();
+    this.refreshTimer = setInterval(
+      () => void this.refreshAll(),
+      LOGIN_REFRESH_INTERVAL_MS,
+    );
+    this.refreshTimer.unref?.();
+  }
+
+  /** Reads the login states again in the background if they are old. */
+  refreshIfStale(now = Date.now()): void {
+    if (now - this.refreshedAt >= LOGIN_STALE_MS) {
+      void this.refreshAll();
+    }
   }
 
   /** Stops logins in progress; later results are dropped. */
   onModuleDestroy(): void {
     this.destroyed = true;
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+    }
     for (const id of [...this.logins.keys()]) {
       this.cancelLogin(id);
     }
@@ -142,14 +172,15 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   update(id: string, request: UpdateAccountRequest): AccountDto {
     const body = requireObject(request);
     this.requireRow(id);
-    if ('name' in body) {
-      const name = this.validName(body);
+    // Both checked before anything is written.
+    const name = 'name' in body ? this.validName(body) : undefined;
+    if ('isDefault' in body && body['isDefault'] !== true) {
+      throw new BadRequestException('isDefault can only be set to true');
+    }
+    if (name !== undefined) {
       this.db.update(accounts).set({ name }).where(eq(accounts.id, id)).run();
     }
     if ('isDefault' in body) {
-      if (body['isDefault'] !== true) {
-        throw new BadRequestException('isDefault can only be set to true');
-      }
       this.db.transaction((tx) => {
         tx.update(accounts).set({ isDefault: false }).run();
         tx.update(accounts)
@@ -196,19 +227,40 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
         'The main account cannot be removed; log it out instead',
       );
     }
-    if (this.inUse(id)) {
-      throw new ConflictException(
+    const busy = () =>
+      new ConflictException(
         'A running session uses this account; switch it to another account or end it first',
       );
+    if (this.used(id) || this.removing.has(id)) {
+      throw busy();
     }
-    this.cancelLogin(id);
+    // From now on no process starts with it (sessions take the default).
+    this.removing.add(id);
     try {
-      await this.cli.logout(this.agentAccountOf(row));
-    } catch (error) {
-      this.logger.warn(
-        `Could not log out account ${id} before removing it: ${errorMessage(error)}`,
-      );
+      this.cancelLogin(id);
+      try {
+        await this.cli.logout(this.agentAccountOf(row));
+      } catch (error) {
+        this.logger.warn(
+          `Could not log out account ${id} before removing it: ${errorMessage(error)}`,
+        );
+      }
+      if (this.used(id)) {
+        // Started before the removal began.
+        throw busy();
+      }
+      // The directory first: if that fails, the account stays (retry).
+      await this.directories.remove(row.directory);
+      this.deleteRow(row);
+      this.limits.forget(id);
+    } finally {
+      this.removing.delete(id);
+      this.publish();
     }
+  }
+
+  private deleteRow(row: AccountRow): void {
+    const id = row.id;
     this.db.transaction((tx) => {
       tx.update(sessions)
         .set({ accountId: null })
@@ -229,9 +281,6 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
         }
       }
     });
-    this.limits.forget(id);
-    await this.directories.remove(row.directory);
-    this.publish();
   }
 
   /** Starts (or restarts) the login of an account from the UI. */
@@ -358,10 +407,19 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     this.publish();
   }
 
-  async refreshAll(): Promise<void> {
-    for (const row of this.rows()) {
-      await this.refresh(row.id);
-    }
+  /** Reads every account's login state; shares a read in flight. */
+  refreshAll(): Promise<void> {
+    this.refreshedAt = Date.now();
+    this.refreshing ??= (async () => {
+      try {
+        for (const row of this.destroyed ? [] : this.rows()) {
+          await this.refresh(row.id);
+        }
+      } finally {
+        this.refreshing = null;
+      }
+    })();
+    return this.refreshing;
   }
 
   /**
@@ -373,7 +431,9 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     accountId: string | null,
   ): Promise<AgentAccount & { id: string }> {
     const row =
-      (accountId ? this.row(accountId) : undefined) ?? this.defaultRow();
+      (accountId && !this.removing.has(accountId)
+        ? this.row(accountId)
+        : undefined) ?? this.defaultRow();
     if (row.directory !== null) {
       await this.directories.prepare(row.directory);
     }
@@ -385,11 +445,47 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
    * ready; for reading its limits.
    */
   async exactAgentAccount(accountId: string): Promise<AgentAccount> {
+    if (this.removing.has(accountId)) {
+      throw new ConflictException(`Account ${accountId} is being removed`);
+    }
     const row = this.requireRow(accountId);
     if (row.directory !== null) {
       await this.directories.prepare(row.directory);
     }
     return this.agentAccountOf(row);
+  }
+
+  /**
+   * Runs a short-lived process (review, probe) with an account (see
+   * {@link agentAccount}; `exact`: that account or a failure); the account
+   * counts as in use meanwhile, so it cannot be removed under it.
+   */
+  async withAccount<T>(
+    accountId: string | null,
+    task: (account: AgentAccount & { id: string }) => Promise<T>,
+    { exact = false }: { exact?: boolean } = {},
+  ): Promise<T> {
+    const account = exact
+      ? {
+          id: accountId ?? '',
+          ...(await this.exactAgentAccount(accountId ?? '')),
+        }
+      : await this.agentAccount(accountId);
+    this.leases.set(account.id, (this.leases.get(account.id) ?? 0) + 1);
+    try {
+      return await task(account);
+    } finally {
+      const left = (this.leases.get(account.id) ?? 1) - 1;
+      if (left > 0) {
+        this.leases.set(account.id, left);
+      } else {
+        this.leases.delete(account.id);
+      }
+    }
+  }
+
+  private used(id: string): boolean {
+    return this.inUse(id) || (this.leases.get(id) ?? 0) > 0;
   }
 
   /** The account a session effectively uses (`null`: the default). */
@@ -460,7 +556,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   /** The default account; the main one if none is marked. */
   private defaultRow(): AccountRow {
-    const rows = this.rows();
+    // Not one being removed (the main account never is).
+    const rows = this.rows().filter((row) => !this.removing.has(row.id));
     const found =
       rows.find((row) => row.isDefault) ??
       rows.find((row) => row.id === MAIN_ACCOUNT_ID) ??

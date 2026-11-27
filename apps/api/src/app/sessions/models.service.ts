@@ -4,7 +4,7 @@ import type {
   ModelListResponse,
   ModelOption,
 } from '@claude-remote-manager/shared-types';
-import { AgentRunner } from '../agent/agent-runner';
+import { AgentRunner, type AgentProbe } from '../agent/agent-runner';
 import { AccountsService } from '../accounts/accounts.service';
 
 /** How long the list Claude Code reported is used. */
@@ -83,10 +83,13 @@ export class ModelsService {
 
   private async load(): Promise<ModelListResponse> {
     try {
-      const models = await this.runner.probe(
-        (probe) => probe.supportedModels(),
-        await this.accounts?.agentAccount(null),
-      );
+      const task = (probe: AgentProbe) => probe.supportedModels();
+      // The default account's models.
+      const models = this.accounts
+        ? await this.accounts.withAccount(null, (account) =>
+            this.runner.probe(task, account),
+          )
+        : await this.runner.probe(task);
       if (models.length === 0) {
         throw new Error('Claude Code reported no models');
       }

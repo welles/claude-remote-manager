@@ -502,6 +502,8 @@ export class AccountSettings implements OnInit {
       },
       error: (error: unknown) => {
         this.busy.set(false);
+        // What did happen shows (e.g. a logout before a failed removal).
+        this.store.load();
         this.toasts.show({
           title: errorMessage(error, failure),
           kind: 'error',
