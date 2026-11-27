@@ -3,17 +3,19 @@ import {
   DestroyRef,
   computed,
   inject,
+  input,
   signal,
   type OnInit,
 } from '@angular/core';
 import { formatTime, isStale, limitViews } from './limit-format';
 import { Meter } from '../ui/meter';
+import { AccountsStore } from '../accounts/accounts-store';
 import { LimitsStore } from './limits-store';
 
 /**
- * The account's plan limit windows with percent, meter and reset time, and
- * when they were last read: in the limits dialog of the session list and
- * in the session's details.
+ * An account's plan limit windows with percent, meter and reset time, and
+ * when they were last read: in the limits dialog of the session list, on
+ * the Settings page and in the session's details.
  */
 @Component({
   selector: 'app-limit-windows',
@@ -59,25 +61,34 @@ import { LimitsStore } from './limits-store';
 })
 export class LimitWindows implements OnInit {
   private readonly store = inject(LimitsStore);
+  private readonly accountsStore = inject(AccountsStore);
   private readonly destroyRef = inject(DestroyRef);
   private readonly now = signal(Date.now());
 
+  /** The account; `null`: the default account. */
+  readonly accountId = input<string | null>(null);
+
+  private readonly limits = computed(() =>
+    this.store.limits(this.accountId() ?? this.accountsStore.defaultId()),
+  );
+
   protected readonly failed = this.store.failed;
   protected readonly views = computed(() => {
-    const limits = this.store.limits();
+    const limits = this.limits();
     return limits ? limitViews(limits, this.now()) : [];
   });
   protected readonly stale = computed(() => {
-    const limits = this.store.limits();
+    const limits = this.limits();
     return limits !== null && isStale(limits, this.now());
   });
   protected readonly updated = computed(() => {
-    const at = this.store.limits()?.updatedAt;
+    const at = this.limits()?.updatedAt;
     return at ? formatTime(at, this.now()) : null;
   });
 
   ngOnInit(): void {
     this.store.start();
+    this.accountsStore.start();
     const timer = setInterval(() => this.now.set(Date.now()), 30_000);
     this.destroyRef.onDestroy(() => clearInterval(timer));
   }

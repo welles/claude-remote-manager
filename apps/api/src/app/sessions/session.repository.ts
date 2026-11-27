@@ -180,6 +180,8 @@ export interface SessionRecord {
   reviewModel: string | null;
   reviewEffort: ReviewEffort | null;
   reviewedDiff: string | null;
+  /** Account the session works with; `null`: the default account. */
+  accountId: string | null;
 }
 
 export type NewSessionDirectory = Pick<
@@ -205,6 +207,7 @@ export interface NewSession {
   directories: NewSessionDirectory[];
   environmentId?: string | null;
   environmentSetupStatus?: SetupStatus;
+  accountId?: string | null;
 }
 
 export type SessionPatch = Partial<
@@ -227,6 +230,7 @@ export type SessionPatch = Partial<
     | 'reviewModel'
     | 'reviewEffort'
     | 'reviewedDiff'
+    | 'accountId'
   >
 >;
 

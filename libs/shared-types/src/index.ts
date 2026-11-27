@@ -1,4 +1,5 @@
 // Types shared between the web app and the API, e.g. session events.
+export * from './lib/accounts';
 export * from './lib/attachments';
 export * from './lib/commits';
 export * from './lib/diffs';

@@ -1,4 +1,9 @@
-import { HttpException, Logger, type OnModuleDestroy } from '@nestjs/common';
+import {
+  HttpException,
+  Logger,
+  Optional,
+  type OnModuleDestroy,
+} from '@nestjs/common';
 import {
   WebSocketGateway,
   type OnGatewayConnection,
@@ -11,6 +16,7 @@ import {
   type ClientMessage,
   type ServerMessage,
 } from '@claude-remote-manager/shared-types';
+import { AccountsService } from '../accounts/accounts.service';
 import { LimitsService } from '../limits/limits.service';
 import {
   parseClientFrame,
@@ -45,6 +51,7 @@ export class SessionsGateway
     private readonly sessions: SessionsService,
     limits: LimitsService,
     private readonly presence: ViewerPresence,
+    @Optional() accounts?: AccountsService,
   ) {
     this.subscriptions = [
       sessions.events$.subscribe(({ sessionId, event }) => {
@@ -66,6 +73,13 @@ export class SessionsGateway
       limits.changes$.subscribe((limits) =>
         this.broadcast({ type: 'account.limits', limits }),
       ),
+      ...(accounts
+        ? [
+            accounts.changes$.subscribe((list) =>
+              this.broadcast({ type: 'accounts.changed', accounts: list }),
+            ),
+          ]
+        : []),
     ];
   }
 

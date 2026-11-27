@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -23,6 +24,7 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { REVIEW_MODES } from '@claude-remote-manager/shared-types';
 import { AgentRunner } from '../agent/agent-runner';
+import { AccountsService } from '../accounts/accounts.service';
 import type { UntrustedContext } from '../agent/untrusted-context';
 import { requireObject } from '../common/validation';
 import { SessionDiffService } from '../diffs/session-diff.service';
@@ -98,6 +100,8 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     private readonly runner: AgentRunner,
     private readonly hooks: SessionAutomationHooks,
     private readonly defaults: ReviewDefaultsStore,
+    // Reviews run with the session's account; without it the main one.
+    @Optional() private readonly accounts?: AccountsService,
   ) {}
 
   onModuleInit(): void {
@@ -359,7 +363,11 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     }, this.timeoutMs);
     timer.unref?.();
     try {
+      const account = await this.accounts?.agentAccount(record.accountId);
       const result = await this.runner.review({
+        ...(account
+          ? { account: { configDir: account.configDir, main: account.main } }
+          : {}),
         cwd: workingDirectory(record),
         additionalDirectories: additionalDirectories(record),
         model: dto.model,
@@ -374,7 +382,14 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       if (Object.keys(byModel).length > 0) {
         usage = sumUsage(Object.values(byModel));
         if (this.records.get(sessionId)) {
-          this.usage.record(sessionId, null, byModel, new Date(), dto.id);
+          this.usage.record(
+            sessionId,
+            null,
+            byModel,
+            new Date(),
+            dto.id,
+            account?.id ?? null,
+          );
         }
       }
       const parsed = result.error ? null : parseReviewOutput(result.output);

@@ -1,4 +1,6 @@
 import { provideHttpClient } from '@angular/common/http';
+import { accountDto, mainAccountList } from '../accounts/testing/accounts';
+import { AccountsStore } from '../accounts/accounts-store';
 import {
   HttpTestingController,
   provideHttpClientTesting,
@@ -45,6 +47,7 @@ const repository = (
 interface FormInternals {
   prompt: string;
   model: string;
+  accountId: string;
   permissionMode: string;
   projectName: string;
   mode(): 'repository' | 'project' | 'scratch';
@@ -92,6 +95,7 @@ describe('NewSessionForm', () => {
       created.push(session),
     );
     fixture.detectChanges();
+    http.expectOne('/api/accounts').flush(mainAccountList());
     http.expectOne('/api/models').flush({
       models: [
         {
@@ -261,6 +265,24 @@ describe('NewSessionForm', () => {
       permissionMode: 'default',
       scratch: true,
     });
+  });
+
+  it('offers the accounts when there are several and sends the chosen one', async () => {
+    const { form, fixture, element } = await render([]);
+    expect(element.querySelector('[data-testid="account"]')).toBeNull();
+    TestBed.inject(AccountsStore).accounts.set([
+      accountDto(),
+      accountDto({ id: 'a1', name: 'Work', isDefault: false, position: 1 }),
+    ]);
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="account"]')).not.toBeNull();
+    form.prompt = 'Hi';
+    form.setMode('scratch');
+    form.accountId = 'a1';
+    form.create();
+    expect(
+      http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
+    ).toMatchObject({ accountId: 'a1' });
   });
 
   it('starts a scratch session without repository', async () => {
@@ -473,6 +495,7 @@ describe('NewSessionForm', () => {
   const start = () => {
     const fixture = TestBed.createComponent(NewSessionForm);
     fixture.detectChanges();
+    http.expectOne('/api/accounts').flush(mainAccountList());
     http.expectOne('/api/models').flush({
       models: [],
       source: 'claude-code',

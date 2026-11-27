@@ -1,0 +1,240 @@
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { join } from 'node:path';
+import type {
+  AccountDto,
+  AccountListResponse,
+  SessionDto,
+} from '@claude-remote-manager/shared-types';
+import { LimitsService } from '../limits/limits.service';
+import { waitFor } from '../sessions/testing/fake-agent';
+import { rawRequest, startTestApp, type TestApp } from '../testing/test-app';
+
+describe('accounts', () => {
+  let app: TestApp;
+  let mainDir: string;
+
+  beforeEach(async () => {
+    app = await startTestApp();
+    mainDir = join(app.dir, 'claude');
+  });
+  afterEach(() => app.close());
+
+  const call = (method: string, path: string, body?: unknown) =>
+    rawRequest(
+      app.port,
+      method,
+      path,
+      body === undefined ? {} : { 'content-type': 'application/json' },
+      body === undefined ? undefined : JSON.stringify(body),
+    );
+  const list = async () =>
+    (await call('GET', '/api/accounts')).json<AccountListResponse>().accounts;
+  const loggedIn = (email: string) => ({
+    loggedIn: true,
+    email,
+    organization: null,
+    subscriptionType: 'max',
+    loginExpiresAt: null,
+  });
+
+  /** Adds an account through the login in the UI. */
+  const addAccount = async (name: string, email: string) => {
+    const created = (
+      await call('POST', '/api/accounts', { name })
+    ).json<AccountDto>();
+    const login = app.claudeCli.logins.at(-1);
+    if (!login) {
+      throw new Error('no login started');
+    }
+    login.showUrl('https://claude.com/cai/oauth/authorize?code=true');
+    await waitFor(
+      async () =>
+        (await list()).find((a) => a.id === created.id)?.login?.status ===
+        'waiting',
+    );
+    const coded = await call('POST', `/api/accounts/${created.id}/login/code`, {
+      code: 'abc#def',
+    });
+    expect(coded.status).toBe(201);
+    expect(login.codes).toEqual(['abc#def']);
+    app.claudeCli.statuses.set(login.account.configDir, loggedIn(email));
+    login.finish();
+    await waitFor(
+      async () =>
+        (await list()).find((a) => a.id === created.id)?.login?.status ===
+        'done',
+    );
+    return created;
+  };
+
+  it('lists the main account with its login state', async () => {
+    app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+    await call('POST', '/api/accounts/main/refresh');
+    const [main] = await list();
+    expect(main).toMatchObject({
+      id: 'main',
+      main: true,
+      isDefault: true,
+      loggedIn: true,
+      email: 'main@example.test',
+      subscriptionType: 'max',
+      limits: { accountId: 'main', windows: [] },
+    });
+    // The main account cannot be removed, only logged out.
+    expect((await call('DELETE', '/api/accounts/main')).status).toBe(409);
+    expect((await call('POST', '/api/accounts/main/logout')).status).toBe(201);
+    expect(app.claudeCli.logouts).toEqual([mainDir]);
+    expect((await list())[0].loggedIn).toBe(false);
+  });
+
+  it('adds an account with its own login and shared configuration', async () => {
+    mkdirSync(join(mainDir, 'skills'), { recursive: true });
+    writeFileSync(join(mainDir, 'settings.json'), '{}');
+    writeFileSync(
+      join(mainDir, '.claude.json'),
+      JSON.stringify({
+        mcpServers: { docs: { command: 'docs' } },
+        userID: 'x',
+      }),
+    );
+    writeFileSync(join(mainDir, '.credentials.json'), '{}');
+
+    const account = await addAccount('Work', 'work@example.test');
+    const [, added] = await list();
+    expect(added).toMatchObject({
+      id: account.id,
+      name: 'Work',
+      main: false,
+      isDefault: false,
+      loggedIn: true,
+      email: 'work@example.test',
+      position: 1,
+      login: { status: 'done', error: null },
+    });
+
+    const dir = app.claudeCli.logins[0].account.configDir;
+    expect(dir).toBe(join(mainDir, 'crm-accounts', account.id));
+    expect(app.claudeCli.logins[0].account.main).toBe(false);
+    // Shared through symlinks; the login and state file are its own.
+    expect(readlinkSync(join(dir, 'settings.json'))).toBe(
+      join('..', '..', 'settings.json'),
+    );
+    expect(lstatSync(join(dir, 'projects')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(dir, 'skills')).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(dir, '.credentials.json'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, '.claude.json'), 'utf8'))).toEqual(
+      {
+        mcpServers: { docs: { command: 'docs' } },
+      },
+    );
+
+    // Renamed, made the default, moved to the front.
+    await call('PATCH', `/api/accounts/${account.id}`, {
+      name: 'Work (Max)',
+      isDefault: true,
+    });
+    await call('PUT', '/api/accounts/order', { ids: [account.id, 'main'] });
+    expect((await list()).map((a) => [a.name, a.isDefault])).toEqual([
+      ['Work (Max)', true],
+      ['Claude', false],
+    ]);
+    expect(
+      (await call('PUT', '/api/accounts/order', { ids: ['main'] })).status,
+    ).toBe(400);
+  });
+
+  it('reports a failed or cancelled login', async () => {
+    const created = (
+      await call('POST', '/api/accounts', { name: 'Other' })
+    ).json<AccountDto>();
+    expect(
+      (
+        await call('POST', `/api/accounts/${created.id}/login/code`, {
+          code: 'x',
+        })
+      ).status,
+    ).toBe(409);
+    app.claudeCli.logins[0].finish('Invalid code');
+    await waitFor(async () => (await list())[1].login?.status === 'failed');
+    expect((await list())[1].login?.error).toBe('Invalid code');
+
+    await call('POST', `/api/accounts/${created.id}/login`);
+    expect(app.claudeCli.logins).toHaveLength(2);
+    await call('DELETE', `/api/accounts/${created.id}/login`);
+    expect(app.claudeCli.logins[1].cancelled).toBe(true);
+    expect((await list())[1].login).toBeNull();
+  });
+
+  it('runs sessions with their account and switches it', async () => {
+    app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+    await call('POST', '/api/accounts/main/refresh');
+    const account = await addAccount('Work', 'work@example.test');
+    const dir = join(mainDir, 'crm-accounts', account.id);
+
+    const session = (
+      await call('POST', '/api/sessions', {
+        prompt: 'Hi',
+        scratch: true,
+        accountId: account.id,
+      })
+    ).json<SessionDto>();
+    expect(session.accountId).toBe(account.id);
+    await waitFor(() => app.runner.runs.length === 1);
+    expect(app.runner.last.options.account).toEqual({
+      configDir: dir,
+      main: false,
+    });
+
+    // Without a choice: the default account, unless its limit is exhausted.
+    const plain = (
+      await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
+    ).json<SessionDto>();
+    expect(plain.accountId).toBe('main');
+    app.app
+      .get(LimitsService)
+      .account('main')
+      .updateFromRateLimitEvent({
+        status: 'rejected',
+        rateLimitType: 'five_hour',
+        resetsAt: Date.now() / 1000 + 3600,
+      });
+    const avoiding = (
+      await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
+    ).json<SessionDto>();
+    expect(avoiding.accountId).toBe(account.id);
+
+    // Switched: stored now, used by the next process.
+    const switched = await call('PATCH', `/api/sessions/${session.id}`, {
+      accountId: 'main',
+    });
+    expect(switched.json<SessionDto>().accountId).toBe('main');
+    expect(
+      (
+        await call('PATCH', `/api/sessions/${session.id}`, {
+          accountId: 'nope',
+        })
+      ).status,
+    ).toBe(400);
+
+    // Removed: its sessions fall back to the default account.
+    await call('PATCH', `/api/sessions/${session.id}`, {
+      accountId: account.id,
+    });
+    expect((await call('DELETE', `/api/accounts/${account.id}`)).status).toBe(
+      204,
+    );
+    expect(existsSync(dir)).toBe(false);
+    const after = (
+      await call('GET', `/api/sessions/${session.id}`)
+    ).json<SessionDto>();
+    expect(after.accountId).toBeNull();
+    expect((await list()).map((a) => a.id)).toEqual(['main']);
+  });
+});

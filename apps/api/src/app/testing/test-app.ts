@@ -5,7 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
+import {
+  CLAUDE_ACCOUNT_DIRECTORIES,
+  CLAUDE_CLI,
+} from '../accounts/accounts.service';
+import { ClaudeAccountDirectories } from '../accounts/claude-account-directories';
+import { FakeClaudeCli } from '../accounts/testing/fake-claude-cli';
 import { AgentRunner } from '../agent/agent-runner';
+import { SINGLE_USER } from '../common/process-isolation';
 import { TranscriptReader } from '../agent/transcript-reader';
 import { AppModule } from '../app.module';
 import {
@@ -25,6 +32,8 @@ import { TEST_IDENTITY } from '../workspaces/testing/workspace-harness';
 export interface TestApp {
   app: NestExpressApplication;
   runner: FakeAgentRunner;
+  /** `claude auth` of the accounts. */
+  claudeCli: FakeClaudeCli;
   transcripts: FakeTranscriptReader;
   config: AppConfig;
   /** Temporary directory holding the database and data directories. */
@@ -51,6 +60,7 @@ export async function startTestApp(
   const sandbox = gitSandbox('crm-app-git-');
   const dir = mkdtempSync(join(tmpdir(), 'crm-app-'));
   const runner = new FakeAgentRunner();
+  const claudeCli = new FakeClaudeCli();
   const transcripts = new FakeTranscriptReader();
   const config: AppConfig = testAppConfig(dir, {
     dbDir: join(dir, 'db'),
@@ -64,7 +74,17 @@ export async function startTestApp(
     .overrideProvider(AgentRunner)
     .useValue(runner)
     .overrideProvider(TranscriptReader)
-    .useValue(transcripts);
+    .useValue(transcripts)
+    .overrideProvider(CLAUDE_CLI)
+    .useValue(claudeCli)
+    .overrideProvider(CLAUDE_ACCOUNT_DIRECTORIES)
+    .useValue(
+      new ClaudeAccountDirectories(
+        join(dir, 'claude'),
+        SINGLE_USER,
+        join(dir, 'claude', '.claude.json'),
+      ),
+    );
   if (configure) {
     builder = configure(builder);
   }
@@ -80,6 +100,7 @@ export async function startTestApp(
   return {
     app,
     runner,
+    claudeCli,
     transcripts,
     config,
     dir,

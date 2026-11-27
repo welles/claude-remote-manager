@@ -60,8 +60,25 @@ export interface AgentGateDecision {
   reason: string;
 }
 
+/**
+ * The Claude account a process runs with: Claude Code's configuration
+ * directory with its login. Without one, a process uses the main directory
+ * (the API's `CLAUDE_CONFIG_DIR` or `~/.claude`).
+ */
+export interface AgentAccount {
+  /** Claude Code's configuration directory of the account. */
+  configDir: string;
+  /**
+   * The main directory: its login may also come from
+   * `CLAUDE_CODE_OAUTH_TOKEN`, which other accounts must not get.
+   */
+  main: boolean;
+}
+
 /** What a Claude Code process is started with. */
 export interface AgentStartOptions {
+  /** The account; the main one without. */
+  account?: AgentAccount;
   cwd: string;
   additionalDirectories: string[];
   /** Model name or alias; `null` uses Claude Code's default. */
@@ -177,6 +194,8 @@ export interface AgentRun {
  * starts no MCP server, keeps no transcript and answers in `schema`.
  */
 export interface AgentReviewOptions {
+  /** The account; the main one without. */
+  account?: AgentAccount;
   cwd: string;
   additionalDirectories: string[];
   model: string;
@@ -216,7 +235,10 @@ export abstract class AgentRunner {
    * Starts a short-lived Claude Code process without a prompt (no model
    * request, no transcript) to ask it about the account, and closes it.
    */
-  abstract probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T>;
+  abstract probe<T>(
+    task: (probe: AgentProbe) => Promise<T>,
+    account?: AgentAccount,
+  ): Promise<T>;
 
   /**
    * Runs an independent review to its end (see {@link AgentReviewOptions});

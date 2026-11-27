@@ -1,4 +1,5 @@
 import { provideHttpClient } from '@angular/common/http';
+import { mainAccountList } from '../accounts/testing/accounts';
 import {
   HttpTestingController,
   provideHttpClientTesting,
@@ -38,10 +39,16 @@ describe('SessionList', () => {
       .expectOne('/api/models')
       .flush({ models: [], source: 'fallback', updatedAt: null });
     http.expectOne('/api/limits').flush({
-      windows: [],
-      subscriptionType: null,
-      updatedAt: null,
+      accounts: [
+        {
+          accountId: 'main',
+          windows: [],
+          subscriptionType: null,
+          updatedAt: null,
+        },
+      ],
     });
+    http.expectOne('/api/accounts').flush(mainAccountList());
     return fixture;
   };
 
@@ -167,6 +174,7 @@ describe('SessionList', () => {
       replaceUrl: true,
     });
     http.expectOne('/api/limits');
+    http.expectOne('/api/accounts');
   });
 
   it('marks the session open beside the list as the current page', async () => {

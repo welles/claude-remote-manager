@@ -483,9 +483,14 @@ describe('SessionsGateway', () => {
     );
     expect(badMessage.status).toBe(400);
     expect(await (await fetch(`${url}/api/limits`)).json()).toEqual({
-      windows: [],
-      subscriptionType: null,
-      updatedAt: null,
+      accounts: [
+        {
+          accountId: 'main',
+          windows: [],
+          subscriptionType: null,
+          updatedAt: null,
+        },
+      ],
     });
   });
 

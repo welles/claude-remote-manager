@@ -1,6 +1,7 @@
 import type { SDKControlGetUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import type { AccountLimits } from '@claude-remote-manager/shared-types';
 import {
+  AccountLimitTracker,
   LIMITS_STALE_MS,
   LimitsService,
   PLAN_USAGE_REFRESH_INTERVAL_MS,
@@ -16,19 +17,20 @@ const planUsage = (
     rate_limits: rateLimits,
   }) as SDKControlGetUsageResponse;
 
-describe('LimitsService', () => {
-  let service: LimitsService;
+describe('AccountLimitTracker', () => {
+  let service: AccountLimitTracker;
   let published: AccountLimits[];
   const now = new Date('2026-03-01T12:00:00Z');
 
   beforeEach(() => {
-    service = new LimitsService();
+    service = new AccountLimitTracker('main');
     published = [];
     service.changes$.subscribe((limits) => published.push(limits));
   });
 
   it('starts empty', () => {
     expect(service.get()).toEqual({
+      accountId: 'main',
       windows: [],
       subscriptionType: null,
       updatedAt: null,
@@ -47,6 +49,7 @@ describe('LimitsService', () => {
     );
 
     expect(service.get()).toEqual({
+      accountId: 'main',
       windows: [
         {
           type: 'five_hour',
@@ -232,5 +235,41 @@ describe('LimitsService', () => {
       throw new Error('probe failed');
     });
     expect(await service.readNow()).toBe(false);
+  });
+});
+
+describe('LimitsService', () => {
+  it('keeps the limits per account and lists them in the accounts order', async () => {
+    const limits = new LimitsService();
+    const published: AccountLimits[] = [];
+    limits.changes$.subscribe((value) => published.push(value));
+    const source = jest.fn(async (accountId: string) =>
+      planUsage({
+        five_hour: {
+          utilization: accountId === 'b' ? 90 : 10,
+          resets_at: null,
+        },
+      }),
+    );
+    limits.setPlanUsageSource(source);
+    limits.setAccounts(() => ['b', 'main']);
+
+    expect(await limits.account('b').readNow()).toBe(true);
+    expect(source).toHaveBeenCalledWith('b');
+    limits.account('main').updateFromRateLimitEvent({
+      status: 'allowed',
+      rateLimitType: 'seven_day',
+    });
+
+    expect(limits.list().map((value) => value.accountId)).toEqual([
+      'b',
+      'main',
+    ]);
+    expect(limits.get('b').windows[0]).toMatchObject({ utilization: 90 });
+    expect(limits.get('main').windows[0]).toMatchObject({ type: 'seven_day' });
+    expect(published.map((value) => value.accountId)).toEqual(['b', 'main']);
+
+    limits.forget('b');
+    expect(limits.get('b').windows).toEqual([]);
   });
 });

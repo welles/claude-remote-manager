@@ -420,15 +420,17 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   other Claude Code versions, `TodoWrite`) tool calls, so it is rebuilt with the history. The
   bundled Claude Code offers these tools to SDK sessions only with
   `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, which every session process gets.
-- Plan limits: the 5-hour, weekly and per-model weekly windows of the account come from
-  `rate_limit_event` messages of any session and from Claude Code's plan usage request after
-  turns; `GET /api/limits` reads them again through a short-lived process when they are unknown
-  or older than 5 minutes (the web app asks every 5 minutes), and a later answer drops windows
-  it no longer lists. Changes go to all clients as `account.limits`. The session list's app
-  bar shows the 5-hour window as a meter (outlined in the error colour from 75 %, filled when
+- Plan limits: the 5-hour, weekly and per-model weekly windows of each account (see
+  [Claude accounts](#claude-accounts)) come from `rate_limit_event` messages of the account's
+  sessions and from Claude Code's plan usage request after turns; `GET /api/limits` (all
+  accounts, in their order) reads them again through a short-lived process of the account when
+  they are unknown or older than 5 minutes (the web app asks every 5 minutes), and a later
+  answer drops windows it no longer lists. Changes go to all clients as `account.limits` (with
+  the `accountId`). The session list's app bar shows the default account's 5-hour window as a
+  meter (outlined in the error colour from 75 %, filled when
   exhausted; amber is kept for sessions that need the user); tapping it opens a dialog with
-  every window, per-model weekly ones included, with percent, reset time and when they were
-  last updated. The session details show the same list.
+  every window of every account, per-model weekly ones included, with percent, reset time and
+  when they were last updated. The session details show the list of the session's account.
 - Integrations: each Claude Code process gets the tools `show_file` (always),
   `set_session_title` (unless the user chose the title, see
   [Managing sessions](#managing-sessions)), `add_repository` (always, see
@@ -1026,6 +1028,44 @@ notification (`turn_finished`) reads "Usage limit: …" with how long until it c
   next message.
 - **Meanwhile:** the PR automation starts no run (`acceptsAppMessage` is false); held messages
   live in memory and are withdrawn when the server stops.
+
+### Claude accounts
+
+Sessions can work with several Claude subscription accounts (no API keys). Settings → Claude
+accounts lists them with their login (email, plan, organization from `claude auth status`),
+their limits and the actions: add (name, then the login), log in again, log out, rename, make
+default, move up/down (the order), remove (not the main account).
+
+- **Directories:** the main account is Claude Code's main directory (`~/.claude`, or
+  `CLAUDE_CONFIG_DIR`). Every further account has `<main>/crm-accounts/<id>` with its own login
+  (`.credentials.json`) and state file (`.claude.json`: account, onboarding, per-project trust);
+  everything else is a relative symlink into the main directory, created (and completed with
+  entries added later) before every process of the account: transcripts (`projects/`),
+  `settings.json`, `CLAUDE.md`, skills, plugins, agents, commands, memory and Claude Code's
+  per-session state. The shared directories are created in the main directory first, so that
+  Claude Code of another account never makes its own. The user's MCP servers (`mcpServers` of the
+  main state file) are copied into the account's state file when they differ. In the container
+  the directories are on the Claude volume and belong to the session user.
+- **Processes:** a session's Claude Code, its reviewer, and the probes (models, slash commands,
+  plan usage) of an account run with `CLAUDE_CONFIG_DIR` set to the account's directory; only
+  the main account gets `CLAUDE_CODE_OAUTH_TOKEN` (it would log every account in as the main
+  one). Usage records keep the account (`usage_records.account_id`).
+- **Login in the UI:** `POST /api/accounts` (name) creates the account and starts
+  `claude auth login --claudeai` as the session user with the account's directory; without a
+  terminal it prints the login URL and reads the code from stdin. The UI shows "Open login
+  page" and a field for the code (`POST /api/accounts/:id/login/code`), then the result; the
+  login state is read again with `claude auth status` when it ends and at every start of the
+  API. `POST /api/accounts/:id/login` starts a new login (an expired one), `DELETE` cancels it
+  (after 15 minutes it ends by itself), `POST /api/accounts/:id/logout` runs `claude auth logout`.
+  Changes go to all clients as `accounts.changed` (all accounts, with their limits and logins).
+- **Sessions:** `CreateSessionRequest.accountId` chooses the account; without it the default
+  account, or, while its 5-hour or weekly window is exhausted, the first logged-in one in order
+  whose limits are not (the default when all are). `sessions.account_id` keeps it (`null` for
+  older sessions: the default account). The session's settings switch it (`accountId` in
+  `PATCH /api/sessions/:id` or `session.update`): stored at once, effective when the process
+  is free (as after `switch_directory`), the conversation resumes from the shared transcript.
+  Removing an account (`DELETE /api/accounts/:id`: logout, then its directory) moves its sessions
+  to the default account.
 
 ## Previews of dev servers
 
@@ -2424,9 +2464,13 @@ or the compose file itself.
 
 ### Logging in to Claude
 
-Claude Code uses the Claude account (subscription), not an API key. Log in once inside the
-running container; the credentials are stored in `/data/claude/.credentials.json` and survive
-restarts and re-creations of the container.
+Claude Code uses Claude accounts (subscriptions), not API keys. Log in from the web app:
+Settings → Claude accounts → Log in (the main account) or Add account (further ones, see
+[Claude accounts](#claude-accounts)). The credentials are stored on the Claude volume
+(`/data/claude/.credentials.json`, further accounts under `/data/claude/crm-accounts/`) and
+survive restarts and re-creations of the container.
+
+Alternatively log in the main account once inside the running container:
 
 ```sh
 docker compose exec -u claude claude-remote-manager claude
@@ -2666,6 +2710,9 @@ package's own Claude Code, the version the sessions run, is
 `<package>/libexec/claude-remote-manager/claude`. Alternatively put
 `CLAUDE_CODE_OAUTH_TOKEN=…` (from `claude setup-token`) into a secret file listed in
 `environmentFiles`.
+Further accounts are added in the web app (Settings → Claude accounts); they live in
+`~/.claude/crm-accounts/` (see [Claude accounts](#claude-accounts)), and the main account can be
+logged in there too.
 
 ### The service
 

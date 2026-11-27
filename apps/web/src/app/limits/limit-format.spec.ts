@@ -62,6 +62,7 @@ describe('limit presentation', () => {
 
   it('orders the windows and marks stale values', () => {
     const limits: AccountLimits = {
+      accountId: 'main',
       windows: [
         window({ type: 'model:Fable', label: 'Week (Fable)' }),
         window({ type: 'seven_day', label: 'Week' }),

@@ -409,6 +409,11 @@ export interface SessionDto {
    * after it was deleted). Absent from older servers.
    */
   environment?: SessionEnvironmentDto | null;
+  /**
+   * Account the session works with (see `AccountDto`); `null`: the
+   * default account. Absent from older servers.
+   */
+  accountId?: string | null;
   createdAt: string;
   updatedAt: string;
   /** Summed usage of all requests of the session. */
@@ -484,6 +489,9 @@ export interface CreateSessionRequest {
    * script), fixed for its lifetime.
    */
   environmentId?: string;
+  /** Account to work with; without it the default account (or the next
+   * one in order whose limit is not exhausted). */
+  accountId?: string;
 }
 
 /**

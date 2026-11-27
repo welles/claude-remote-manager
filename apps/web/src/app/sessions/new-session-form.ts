@@ -43,6 +43,7 @@ import {
   errorMessage,
 } from '../repositories/repositories-api';
 import { ModelsStore } from './models-store';
+import { AccountsStore } from '../accounts/accounts-store';
 import { AttachmentDrafts, imageFiles } from '../attachments/attachment-drafts';
 import { AttachmentsApi } from '../attachments/attachments-api';
 import { DraftImages } from '../attachments/draft-images';
@@ -116,6 +117,14 @@ export class NewSessionForm implements OnInit {
   private readonly sessionsApi = inject(SessionsApi);
   private readonly repositoriesApi = inject(RepositoriesApi);
   private readonly modelsStore = inject(ModelsStore);
+  private readonly accountsStore = inject(AccountsStore);
+  /** The accounts; the choice only shows with more than one. */
+  protected readonly accounts = computed(
+    () => this.accountsStore.accounts() ?? [],
+  );
+  protected readonly defaultAccountName = computed(
+    () => this.accountsStore.effective(null)?.name ?? null,
+  );
   private readonly environmentsApi = inject(EnvironmentsApi);
 
   /** The session was created. */
@@ -152,6 +161,11 @@ export class NewSessionForm implements OnInit {
   protected readonly images = new AttachmentDrafts(inject(AttachmentsApi));
   protected readonly accept = ATTACHMENT_MEDIA_TYPES.join(',');
   protected model = '';
+  /**
+   * Chosen account; `''`: the default one (or, while its limit is
+   * exhausted, the next one that is not; decided by the server).
+   */
+  protected accountId = '';
   /** New sessions start in `auto` (the owner's choice). */
   protected permissionMode: SessionPermissionMode = 'auto';
   protected projectName = '';
@@ -231,6 +245,7 @@ export class NewSessionForm implements OnInit {
 
   ngOnInit(): void {
     this.modelsStore.load();
+    this.accountsStore.start();
     this.repositoriesApi.list().subscribe({
       next: ({ repositories }) => {
         this.repositories.set(repositories);
@@ -453,6 +468,7 @@ export class NewSessionForm implements OnInit {
         : {}),
       ...(this.mode() === 'scratch' ? { scratch: true } : {}),
       ...(this.environmentId() ? { environmentId: this.environmentId() } : {}),
+      ...(this.accountId ? { accountId: this.accountId } : {}),
     };
     this.creating.set(true);
     this.createError.set(null);

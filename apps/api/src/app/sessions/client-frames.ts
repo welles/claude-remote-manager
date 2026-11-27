@@ -30,6 +30,7 @@ export const SESSION_UPDATE_FIELDS = [
   'title',
   'model',
   'permissionMode',
+  'accountId',
 ] as const;
 
 /** The given fields of an object that are present. */

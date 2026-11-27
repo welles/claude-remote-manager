@@ -19,6 +19,7 @@ import { GitHubApi } from '../github/github-api';
 import { errorMessage } from '../repositories/repositories-api';
 import { NotificationSettings } from './notification-settings';
 import { ReviewSettings } from '../reviews/review-settings';
+import { AccountSettings } from '../accounts/account-settings';
 import { SettingsApi } from './settings-api';
 import { RouterLink } from '@angular/router';
 import { AppIcon } from '../ui/icon';
@@ -49,6 +50,7 @@ export function displayVersion(health: HealthResponse): string {
       'app-page gap-4 [--app-page-max:1320px] lg:grid lg:grid-cols-2 lg:items-start',
   },
   imports: [
+    AccountSettings,
     AppIcon,
     AppPageBar,
     RouterLink,

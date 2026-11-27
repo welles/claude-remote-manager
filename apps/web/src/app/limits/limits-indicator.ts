@@ -11,13 +11,14 @@ import { AppDialog } from '../ui/dialog';
 import { Meter } from '../ui/meter';
 import { isStale, limitViews, type LimitView } from './limit-format';
 import { LimitWindows } from './limit-windows';
+import { AccountsStore } from '../accounts/accounts-store';
 import { LimitsStore } from './limits-store';
 
 /**
- * The account's plan limits in the start page's app bar: the 5-hour window
+ * The plan limits in the start page's app bar: the default account's 5-hour window
  * as a small meter, neutral until 75 %, then outlined in the error colour,
  * filled when exhausted (amber stays reserved for sessions that need the
- * user); all windows with their reset times in a dialog.
+ * user); all windows of every account with their reset times in a dialog.
  */
 @Component({
   selector: 'app-limits-indicator',
@@ -53,8 +54,25 @@ import { LimitsStore } from './limits-store';
         Limits ?
       }
     </button>
-    <app-dialog #details heading="Plan limits (whole account)">
-      <app-limit-windows />
+    <app-dialog #details heading="Plan limits">
+      @let list = accounts();
+      @if (list.length > 1) {
+        <div class="flex flex-col gap-5">
+          @for (account of list; track account.id) {
+            <section class="flex flex-col gap-2" data-testid="limits-account">
+              <h3 class="type-title-small m-0">
+                {{ account.name }}
+                @if (account.isDefault) {
+                  <span class="badge">default</span>
+                }
+              </h3>
+              <app-limit-windows [accountId]="account.id" />
+            </section>
+          }
+        </div>
+      } @else {
+        <app-limit-windows />
+      }
       <div dialog-actions>
         <button
           matButton
@@ -70,13 +88,17 @@ import { LimitsStore } from './limits-store';
 })
 export class LimitsIndicator implements OnInit {
   private readonly store = inject(LimitsStore);
+  private readonly accountsStore = inject(AccountsStore);
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly now = signal(Date.now());
   protected readonly views = computed(() => {
-    const limits = this.store.limits();
+    const limits = this.store.limits(this.accountsStore.defaultId());
     return limits ? limitViews(limits, this.now()) : [];
   });
+  protected readonly accounts = computed(
+    () => this.accountsStore.accounts() ?? [],
+  );
   /** The window on the button: 5 hours (or the first one). */
   protected readonly headline = computed<LimitView | null>(
     () => this.views()[0] ?? null,
@@ -88,12 +110,13 @@ export class LimitsIndicator implements OnInit {
       : 'Plan limits';
   });
   protected readonly stale = computed(() => {
-    const limits = this.store.limits();
+    const limits = this.store.limits(this.accountsStore.defaultId());
     return limits !== null && isStale(limits, this.now());
   });
 
   ngOnInit(): void {
     this.store.start();
+    this.accountsStore.start();
     const timer = setInterval(() => this.now.set(Date.now()), 30_000);
     this.destroyRef.onDestroy(() => clearInterval(timer));
   }

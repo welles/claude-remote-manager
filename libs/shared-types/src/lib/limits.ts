@@ -1,5 +1,5 @@
 /**
- * Subscription (plan) rate limits of the Claude account. They apply to the
+ * Subscription (plan) rate limits of a Claude account. They apply to the
  * whole account, not to a single session.
  */
 
@@ -29,12 +29,19 @@ export interface RateLimitWindow {
   updatedAt: string;
 }
 
-/** Response of `GET /api/limits` and payload of `account.limits`. */
+/** Limits of one account; payload of `account.limits`. */
 export interface AccountLimits {
+  /** The account (see `AccountDto`). */
+  accountId: string;
   /** Latest known state per window type. Empty until a session reported one. */
   windows: RateLimitWindow[];
   /** Subscription type such as `pro` or `max`, when known. */
   subscriptionType: string | null;
   /** When any value was last updated (ISO 8601), `null` if never. */
   updatedAt: string | null;
+}
+
+/** Response of `GET /api/limits`: every account, in the accounts' order. */
+export interface AccountLimitsListResponse {
+  accounts: AccountLimits[];
 }

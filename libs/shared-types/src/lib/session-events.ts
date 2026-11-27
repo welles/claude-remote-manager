@@ -5,6 +5,7 @@ import type {
   MessageReference,
   MessageReferenceRequest,
 } from './github-references';
+import type { AccountsChangedMessage } from './accounts';
 import type { AccountLimits } from './limits';
 import type { PreviewDto, PreviewStopper } from './previews';
 import type { RepositoryAdditionCall } from './repository-additions';
@@ -631,7 +632,7 @@ export interface SessionDeletedMessage {
   sessionId: string;
 }
 
-/** The account-wide rate limits changed. Sent to all clients. */
+/** The rate limits of an account changed. Sent to all clients. */
 export interface AccountLimitsMessage {
   type: 'account.limits';
   limits: AccountLimits;
@@ -658,6 +659,7 @@ export type ServerMessage =
   | SessionUpdatedMessage
   | SessionDeletedMessage
   | AccountLimitsMessage
+  | AccountsChangedMessage
   | ErrorMessage
   | AckMessage;
 
@@ -759,7 +761,8 @@ export interface SendQueuedNowMessage {
 }
 
 /**
- * Change the title, model or permission mode (see `UpdateSessionRequest`).
+ * Change the title, model, permission mode or account (see
+ * `UpdateSessionRequest`).
  */
 export interface UpdateSessionMessage {
   type: 'session.update';
@@ -767,6 +770,7 @@ export interface UpdateSessionMessage {
   title?: string;
   model?: string | null;
   permissionMode?: SessionPermissionMode;
+  accountId?: string;
   requestId?: string;
 }
 
