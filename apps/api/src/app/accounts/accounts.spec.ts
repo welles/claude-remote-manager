@@ -13,6 +13,7 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
+import { SessionRepository } from '../sessions/session.repository';
 import { AccountsService, LOGIN_STALE_MS } from './accounts.service';
 import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import { rawRequest, startTestApp, type TestApp } from '../testing/test-app';
@@ -413,6 +414,50 @@ describe('accounts', () => {
     expect(app.runner.last.options.account).toEqual({
       configDir: join(mainDir, 'crm-accounts', account.id),
       main: false,
+    });
+  });
+
+  it('keeps the account when the rest of a session change is refused', async () => {
+    const account = await addAccount('Work', 'work@example.test');
+    const session = (
+      await call('POST', '/api/sessions', {
+        prompt: 'Hi',
+        scratch: true,
+        accountId: 'main',
+      })
+    ).json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    app.runner.last.failSwitch = new Error('model not available');
+    const response = await call('PATCH', `/api/sessions/${session.id}`, {
+      accountId: account.id,
+      model: 'opus',
+    });
+    expect(response.status).toBe(409);
+    expect(
+      (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>()
+        .accountId,
+    ).toBe('main');
+  });
+
+  it('takes over limit waits from before accounts without dropping their window', async () => {
+    const session = (
+      await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
+    ).json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    const repository = app.app.get(SessionRepository);
+    const wait = {
+      since: new Date().toISOString(),
+      window: 'model:Fable',
+      resumeAt: new Date(Date.now() + 86_400_000).toISOString(),
+      resetKnown: true,
+      autofixPullRequests: [],
+    };
+    repository.update(session.id, { status: 'waiting', limitWait: wait });
+    // Any change of the accounts makes waiting sessions look at theirs.
+    await call('PATCH', '/api/accounts/main', { name: 'Main' });
+    expect(repository.require(session.id).limitWait).toEqual({
+      ...wait,
+      accountId: 'main',
     });
   });
 });

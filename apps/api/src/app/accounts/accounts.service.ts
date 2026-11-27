@@ -254,6 +254,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       }
       // The directory first: if that fails, the account stays (retry).
       await this.directories.remove(row.directory);
+      // A login started meanwhile goes too.
+      this.cancelLogin(id);
       this.deleteRow(row);
       this.limits.forget(id);
       removed = true;
@@ -293,7 +295,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   /** Starts (or restarts) the login of an account from the UI. */
   startLogin(id: string): AccountDto {
-    const row = this.requireRow(id);
+    const row = this.requireUsable(id);
     this.cancelLogin(id);
     const process = this.cli.login(this.agentAccountOf(row));
     const state: LoginState = {
@@ -343,7 +345,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   /** Sends the code from the browser to the running login. */
   submitLoginCode(id: string, body: unknown): AccountDto {
-    this.requireRow(id);
+    this.requireUsable(id);
     const code = requireString(requireObject(body), 'code', {
       maxLength: MAX_CODE_LENGTH,
       notBlank: true,
@@ -372,7 +374,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async logout(id: string): Promise<AccountDto> {
-    const row = this.requireRow(id);
+    const row = this.requireUsable(id);
     this.cancelLogin(id);
     try {
       await this.cli.logout(this.agentAccountOf(row));
@@ -385,7 +387,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   /** Reads the login state of an account again. */
   async refresh(id: string): Promise<void> {
-    const row = this.destroyed ? undefined : this.row(id);
+    const row =
+      this.destroyed || this.removing.has(id) ? undefined : this.row(id);
     if (!row) {
       return;
     }
@@ -558,6 +561,15 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   private row(id: string): AccountRow | undefined {
     return this.db.select().from(accounts).where(eq(accounts.id, id)).get();
+  }
+
+  /** An account that is not being removed (else 409). */
+  private requireUsable(id: string): AccountRow {
+    const row = this.requireRow(id);
+    if (this.removing.has(id)) {
+      throw new ConflictException(`Account ${id} is being removed`);
+    }
+    return row;
   }
 
   private requireRow(id: string): AccountRow {

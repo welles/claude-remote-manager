@@ -134,10 +134,26 @@ function copyMcpServers(mainStateFile, dir) {
     return;
   }
   const file = path.join(dir, '.claude.json');
-  if (fs.existsSync(`${file}.lock`)) {
-    // Claude Code is writing it; the next start copies them.
-    return;
+  // Claude Code's own lock (proper-lockfile: a directory next to the file),
+  // taken atomically for the whole read-modify-write. Held by Claude Code:
+  // the next start copies them.
+  const lock = `${file}.lock`;
+  try {
+    fs.mkdirSync(lock);
+  } catch (error) {
+    if (error.code === 'EEXIST') {
+      return;
+    }
+    throw error;
   }
+  try {
+    writeServers(file, main);
+  } finally {
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+}
+
+function writeServers(file, main) {
   const state = readJson(file);
   if (state === undefined) {
     return;

@@ -1465,13 +1465,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (permissionMode && permissionMode !== record.permissionMode) {
       changes.permissionMode = permissionMode;
     }
-    const accountId = optionalString(body, 'accountId');
-    if (accountId !== undefined && accountId !== record.accountId) {
-      if (!this.accounts?.exists(accountId)) {
-        throw new BadRequestException('accountId is not a known account');
-      }
-      this.changeAccount(sessionId, accountId);
+    const requestedAccount = optionalString(body, 'accountId');
+    if (
+      requestedAccount !== undefined &&
+      !this.accounts?.exists(requestedAccount)
+    ) {
+      throw new BadRequestException('accountId is not a known account');
     }
+    // Applied after the other changes went through.
+    const switchAccount = () => {
+      if (
+        requestedAccount !== undefined &&
+        requestedAccount !== this.requireRecord(sessionId).accountId
+      ) {
+        this.changeAccount(sessionId, requestedAccount);
+      }
+    };
     if (title !== undefined && title !== record.title) {
       // Only the title: slug, branches and directories keep their names.
       // From now on Claude does not change it any more.
@@ -1481,6 +1490,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.sessions.update(sessionId, { titleSource: 'user' });
     }
     if (Object.keys(changes).length === 0) {
+      switchAccount();
       return this.get(sessionId);
     }
     const live = this.live.get(sessionId);
@@ -1503,6 +1513,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     this.applySettings(sessionId, changes, 'user');
+    switchAccount();
     if (run && live && changes.model !== undefined) {
       void this.refreshContext(live, run, { force: true });
       // Claude Code leaves `auto` for a model without auto mode and does
@@ -1551,6 +1562,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
     const accountId = this.accountOf(record.accountId);
+    if (!force && wait.accountId === undefined) {
+      // A wait from before accounts: it was for this account; nothing else
+      // changes (its window stays).
+      return this.sessions.update(sessionId, {
+        limitWait: { ...wait, accountId },
+      });
+    }
     if (!force && wait.accountId === accountId) {
       return null;
     }
@@ -2174,6 +2192,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.rejectedWindow = null;
     // A changed secret is masked from this process on.
     live.mask = undefined;
+    // In use from now on: by the account it will pick (see `pickId`).
+    live.accountId =
+      this.accounts?.pickId(this.requireRecord(live.id).accountId) ??
+      MAIN_ACCOUNT_ID;
     live.launching = true;
     try {
       const extras = await this.support.prepare(record);
@@ -4888,6 +4910,24 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           resetKnown: until !== null,
         },
       });
+      this.updates.next(this.toDto(updated));
+      this.scheduleLimitCheck(sessionId);
+      return;
+    }
+    const live = this.live.get(sessionId);
+    if (live?.run && live.accountId !== accountId) {
+      // Its process still runs with the old account (kept for previews or
+      // background tasks; it restarts with the new one once free): wait
+      // instead of sending the continuation to the exhausted account.
+      const updated = this.sessions.update(sessionId, {
+        limitWait: {
+          ...current,
+          accountId,
+          resumeAt: new Date(now + this.limitUnknownRecheckMs).toISOString(),
+          resetKnown: false,
+        },
+      });
+      this.restartWhenFree(sessionId);
       this.updates.next(this.toDto(updated));
       this.scheduleLimitCheck(sessionId);
       return;
