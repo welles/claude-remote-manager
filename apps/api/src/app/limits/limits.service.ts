@@ -276,6 +276,7 @@ export class LimitsService {
     | ((accountId: string) => Promise<SDKControlGetUsageResponse>)
     | null = null;
   private accountIds: () => string[] = () => [MAIN_ACCOUNT_ID];
+  private refreshableIds: () => string[] = () => [MAIN_ACCOUNT_ID];
   private readonly changes = new Subject<AccountLimits>();
 
   /** Emits the complete state of an account after every change. */
@@ -313,9 +314,13 @@ export class LimitsService {
     }
   }
 
-  /** The accounts in their order; set by the accounts module. */
-  setAccounts(ids: () => string[]): void {
+  /**
+   * The accounts in their order, and those whose limits can be read (logged
+   * in); set by the accounts module.
+   */
+  setAccounts(ids: () => string[], refreshable: () => string[] = ids): void {
     this.accountIds = ids;
+    this.refreshableIds = refreshable;
   }
 
   /** The limits of every account, in the accounts' order. */
@@ -327,9 +332,9 @@ export class LimitsService {
     return this.account(accountId).get();
   }
 
-  /** Reads stale or unknown limits of every account in the background. */
+  /** Reads stale or unknown limits of the logged-in accounts in the background. */
   refreshIfStale(now = Date.now()): void {
-    for (const id of this.accountIds()) {
+    for (const id of this.refreshableIds()) {
       this.account(id).refreshIfStale(now);
     }
   }

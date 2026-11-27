@@ -12,8 +12,11 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import type { Observable } from 'rxjs';
 import {
+  ACCOUNT_PROVIDER_LABELS,
+  ACCOUNT_PROVIDERS,
   MAX_ACCOUNT_NAME_LENGTH,
   type AccountDto,
+  type AccountProvider,
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { LimitWindows } from '../limits/limit-windows';
@@ -29,7 +32,7 @@ export function planLabel(account: AccountDto): string | null {
 }
 
 /**
- * The Claude accounts on the Settings page: their login state and limits,
+ * The accounts of every provider on the Settings page: their login state and limits,
  * adding one with the login in the UI (open the login page, paste the
  * code), logging in again or out, renaming, the default and the order of
  * the automatic switch, removing.
@@ -47,10 +50,10 @@ export function planLabel(account: AccountDto): string | null {
   ],
   template: `
     <p class="m-0 text-on-surface-variant">
-      Sessions work with a Claude subscription account. New sessions use the
-      default account, or the next one in this order while its limit is used up;
-      each session can switch its account in its settings. All accounts share
-      settings, skills, plugins, memory and conversations.
+      Sessions work with a subscription account. New sessions use the default
+      account, or the next one in this order while its limit is used up; each
+      session can switch its account in its settings. Accounts of the same
+      provider share settings, skills, plugins, memory and conversations.
     </p>
     @if (store.failed()) {
       <p class="m-0 text-error">The accounts could not be loaded.</p>
@@ -73,6 +76,9 @@ export function planLabel(account: AccountDto): string | null {
           >
             {{ account.name }}
           </h3>
+          <span class="badge" data-testid="account-provider">{{
+            providerLabels[account.provider]
+          }}</span>
           @if (account.isDefault) {
             <span class="badge" data-testid="account-default">default</span>
           }
@@ -278,19 +284,25 @@ export function planLabel(account: AccountDto): string | null {
         </div>
       </section>
     }
-    <div>
-      <button
-        matButton="tonal"
-        type="button"
-        (click)="openAdd()"
-        data-testid="account-add"
-      >
-        Add account
-      </button>
+    <div class="flex flex-wrap gap-2">
+      @for (provider of providers; track provider) {
+        <button
+          matButton="tonal"
+          type="button"
+          (click)="openAdd(provider)"
+          [attr.data-testid]="'account-add-' + provider"
+        >
+          Add {{ providerLabels[provider] }} account
+        </button>
+      }
 
       <app-dialog
         #nameDialog
-        [heading]="renaming() ? 'Rename account' : 'Add account'"
+        [heading]="
+          renaming()
+            ? 'Rename account'
+            : 'Add ' + providerLabels[adding()] + ' account'
+        "
         initialFocus="input"
         testId="account-name-dialog"
       >
@@ -371,6 +383,10 @@ export class AccountSettings implements OnInit {
   protected readonly renaming = signal<AccountDto | null>(null);
   protected readonly maxNameLength = MAX_ACCOUNT_NAME_LENGTH;
   protected readonly planLabel = planLabel;
+  protected readonly providers = ACCOUNT_PROVIDERS;
+  protected readonly providerLabels = ACCOUNT_PROVIDER_LABELS;
+  /** The provider of the account being added. */
+  protected readonly adding = signal<AccountProvider>('claude');
   protected name = '';
   /** Codes typed per account. */
   protected codes: Record<string, string> = {};
@@ -388,7 +404,8 @@ export class AccountSettings implements OnInit {
     this.limits.start();
   }
 
-  protected openAdd(): void {
+  protected openAdd(provider: AccountProvider): void {
+    this.adding.set(provider);
     this.renaming.set(null);
     this.name = '';
     this.nameDialog().open();
@@ -409,7 +426,7 @@ export class AccountSettings implements OnInit {
     this.run(
       renaming
         ? this.store.update(renaming.id, { name })
-        : this.store.create(name),
+        : this.store.create(this.adding(), name),
       renaming
         ? 'The account could not be renamed'
         : 'The account could not be added',

@@ -5,6 +5,7 @@ import {
   MAIN_ACCOUNT_ID,
   type AccountDto,
   type AccountListResponse,
+  type AccountProvider,
   type UpdateAccountRequest,
 } from '@claude-remote-manager/shared-types';
 import { SessionSocket } from '../sessions/session-socket';
@@ -64,8 +65,8 @@ export class AccountsStore {
     );
   }
 
-  create(name: string): Observable<AccountDto> {
-    return this.http.post<AccountDto>('/api/accounts', { name });
+  create(provider: AccountProvider, name: string): Observable<AccountDto> {
+    return this.http.post<AccountDto>('/api/accounts', { provider, name });
   }
 
   update(id: string, request: UpdateAccountRequest): Observable<AccountDto> {

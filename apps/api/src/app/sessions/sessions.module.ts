@@ -170,7 +170,7 @@ export class SessionsModule {
     limits.setPlanUsageSource(async (accountId) =>
       runner.probe(
         (probe) => probe.planUsage(),
-        await accounts.agentAccount(accountId),
+        await accounts.exactAgentAccount(accountId),
       ),
     );
   }

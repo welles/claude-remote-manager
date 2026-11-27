@@ -13,7 +13,7 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
-import { waitFor } from '../sessions/testing/fake-agent';
+import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import { rawRequest, startTestApp, type TestApp } from '../testing/test-app';
 
 describe('accounts', () => {
@@ -227,14 +227,87 @@ describe('accounts', () => {
     await call('PATCH', `/api/sessions/${session.id}`, {
       accountId: account.id,
     });
+    // Not while a running process uses it.
     expect((await call('DELETE', `/api/accounts/${account.id}`)).status).toBe(
-      204,
+      409,
     );
+    await call('POST', `/api/sessions/${session.id}/end`);
+    await call('POST', `/api/sessions/${avoiding.id}/end`);
+    let status = 0;
+    await waitFor(async () => {
+      status = (await call('DELETE', `/api/accounts/${account.id}`)).status;
+      return status !== 409;
+    });
+    expect(status).toBe(204);
     expect(existsSync(dir)).toBe(false);
     const after = (
       await call('GET', `/api/sessions/${session.id}`)
     ).json<SessionDto>();
     expect(after.accountId).toBeNull();
     expect((await list()).map((a) => a.id)).toEqual(['main']);
+  });
+
+  it('continues a session waiting for its limit as soon as it switches to an account with room', async () => {
+    app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+    await call('POST', '/api/accounts/main/refresh');
+    const account = await addAccount('Work', 'work@example.test');
+    const session = (
+      await call('POST', '/api/sessions', {
+        prompt: 'Hi',
+        scratch: true,
+        accountId: 'main',
+      })
+    ).json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    const resetsAt = Date.now() + 5 * 3_600_000;
+    app.runner.last.emit(
+      {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          status: 'rejected',
+          resetsAt: Math.floor(resetsAt / 1000),
+          rateLimitType: 'five_hour',
+        },
+      },
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'rate_limit',
+        message: {
+          id: 'limit',
+          content: [{ type: 'text', text: "You've hit your 5-hour limit" }],
+        },
+      },
+      resultMessage(1, 0, {
+        is_error: true,
+        result: "You've hit your 5-hour limit",
+      }),
+    );
+    const get = async () =>
+      (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>();
+    await waitFor(async () => (await get()).waitingFor === 'limit');
+
+    // The other account has room (the probe answers for it).
+    app.runner.probeUsage = () =>
+      ({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 10, resets_at: null },
+          seven_day: null,
+          seven_day_opus: null,
+          seven_day_sonnet: null,
+          seven_day_oauth_apps: null,
+        },
+      }) as never;
+    await call('PATCH', `/api/sessions/${session.id}`, {
+      accountId: account.id,
+    });
+    await waitFor(() => app.runner.runs.length === 2);
+    expect(app.runner.last.options.account).toEqual({
+      configDir: join(mainDir, 'crm-accounts', account.id),
+      main: false,
+    });
+    expect((await get()).waitingFor).not.toBe('limit');
   });
 });

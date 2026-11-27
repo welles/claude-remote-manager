@@ -421,7 +421,7 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   bundled Claude Code offers these tools to SDK sessions only with
   `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, which every session process gets.
 - Plan limits: the 5-hour, weekly and per-model weekly windows of each account (see
-  [Claude accounts](#claude-accounts)) come from `rate_limit_event` messages of the account's
+  [Accounts](#accounts)) come from `rate_limit_event` messages of the account's
   sessions and from Claude Code's plan usage request after turns; `GET /api/limits` (all
   accounts, in their order) reads them again through a short-lived process of the account when
   they are unknown or older than 5 minutes (the web app asks every 5 minutes), and a later
@@ -1029,10 +1029,11 @@ notification (`turn_finished`) reads "Usage limit: …" with how long until it c
 - **Meanwhile:** the PR automation starts no run (`acceptsAppMessage` is false); held messages
   live in memory and are withdrawn when the server stops.
 
-### Claude accounts
+### Accounts
 
-Sessions can work with several Claude subscription accounts (no API keys). Settings → Claude
-accounts lists them with their login (email, plan, organization from `claude auth status`),
+Sessions can work with several subscription accounts (no API keys; Claude for now, ChatGPT
+accounts follow with Codex as an equal engine). Settings → Accounts
+lists them with their login (email, plan, organization from `claude auth status`),
 their limits and the actions: add (name, then the login), log in again, log out, rename, make
 default, move up/down (the order), remove (not the main account).
 
@@ -1042,14 +1043,20 @@ default, move up/down (the order), remove (not the main account).
   everything else is a relative symlink into the main directory, created (and completed with
   entries added later) before every process of the account: transcripts (`projects/`),
   `settings.json`, `CLAUDE.md`, skills, plugins, agents, commands, memory and Claude Code's
-  per-session state. The shared directories are created in the main directory first, so that
-  Claude Code of another account never makes its own. The user's MCP servers (`mcpServers` of the
-  main state file) are copied into the account's state file when they differ. In the container
-  the directories are on the Claude volume and belong to the session user.
+  per-session state. The shared directories (and an empty `settings.json`) are created in the
+  main directory first, so that Claude Code of another account never makes its own. The user's
+  MCP servers are managed in the main account: `mcpServers` of the main state file replaces the
+  account's when they differ, unless Claude Code holds the account's lock
+  (`.claude.json.lock`; the next start copies them). The helper `assets/claude-account-dir.cjs`
+  does all of this, and removes a directory, as the session user (through the launcher, like the
+  file helper), so the API never writes into directories the sessions control with its own
+  privileges; it refuses a `crm-accounts` that is a symlink and never writes through a symlinked
+  state file. Calls for the same account run one after the other.
 - **Processes:** a session's Claude Code, its reviewer, and the probes (models, slash commands,
   plan usage) of an account run with `CLAUDE_CONFIG_DIR` set to the account's directory; only
   the main account gets `CLAUDE_CODE_OAUTH_TOKEN` (it would log every account in as the main
-  one). Usage records keep the account (`usage_records.account_id`).
+  one). Usage records keep the account (`usage_records.account_id`). The model list and the
+  slash commands before a session's first process come from the default account.
 - **Login in the UI:** `POST /api/accounts` (name) creates the account and starts
   `claude auth login --claudeai` as the session user with the account's directory; without a
   terminal it prints the login URL and reads the code from stdin. The UI shows "Open login
@@ -1064,8 +1071,11 @@ default, move up/down (the order), remove (not the main account).
   older sessions: the default account). The session's settings switch it (`accountId` in
   `PATCH /api/sessions/:id` or `session.update`): stored at once, effective when the process
   is free (as after `switch_directory`), the conversation resumes from the shared transcript.
-  Removing an account (`DELETE /api/accounts/:id`: logout, then its directory) moves its sessions
-  to the default account.
+  A switch while the session waits for the old account's limit makes the app look at the new
+  account's limits at once and continue if it has room. Removing an account
+  (`DELETE /api/accounts/:id`: logout, then its directory) moves its sessions to the default
+  account; it is refused (409) while a running Claude Code process of a session uses it.
+  Limits are only read for logged-in accounts.
 
 ## Previews of dev servers
 
@@ -2465,8 +2475,8 @@ or the compose file itself.
 ### Logging in to Claude
 
 Claude Code uses Claude accounts (subscriptions), not API keys. Log in from the web app:
-Settings → Claude accounts → Log in (the main account) or Add account (further ones, see
-[Claude accounts](#claude-accounts)). The credentials are stored on the Claude volume
+Settings → Accounts → Log in (the main account) or Add Claude account (further ones, see
+[Accounts](#accounts)). The credentials are stored on the Claude volume
 (`/data/claude/.credentials.json`, further accounts under `/data/claude/crm-accounts/`) and
 survive restarts and re-creations of the container.
 
@@ -2710,8 +2720,8 @@ package's own Claude Code, the version the sessions run, is
 `<package>/libexec/claude-remote-manager/claude`. Alternatively put
 `CLAUDE_CODE_OAUTH_TOKEN=…` (from `claude setup-token`) into a secret file listed in
 `environmentFiles`.
-Further accounts are added in the web app (Settings → Claude accounts); they live in
-`~/.claude/crm-accounts/` (see [Claude accounts](#claude-accounts)), and the main account can be
+Further accounts are added in the web app (Settings → Accounts); they live in
+`~/.claude/crm-accounts/` (see [Accounts](#accounts)), and the main account can be
 logged in there too.
 
 ### The service

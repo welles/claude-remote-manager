@@ -747,6 +747,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * cut off are rolled back and their sessions marked failed.
    */
   async onModuleInit(): Promise<void> {
+    // An account a running process uses cannot be removed.
+    this.accounts?.setUsage((accountId) =>
+      [...this.live.values()].some(
+        (live) => !!live.run && live.accountId === accountId,
+      ),
+    );
     await this.workspaces.rollbackInterruptedAdditions((sessionId, event) =>
       this.storedEvents.add(sessionId, event, { uuid: null, userId: null }),
     );
@@ -1504,10 +1510,24 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * like after `switch_directory`; the conversation resumes).
    */
   private changeAccount(sessionId: string, accountId: string): void {
-    const updated = this.sessions.update(sessionId, { accountId });
+    const before = this.requireRecord(sessionId);
+    let updated = this.sessions.update(sessionId, { accountId });
     const live = this.live.get(sessionId);
     if (live && live.accountId !== this.accountOf(accountId)) {
       this.restartWhenFree(sessionId);
+    }
+    if (before.limitWait && before.status === 'waiting') {
+      // Waiting for the old account's limit: look now whether the new one
+      // has room, and continue with it if so.
+      updated = this.sessions.update(sessionId, {
+        limitWait: {
+          ...before.limitWait,
+          window: null,
+          resumeAt: new Date().toISOString(),
+          resetKnown: false,
+        },
+      });
+      this.scheduleLimitCheck(sessionId);
     }
     this.updates.next(this.toDto(updated));
   }
@@ -2133,8 +2153,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         live,
         await this.agentMessage(live.id, firstMessage),
       );
+      // The account as stored now: a switch while the process was being
+      // prepared counts.
       const account = this.accounts
-        ? await this.accounts.agentAccount(record.accountId)
+        ? await this.accounts.agentAccount(
+            this.requireRecord(live.id).accountId,
+          )
         : null;
       live.accountId = account?.id ?? MAIN_ACCOUNT_ID;
       const run = await this.runner.start(
@@ -2190,6 +2214,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.runningDirectories.set(live.id, workingDirectory(record));
       this.countContext(live, first);
       live.consuming = this.consume(live, run);
+      if (
+        this.accountOf(this.requireRecord(live.id).accountId) !== live.accountId
+      ) {
+        // Switched while the process started: restarted once it is free.
+        this.restartWhenFree(live.id);
+      }
     } catch (error) {
       this.support.released(live.id);
       this.failRun(live, error);

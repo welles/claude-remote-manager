@@ -87,3 +87,8 @@ export interface AccountsChangedMessage {
   type: 'accounts.changed';
   accounts: AccountDto[];
 }
+
+/** How the UI names a provider's accounts. */
+export const ACCOUNT_PROVIDER_LABELS: Record<AccountProvider, string> = {
+  claude: 'Claude',
+};

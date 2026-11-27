@@ -78,7 +78,7 @@ describe('AccountSettings', () => {
 
   it('adds an account and completes its login with the pasted code', async () => {
     const fixture = render([accountDto()]);
-    one(fixture, 'account-add').click();
+    one(fixture, 'account-add-claude').click();
     fixture.detectChanges();
     await fixture.whenStable();
     const input = one(fixture, 'account-name-input') as HTMLInputElement;
@@ -92,7 +92,7 @@ describe('AccountSettings', () => {
       .querySelector('form#account-name-form')
       ?.dispatchEvent(new Event('submit'));
     const create = http.expectOne({ method: 'POST', url: '/api/accounts' });
-    expect(create.request.body).toEqual({ name: 'Work' });
+    expect(create.request.body).toEqual({ provider: 'claude', name: 'Work' });
     create.flush({
       ...work,
       login: { status: 'starting', url: null, error: null },

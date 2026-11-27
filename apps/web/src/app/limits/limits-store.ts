@@ -31,16 +31,23 @@ export class LimitsStore {
     this.started = true;
     this.socket.connect();
     this.socket.messages$.subscribe((message) => {
+      if (message.type === 'accounts.changed') {
+        // The accounts carry their limits: added and removed ones follow.
+        this.accounts.set(message.accounts.map((account) => account.limits));
+        return;
+      }
       if (message.type === 'account.limits') {
         const limits = message.limits;
+        // Only accounts the last list named: a removed one does not come
+        // back.
         const current = this.accounts() ?? [];
-        this.accounts.set(
-          current.some((entry) => entry.accountId === limits.accountId)
-            ? current.map((entry) =>
-                entry.accountId === limits.accountId ? limits : entry,
-              )
-            : [...current, limits],
-        );
+        if (current.some((entry) => entry.accountId === limits.accountId)) {
+          this.accounts.set(
+            current.map((entry) =>
+              entry.accountId === limits.accountId ? limits : entry,
+            ),
+          );
+        }
       }
     });
     this.load();

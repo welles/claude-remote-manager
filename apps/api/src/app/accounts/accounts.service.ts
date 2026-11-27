@@ -62,6 +62,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   private readonly logins = new Map<string, LoginState>();
   private readonly changes = new Subject<AccountDto[]>();
   private destroyed = false;
+  /** Whether a running process uses an account; set by the sessions. */
+  private inUse: (accountId: string) => boolean = () => false;
 
   /** Emits all accounts after every change (logins, limits, edits). */
   readonly changes$ = this.changes.asObservable();
@@ -73,7 +75,15 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     private readonly directories: ClaudeAccountDirectories,
     private readonly limits: LimitsService,
   ) {
-    limits.setAccounts(() => this.rows().map((row) => row.id));
+    limits.setAccounts(
+      () => this.rows().map((row) => row.id),
+      // Logged-out accounts (also those still logging in) have no limits
+      // to read.
+      () =>
+        this.rows()
+          .filter((row) => row.loggedIn === true)
+          .map((row) => row.id),
+    );
     limits.changes$.subscribe(() => this.publish());
   }
 
@@ -90,6 +100,11 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Tells the accounts which ones running session processes use. */
+  setUsage(inUse: (accountId: string) => boolean): void {
+    this.inUse = inUse;
+  }
+
   list(): AccountDto[] {
     return this.rows().map((row) => this.toDto(row));
   }
@@ -101,11 +116,6 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   /** Whether an account exists. */
   exists(id: string): boolean {
     return this.row(id) !== undefined;
-  }
-
-  /** Name of an account, for messages; `null` if it is gone. */
-  name(id: string | null): string | null {
-    return this.row(id ?? this.defaultRow().id)?.name ?? null;
   }
 
   /**
@@ -184,6 +194,11 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     if (row.directory === null) {
       throw new ConflictException(
         'The main account cannot be removed; log it out instead',
+      );
+    }
+    if (this.inUse(id)) {
+      throw new ConflictException(
+        'A running session uses this account; switch it to another account or end it first',
       );
     }
     this.cancelLogin(id);
@@ -365,6 +380,18 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     return { id: row.id, ...this.agentAccountOf(row) };
   }
 
+  /**
+   * The account `accountId` exactly (no fallback), with its directory made
+   * ready; for reading its limits.
+   */
+  async exactAgentAccount(accountId: string): Promise<AgentAccount> {
+    const row = this.requireRow(accountId);
+    if (row.directory !== null) {
+      await this.directories.prepare(row.directory);
+    }
+    return this.agentAccountOf(row);
+  }
+
   /** The account a session effectively uses (`null`: the default). */
   effectiveId(accountId: string | null): string {
     return (
@@ -393,24 +420,6 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       candidates.find(
         (row) => this.limits.account(row.id).exhaustedUntil([], now) === null,
       )?.id ?? preferred.id
-    );
-  }
-
-  /**
-   * The next account in order after `current` (wrapping around) that is
-   * logged in and whose limit is not exhausted; `null` if there is none.
-   */
-  nextAvailable(current: string, now = Date.now()): string | null {
-    const rows = this.rows();
-    const index = rows.findIndex((row) => row.id === current);
-    const ordered = [...rows.slice(index + 1), ...rows.slice(0, index)];
-    return (
-      ordered.find(
-        (row) =>
-          row.id !== current &&
-          row.loggedIn !== false &&
-          this.limits.account(row.id).exhaustedUntil([], now) === null,
-      )?.id ?? null
     );
   }
 
