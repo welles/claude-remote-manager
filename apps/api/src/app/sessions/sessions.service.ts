@@ -497,6 +497,11 @@ interface LiveSession {
   accountId: string;
   /** A process is being started (see {@link launch}). */
   launching: boolean;
+  /**
+   * {@link restartPending} was set only because the session switched to
+   * another account; undone when it switches back.
+   */
+  accountRestart: boolean;
 }
 
 /** How long shutdown waits for Claude Code processes to exit. */
@@ -960,7 +965,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       ? this.environments.requireForSession(body['environmentId'])
       : null;
     const requestedAccount = optionalString(body, 'accountId');
-    const accountId = this.accounts
+    let accountId = this.accounts
       ? this.accounts.forNewSession(requestedAccount)
       : null;
 
@@ -969,6 +974,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const message = { id: randomUUID(), text: prompt };
     // Resolved now, so the chips show at once; sent with the message later.
     const context = await this.prepareContext(referenceRequests);
+    if (this.accounts && accountId && !this.accounts.isUsable(accountId)) {
+      // Removed while the directories were planned.
+      if (requestedAccount !== undefined) {
+        throw new ConflictException('The account was removed meanwhile');
+      }
+      accountId = this.accounts.forNewSession(undefined);
+    }
     let record: SessionRecord;
     try {
       record = this.sessions.create({
@@ -1478,6 +1490,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         requestedAccount !== undefined &&
         requestedAccount !== this.requireRecord(sessionId).accountId
       ) {
+        if (!this.accounts?.isUsable(requestedAccount)) {
+          // Removed while the rest of the change was applied.
+          throw new ConflictException('The account was removed meanwhile');
+        }
         this.changeAccount(sessionId, requestedAccount);
       }
     };
@@ -1538,7 +1554,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     let updated = this.sessions.update(sessionId, { accountId });
     const live = this.live.get(sessionId);
     if (live && live.accountId !== this.accountOf(accountId)) {
+      const pending = live.restartPending;
       this.restartWhenFree(sessionId);
+      // Only for the account: undone when the session switches back.
+      live.accountRestart = !pending && live.restartPending;
+    } else if (live?.accountRestart) {
+      // Back to the process's account before it restarted.
+      live.restartPending = false;
+      live.accountRestart = false;
     }
     if (before.limitWait && before.status === 'waiting') {
       updated = this.followAccount(sessionId, true) ?? updated;
@@ -1955,6 +1978,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       limitRetries: 0,
       accountId: this.accountOf(this.sessions.get(id)?.accountId ?? null),
       launching: false,
+      accountRestart: false,
     };
   }
 
@@ -2186,6 +2210,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // A new process has the current directories: nothing to restart for.
     live.reopen = null;
     live.restartPending = false;
+    live.accountRestart = false;
     live.contextResults = 0;
     live.reportedMode = null;
     live.limitHit = false;
@@ -4592,6 +4617,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     live.restartPending = true;
+    // Also for another reason now (see `changeAccount`).
+    live.accountRestart = false;
     this.restartIfPending(live);
   }
 
@@ -4609,6 +4636,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     live.restartPending = false;
+    live.accountRestart = false;
     this.closeForRestart(live);
     return true;
   }
@@ -4915,7 +4943,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const live = this.live.get(sessionId);
-    if (live?.run && live.accountId !== accountId) {
+    if (live?.run && !live.closing && live.accountId !== accountId) {
       // Its process still runs with the old account (kept for previews or
       // background tasks; it restarts with the new one once free): wait
       // instead of sending the continuation to the exhausted account.

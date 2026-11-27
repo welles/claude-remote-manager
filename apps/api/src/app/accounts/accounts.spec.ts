@@ -460,4 +460,27 @@ describe('accounts', () => {
       accountId: 'main',
     });
   });
+
+  it('does not restart the process when the session switches away and back during a turn', async () => {
+    const account = await addAccount('Work', 'work@example.test');
+    const session = (
+      await call('POST', '/api/sessions', {
+        prompt: 'Hi',
+        scratch: true,
+        accountId: 'main',
+      })
+    ).json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    await call('PATCH', `/api/sessions/${session.id}`, {
+      accountId: account.id,
+    });
+    await call('PATCH', `/api/sessions/${session.id}`, { accountId: 'main' });
+    app.runner.last.emit(resultMessage(1, 0));
+    const get = async () =>
+      (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>();
+    await waitFor(async () => (await get()).status === 'waiting');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(app.runner.last.closed).toBe(false);
+    expect(app.runner.runs).toHaveLength(1);
+  });
 });

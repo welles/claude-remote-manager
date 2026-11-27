@@ -143,6 +143,11 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     return this.toDto(this.requireRow(id));
   }
 
+  /** Whether an account exists and is not being removed. */
+  isUsable(id: string): boolean {
+    return !this.removing.has(id) && this.exists(id);
+  }
+
   /** Whether an account exists. */
   exists(id: string): boolean {
     return this.row(id) !== undefined;
@@ -171,7 +176,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   update(id: string, request: UpdateAccountRequest): AccountDto {
     const body = requireObject(request);
-    this.requireRow(id);
+    this.requireUsable(id);
     // Both checked before anything is written.
     const name = 'name' in body ? this.validName(body) : undefined;
     if ('isDefault' in body && body['isDefault'] !== true) {
@@ -277,7 +282,13 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
         .where(eq(sessions.accountId, id))
         .run();
       tx.delete(accounts).where(eq(accounts.id, id)).run();
-      if (row.isDefault) {
+      // Whatever is marked now (not the row read before the awaits).
+      const hasDefault = tx
+        .select()
+        .from(accounts)
+        .where(eq(accounts.isDefault, true))
+        .get();
+      if (!hasDefault) {
         const first = tx
           .select()
           .from(accounts)
