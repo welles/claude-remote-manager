@@ -333,8 +333,13 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       }
       state.process = null;
       if (error === null) {
-        await this.refresh(id);
-        const loggedIn = this.row(id)?.loggedIn === true;
+        const read = await this.refresh(id);
+        if (this.logins.get(id) !== state) {
+          return;
+        }
+        // Claude Code said it worked; only a status that says otherwise
+        // counts against it (an unreadable one is checked again later).
+        const loggedIn = !read || this.row(id)?.loggedIn === true;
         state.status = loggedIn ? 'done' : 'failed';
         state.error = loggedIn ? null : 'Claude Code is not logged in';
       } else {
@@ -396,12 +401,15 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     return this.get(id);
   }
 
-  /** Reads the login state of an account again. */
-  async refresh(id: string): Promise<void> {
+  /**
+   * Reads the login state of an account again. Resolves with whether it
+   * could be read (and was stored).
+   */
+  async refresh(id: string): Promise<boolean> {
     const row =
       this.destroyed || this.removing.has(id) ? undefined : this.row(id);
     if (!row) {
-      return;
+      return false;
     }
     let status: ClaudeAuthStatus;
     try {
@@ -410,10 +418,10 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn(
         `Could not read the login of account ${id}: ${errorMessage(error)}`,
       );
-      return;
+      return false;
     }
     if (this.destroyed) {
-      return;
+      return false;
     }
     this.db
       .update(accounts)
@@ -427,6 +435,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       .where(eq(accounts.id, id))
       .run();
     this.publish();
+    return true;
   }
 
   /** Reads every account's login state; shares a read in flight. */

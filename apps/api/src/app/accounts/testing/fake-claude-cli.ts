@@ -17,8 +17,13 @@ export class FakeClaudeCli
   readonly statuses = new Map<string, ClaudeAuthStatus>();
   readonly logins: FakeLogin[] = [];
   readonly logouts: string[] = [];
+  /** Makes `status` fail (e.g. a timeout). */
+  statusError: Error | null = null;
 
   async status(account: AgentAccount): Promise<ClaudeAuthStatus> {
+    if (this.statusError) {
+      throw this.statusError;
+    }
     return (
       this.statuses.get(account.configDir) ?? {
         loggedIn: false,

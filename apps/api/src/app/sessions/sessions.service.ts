@@ -1554,10 +1554,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     let updated = this.sessions.update(sessionId, { accountId });
     const live = this.live.get(sessionId);
     if (live && live.accountId !== this.accountOf(accountId)) {
-      const pending = live.restartPending;
+      // Only for the account (also after earlier switches): undone when
+      // the session switches back to the process's account.
+      const accountOnly = !live.restartPending || live.accountRestart;
       this.restartWhenFree(sessionId);
-      // Only for the account: undone when the session switches back.
-      live.accountRestart = !pending && live.restartPending;
+      live.accountRestart = accountOnly && live.restartPending;
     } else if (live?.accountRestart) {
       // Back to the process's account before it restarted.
       live.restartPending = false;
@@ -4833,6 +4834,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     live.reopen = null;
     live.restartPending = true;
+    // Also for the directories now (see `changeAccount`).
+    live.accountRestart = false;
     if (reopen.continueWith) {
       const note = this.directoryNotes.get(live.id);
       this.directoryNotes.set(

@@ -483,4 +483,42 @@ describe('accounts', () => {
     expect(app.runner.last.closed).toBe(false);
     expect(app.runner.runs).toHaveLength(1);
   });
+
+  it('reports a login Claude Code confirmed as done even when its status cannot be read', async () => {
+    const created = (
+      await call('POST', '/api/accounts', { name: 'Work' })
+    ).json<AccountDto>();
+    app.claudeCli.statusError = new Error('timed out');
+    app.claudeCli.logins[0].finish();
+    await waitFor(
+      async () =>
+        (await list()).find((a) => a.id === created.id)?.login?.status ===
+        'done',
+    );
+  });
+
+  it('does not restart the process after switching through several accounts back to its own', async () => {
+    const work = await addAccount('Work', 'work@example.test');
+    const other = await addAccount('Other', 'other@example.test');
+    const session = (
+      await call('POST', '/api/sessions', {
+        prompt: 'Hi',
+        scratch: true,
+        accountId: 'main',
+      })
+    ).json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    for (const accountId of [work.id, other.id, 'main']) {
+      await call('PATCH', `/api/sessions/${session.id}`, { accountId });
+    }
+    app.runner.last.emit(resultMessage(1, 0));
+    await waitFor(
+      async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>()
+          .status === 'waiting',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(app.runner.last.closed).toBe(false);
+    expect(app.runner.runs).toHaveLength(1);
+  });
 });
