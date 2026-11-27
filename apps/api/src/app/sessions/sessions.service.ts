@@ -749,6 +749,16 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * cut off are rolled back and their sessions marked failed.
    */
   async onModuleInit(): Promise<void> {
+    // Sessions waiting for an account's limit follow when their account
+    // changes without a switch (removed, another default).
+    this.accounts?.changes$.subscribe(() => {
+      for (const record of this.sessions.listLimitWaits()) {
+        const updated = this.followAccount(record.id);
+        if (updated) {
+          this.updates.next(this.toDto(updated));
+        }
+      }
+    });
     // An account a running process uses cannot be removed.
     this.accounts?.setUsage((accountId) =>
       [...this.live.values()].some(
@@ -1520,19 +1530,41 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.restartWhenFree(sessionId);
     }
     if (before.limitWait && before.status === 'waiting') {
-      // Waiting for the old account's limit: look now whether the new one
-      // has room, and continue with it if so.
-      updated = this.sessions.update(sessionId, {
-        limitWait: {
-          ...before.limitWait,
-          window: null,
-          resumeAt: new Date().toISOString(),
-          resetKnown: false,
-        },
-      });
-      this.scheduleLimitCheck(sessionId);
+      updated = this.followAccount(sessionId, true) ?? updated;
     }
     this.updates.next(this.toDto(updated));
+  }
+
+  /**
+   * A session waiting for the limit of an account it no longer uses
+   * (switched, the account removed, another default): looks now whether
+   * its account has room, and continues with it if so. `force`: also when
+   * the account seems the same. Returns the updated record, if any.
+   */
+  private followAccount(
+    sessionId: string,
+    force = false,
+  ): SessionRecord | null {
+    const record = this.sessions.get(sessionId);
+    const wait = record?.limitWait;
+    if (!record || !wait || record.status !== 'waiting' || this.shuttingDown) {
+      return null;
+    }
+    const accountId = this.accountOf(record.accountId);
+    if (!force && wait.accountId === accountId) {
+      return null;
+    }
+    const updated = this.sessions.update(sessionId, {
+      limitWait: {
+        ...wait,
+        accountId,
+        window: null,
+        resumeAt: new Date().toISOString(),
+        resetKnown: false,
+      },
+    });
+    this.scheduleLimitCheck(sessionId);
+    return updated;
   }
 
   /** Stops the running turn of a session. */
@@ -2160,6 +2192,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
       // The account as stored now: a switch while the process was being
       // prepared counts.
+      // Counted as in use from here (see `launching`), before its directory
+      // is prepared.
+      live.accountId =
+        this.accounts?.pickId(this.requireRecord(live.id).accountId) ??
+        MAIN_ACCOUNT_ID;
       const account = this.accounts
         ? await this.accounts.agentAccount(
             this.requireRecord(live.id).accountId,
@@ -4714,6 +4751,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       ).toISOString(),
       resetKnown: until !== null,
       autofixPullRequests,
+      accountId: live.accountId,
     };
     this.sessions.update(live.id, { limitWait: wait });
     this.holdReopen(live);
@@ -4724,6 +4762,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     live.suggestionOpen = false;
     this.scheduleLimitCheck(live.id);
+    // Switched to another account during the turn: that one decides.
+    this.followAccount(live.id);
     const run = live.run;
     if (run) {
       void this.refreshContext(live, run, { force: true });
@@ -4839,6 +4879,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       const updated = this.sessions.update(sessionId, {
         limitWait: {
           ...current,
+          accountId,
           resumeAt: new Date(
             until
               ? until.getTime() + this.limitResumeMarginMs

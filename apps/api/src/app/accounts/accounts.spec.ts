@@ -357,4 +357,62 @@ describe('accounts', () => {
       service.withAccount(account.id, async () => 'x', { exact: true }),
     ).rejects.toThrow();
   });
+
+  it('continues with the account the session was switched to during the turn the limit ended', async () => {
+    app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+    await call('POST', '/api/accounts/main/refresh');
+    const account = await addAccount('Work', 'work@example.test');
+    const session = (
+      await call('POST', '/api/sessions', {
+        prompt: 'Hi',
+        scratch: true,
+        accountId: 'main',
+      })
+    ).json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    // Switched while the turn runs; then the old account's limit ends it.
+    await call('PATCH', `/api/sessions/${session.id}`, {
+      accountId: account.id,
+    });
+    app.runner.probeUsage = () =>
+      ({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 10, resets_at: null },
+          seven_day: null,
+          seven_day_opus: null,
+          seven_day_sonnet: null,
+          seven_day_oauth_apps: null,
+        },
+      }) as never;
+    app.runner.last.emit(
+      {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          status: 'rejected',
+          resetsAt: Math.floor((Date.now() + 5 * 3_600_000) / 1000),
+          rateLimitType: 'five_hour',
+        },
+      },
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'rate_limit',
+        message: {
+          id: 'limit',
+          content: [{ type: 'text', text: "You've hit your 5-hour limit" }],
+        },
+      },
+      resultMessage(1, 0, {
+        is_error: true,
+        result: "You've hit your 5-hour limit",
+      }),
+    );
+    await waitFor(() => app.runner.runs.length === 2);
+    expect(app.runner.last.options.account).toEqual({
+      configDir: join(mainDir, 'crm-accounts', account.id),
+      main: false,
+    });
+  });
 });

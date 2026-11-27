@@ -268,6 +268,11 @@ export interface LimitWait {
    * as one if autofix is still on for them and they are open.
    */
   autofixPullRequests: number[];
+  /**
+   * The account whose limit is awaited (absent in waits from before
+   * accounts): when the session's account changes, the new one decides.
+   */
+  accountId?: string;
 }
 
 /**

@@ -236,10 +236,13 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     }
     // From now on no process starts with it (sessions take the default).
     this.removing.add(id);
+    let loggedOut = false;
+    let removed = false;
     try {
       this.cancelLogin(id);
       try {
         await this.cli.logout(this.agentAccountOf(row));
+        loggedOut = true;
       } catch (error) {
         this.logger.warn(
           `Could not log out account ${id} before removing it: ${errorMessage(error)}`,
@@ -253,8 +256,13 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       await this.directories.remove(row.directory);
       this.deleteRow(row);
       this.limits.forget(id);
+      removed = true;
     } finally {
       this.removing.delete(id);
+      if (loggedOut && !removed) {
+        // Logged out although it stays: show that.
+        await this.refresh(id);
+      }
       this.publish();
     }
   }
@@ -430,29 +438,11 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   async agentAccount(
     accountId: string | null,
   ): Promise<AgentAccount & { id: string }> {
-    const row =
-      (accountId && !this.removing.has(accountId)
-        ? this.row(accountId)
-        : undefined) ?? this.defaultRow();
+    const row = this.pick(accountId);
     if (row.directory !== null) {
       await this.directories.prepare(row.directory);
     }
     return { id: row.id, ...this.agentAccountOf(row) };
-  }
-
-  /**
-   * The account `accountId` exactly (no fallback), with its directory made
-   * ready; for reading its limits.
-   */
-  async exactAgentAccount(accountId: string): Promise<AgentAccount> {
-    if (this.removing.has(accountId)) {
-      throw new ConflictException(`Account ${accountId} is being removed`);
-    }
-    const row = this.requireRow(accountId);
-    if (row.directory !== null) {
-      await this.directories.prepare(row.directory);
-    }
-    return this.agentAccountOf(row);
   }
 
   /**
@@ -465,23 +455,47 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     task: (account: AgentAccount & { id: string }) => Promise<T>,
     { exact = false }: { exact?: boolean } = {},
   ): Promise<T> {
-    const account = exact
-      ? {
-          id: accountId ?? '',
-          ...(await this.exactAgentAccount(accountId ?? '')),
-        }
-      : await this.agentAccount(accountId);
-    this.leases.set(account.id, (this.leases.get(account.id) ?? 0) + 1);
+    // Chosen and counted at once, before the directory is prepared, so a
+    // removal cannot slip in between.
+    const row = exact ? this.pickExact(accountId ?? '') : this.pick(accountId);
+    this.leases.set(row.id, (this.leases.get(row.id) ?? 0) + 1);
     try {
-      return await task(account);
+      if (row.directory !== null) {
+        await this.directories.prepare(row.directory);
+      }
+      return await task({ id: row.id, ...this.agentAccountOf(row) });
     } finally {
-      const left = (this.leases.get(account.id) ?? 1) - 1;
+      const left = (this.leases.get(row.id) ?? 1) - 1;
       if (left > 0) {
-        this.leases.set(account.id, left);
+        this.leases.set(row.id, left);
       } else {
-        this.leases.delete(account.id);
+        this.leases.delete(row.id);
       }
     }
+  }
+
+  /**
+   * The ID of the account a process started now uses (see
+   * {@link agentAccount}), without preparing anything.
+   */
+  pickId(accountId: string | null): string {
+    return this.pick(accountId).id;
+  }
+
+  /** The account itself, else (unknown or being removed) the default. */
+  private pick(accountId: string | null): AccountRow {
+    return (
+      (accountId && !this.removing.has(accountId)
+        ? this.row(accountId)
+        : undefined) ?? this.defaultRow()
+    );
+  }
+
+  private pickExact(accountId: string): AccountRow {
+    if (this.removing.has(accountId)) {
+      throw new ConflictException(`Account ${accountId} is being removed`);
+    }
+    return this.requireRow(accountId);
   }
 
   private used(id: string): boolean {

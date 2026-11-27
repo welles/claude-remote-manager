@@ -90,5 +90,12 @@ esac
       loginUrl('visit: https://claude.com/cai/oauth/authorize?a=1 \n'),
     ).toBe('https://claude.com/cai/oauth/authorize?a=1');
     expect(loginUrl('nothing')).toBeNull();
+    // Split across chunks: not yet.
+    expect(
+      loginUrl('visit: https://claude.com/cai/oauth/authorize?a=1&cl'),
+    ).toBeNull();
+    expect(
+      loginUrl('visit: https://claude.com/cai/oauth/authorize?a=1', true),
+    ).toBe('https://claude.com/cai/oauth/authorize?a=1');
   });
 });

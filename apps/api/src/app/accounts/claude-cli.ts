@@ -68,9 +68,17 @@ export function parseAuthStatus(output: string): ClaudeAuthStatus {
   };
 }
 
-/** The page to open from the output of `claude auth login`. */
-export function loginUrl(output: string): string | null {
-  const match = /https:\/\/\S*oauth\/authorize\S*/.exec(output);
+/**
+ * The page to open from the output of `claude auth login`: only once
+ * something follows it (a URL split across chunks is not complete yet),
+ * unless the output is `complete`.
+ */
+export function loginUrl(output: string, complete = false): string | null {
+  const match = (
+    complete
+      ? /https:\/\/\S*oauth\/authorize\S*/
+      : /https:\/\/\S*oauth\/authorize\S*(?=\s)/
+  ).exec(output);
   return match ? match[0] : null;
 }
 
@@ -131,6 +139,8 @@ export class ClaudeCli {
     };
     child.stdout?.on('data', collect);
     child.stderr?.on('data', collect);
+    // Writing the code to a process that just ended must not crash the API.
+    child.stdin?.on('error', () => undefined);
     const timer = setTimeout(() => child.kill('SIGTERM'), LOGIN_TIMEOUT_MS);
     const done = new Promise<string | null>((resolve) => {
       child.on('error', (error) => {
@@ -140,6 +150,10 @@ export class ClaudeCli {
       });
       child.on('close', (code, signal) => {
         clearTimeout(timer);
+        const last = loginUrl(output, true);
+        if (last) {
+          resolveUrl(last);
+        }
         rejectUrl(new Error(lastLines(output) || 'claude auth login ended'));
         resolve(
           code === 0
@@ -169,6 +183,7 @@ export class ClaudeCli {
   ): Promise<{ code: number | null; output: string }> {
     return new Promise((resolve, reject) => {
       const child = this.spawn(account, args);
+      child.stdin?.on('error', () => undefined);
       child.stdin?.end();
       let output = '';
       const collect = (chunk: Buffer) => {
