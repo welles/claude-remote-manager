@@ -57,6 +57,8 @@ const NOT_ACTIVITY = new Set<SessionEvent['type']>([
 ]);
 
 const BODY_LENGTH = 200;
+/** A limit wait that ends within this time gets no notification. */
+const IMMEDIATE_RESUME_MS = 60_000;
 
 /**
  * Turns what happens in sessions into notifications and withdraws them when
@@ -294,6 +296,14 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
   }
 
   private notifyLimit(session: SessionDto): void {
+    if (
+      session.limitResumesAt &&
+      Date.parse(session.limitResumesAt) <= this.now() + IMMEDIATE_RESUME_MS
+    ) {
+      // It continues at once (another account has room): nothing to say;
+      // if that fails, the next limit says it.
+      return;
+    }
     const left = session.limitResumesAt
       ? durationText(Date.parse(session.limitResumesAt) - this.now())
       : null;

@@ -14,6 +14,11 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
 import { SessionRepository } from '../sessions/session.repository';
+import {
+  LIMIT_SWITCH_CONTINUE_TEXT,
+  limitSwitchNotice,
+  SessionsService,
+} from '../sessions/sessions.service';
 import { AccountsService, LOGIN_STALE_MS } from './accounts.service';
 import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import { rawRequest, startTestApp, type TestApp } from '../testing/test-app';
@@ -520,5 +525,133 @@ describe('accounts', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(app.runner.last.closed).toBe(false);
     expect(app.runner.runs).toHaveLength(1);
+  });
+
+  describe('automatic switch at the limit', () => {
+    const hitLimit = (resetsAtMs: number) =>
+      app.runner.last.emit(
+        {
+          type: 'rate_limit_event',
+          rate_limit_info: {
+            status: 'rejected',
+            resetsAt: Math.floor(resetsAtMs / 1000),
+            rateLimitType: 'five_hour',
+          },
+        },
+        {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          error: 'rate_limit',
+          message: {
+            id: 'limit',
+            content: [{ type: 'text', text: "You've hit your 5-hour limit" }],
+          },
+        },
+        resultMessage(1, 0, {
+          is_error: true,
+          result: "You've hit your 5-hour limit",
+        }),
+      );
+    const usage = (percent: number, resetsAt: string | null) =>
+      ({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: percent, resets_at: resetsAt },
+          seven_day: null,
+          seven_day_opus: null,
+          seven_day_sonnet: null,
+          seven_day_oauth_apps: null,
+        },
+      }) as never;
+    const events = async (sessionId: string) => {
+      const sessions = app.app.get(SessionsService);
+      return (await sessions.subscribe(sessionId)).events;
+    };
+
+    it('continues the turn with the next account that has room', async () => {
+      app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+      await call('POST', '/api/accounts/main/refresh');
+      const work = await addAccount('Work', 'work@example.test');
+      const session = (
+        await call('POST', '/api/sessions', {
+          prompt: 'Hi',
+          scratch: true,
+          accountId: 'main',
+        })
+      ).json<SessionDto>();
+      await waitFor(() => app.runner.runs.length === 1);
+      app.runner.probeUsage = () => usage(10, null);
+      hitLimit(Date.now() + 5 * 3_600_000);
+
+      await waitFor(() => app.runner.runs.length === 2);
+      expect(app.runner.last.options.account).toEqual({
+        configDir: join(mainDir, 'crm-accounts', work.id),
+        main: false,
+      });
+      expect(app.runner.last.sent[0].text).toBe(LIMIT_SWITCH_CONTINUE_TEXT);
+      const after = (
+        await call('GET', `/api/sessions/${session.id}`)
+      ).json<SessionDto>();
+      expect(after.accountId).toBe(work.id);
+      expect(await events(session.id)).toContainEqual(
+        expect.objectContaining({
+          type: 'notice',
+          text: limitSwitchNotice('Claude', 'Work'),
+        }),
+      );
+    });
+
+    it('waits for the account that resets first when every account is exhausted', async () => {
+      app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+      await call('POST', '/api/accounts/main/refresh');
+      const work = await addAccount('Work', 'work@example.test');
+      const soon = Date.now() + 3_600_000;
+      app.app
+        .get(LimitsService)
+        .account(work.id)
+        .updateFromRateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: Math.floor(soon / 1000),
+        });
+      const session = (
+        await call('POST', '/api/sessions', {
+          prompt: 'Hi',
+          scratch: true,
+          accountId: 'main',
+        })
+      ).json<SessionDto>();
+      await waitFor(() => app.runner.runs.length === 1);
+      app.runner.probeUsage = () => usage(100, new Date(soon).toISOString());
+      hitLimit(Date.now() + 5 * 3_600_000);
+
+      const get = async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>();
+      await waitFor(async () => {
+        const dto = await get();
+        return (
+          dto.accountId === work.id &&
+          dto.waitingFor === 'limit' &&
+          dto.limitResetKnown === true
+        );
+      });
+      const resumes = Date.parse((await get()).limitResumesAt ?? '');
+      expect(resumes).toBeGreaterThan(soon - 1000);
+      expect(resumes).toBeLessThan(soon + 5 * 60_000);
+      expect(app.runner.runs).toHaveLength(1);
+    });
+
+    it('stays with the only account', async () => {
+      const session = (
+        await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
+      ).json<SessionDto>();
+      await waitFor(() => app.runner.runs.length === 1);
+      hitLimit(Date.now() + 3_600_000);
+      const get = async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>();
+      await waitFor(async () => (await get()).waitingFor === 'limit');
+      expect((await get()).accountId).toBe('main');
+    });
   });
 });

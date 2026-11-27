@@ -556,6 +556,47 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /**
+   * The account to switch to when `current`'s limit ended a turn: the next
+   * one in order after it (wrapping around) that is logged in and whose
+   * limits are not known to be exhausted; `null` if there is none.
+   */
+  nextAvailable(current: string, now = Date.now()): string | null {
+    const rows = this.switchable();
+    const index = rows.findIndex((row) => row.id === current);
+    const ordered =
+      index < 0 ? rows : [...rows.slice(index + 1), ...rows.slice(0, index)];
+    return (
+      ordered.find(
+        (row) =>
+          row.id !== current &&
+          this.limits.account(row.id).exhaustedUntil([], now) === null,
+      )?.id ?? null
+    );
+  }
+
+  /**
+   * When every account is exhausted: the one whose limits reset first,
+   * with that time; `null` when no reset is known.
+   */
+  earliestReset(now = Date.now()): { id: string; at: Date } | null {
+    let best: { id: string; at: Date } | null = null;
+    for (const row of this.switchable()) {
+      const at = this.limits.account(row.id).exhaustedUntil([], now);
+      if (at && (!best || at < best.at)) {
+        best = { id: row.id, at };
+      }
+    }
+    return best;
+  }
+
+  /** Accounts a session can switch to: logged in (or unknown), not removed. */
+  private switchable(): AccountRow[] {
+    return this.rows().filter(
+      (row) => row.loggedIn !== false && !this.removing.has(row.id),
+    );
+  }
+
   private agentAccountOf(row: AccountRow): AgentAccount {
     return {
       configDir: this.directories.path(row.directory),

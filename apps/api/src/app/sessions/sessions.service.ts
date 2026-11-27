@@ -557,6 +557,24 @@ export const LIMIT_CONTINUE_TEXT =
   'The usage limit of the Claude subscription stopped your last turn; it has reset now. Continue where you left off. ' +
   'Background tasks of that turn (subagents, background commands) may have ended with it: check their state before you rely on their results.';
 
+/**
+ * What the app tells Claude when it continues a session with another
+ * account after the usage limit of the previous one stopped its turn.
+ */
+export const LIMIT_SWITCH_CONTINUE_TEXT =
+  'The usage limit of the account this session used stopped your last turn; the session continues with another account now. Continue where you left off. ' +
+  'Background tasks of that turn (subagents, background commands) may have ended with it: check their state before you rely on their results.';
+
+/** The notice when the app switched the session to an account with room. */
+export function limitSwitchNotice(from: string, to: string): string {
+  return `The usage limit of the account "${from}" stopped this turn; the session continues with the account "${to}".`;
+}
+
+/** The notice when every account is exhausted and another resets first. */
+export function limitEarliestNotice(from: string, to: string): string {
+  return `The usage limit of the account "${from}" stopped this turn and every account is at its limit; the session continues with the account "${to}", whose limit resets first.`;
+}
+
 /** Margin after a limit's reset before the session continues. */
 export const LIMIT_RESUME_MARGIN_MS = 60_000;
 
@@ -1542,6 +1560,51 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return this.get(sessionId);
+  }
+
+  /**
+   * The usage limit of the process's account ended a turn: switches the
+   * session to the next account with room, or, when every account is
+   * exhausted, to the one that resets first (if that is another one).
+   * Returns what it did, for the notice; `null` when it stayed.
+   */
+  private switchAccountForLimit(
+    live: LiveSession,
+    window: string | null,
+  ): { kind: 'available' | 'earliest'; text: string } | null {
+    const accounts = this.accounts;
+    if (!accounts) {
+      return null;
+    }
+    const from = live.accountId;
+    const now = Date.now();
+    let to = accounts.nextAvailable(from, now);
+    let kind: 'available' | 'earliest' = 'available';
+    if (!to) {
+      const earliest = accounts.earliestReset(now);
+      const own = this.limits
+        .account(from)
+        .exhaustedUntil(window ? [window] : [], now);
+      if (!earliest || earliest.id === from || (own && own <= earliest.at)) {
+        return null;
+      }
+      to = earliest.id;
+      kind = 'earliest';
+    }
+    if (to === this.accountOf(this.requireRecord(live.id).accountId)) {
+      // The user chose it already (a switch during the turn).
+      return null;
+    }
+    this.sessions.update(live.id, { accountId: to });
+    const fromName = accounts.get(from).name;
+    const toName = accounts.get(to).name;
+    return {
+      kind,
+      text:
+        kind === 'available'
+          ? limitSwitchNotice(fromName, toName)
+          : limitEarliestNotice(fromName, toName),
+    };
   }
 
   /**
@@ -4769,6 +4832,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * messages held, and continues by itself then.
    */
   private stopForLimit(live: LiveSession, window: string | null): void {
+    const switched = this.switchAccountForLimit(live, window);
     const record = this.requireRecord(live.id);
     const previous = record.limitWait;
     // The Autofix run goes on after the reset (also when a turn Claude Code
@@ -4792,21 +4856,44 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const until = this.limits
       .account(live.accountId)
       .exhaustedUntil(window ? [window] : [], now);
-    const wait: LimitWait = {
-      since: new Date(now).toISOString(),
-      window: window ?? previous?.window ?? null,
-      resumeAt: new Date(
-        until
-          ? until.getTime() + this.limitResumeMarginMs
-          : now + this.limitRecheckMs(live),
-      ).toISOString(),
-      resetKnown: until !== null,
-      autofixPullRequests,
-      accountId: live.accountId,
-    };
+    const switchedTo = this.accountOf(record.accountId);
+    const wait: LimitWait =
+      switched?.kind === 'available'
+        ? {
+            // Another account has room: looked at (and continued) at once.
+            since: new Date(now).toISOString(),
+            window: null,
+            resumeAt: new Date(now).toISOString(),
+            resetKnown: false,
+            autofixPullRequests,
+            accountId: switchedTo,
+            limitedAccountId: previous?.limitedAccountId ?? live.accountId,
+          }
+        : {
+            since: new Date(now).toISOString(),
+            window: window ?? previous?.window ?? null,
+            resumeAt: new Date(
+              until
+                ? until.getTime() + this.limitResumeMarginMs
+                : now + this.limitRecheckMs(live),
+            ).toISOString(),
+            resetKnown: until !== null,
+            autofixPullRequests,
+            accountId: live.accountId,
+            limitedAccountId: previous?.limitedAccountId ?? live.accountId,
+          };
     this.sessions.update(live.id, { limitWait: wait });
     this.holdReopen(live);
-    this.append(live, { type: 'notice', level: 'warning', text: LIMIT_NOTICE });
+    if (switched?.kind !== 'available') {
+      this.append(live, {
+        type: 'notice',
+        level: 'warning',
+        text: LIMIT_NOTICE,
+      });
+    }
+    if (switched) {
+      this.append(live, { type: 'notice', level: 'info', text: switched.text });
+    }
     this.clearClaudeWait(live);
     if (!this.setStatus(live, 'waiting')) {
       this.publishStatus(live);
@@ -4947,9 +5034,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     const live = this.live.get(sessionId);
     if (live?.run && !live.closing && live.accountId !== accountId) {
-      // Its process still runs with the old account (kept for previews or
-      // background tasks; it restarts with the new one once free): wait
-      // instead of sending the continuation to the exhausted account.
+      // Its process still runs with the old account: restarted now if it
+      // is free, else (kept for previews or background tasks; it restarts
+      // with the new one once free) the session waits instead of sending
+      // the continuation to the exhausted account.
+      this.restartWhenFree(sessionId);
+    }
+    if (live?.run && !live.closing && live.accountId !== accountId) {
       const updated = this.sessions.update(sessionId, {
         limitWait: {
           ...current,
@@ -5009,9 +5100,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (this.isSendingMessage(live)) {
       return;
     }
+    const switchedAccount =
+      wait.limitedAccountId !== undefined &&
+      wait.limitedAccountId !== this.accountOf(record.accountId);
     const send = (autofixRun: boolean) =>
       this.sendMessage(live.id, {
-        text: LIMIT_CONTINUE_TEXT,
+        text: switchedAccount
+          ? LIMIT_SWITCH_CONTINUE_TEXT
+          : LIMIT_CONTINUE_TEXT,
         origin: 'app',
         autofixRun,
       });

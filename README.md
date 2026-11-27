@@ -1002,6 +1002,15 @@ whether that time is the known reset, whether the turn was an Autofix run) is se
 is `waiting` with `waitingFor: 'limit'` and `limitResumesAt`, a notice says so, and the turn's
 notification (`turn_finished`) reads "Usage limit: …" with how long until it continues.
 
+- **Another account first:** with several accounts (see [Accounts](#accounts)) the app
+  switches the session to the next account in order after the exhausted one that is logged in
+  and whose limits are not known to be exhausted, and continues at once with the new account
+  ("the session continues with another account"; no usage-limit notification, a notice names
+  both accounts). When every account is exhausted it switches to the one whose limits reset
+  first (if that is not its own) and waits for that reset. An account found exhausted when the
+  app reads its limits before continuing makes it wait for that one in turn; each limit that ends
+  a turn moves on to the next account. The wait remembers its account (`accountId`) and the
+  account whose limit stopped the session (`limitedAccountId`).
 - **When it continues:** at the reset plus a minute. It reads the plan usage first (the probe
   process, as for the limits display): a window of the session still at 100 % (5-hour, weekly,
   or the one that was rejected) means waiting for its new reset; otherwise it continues. A

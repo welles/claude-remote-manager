@@ -273,6 +273,11 @@ export interface LimitWait {
    * accounts): when the session's account changes, the new one decides.
    */
   accountId?: string;
+  /**
+   * The account whose limit stopped the session (absent in older waits):
+   * the continuation says so when the session goes on with another one.
+   */
+  limitedAccountId?: string;
 }
 
 /**

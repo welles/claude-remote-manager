@@ -8,6 +8,7 @@ import type {
   PushSubscriptionDto,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
+import { AccountsService } from '../accounts/accounts.service';
 import { SESSIONS_WS_PATH } from '../sessions/sessions.gateway';
 import { SessionsService } from '../sessions/sessions.service';
 import { flush, resultMessage, waitFor } from '../sessions/testing/fake-agent';
@@ -470,6 +471,76 @@ describe('notifications', () => {
         ),
       },
     ]);
+  });
+
+  it('says nothing about a limit when the session continues with another account', async () => {
+    await device();
+    const accounts = app.app.get(AccountsService);
+    app.claudeCli.statuses.set(join(app.dir, 'claude'), {
+      loggedIn: true,
+      email: null,
+      organization: null,
+      subscriptionType: 'max',
+      loginExpiresAt: null,
+    });
+    await accounts.refresh('main');
+    const work = await accounts.create({ name: 'Work' });
+    app.claudeCli.statuses.set(app.claudeCli.logins[0].account.configDir, {
+      loggedIn: true,
+      email: null,
+      organization: null,
+      subscriptionType: 'max',
+      loginExpiresAt: null,
+    });
+    await accounts.refresh(work.id);
+    app.runner.probeUsage = () =>
+      ({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 5, resets_at: null },
+          seven_day: null,
+          seven_day_opus: null,
+          seven_day_sonnet: null,
+          seven_day_oauth_apps: null,
+        },
+      }) as never;
+    await createSession();
+    app.runner.last.emit(
+      {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600,
+        },
+      },
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'rate_limit',
+        message: {
+          id: 'm-limit',
+          content: [{ type: 'text', text: "You've hit your 5-hour limit" }],
+        },
+      },
+      resultMessage(1, 0, {
+        is_error: true,
+        result: "You've hit your 5-hour limit",
+      }),
+    );
+    await waitFor(() => app.runner.runs.length === 2);
+    await flush();
+    await service.settled();
+    expect(
+      push
+        .payloads('show')
+        .filter((payload) =>
+          String((payload as { title?: string }).title).startsWith(
+            'Usage limit',
+          ),
+        ),
+    ).toEqual([]);
   });
 
   it('notifies a finished turn only once background work is over', async () => {
