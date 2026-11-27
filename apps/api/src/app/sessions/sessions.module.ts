@@ -49,6 +49,7 @@ import { WorkspaceController } from '../workspaces/workspace.controller';
 import { WorkspaceOrphansService } from '../workspaces/workspace-orphans.service';
 import { SessionsGateway } from './sessions.gateway';
 import { SessionsService } from './sessions.service';
+import { AccountsService } from '../accounts/accounts.service';
 import { UsageRepository } from './usage.repository';
 import { UserToolApprover } from './user-tool-approver';
 import { ViewerPresence } from './viewer-presence';
@@ -134,6 +135,7 @@ export class SessionsModule {
     shownFiles: ShownFilesService,
     previews: PreviewsService,
     commits: SessionCommitsService,
+    accounts: AccountsService,
   ) {
     // Files shown by the app's tool belong in the session's log.
     shownFiles.shown$.subscribe(({ sessionId, toolUseId, file }) =>
@@ -165,6 +167,12 @@ export class SessionsModule {
     // Pushes and pull requests change what the session view shows.
     git.changes$.subscribe((id) => sessions.publishUpdate(id));
     // Limits are also read when no session runs (see LimitsService).
-    limits.setPlanUsageSource(() => runner.probe((probe) => probe.planUsage()));
+    limits.setPlanUsageSource((accountId) =>
+      accounts.withAccount(
+        accountId,
+        (account) => runner.probe((probe) => probe.planUsage(), account),
+        { exact: true },
+      ),
+    );
   }
 }

@@ -150,6 +150,28 @@ describe('buildQueryOptions', () => {
     });
   });
 
+  it('runs another account with its own directory and without the main login token', () => {
+    const options = buildQueryOptions(
+      {
+        ...base,
+        env: { CRM_SESSION_ID: 's1' },
+        account: { configDir: '/claude/crm-accounts/a1', main: false },
+      },
+      { claudeExecutable: null },
+      stderr,
+      {
+        PATH: '/bin',
+        CLAUDE_CONFIG_DIR: '/claude',
+        CLAUDE_CODE_OAUTH_TOKEN: 'oauth',
+      },
+    );
+    expect(options.env).toEqual({
+      PATH: '/bin',
+      CLAUDE_CONFIG_DIR: '/claude/crm-accounts/a1',
+      CRM_SESSION_ID: 's1',
+    });
+  });
+
   it('makes bypassPermissions available, also for a switch at run time', () => {
     const options = buildQueryOptions(
       { ...base, permissionMode: 'bypassPermissions' },

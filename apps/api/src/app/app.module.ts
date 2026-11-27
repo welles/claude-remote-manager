@@ -6,6 +6,7 @@ import {
   type NestModule,
 } from '@nestjs/common';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { AccountsModule } from './accounts/accounts.module';
 import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './db/database.module';
 import { EnvironmentsModule } from './environments/environments.module';
@@ -41,6 +42,7 @@ const webRoot = resolve(process.env.WEB_ROOT || join(__dirname, 'public'));
     EnvironmentsModule,
     GitHubModule,
     LimitsModule,
+    AccountsModule,
     RepositoriesModule,
     SessionsModule,
     NotificationsModule,

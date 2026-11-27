@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type {
   SlashCommandOption,
   SlashCommandsResponse,
 } from '@claude-remote-manager/shared-types';
-import { AgentRunner } from '../agent/agent-runner';
+import { AgentRunner, type AgentProbe } from '../agent/agent-runner';
+import { AccountsService } from '../accounts/accounts.service';
 
 /** How long the user's commands (asked through a probe) are used. */
 export const USER_COMMANDS_CACHE_MS = 10 * 60_000;
@@ -70,7 +71,11 @@ export class SlashCommandsService {
   /** Clock; replaced in tests. */
   now: () => number = Date.now;
 
-  constructor(private readonly runner: AgentRunner) {}
+  constructor(
+    private readonly runner: AgentRunner,
+    // The commands of the default account; without it the main one.
+    @Optional() private readonly accounts?: AccountsService,
+  ) {}
 
   async forSession(sessionId: string): Promise<SlashCommandsResponse> {
     const reported = this.sessions.get(sessionId);
@@ -116,14 +121,21 @@ export class SlashCommandsService {
     return this.loading;
   }
 
+  /** The commands of the default account's Claude Code. */
+  private probeCommands(): Promise<SlashCommand[]> {
+    const task = (probe: AgentProbe) =>
+      withTimeout(probe.supportedCommands(), PROBE_TIMEOUT_MS);
+    return this.accounts
+      ? this.accounts.withAccount(null, (account) =>
+          this.runner.probe(task, account),
+        )
+      : this.runner.probe(task);
+  }
+
   private async load(): Promise<SlashCommandOption[]> {
     try {
       const commands = uniqueCommands(
-        (
-          await this.runner.probe((probe) =>
-            withTimeout(probe.supportedCommands(), PROBE_TIMEOUT_MS),
-          )
-        ).map(slashCommandOption),
+        (await this.probeCommands()).map(slashCommandOption),
       );
       this.user = { commands, until: this.now() + USER_COMMANDS_CACHE_MS };
       return commands;

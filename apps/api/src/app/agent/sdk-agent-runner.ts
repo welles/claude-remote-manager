@@ -12,6 +12,7 @@ import {
 } from '../common/process-isolation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import type {
+  AgentAccount,
   AgentProbe,
   AgentReviewOptions,
   AgentReviewResult,
@@ -147,6 +148,31 @@ export const PROBE_SETTINGS = {
   strictMcpConfig: true,
   settings: { disableClaudeAiConnectors: true },
 } as const;
+
+/**
+ * Environment of a process for its account: the main account keeps the
+ * inherited `CLAUDE_CONFIG_DIR` and may get `CLAUDE_CODE_OAUTH_TOKEN`;
+ * another account gets its own directory and never the token (it would
+ * log the process in as the main account).
+ */
+export function accountEnvironment(
+  launcher: ProcessLauncher,
+  extra: Record<string, string>,
+  account: AgentAccount | undefined,
+  baseEnv: NodeJS.ProcessEnv,
+): Record<string, string> {
+  if (!account || account.main) {
+    return launcher.environment('session', extra, {
+      keep: CLAUDE_CODE_SECRETS,
+      base: baseEnv,
+    });
+  }
+  return launcher.environment(
+    'session',
+    { ...extra, CLAUDE_CONFIG_DIR: account.configDir },
+    { base: baseEnv },
+  );
+}
 
 /** Lines of Claude Code's stderr kept for error messages. */
 const STDERR_LINES = 5;
@@ -330,10 +356,12 @@ export function buildQueryOptions(
     // user's, where sessions run as the API's user) without the app's own
     // secrets, except Claude Code's login (with separate users: only
     // allowlisted variables).
-    env: launcher.environment('session', options.env, {
-      keep: CLAUDE_CODE_SECRETS,
-      base: baseEnv,
-    }),
+    env: accountEnvironment(
+      launcher,
+      options.env ?? {},
+      options.account,
+      baseEnv,
+    ),
     cwd: options.cwd,
     additionalDirectories: options.additionalDirectories,
     ...(options.allowedTools && options.allowedTools.length > 0
@@ -408,11 +436,7 @@ export function buildReviewQueryOptions(
     // No connectors, and no hooks: the user's, the project's (which the
     // reviewed changes may have written) and plugins' would run commands.
     settings: { disableClaudeAiConnectors: true, disableAllHooks: true },
-    env: launcher.environment(
-      'session',
-      {},
-      { keep: CLAUDE_CODE_SECRETS, base: baseEnv },
-    ),
+    env: accountEnvironment(launcher, {}, options.account, baseEnv),
     cwd: options.cwd,
     additionalDirectories: options.additionalDirectories,
     // No allow rules: reads inside the working and additional directories
@@ -586,7 +610,10 @@ export class SdkAgentRunner implements AgentRunner {
     }
   }
 
-  async probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T> {
+  async probe<T>(
+    task: (probe: AgentProbe) => Promise<T>,
+    account?: AgentAccount,
+  ): Promise<T> {
     const sdk = await loadAgentSdk();
     // Streaming input that never sends a message: Claude Code initializes
     // and answers control requests, but makes no model request.
@@ -600,11 +627,7 @@ export class SdkAgentRunner implements AgentRunner {
                 spawnAsSession(this.launcher, spawnOptions, () => undefined),
             }
           : {}),
-        env: this.launcher.environment(
-          'session',
-          {},
-          { keep: CLAUDE_CODE_SECRETS, base: process.env },
-        ),
+        env: accountEnvironment(this.launcher, {}, account, process.env),
         // Readable for the session user; nothing is written there.
         cwd: tmpdir(),
         settingSources: ['user'],

@@ -57,6 +57,7 @@ import {
   type ConversationItem,
 } from './conversation';
 import { groupPreparation } from './preparation';
+import { AccountsStore } from '../accounts/accounts-store';
 import { formatCost, formatTokens, needLabel, totalTokens } from './format';
 import {
   ModelsStore,
@@ -138,6 +139,15 @@ export class SessionView implements OnInit {
   private readonly toasts = inject(Toasts);
   private readonly destroyRef = inject(DestroyRef);
   private readonly modelsStore = inject(ModelsStore);
+  private readonly accountsStore = inject(AccountsStore);
+  /** The accounts; the choice only shows with more than one. */
+  protected readonly accounts = computed(
+    () => this.accountsStore.accounts() ?? [],
+  );
+  /** The account the session uses (its own, else the default). */
+  protected readonly sessionAccount = computed(() =>
+    this.accountsStore.effective(this.session()?.accountId),
+  );
   private readonly host = inject(ElementRef);
 
   protected readonly modes = SESSION_PERMISSION_MODES;
@@ -434,6 +444,7 @@ export class SessionView implements OnInit {
 
   ngOnInit(): void {
     this.modelsStore.load();
+    this.accountsStore.start();
     this.socket.messages$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((message) => this.handle(message));
@@ -603,10 +614,14 @@ export class SessionView implements OnInit {
     });
   }
 
-  /** Switches the model (`''`: default) or the permission mode. */
+  /**
+   * Switches the model (`''`: default), the permission mode or the account
+   * (effective with the next Claude Code process).
+   */
   protected configure(change: {
     model?: string;
     permissionMode?: SessionPermissionMode;
+    accountId?: string;
   }): void {
     const requestId = newId();
     const sent = this.socket.send({
@@ -616,6 +631,7 @@ export class SessionView implements OnInit {
       ...(change.permissionMode
         ? { permissionMode: change.permissionMode }
         : {}),
+      ...(change.accountId ? { accountId: change.accountId } : {}),
       requestId,
     });
     if (sent) {

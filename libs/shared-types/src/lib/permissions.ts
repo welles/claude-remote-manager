@@ -288,4 +288,9 @@ export interface UpdateSessionRequest {
   /** Model name or alias; `null` for Claude Code's default. */
   model?: string | null;
   permissionMode?: SessionPermissionMode;
+  /**
+   * Account the session works with (see `AccountDto`); takes effect when
+   * its Claude Code process starts next (after the running turn).
+   */
+  accountId?: string;
 }

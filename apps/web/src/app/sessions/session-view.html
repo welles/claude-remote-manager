@@ -377,7 +377,28 @@
         >
         }
       </mat-form-field>
-      @if (s.environment; as environment) {
+      @if (accounts().length > 1) {
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Account</mat-label>
+        <mat-select
+          [value]="sessionAccount()?.id ?? ''"
+          (selectionChange)="configure({ accountId: $event.value })"
+          [disabled]="!connected() || s.status === 'preparing'"
+          data-testid="account-select"
+        >
+          @for (account of accounts(); track account.id) {
+          <mat-option [value]="account.id"
+            >{{ account.name }}{{ account.loggedIn === false ? ' (logged out)' :
+            '' }}</mat-option
+          >
+          }
+        </mat-select>
+        <mat-hint data-testid="account-hint"
+          >A switch takes effect after the running turn; the conversation
+          continues.</mat-hint
+        >
+      </mat-form-field>
+      } @if (s.environment; as environment) {
       <p
         class="mt-1 mb-0 flex flex-wrap items-baseline gap-2 wrap-anywhere"
         data-testid="session-environment"
@@ -430,8 +451,11 @@
     </section>
     @if (panelOpen() || docked()) {
     <section class="panel-section" id="details-limits">
-      <h3 class="app-section-label">Plan limits</h3>
-      <app-limit-windows />
+      <h3 class="app-section-label">
+        Plan limits@if (accounts().length > 1 && sessionAccount(); as account) {
+        · {{ account.name }} }
+      </h3>
+      <app-limit-windows [accountId]="sessionAccount()?.id ?? null" />
     </section>
     }
     <section class="panel-section" id="details-manage">

@@ -37,11 +37,13 @@ export class UsageRepository {
     byModel: Record<string, ModelUsageAmounts>,
     now = new Date(),
     reviewId: string | null = null,
+    accountId: string | null = null,
   ): void {
     const rows = Object.entries(byModel).map(([model, usage]) => ({
       sessionId,
       sdkSessionId,
       reviewId,
+      accountId,
       model,
       ...usage,
       createdAt: now,

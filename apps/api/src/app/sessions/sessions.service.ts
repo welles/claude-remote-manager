@@ -19,6 +19,7 @@ import type {
 import {
   CLAUDE_WAIT_LIMIT_MINUTES,
   isRetiredClone,
+  MAIN_ACCOUNT_ID,
   MAX_ATTACHMENTS_PER_MESSAGE,
   SESSION_PERMISSION_MODES,
   summarizePendingRequests,
@@ -120,6 +121,7 @@ import {
 import { TranscriptReader } from '../agent/transcript-reader';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { LimitsService } from '../limits/limits.service';
+import { AccountsService } from '../accounts/accounts.service';
 import {
   SessionWorkspaceService,
   type AdditionOutcome,
@@ -488,6 +490,18 @@ interface LiveSession {
    * the limit again (the app then looks less often).
    */
   limitRetries: number;
+  /**
+   * The account the current (or last) process runs with; its limits are
+   * the session's.
+   */
+  accountId: string;
+  /** A process is being started (see {@link launch}). */
+  launching: boolean;
+  /**
+   * {@link restartPending} was set only because the session switched to
+   * another account; undone when it switches back.
+   */
+  accountRestart: boolean;
 }
 
 /** How long shutdown waits for Claude Code processes to exit. */
@@ -694,7 +708,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly environments?: EnvironmentsService,
     @Optional()
     private readonly runningDirectories: RunningDirectories = new RunningDirectories(),
+    // Without it every session uses the main account.
+    @Optional()
+    private readonly accounts?: AccountsService,
   ) {}
+
+  /** The account a session effectively uses (`null`: the default). */
+  private accountOf(accountId: string | null): string {
+    return this.accounts?.effectiveId(accountId) ?? MAIN_ACCOUNT_ID;
+  }
 
   private environmentOf(record: SessionRecord): SessionEnvironmentDto | null {
     const summary = this.environments?.summary(record.environmentId);
@@ -732,6 +754,23 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * cut off are rolled back and their sessions marked failed.
    */
   async onModuleInit(): Promise<void> {
+    // Sessions waiting for an account's limit follow when their account
+    // changes without a switch (removed, another default).
+    this.accounts?.changes$.subscribe(() => {
+      for (const record of this.sessions.listLimitWaits()) {
+        const updated = this.followAccount(record.id);
+        if (updated) {
+          this.updates.next(this.toDto(updated));
+        }
+      }
+    });
+    // An account a running process uses cannot be removed.
+    this.accounts?.setUsage((accountId) =>
+      [...this.live.values()].some(
+        (live) =>
+          (!!live.run || live.launching) && live.accountId === accountId,
+      ),
+    );
     await this.workspaces.rollbackInterruptedAdditions((sessionId, event) =>
       this.storedEvents.add(sessionId, event, { uuid: null, userId: null }),
     );
@@ -925,12 +964,23 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const environment = this.environments
       ? this.environments.requireForSession(body['environmentId'])
       : null;
+    const requestedAccount = optionalString(body, 'accountId');
+    let accountId = this.accounts
+      ? this.accounts.forNewSession(requestedAccount)
+      : null;
 
     this.attachmentStore(attachmentIds).check(attachmentIds);
     const plan = await this.workspaces.plan(request);
     const message = { id: randomUUID(), text: prompt };
     // Resolved now, so the chips show at once; sent with the message later.
     const context = await this.prepareContext(referenceRequests);
+    if (this.accounts && accountId && !this.accounts.isUsable(accountId)) {
+      // Removed while the directories were planned.
+      if (requestedAccount !== undefined) {
+        throw new ConflictException('The account was removed meanwhile');
+      }
+      accountId = this.accounts.forNewSession(undefined);
+    }
     let record: SessionRecord;
     try {
       record = this.sessions.create({
@@ -946,6 +996,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         directories: plan.directories,
         environmentId: environment?.id ?? null,
         environmentSetupStatus: environment?.setupScript ? 'pending' : 'none',
+        accountId,
       });
     } catch (error) {
       if (
@@ -1426,6 +1477,26 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (permissionMode && permissionMode !== record.permissionMode) {
       changes.permissionMode = permissionMode;
     }
+    const requestedAccount = optionalString(body, 'accountId');
+    if (
+      requestedAccount !== undefined &&
+      !this.accounts?.exists(requestedAccount)
+    ) {
+      throw new BadRequestException('accountId is not a known account');
+    }
+    // Applied after the other changes went through.
+    const switchAccount = () => {
+      if (
+        requestedAccount !== undefined &&
+        requestedAccount !== this.requireRecord(sessionId).accountId
+      ) {
+        if (!this.accounts?.isUsable(requestedAccount)) {
+          // Removed while the rest of the change was applied.
+          throw new ConflictException('The account was removed meanwhile');
+        }
+        this.changeAccount(sessionId, requestedAccount);
+      }
+    };
     if (title !== undefined && title !== record.title) {
       // Only the title: slug, branches and directories keep their names.
       // From now on Claude does not change it any more.
@@ -1435,6 +1506,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.sessions.update(sessionId, { titleSource: 'user' });
     }
     if (Object.keys(changes).length === 0) {
+      switchAccount();
       return this.get(sessionId);
     }
     const live = this.live.get(sessionId);
@@ -1457,6 +1529,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     this.applySettings(sessionId, changes, 'user');
+    switchAccount();
     if (run && live && changes.model !== undefined) {
       void this.refreshContext(live, run, { force: true });
       // Claude Code leaves `auto` for a model without auto mode and does
@@ -1469,6 +1542,71 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return this.get(sessionId);
+  }
+
+  /**
+   * Switches the account of a session: stored now, effective with the next
+   * Claude Code process (the running one closes as soon as it is free,
+   * like after `switch_directory`; the conversation resumes).
+   */
+  private changeAccount(sessionId: string, accountId: string): void {
+    const before = this.requireRecord(sessionId);
+    let updated = this.sessions.update(sessionId, { accountId });
+    const live = this.live.get(sessionId);
+    if (live && live.accountId !== this.accountOf(accountId)) {
+      // Only for the account (also after earlier switches): undone when
+      // the session switches back to the process's account.
+      const accountOnly = !live.restartPending || live.accountRestart;
+      this.restartWhenFree(sessionId);
+      live.accountRestart = accountOnly && live.restartPending;
+    } else if (live?.accountRestart) {
+      // Back to the process's account before it restarted.
+      live.restartPending = false;
+      live.accountRestart = false;
+    }
+    if (before.limitWait && before.status === 'waiting') {
+      updated = this.followAccount(sessionId, true) ?? updated;
+    }
+    this.updates.next(this.toDto(updated));
+  }
+
+  /**
+   * A session waiting for the limit of an account it no longer uses
+   * (switched, the account removed, another default): looks now whether
+   * its account has room, and continues with it if so. `force`: also when
+   * the account seems the same. Returns the updated record, if any.
+   */
+  private followAccount(
+    sessionId: string,
+    force = false,
+  ): SessionRecord | null {
+    const record = this.sessions.get(sessionId);
+    const wait = record?.limitWait;
+    if (!record || !wait || record.status !== 'waiting' || this.shuttingDown) {
+      return null;
+    }
+    const accountId = this.accountOf(record.accountId);
+    if (!force && wait.accountId === undefined) {
+      // A wait from before accounts: it was for this account; nothing else
+      // changes (its window stays).
+      return this.sessions.update(sessionId, {
+        limitWait: { ...wait, accountId },
+      });
+    }
+    if (!force && wait.accountId === accountId) {
+      return null;
+    }
+    const updated = this.sessions.update(sessionId, {
+      limitWait: {
+        ...wait,
+        accountId,
+        window: null,
+        resumeAt: new Date().toISOString(),
+        resetKnown: false,
+      },
+    });
+    this.scheduleLimitCheck(sessionId);
+    return updated;
   }
 
   /** Stops the running turn of a session. */
@@ -1839,6 +1977,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       limitHit: false,
       rejectedWindow: null,
       limitRetries: 0,
+      accountId: this.accountOf(this.sessions.get(id)?.accountId ?? null),
+      launching: false,
+      accountRestart: false,
     };
   }
 
@@ -2070,12 +2211,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // A new process has the current directories: nothing to restart for.
     live.reopen = null;
     live.restartPending = false;
+    live.accountRestart = false;
     live.contextResults = 0;
     live.reportedMode = null;
     live.limitHit = false;
     live.rejectedWindow = null;
     // A changed secret is masked from this process on.
     live.mask = undefined;
+    // In use from now on: by the account it will pick (see `pickId`).
+    live.accountId =
+      this.accounts?.pickId(this.requireRecord(live.id).accountId) ??
+      MAIN_ACCOUNT_ID;
+    live.launching = true;
     try {
       const extras = await this.support.prepare(record);
       // What the user allowed for the session applies to every process.
@@ -2091,8 +2238,24 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         live,
         await this.agentMessage(live.id, firstMessage),
       );
+      // The account as stored now: a switch while the process was being
+      // prepared counts.
+      // Counted as in use from here (see `launching`), before its directory
+      // is prepared.
+      live.accountId =
+        this.accounts?.pickId(this.requireRecord(live.id).accountId) ??
+        MAIN_ACCOUNT_ID;
+      const account = this.accounts
+        ? await this.accounts.agentAccount(
+            this.requireRecord(live.id).accountId,
+          )
+        : null;
+      live.accountId = account?.id ?? MAIN_ACCOUNT_ID;
       const run = await this.runner.start(
         {
+          ...(account
+            ? { account: { configDir: account.configDir, main: account.main } }
+            : {}),
           cwd: workingDirectory(record),
           additionalDirectories: [
             ...directories,
@@ -2141,9 +2304,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.runningDirectories.set(live.id, workingDirectory(record));
       this.countContext(live, first);
       live.consuming = this.consume(live, run);
+      if (
+        this.accountOf(this.requireRecord(live.id).accountId) !== live.accountId
+      ) {
+        // Switched while the process started: restarted once it is free.
+        this.restartWhenFree(live.id);
+      }
     } catch (error) {
       this.support.released(live.id);
       this.failRun(live, error);
+    } finally {
+      live.launching = false;
     }
   }
 
@@ -2339,7 +2510,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.syncPermissionMode(live, message.permissionMode);
     }
     if (message.type === 'rate_limit_event') {
-      this.limits.updateFromRateLimitEvent(message.rate_limit_info);
+      this.limits
+        .account(live.accountId)
+        .updateFromRateLimitEvent(message.rate_limit_info);
       if (message.rate_limit_info.status === 'rejected') {
         live.rejectedWindow =
           message.rate_limit_info.rateLimitType ?? live.rejectedWindow;
@@ -2417,6 +2590,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       live.id,
       result.session_id ?? record.sdkSessionId,
       byModel,
+      undefined,
+      null,
+      live.accountId,
     );
     const stop = live.interruptRequested;
     const interrupted = stop !== null;
@@ -2514,7 +2690,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.suggestionOpen = !queued && !interrupted;
     if (run) {
       void this.refreshContext(live, run, { force: true });
-      void this.limits.refreshPlanUsage(() => run.planUsage());
+      void this.limits
+        .account(live.accountId)
+        .refreshPlanUsage(() => run.planUsage());
     }
   }
 
@@ -4440,6 +4618,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     live.restartPending = true;
+    // Also for another reason now (see `changeAccount`).
+    live.accountRestart = false;
     this.restartIfPending(live);
   }
 
@@ -4457,6 +4637,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     live.restartPending = false;
+    live.accountRestart = false;
     this.closeForRestart(live);
     return true;
   }
@@ -4608,7 +4789,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       live.autofixTurn = null;
     }
     const now = Date.now();
-    const until = this.limits.exhaustedUntil(window ? [window] : [], now);
+    const until = this.limits
+      .account(live.accountId)
+      .exhaustedUntil(window ? [window] : [], now);
     const wait: LimitWait = {
       since: new Date(now).toISOString(),
       window: window ?? previous?.window ?? null,
@@ -4619,6 +4802,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       ).toISOString(),
       resetKnown: until !== null,
       autofixPullRequests,
+      accountId: live.accountId,
     };
     this.sessions.update(live.id, { limitWait: wait });
     this.holdReopen(live);
@@ -4629,6 +4813,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     live.suggestionOpen = false;
     this.scheduleLimitCheck(live.id);
+    // Switched to another account during the turn: that one decides.
+    this.followAccount(live.id);
     const run = live.run;
     if (run) {
       void this.refreshContext(live, run, { force: true });
@@ -4648,6 +4834,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     live.reopen = null;
     live.restartPending = true;
+    // Also for the directories now (see `changeAccount`).
+    live.accountRestart = false;
     if (reopen.continueWith) {
       const note = this.directoryNotes.get(live.id);
       this.directoryNotes.set(
@@ -4718,20 +4906,33 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.scheduleLimitCheck(sessionId);
       return;
     }
-    const read = await this.limits.readNow();
+    const accountId = this.accountOf(
+      this.sessions.get(sessionId)?.accountId ?? null,
+    );
+    const limits = this.limits.account(accountId);
+    const read = await limits.readNow();
     const current = this.sessions.get(sessionId)?.limitWait;
     if (!current || current.since !== wait.since || this.shuttingDown) {
       // Continued, cancelled or ended meanwhile.
       return;
     }
+    if (
+      this.accountOf(this.sessions.get(sessionId)?.accountId ?? null) !==
+      accountId
+    ) {
+      // Switched to another account meanwhile: its limits decide.
+      this.scheduleLimitCheck(sessionId);
+      return;
+    }
     const now = Date.now();
     const until = read
-      ? this.limits.exhaustedUntil(current.window ? [current.window] : [], now)
+      ? limits.exhaustedUntil(current.window ? [current.window] : [], now)
       : null;
     if (until || (!read && !current.resetKnown)) {
       const updated = this.sessions.update(sessionId, {
         limitWait: {
           ...current,
+          accountId,
           resumeAt: new Date(
             until
               ? until.getTime() + this.limitResumeMarginMs
@@ -4740,6 +4941,24 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           resetKnown: until !== null,
         },
       });
+      this.updates.next(this.toDto(updated));
+      this.scheduleLimitCheck(sessionId);
+      return;
+    }
+    const live = this.live.get(sessionId);
+    if (live?.run && !live.closing && live.accountId !== accountId) {
+      // Its process still runs with the old account (kept for previews or
+      // background tasks; it restarts with the new one once free): wait
+      // instead of sending the continuation to the exhausted account.
+      const updated = this.sessions.update(sessionId, {
+        limitWait: {
+          ...current,
+          accountId,
+          resumeAt: new Date(now + this.limitUnknownRecheckMs).toISOString(),
+          resetKnown: false,
+        },
+      });
+      this.restartWhenFree(sessionId);
       this.updates.next(this.toDto(updated));
       this.scheduleLimitCheck(sessionId);
       return;
@@ -5555,6 +5774,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       title: record.title,
       model: record.model,
       permissionMode: record.permissionMode,
+      accountId: record.accountId,
       permissionModeOverride: this.permissionModeOverride(record),
       ...this.effectiveStatus(record),
       pendingRequests: this.pendingSummary(record),

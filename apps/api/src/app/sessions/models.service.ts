@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import type { ModelInfo } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ModelListResponse,
   ModelOption,
 } from '@claude-remote-manager/shared-types';
-import { AgentRunner } from '../agent/agent-runner';
+import { AgentRunner, type AgentProbe } from '../agent/agent-runner';
+import { AccountsService } from '../accounts/accounts.service';
 
 /** How long the list Claude Code reported is used. */
 export const MODELS_CACHE_MS = 60 * 60_000;
@@ -64,7 +65,11 @@ export class ModelsService {
   /** Clock; replaced in tests. */
   now: () => number = Date.now;
 
-  constructor(private readonly runner: AgentRunner) {}
+  constructor(
+    private readonly runner: AgentRunner,
+    // The models of the default account; without it the main one.
+    @Optional() private readonly accounts?: AccountsService,
+  ) {}
 
   list(): Promise<ModelListResponse> {
     if (this.cached && this.cached.until > this.now()) {
@@ -78,9 +83,13 @@ export class ModelsService {
 
   private async load(): Promise<ModelListResponse> {
     try {
-      const models = await this.runner.probe((probe) =>
-        probe.supportedModels(),
-      );
+      const task = (probe: AgentProbe) => probe.supportedModels();
+      // The default account's models.
+      const models = this.accounts
+        ? await this.accounts.withAccount(null, (account) =>
+            this.runner.probe(task, account),
+          )
+        : await this.runner.probe(task);
       if (models.length === 0) {
         throw new Error('Claude Code reported no models');
       }

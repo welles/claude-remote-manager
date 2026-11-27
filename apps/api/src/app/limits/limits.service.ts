@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Subject } from 'rxjs';
+import { Subject, type Subscription } from 'rxjs';
 import type {
   SDKControlGetUsageResponse,
   SDKRateLimitInfo,
 } from '@anthropic-ai/claude-agent-sdk';
+import { MAIN_ACCOUNT_ID } from '@claude-remote-manager/shared-types';
 import type {
   AccountLimits,
   RateLimitWindow,
@@ -56,13 +57,12 @@ function fractionToPercent(value: number | undefined): number | null {
 }
 
 /**
- * Latest known subscription rate limits of the Claude account (5-hour and
- * weekly windows). Fed from `rate_limit_event` messages of any session and
- * from Claude Code's plan usage request after turns.
+ * Latest known subscription rate limits of one Claude account (5-hour and
+ * weekly windows). Fed from `rate_limit_event` messages of the account's
+ * sessions and from Claude Code's plan usage request after turns.
  */
-@Injectable()
-export class LimitsService {
-  private readonly logger = new Logger(LimitsService.name);
+export class AccountLimitTracker {
+  private readonly logger = new Logger(AccountLimitTracker.name);
   private readonly windows = new Map<string, RateLimitWindow>();
   private subscriptionType: string | null = null;
   private updatedAt: string | null = null;
@@ -75,9 +75,11 @@ export class LimitsService {
   /** Emits the complete state after every change. */
   readonly changes$ = this.changes.asObservable();
 
+  constructor(readonly accountId: string) {}
+
   /**
    * How to read the plan usage without a running session (a short-lived
-   * Claude Code process); set by the sessions module.
+   * Claude Code process); set by {@link LimitsService}.
    */
   setPlanUsageSource(source: () => Promise<SDKControlGetUsageResponse>): void {
     this.planUsageSource = source;
@@ -147,6 +149,7 @@ export class LimitsService {
 
   get(): AccountLimits {
     return {
+      accountId: this.accountId,
       windows: [...this.windows.values()],
       subscriptionType: this.subscriptionType,
       updatedAt: this.updatedAt,
@@ -258,5 +261,88 @@ export class LimitsService {
   private publish(now: Date): void {
     this.updatedAt = now.toISOString();
     this.changes.next(this.get());
+  }
+}
+
+/**
+ * The limits of all accounts, one {@link AccountLimitTracker} per account,
+ * created on first use. Emits every change of any account.
+ */
+@Injectable()
+export class LimitsService {
+  private readonly trackers = new Map<string, AccountLimitTracker>();
+  private readonly subscriptions = new Map<string, Subscription>();
+  private planUsageSource:
+    | ((accountId: string) => Promise<SDKControlGetUsageResponse>)
+    | null = null;
+  private accountIds: () => string[] = () => [MAIN_ACCOUNT_ID];
+  private refreshableIds: () => string[] = () => [MAIN_ACCOUNT_ID];
+  private readonly changes = new Subject<AccountLimits>();
+
+  /** Emits the complete state of an account after every change. */
+  readonly changes$ = this.changes.asObservable();
+
+  /** The tracker of an account (created on first use). */
+  account(accountId: string): AccountLimitTracker {
+    let tracker = this.trackers.get(accountId);
+    if (!tracker) {
+      tracker = new AccountLimitTracker(accountId);
+      const source = this.planUsageSource;
+      if (source) {
+        tracker.setPlanUsageSource(() => source(accountId));
+      }
+      this.subscriptions.set(
+        accountId,
+        tracker.changes$.subscribe((limits) => this.changes.next(limits)),
+      );
+      this.trackers.set(accountId, tracker);
+    }
+    return tracker;
+  }
+
+  /**
+   * How to read an account's plan usage without a running session (a
+   * short-lived Claude Code process of the account); set by the sessions
+   * module.
+   */
+  setPlanUsageSource(
+    source: (accountId: string) => Promise<SDKControlGetUsageResponse>,
+  ): void {
+    this.planUsageSource = source;
+    for (const [accountId, tracker] of this.trackers) {
+      tracker.setPlanUsageSource(() => source(accountId));
+    }
+  }
+
+  /**
+   * The accounts in their order, and those whose limits can be read (logged
+   * in); set by the accounts module.
+   */
+  setAccounts(ids: () => string[], refreshable: () => string[] = ids): void {
+    this.accountIds = ids;
+    this.refreshableIds = refreshable;
+  }
+
+  /** The limits of every account, in the accounts' order. */
+  list(): AccountLimits[] {
+    return this.accountIds().map((id) => this.account(id).get());
+  }
+
+  get(accountId: string): AccountLimits {
+    return this.account(accountId).get();
+  }
+
+  /** Reads stale or unknown limits of the logged-in accounts in the background. */
+  refreshIfStale(now = Date.now()): void {
+    for (const id of this.refreshableIds()) {
+      this.account(id).refreshIfStale(now);
+    }
+  }
+
+  /** Forgets a removed account. */
+  forget(accountId: string): void {
+    this.subscriptions.get(accountId)?.unsubscribe();
+    this.subscriptions.delete(accountId);
+    this.trackers.delete(accountId);
   }
 }

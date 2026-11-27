@@ -28,6 +28,12 @@ let
   # environment. It writes what it sees into the user's home and stays
   # alive like a Claude Code process.
   fakeClaude = pkgs.writeShellScript "fake-claude" ''
+    # `claude auth status` (the app reads the accounts' logins): answered
+    # at once, and not recorded as a session process.
+    if [ "$1" = auth ]; then
+      [ "$2" = status ] && echo '{"loggedIn": true, "authMethod": "claude.ai", "subscriptionType": "max"}'
+      exit 0
+    fi
     out="$HOME/fake-claude"
     mkdir -p "$out"
     n="$$"

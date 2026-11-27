@@ -35,6 +35,7 @@ describe('openDatabase', () => {
 
     expect(existsSync(join(location, DATABASE_FILE_NAME))).toBe(true);
     expect(tables(db)).toEqual([
+      'accounts',
       'app_settings',
       'attachments',
       'deleted_sessions',

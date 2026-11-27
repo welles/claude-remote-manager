@@ -478,7 +478,7 @@ describe('SessionsService', () => {
         usage: { inputTokens: 10, costUsd: 0.01 },
         context: { usedTokens: 1200 },
       });
-      expect(limits.get().windows[0]).toMatchObject({
+      expect(limits.get('main').windows[0]).toMatchObject({
         type: 'five_hour',
         utilization: 10,
       });

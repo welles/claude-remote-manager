@@ -8,6 +8,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 import type {
+  AccountProvider,
   PreviewStopper,
   PullRequestChecksDto,
   PullRequestCreator,
@@ -132,6 +133,29 @@ export const environmentEntries = sqliteTable(
   ],
 );
 
+/**
+ * Accounts sessions work with (see `AccountDto`). `directory` is the name
+ * of the Claude Code configuration directory under `<claudeDir>/crm-accounts`;
+ * `null` for the main account, which uses the main directory itself. Login
+ * details are cached from `claude auth status`.
+ */
+export const accounts = sqliteTable('accounts', {
+  id: text('id').primaryKey(),
+  provider: text('provider').$type<AccountProvider>().notNull(),
+  name: text('name').notNull(),
+  position: integer('position').notNull(),
+  isDefault: integer('is_default', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+  directory: text('directory'),
+  loggedIn: integer('logged_in', { mode: 'boolean' }),
+  email: text('email'),
+  organization: text('organization'),
+  subscriptionType: text('subscription_type'),
+  loginExpiresAt: text('login_expires_at'),
+  createdAt: createdAt(),
+});
+
 export const sessions = sqliteTable('sessions', {
   id: text('id').primaryKey(),
   /** Claude Code session ID used for resuming; known after the first start. */
@@ -214,6 +238,13 @@ export const sessions = sqliteTable('sessions', {
   autoReviewRounds: integer('auto_review_rounds').notNull().default(0),
   /** Fingerprint of the session diff the last review was given. */
   reviewedDiff: text('reviewed_diff'),
+  /**
+   * Account the session works with; `null`: the default account. Set to
+   * `null` when the account is removed.
+   */
+  accountId: text('account_id').references(() => accounts.id, {
+    onDelete: 'set null',
+  }),
 });
 
 /**
@@ -237,6 +268,11 @@ export interface LimitWait {
    * as one if autofix is still on for them and they are open.
    */
   autofixPullRequests: number[];
+  /**
+   * The account whose limit is awaited (absent in waits from before
+   * accounts): when the session's account changes, the new one decides.
+   */
+  accountId?: string;
 }
 
 /**
@@ -476,6 +512,8 @@ export const usageRecords = sqliteTable(
      * session's Claude Code process, whose totals start from the others).
      */
     reviewId: text('review_id'),
+    /** Account the request ran with; `null` before accounts existed. */
+    accountId: text('account_id'),
     createdAt: createdAt(),
   },
   (table) => [

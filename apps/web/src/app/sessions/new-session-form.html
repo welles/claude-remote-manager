@@ -237,6 +237,28 @@
         }
       </mat-select>
     </mat-form-field>
+    } @if (accounts().length > 1) {
+    <mat-form-field appearance="outline" class="w-48" subscriptSizing="dynamic">
+      <mat-label>Account</mat-label>
+      <mat-select
+        name="accountId"
+        [(ngModel)]="accountId"
+        data-testid="account"
+      >
+        <mat-option
+          value=""
+          title="The default account, or the next one in order while its limit is used up"
+          >Default{{ defaultAccountName() ? ' (' + defaultAccountName() + ')' :
+          '' }}</mat-option
+        >
+        @for (account of accounts(); track account.id) {
+        <mat-option [value]="account.id"
+          >{{ account.name }}{{ account.loggedIn === false ? ' (logged out)' :
+          '' }}</mat-option
+        >
+        }
+      </mat-select>
+    </mat-form-field>
     }
     <mat-form-field appearance="outline" class="w-40" subscriptSizing="dynamic">
       <mat-label>Model</mat-label>

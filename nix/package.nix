@@ -166,6 +166,7 @@ stdenv.mkDerivation {
     test -f $out/lib/claude-remote-manager/public/index.html
     test -f $out/lib/claude-remote-manager/assets/session-files.cjs
     test -f $out/lib/claude-remote-manager/assets/stop-processes-in.cjs
+    test -f $out/lib/claude-remote-manager/assets/claude-account-dir.cjs
     ls $out/lib/claude-remote-manager/migrations/*.sql > /dev/null
     runHook postInstallCheck
   '';

@@ -1,3 +1,4 @@
+import { mainAccountList } from '../accounts/testing/accounts';
 import { provideHttpClient } from '@angular/common/http';
 import {
   HttpTestingController,
@@ -41,6 +42,7 @@ describe('NewSessionPage', () => {
       strayDirectories: [],
     });
     http.expectOne('/api/environments').flush({ environments: [] });
+    http.expectOne('/api/accounts').flush(mainAccountList());
     await fixture.whenStable();
     return fixture;
   };

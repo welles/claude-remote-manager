@@ -1,4 +1,5 @@
 import { provideHttpClient } from '@angular/common/http';
+import { mainAccountList } from '../accounts/testing/accounts';
 import {
   HttpTestingController,
   provideHttpClientTesting,
@@ -92,6 +93,8 @@ describe('SettingsPage', () => {
     http
       .expectOne('/api/settings/review')
       .flush({ model: 'claude-fable-5-2', effort: 'high' });
+    http.expectOne('/api/accounts').flush(mainAccountList());
+    http.expectOne('/api/limits').flush({ accounts: [] });
     http.expectOne('/api/models').flush({
       models: [],
       source: 'fallback',
@@ -270,6 +273,8 @@ describe('SettingsPage review settings', () => {
     http
       .expectOne('/api/settings/review')
       .flush({ model: 'claude-fable-5-2', effort: 'high' });
+    http.expectOne('/api/accounts').flush(mainAccountList());
+    http.expectOne('/api/limits').flush({ accounts: [] });
     http.expectOne('/api/models').flush({
       models: [
         {
