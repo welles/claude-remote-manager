@@ -1,5 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { Logger } from '@nestjs/common';
 import type { ProcessLauncher } from '../../common/process-isolation';
+
+const logger = new Logger('CodexAppServer');
 
 /** How long a request may take before it fails (turns run longer). */
 export const CODEX_REQUEST_TIMEOUT_MS = 60_000;
@@ -58,6 +61,11 @@ export class CodexAppServer {
   private readonly pending = new Map<number, Pending>();
   private readonly stderr: string[] = [];
   private nextId = 1;
+  private markExited: () => void = () => undefined;
+  /** Resolves once the process has ended. */
+  readonly exited = new Promise<void>((resolve) => {
+    this.markExited = resolve;
+  });
   private buffer = '';
   private closing = false;
   private ended = false;
@@ -154,9 +162,9 @@ export class CodexAppServer {
   }
 
   /** Ends the process (killed when it does not end in time). */
-  close(): void {
+  close(): Promise<void> {
     if (this.closing) {
-      return;
+      return this.exited;
     }
     this.closing = true;
     this.child.stdin?.end();
@@ -170,6 +178,7 @@ export class CodexAppServer {
       timer.unref?.();
       this.child.once('close', () => clearTimeout(timer));
     }
+    return this.exited;
   }
 
   get running(): boolean {
@@ -200,7 +209,18 @@ export class CodexAppServer {
     }
   }
 
+  /** One line of Codex: a malformed one is logged, never thrown. */
   private handle(line: string): void {
+    try {
+      this.dispatch(line);
+    } catch (error) {
+      logger.warn(
+        `Could not handle a message of Codex (${line.slice(0, 200)}): ${String(error)}`,
+      );
+    }
+  }
+
+  private dispatch(line: string): void {
     let message: {
       id?: number | string;
       method?: string;
@@ -211,6 +231,9 @@ export class CodexAppServer {
     try {
       message = JSON.parse(line);
     } catch {
+      return;
+    }
+    if (typeof message !== 'object' || message === null) {
       return;
     }
     if (message.method !== undefined && message.id !== undefined) {
@@ -271,6 +294,7 @@ export class CodexAppServer {
       return;
     }
     this.ended = true;
+    this.markExited();
     for (const pending of this.pending.values()) {
       if (pending.timer) {
         clearTimeout(pending.timer);

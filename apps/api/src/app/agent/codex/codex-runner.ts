@@ -24,7 +24,10 @@ import type {
 import { AsyncQueue } from '../async-queue';
 import { loadZod } from '../sdk-agent-runner';
 import type { TranscriptReader } from '../transcript-reader';
-import { runAccountHelper } from '../../accounts/claude-account-directories';
+import {
+  runAccountHelper,
+  runAccountHelperJson,
+} from '../../accounts/claude-account-directories';
 import { CODEX_ACCOUNT_DIR_SCRIPT } from '../../accounts/codex-accounts';
 import { CodexAppServer } from './codex-app-server';
 import {
@@ -176,7 +179,8 @@ function forgetRollouts(threadId: string): void {
 }
 
 /**
- * The rollout file of a thread under a Codex home's `sessions/` (shared by
+ * The rollout file of a thread under a Codex home's `sessions/`, else its
+ * `archived_sessions/` (both shared by
  * all accounts): Codex resumes a thread of another account by its path.
  * A found path is remembered until the file is gone (e.g. compressed).
  */
@@ -231,7 +235,9 @@ async function scanRollouts(
     }
     return null;
   };
-  return visit(root, 0);
+  return (
+    (await visit(root, 0)) ?? (await visit(join(home, 'archived_sessions'), 0))
+  );
 }
 
 /**
@@ -325,6 +331,28 @@ export class CodexRunner implements AgentRunner {
   }
 
   /**
+   * Deletes a thread from a Codex home (its databases and rollout);
+   * `false` when that home does not know it or Codex cannot start.
+   */
+  async deleteThread(home: string, threadId: string): Promise<boolean> {
+    let server: CodexAppServer | null = null;
+    try {
+      server = await CodexAppServer.start({
+        executable: this.config.executable,
+        launcher: this.launcher,
+        home,
+        cwd: tmpdir(),
+      });
+      await server.request('thread/delete', { threadId });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      await server?.close();
+    }
+  }
+
+  /**
    * Reads a thread's history (any account's, through the shared
    * rollouts). Codex knows a thread of another home only once it resumed
    * it by its path; the process runs in the temporary directory and the
@@ -402,11 +430,27 @@ export class CodexTranscriptReader implements TranscriptReader {
   ) {}
 
   /**
-   * Removes a deleted session's thread: its rollouts in the shared
-   * `sessions/` and `archived_sessions/`, as the session user who owns
-   * them (helper `codex-account-dir.cjs remove-thread`).
+   * Removes a deleted session's thread everywhere Codex keeps it: with
+   * `thread/delete` in the base home and in every account's home (each
+   * has the thread in its databases once it ran or read it; homes that do
+   * not know it refuse, which is fine), then whatever rollout is left in
+   * the shared `sessions/` and `archived_sessions/`, as the session user
+   * who owns them (helper `codex-account-dir.cjs remove-thread`).
    */
   async remove(threadId: string): Promise<void> {
+    const answer = await runAccountHelperJson(
+      this.launcher,
+      CODEX_ACCOUNT_DIR_SCRIPT,
+      ['homes', this.baseHome],
+    );
+    const homes = Array.isArray(answer['homes'])
+      ? answer['homes'].filter(
+          (home): home is string => typeof home === 'string',
+        )
+      : [];
+    for (const home of [...homes, this.baseHome]) {
+      await this.runner.deleteThread(home, threadId);
+    }
     await runAccountHelper(this.launcher, CODEX_ACCOUNT_DIR_SCRIPT, [
       'remove-thread',
       this.baseHome,
@@ -470,6 +514,49 @@ export function approvalOption(
   return chosen?.label ?? null;
 }
 
+/** A running call of one of the user's MCP tools. */
+interface McpCall {
+  itemId: string | null;
+  threadId: string | null;
+  server: string;
+  tool: string;
+  arguments: unknown;
+}
+
+/** Whether two JSON values are equal (key order aside). */
+export function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (
+    typeof a !== 'object' ||
+    typeof b !== 'object' ||
+    a === null ||
+    b === null ||
+    Array.isArray(a) !== Array.isArray(b)
+  ) {
+    return false;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return (
+      a.length === b.length && a.every((value, i) => sameJson(value, b[i]))
+    );
+  }
+  const left = Object.keys(a as object);
+  const right = Object.keys(b as object);
+  return (
+    left.length === right.length &&
+    left.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(b, key) &&
+        sameJson(
+          (a as Record<string, unknown>)[key],
+          (b as Record<string, unknown>)[key],
+        ),
+    )
+  );
+}
+
 /** What every approval call of a request shares. */
 type ApprovalBase = {
   title: string | null;
@@ -507,10 +594,7 @@ class CodexProcess implements AgentRun {
    */
   private readonly patternRules: string[];
   /** Running MCP tool calls by item ID (for their approval). */
-  private readonly mcpCalls = new Map<
-    string,
-    { server: string; tool: string; arguments: unknown }
-  >();
+  private readonly mcpCalls = new Map<string, McpCall>();
   /**
    * The model Codex reported as its default when the thread started
    * without one; sent again after `setModel(null)` (`defaultInUse`).
@@ -769,6 +853,8 @@ class CodexProcess implements AgentRun {
     if (method === 'item/started' && item?.type === 'mcpToolCall') {
       const call = item as Extract<CodexThreadItem, { type: 'mcpToolCall' }>;
       this.mcpCalls.set(item.id, {
+        itemId: item.id,
+        threadId: typeof p['threadId'] === 'string' ? p['threadId'] : null,
         server: call.server,
         tool: call.tool,
         arguments: call.arguments,
@@ -1058,19 +1144,17 @@ class CodexProcess implements AgentRun {
 
   /**
    * Approval of a call of one of the user's MCP tools (Codex asks through
-   * \`requestUserInput\` or an elicitation): an approval card for
-   * \`mcp__<server>__<tool>\` with its arguments. "Allow for this session" is
+   * `requestUserInput` or an elicitation): an approval card for
+   * `mcp__<server>__<tool>` with its arguments. "Allow for this session" is
    * kept by the app (an exact rule with the tool's name); Codex is always
    * answered "allow once" or "cancel". `true`: allowed.
    */
   private async mcpToolApproval(
-    itemId: string | null,
+    call: McpCall | null,
     message: string | null,
     base: ApprovalBase,
   ): Promise<boolean> {
-    const call =
-      (itemId ? this.mcpCalls.get(itemId) : undefined) ??
-      [...this.mcpCalls.values()].at(-1);
+    const itemId = call?.itemId ?? null;
     const toolName = call ? codexToolName(call.server, call.tool) : 'mcp__?';
     if (
       this.sessionRules.has(toolName) ||
@@ -1098,9 +1182,41 @@ class CodexProcess implements AgentRun {
   }
 
   /**
-   * \`item/tool/requestUserInput\`: an MCP tool approval (its question ID
-   * starts with \`mcp_tool_call_approval\`), else questions of the model as
-   * the app's question card (like Claude's \`AskUserQuestion\`).
+   * The running call an MCP approval elicitation is about: the one of its
+   * server and thread with the tool and arguments in `_meta`
+   * (`tool_name`, `tool_params`); when there is not exactly one, the call
+   * as `_meta` describes it.
+   */
+  private elicitedCall(
+    p: Record<string, unknown>,
+    meta: Record<string, unknown>,
+  ): McpCall | null {
+    const server = typeof p['serverName'] === 'string' ? p['serverName'] : null;
+    const tool =
+      typeof meta['tool_name'] === 'string' ? meta['tool_name'] : null;
+    const threadId = typeof p['threadId'] === 'string' ? p['threadId'] : null;
+    if (!server || !tool) {
+      return null;
+    }
+    const params = meta['tool_params'] ?? {};
+    const matches = [...this.mcpCalls.values()].filter(
+      (call) =>
+        call.server === server &&
+        call.tool === tool &&
+        (threadId === null ||
+          call.threadId === null ||
+          call.threadId === threadId) &&
+        sameJson(call.arguments ?? {}, params),
+    );
+    return matches.length === 1
+      ? matches[0]
+      : { itemId: null, threadId, server, tool, arguments: params };
+  }
+
+  /**
+   * `item/tool/requestUserInput`: an MCP tool approval (its question ID
+   * starts with `mcp_tool_call_approval`), else questions of the model as
+   * the app's question card (like Claude's `AskUserQuestion`).
    */
   private async userInput(
     p: Record<string, unknown>,
@@ -1115,7 +1231,7 @@ class CodexProcess implements AgentRun {
     );
     if (approval) {
       const allowed = await this.mcpToolApproval(
-        itemId,
+        (itemId ? this.mcpCalls.get(itemId) : undefined) ?? null,
         approval.question,
         base,
       );
@@ -1167,7 +1283,7 @@ class CodexProcess implements AgentRun {
 
   /**
    * An MCP elicitation: Codex's own MCP tool approvals
-   * (\`_meta.codex_approval_kind\` \`mcp_tool_call\`) as an approval card;
+   * (`_meta.codex_approval_kind` `mcp_tool_call`) as an approval card;
    * other servers' requests for input are declined (logged).
    */
   private async elicitation(
@@ -1177,7 +1293,7 @@ class CodexProcess implements AgentRun {
     const meta = (p['_meta'] ?? null) as Record<string, unknown> | null;
     if (meta?.['codex_approval_kind'] === MCP_APPROVAL_KIND) {
       const allowed = await this.mcpToolApproval(
-        null,
+        this.elicitedCall(p, meta),
         typeof p['message'] === 'string' ? p['message'] : null,
         base,
       );
@@ -1419,13 +1535,15 @@ class CodexProcess implements AgentRun {
     // Full access: Codex can work in any directory already.
   }
 
-  close(): void {
+  /** Resolves once Codex has ended (killed when it does not in time). */
+  close(): Promise<void> {
     this.closed = true;
     for (const controller of this.openRequests.values()) {
       controller.abort();
     }
-    this.server?.close();
+    const ended = this.server?.close() ?? Promise.resolve();
     this.queue.close();
+    return ended;
   }
 
   stderrTail(): string[] {

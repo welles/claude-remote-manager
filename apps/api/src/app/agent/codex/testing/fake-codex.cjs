@@ -30,9 +30,12 @@
 //   stdin:<b64>  asks to write the decoded input to a running command
 //   mcp-tool     calls the user's MCP tool docs/search, approved through
 //                requestUserInput (Codex's MCP tool approval question)
-//   mcp-elicit   the same, approved through an MCP elicitation
+//   mcp-elicit   the same, approved through an MCP elicitation (as Codex
+//                does for user MCP servers); `mcp-elicit-other` names
+//                other arguments than the running call
 //   edit-file    may run in a subagent thread too (`subagent-edit`)
 //   stubborn     the process ignores SIGTERM and the end of its input
+//   garbage      malformed lines and notifications first
 //   edit-file    a file change that asks for approval first
 //   app-tool:<n> a call of the app's dynamic tool <n> (item/tool/call)
 //   plan         a plan update
@@ -484,6 +487,10 @@ async function runTurn(thread, turn, input) {
       error: null,
       durationMs: null,
     };
+    // `mcp-elicit-other`: the approval names a call that is not running.
+    const elicitParams = /\bmcp-elicit-other\b/.test(prompt)
+      ? { q: 'other' }
+      : { q: 'codex' };
     started(item);
     let allowed;
     let said;
@@ -528,9 +535,16 @@ async function runTurn(thread, turn, input) {
         serverName: 'docs',
         environmentId: null,
         mode: 'form',
+        // As Codex 0.171 sends it for a user MCP server's tool.
         _meta: {
           codex_approval_kind: 'mcp_tool_call',
-          tool_params_display: [{ name: 'q', value: 'codex' }],
+          tool_name: 'search',
+          tool_annotations: { readOnlyHint: false, destructiveHint: true },
+          tool_description: 'Search docs',
+          tool_params: elicitParams,
+          tool_params_display: [
+            { name: 'q', value: elicitParams.q, display_name: 'q' },
+          ],
         },
         message: 'Allow the docs MCP server to run tool "search"?',
         requestedSchema: { type: 'object', properties: {} },
@@ -642,6 +656,11 @@ async function runTurn(thread, turn, input) {
   } else if (/\bcrash\b/.test(prompt)) {
     process.stderr.write('panicked: fake crash\n', () => process.exit(3));
     return;
+  } else if (/\bgarbage\b/.test(prompt)) {
+    process.stdout.write('42\nnull\n"text"\n');
+    notify('item/started', { threadId, turnId, item: null });
+    notify('item/completed', { threadId, turnId, item: { id: 5 } });
+    await message('after garbage');
   } else if (/\bstubborn\b/.test(prompt)) {
     stubborn = true;
     process.on('SIGTERM', () => undefined);
@@ -947,6 +966,23 @@ function handle(message) {
         });
       });
       return;
+    }
+    case 'thread/delete': {
+      if (fs.existsSync(path.join(home, 'fake-delete-fails'))) {
+        return fail(requestId, 'thread/delete failed');
+      }
+      const file = findRollout(params?.threadId);
+      if (!file && !threads.has(params?.threadId)) {
+        return fail(
+          requestId,
+          `no rollout found for thread id ${params?.threadId}`,
+        );
+      }
+      if (file) {
+        fs.rmSync(file, { force: true });
+      }
+      threads.delete(params?.threadId);
+      return answer(requestId, {});
     }
     case 'turn/steer': {
       const thread = threads.get(params?.threadId);

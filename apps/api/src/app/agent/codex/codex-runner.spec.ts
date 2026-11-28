@@ -1,13 +1,16 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
+  renameSync,
   mkdtempSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { Logger } from '@nestjs/common';
 import type { SessionEventInput } from '@claude-remote-manager/shared-types';
 import { SINGLE_USER } from '../../common/process-isolation';
 import type {
@@ -1145,8 +1148,28 @@ describe('CodexRunner', () => {
     approve.mockResolvedValueOnce({ behavior: 'deny', message: 'no' });
     const { events } = await start(message('mcp-elicit'));
     const turn = await events.result();
-    expect(approve.mock.calls[0][0].toolName).toBe('mcp__docs__search');
+    // The running call with the same server, tool and arguments.
+    expect(approve.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        toolName: 'mcp__docs__search',
+        input: { q: 'codex' },
+        toolUseId: expect.stringMatching(/^mcp-/),
+      }),
+    );
     expect(texts(turn.events)).toEqual(['mcp answer: decline']);
+  });
+
+  it('builds an MCP approval card from the elicitation when no running call matches', async () => {
+    const { events } = await start(message('mcp-elicit-other'));
+    await events.result();
+    expect(approve.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        toolName: 'mcp__docs__search',
+        input: { q: 'other' },
+        toolUseId: '',
+        mcpServer: { name: 'docs', source: 'codex' },
+      }),
+    );
   });
 
   it('shows a subagent’s file change in its approval', async () => {
@@ -1231,27 +1254,86 @@ describe('CodexRunner', () => {
     expect((signal as unknown as AbortSignal).aborted).toBe(true);
   });
 
-  it('removes a deleted session’s rollouts, never through symlinks', async () => {
+  it('deletes a deleted session’s thread in every Codex home', async () => {
+    const account = join(
+      home,
+      'crm-accounts',
+      '00000000-0000-0000-0000-00000000000a',
+    );
+    mkdirSync(account, { recursive: true });
+    mkdirSync(join(home, 'sessions'), { recursive: true });
+    symlinkSync(join('..', '..', 'sessions'), join(account, 'sessions'));
+    const { run, events } = await start(message('hello'), {
+      account: { configDir: account, main: false },
+    });
+    await events.result();
+    const threadId = (events.all[0] as { engineSessionId: string })
+      .engineSessionId;
+    await run.close();
+    const path = await findRollout(home, threadId);
+    expect(path).not.toBeNull();
+    const reader = new CodexTranscriptReader(runner, home, SINGLE_USER);
+    await reader.remove(threadId);
+    // Each home is asked (the account's first); the rollout is gone.
+    expect(requests('thread/delete', account)).toEqual([{ threadId }]);
+    expect(requests('thread/delete', home)).toEqual([{ threadId }]);
+    expect(existsSync(path as string)).toBe(false);
+    expect(await reader.exists(threadId)).toBe(false);
+  });
+
+  it('removes what is left of the rollouts itself, never through symlinks', async () => {
     const { run, events } = await start(message('hello'));
     await events.result();
     const threadId = (events.all[0] as { engineSessionId: string })
       .engineSessionId;
-    run.close();
+    await run.close();
     const path = await findRollout(home, threadId);
-    expect(path).not.toBeNull();
+    writeFileSync(join(home, 'fake-delete-fails'), '');
     // A link with a rollout's name, pointing outside: left alone.
     const outside = join(dir, 'precious.txt');
     writeFileSync(outside, 'keep');
     mkdirSync(join(home, 'archived_sessions'), { recursive: true });
-    symlinkSync(
-      outside,
-      join(home, 'archived_sessions', `rollout-x-${threadId}.jsonl`),
-    );
+    const link = join(home, 'archived_sessions', `rollout-x-${threadId}.jsonl`);
+    symlinkSync(outside, link);
     const reader = new CodexTranscriptReader(runner, home, SINGLE_USER);
     await reader.remove(threadId);
     expect(existsSync(path as string)).toBe(false);
-    expect(await reader.exists(threadId)).toBe(false);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(existsSync(outside)).toBe(true);
+  });
+
+  it('finds archived rollouts too', async () => {
+    const { run, events } = await start(message('hello'));
+    await events.result();
+    const threadId = (events.all[0] as { engineSessionId: string })
+      .engineSessionId;
+    await run.close();
+    const path = (await findRollout(home, threadId)) as string;
+    mkdirSync(join(home, 'archived_sessions'), { recursive: true });
+    const archived = join(home, 'archived_sessions', basename(path));
+    renameSync(path, archived);
+    expect(await findRollout(home, threadId)).toBe(archived);
+  });
+
+  it('survives malformed messages of Codex', async () => {
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    const { events } = await start(message('garbage'));
+    const turn = await events.result();
+    expect(texts(turn.events)).toEqual(['after garbage']);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/^Could not handle a message of Codex/),
+    );
+    warn.mockRestore();
+  });
+
+  it('resolves close once Codex has ended', async () => {
+    const { run, events } = await start(message('hello'));
+    await events.result();
+    const [pid] = fakeCodexPids(home);
+    await run.close();
+    expect(await processEnded(pid, 0)).toBe(true);
   });
 
   it('ends the events with an error when Codex exits', async () => {

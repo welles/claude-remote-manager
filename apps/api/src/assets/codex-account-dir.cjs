@@ -18,6 +18,10 @@
 //   codex-account-dir.cjs remove <baseHome> <id>
 //     Removes <baseHome>/crm-accounts/<id> (symlinks, not their targets).
 //
+//   codex-account-dir.cjs homes <baseHome>
+//     Lists the account homes: {"ok":true,"homes":["<baseHome>/crm-accounts/<id>",…]}
+//     (directories with an account ID as name, no symlinks).
+//
 //   codex-account-dir.cjs remove-thread <baseHome> <threadId>
 //     Removes the rollouts of a thread (a deleted session's conversation):
 //     regular files named rollout-*-<threadId>.jsonl[.zst] in
@@ -168,6 +172,22 @@ function removeThread(baseHome, threadId) {
   return found.length;
 }
 
+function homes(baseHome) {
+  const root = path.join(baseHome, ACCOUNTS);
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+  return entries
+    .filter((entry) => entry.isDirectory() && ID.test(entry.name))
+    .map((entry) => path.join(root, entry.name));
+}
+
 function remove(baseHome, id) {
   const root = path.join(baseHome, ACCOUNTS);
   let stats;
@@ -189,10 +209,13 @@ try {
   const [command, ...args] = process.argv.slice(2);
   let warnings = [];
   let removed;
+  let found;
   if (command === 'prepare' && args.length === 2 && ID.test(args[1])) {
     warnings = prepare(args[0], args[1]);
   } else if (command === 'remove' && args.length === 2 && ID.test(args[1])) {
     remove(args[0], args[1]);
+  } else if (command === 'homes' && args.length === 1) {
+    found = homes(args[0]);
   } else if (
     command === 'remove-thread' &&
     args.length === 2 &&
@@ -200,9 +223,16 @@ try {
   ) {
     removed = removeThread(args[0], args[1]);
   } else {
-    throw new Error('usage: prepare|remove|remove-thread <baseHome> <id>');
+    throw new Error(
+      'usage: prepare|remove|remove-thread <baseHome> <id> | homes <baseHome>',
+    );
   }
-  done({ ok: true, warnings, ...(removed === undefined ? {} : { removed }) });
+  done({
+    ok: true,
+    warnings,
+    ...(removed === undefined ? {} : { removed }),
+    ...(found === undefined ? {} : { homes: found }),
+  });
 } catch (error) {
   done({
     ok: false,

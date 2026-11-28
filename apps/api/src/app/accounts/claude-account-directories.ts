@@ -30,11 +30,25 @@ export function accountDirScript(name = ACCOUNT_DIR_SCRIPT): string {
  * `{"ok":true}` (optionally with `warnings`) or `{"ok":false,"message":...}`.
  * Resolves with the warnings.
  */
-export function runAccountHelper(
+export async function runAccountHelper(
   launcher: ProcessLauncher,
   script: string,
   args: string[],
 ): Promise<string[]> {
+  const result = await runAccountHelperJson(launcher, script, args);
+  return Array.isArray(result['warnings'])
+    ? result['warnings'].filter(
+        (warning): warning is string => typeof warning === 'string',
+      )
+    : [];
+}
+
+/** Runs a helper script (see `runAccountHelper`); resolves with its answer. */
+export function runAccountHelperJson(
+  launcher: ProcessLauncher,
+  script: string,
+  args: string[],
+): Promise<Record<string, unknown>> {
   const command = launcher.command('session', process.execPath, [
     accountDirScript(script),
     ...args,
@@ -61,13 +75,7 @@ export function runAccountHelper(
           result = null;
         }
         if (result?.ok) {
-          resolve(
-            Array.isArray(result.warnings)
-              ? result.warnings.filter(
-                  (warning): warning is string => typeof warning === 'string',
-                )
-              : [],
-          );
+          resolve(result as Record<string, unknown>);
         } else {
           reject(
             new Error(
