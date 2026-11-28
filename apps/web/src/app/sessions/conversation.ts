@@ -120,8 +120,9 @@ export type ConversationItem =
       trigger: ReviewTrigger;
       /** The reviewer's engine (Claude Code for reviews before Codex). */
       engine: AgentEngineId;
-      /** The chosen engine the server did not have. */
+      /** The chosen engine that was not used, and why (see `RunningReviewDto`). */
       fallbackFrom: AgentEngineId | null;
+      fallbackReason: string | null;
       /**
        * The model (`null`: the engine's default) and effort, as the
        * reviewer reported them once it finished.
@@ -604,6 +605,7 @@ export function applyEvent(
           trigger: event.trigger,
           engine: event.engine ?? DEFAULT_ENGINE,
           fallbackFrom: event.fallbackFrom ?? null,
+          fallbackReason: event.fallbackReason ?? null,
           model: event.model,
           effort: event.effort,
           fileCount: event.fileCount,

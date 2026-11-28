@@ -16,6 +16,7 @@ const item = (overrides: Partial<ReviewItem> = {}): ReviewItem => ({
   trigger: 'manual',
   engine: 'claude-code',
   fallbackFrom: null,
+  fallbackReason: null,
   model: 'claude-fable-5-2',
   effort: 'high',
   fileCount: 3,
@@ -130,6 +131,16 @@ describe('ReviewCard', () => {
       render(item({ fallbackFrom: 'codex' })).text('review-fallback'),
     ).toEqual([
       'Codex is not available on this server: reviews run with Claude Code instead.',
+    ]);
+    expect(
+      render(
+        item({
+          fallbackFrom: 'codex',
+          fallbackReason: 'Codex has command rules (x)',
+        }),
+      ).text('review-fallback'),
+    ).toEqual([
+      'Codex has command rules (x): this review ran with Claude Code instead.',
     ]);
   });
 

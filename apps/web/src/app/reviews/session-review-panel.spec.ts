@@ -170,6 +170,7 @@ describe('SessionReviewPanel', () => {
             trigger: 'manual',
             engine: 'codex',
             fallbackFrom: null,
+            fallbackReason: null,
             model: null,
             effort: 'high',
             startedAt: '2026-01-01T10:00:00.000Z',

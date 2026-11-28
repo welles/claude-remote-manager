@@ -87,7 +87,14 @@ export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
     }
     @if (review.fallbackFrom) {
       <p class="m-0 hint-text" data-testid="review-fallback">
-        {{ fallbackText(review.fallbackFrom) }}
+        {{
+          review.fallbackReason
+            ? review.fallbackReason +
+              ': this review ran with ' +
+              engineLabels['claude-code'] +
+              ' instead.'
+            : fallbackText(review.fallbackFrom)
+        }}
       </p>
     }
     <p class="m-0 hint-text" data-testid="review-meta">
