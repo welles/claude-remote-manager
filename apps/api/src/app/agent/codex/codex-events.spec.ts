@@ -758,6 +758,28 @@ describe('unwrapShellCommand', () => {
     ]);
     expect(shellWords('a | b')).toBeNull();
     expect(shellWords('"a $b"')).toBeNull();
+    // A newline or carriage return outside quotes separates commands.
+    expect(shellWords('git status\nrm -rf ~')).toBeNull();
+    expect(shellWords('git status\rrm -rf ~')).toBeNull();
+    // Inside quotes it is part of the word; an escaped newline joins lines.
+    expect(shellWords("echo 'a\nb'")).toEqual(['echo', 'a\nb']);
+    expect(shellWords('echo a\\\nb')).toEqual(['echo', 'ab']);
+  });
+
+  it('does not unwrap a script with an unquoted newline', () => {
+    expect(shellScript('/bin/bash -lc git status\nrm x', [])).toEqual({
+      script: '/bin/bash -lc git status\nrm x',
+      exact: true,
+    });
+    // Codex's parsed command is for display only.
+    expect(
+      shellScript('/bin/bash -lc git status\nrm x', [
+        { command: 'git status' },
+      ]),
+    ).toEqual({ script: 'git status', exact: false });
+    expect(shellScript("/bin/bash -lc 'git status\nrm x'").script).toBe(
+      'git status\nrm x',
+    );
   });
 });
 

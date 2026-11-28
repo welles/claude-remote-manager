@@ -10,8 +10,9 @@ import {
   type SessionPermissionMode,
 } from '@claude-remote-manager/shared-types';
 import type { ProcessLauncher } from '../../common/process-isolation';
-import type {
-  AgentAccount,
+import {
+  AgentReviewRefused,
+  type AgentAccount,
   AgentProbe,
   AgentReviewOptions,
   AgentReviewResult,
@@ -36,11 +37,7 @@ import {
 } from '../../accounts/claude-account-directories';
 import { CODEX_ACCOUNT_DIR_SCRIPT } from '../../accounts/codex-accounts';
 import { CodexAppServer } from './codex-app-server';
-import {
-  codexRulesReason,
-  isGitCommand,
-  isReadOnlyCommand,
-} from './review-commands';
+import { codexRulesReason } from './review-commands';
 import {
   CODEX_APP_INPUT_PREFIX,
   CODEX_APP_TOOL_NAMESPACE,
@@ -126,7 +123,7 @@ export function codexAdditionalContext(
 }
 
 /** Shell syntax that makes a command more than one simple command. */
-const COMPOUND = /[;&|<>`$()\n\\]/;
+const COMPOUND = /[;&|<>`$()\n\r\\]/;
 
 /**
  * Whether a command is allowed by one of the session's Bash rules (as
@@ -310,7 +307,7 @@ export interface CodexRunnerConfig {
    */
   instructionsFile?: string | null;
   /**
-   * Whether Codex's sandbox can start here (tests); else probed once with
+   * Whether Codex's sandbox can start here (tests); else probed with
    * `codex sandbox -- true` (see `CodexRunner.sandboxWorks`).
    */
   sandboxWorks?: () => Promise<boolean>;
@@ -318,6 +315,12 @@ export interface CodexRunnerConfig {
 
 /** How long the sandbox probe may take. */
 export const SANDBOX_PROBE_TIMEOUT_MS = 15_000;
+/** How long a failed sandbox probe counts before it is probed again. */
+export const SANDBOX_RETRY_MS = 10 * 60_000;
+
+/** Why reviews do not run with Codex where its sandbox cannot start. */
+export const NO_SANDBOX_REASON =
+  "Codex's sandbox cannot start on this server (it needs unprivileged user namespaces)";
 
 /**
  * Starts Codex processes (`codex app-server`) for sessions, one thread per
@@ -371,33 +374,34 @@ export class CodexRunner implements AgentRunner {
    * An independent review: a short-lived app server as the session user
    * with the account's home, in the session's first directory, and one
    * ephemeral thread (no rollout) in Codex's read-only sandbox that never
-   * asks (where the sandbox cannot start: full access, asking before every
-   * command, only commands that read allowed), without the app's tools,
-   * the user's MCP servers, hooks, apps, plugins, subagents and goals; one
-   * turn with the review prompt whose final message is constrained to the
-   * schema (`outputSchema`). Refused where Codex has command rules (see
-   * `reviewBlocked`).
+   * asks (every request declined), without the app's tools, the user's
+   * MCP servers, hooks, apps, plugins, subagents, goals, browser, computer
+   * use and image generation, the project's own Codex configuration
+   * (marked untrusted), with a minimal command environment and cached web
+   * search; one turn with the review prompt whose final message is
+   * constrained to the schema (`outputSchema`). Refused
+   * (`AgentReviewRefused`) where the sandbox cannot start or Codex has
+   * command rules (see `reviewBlocked`).
    */
   review(options: AgentReviewOptions): Promise<AgentReviewResult> {
-    return new CodexReview(
-      this.config,
-      this.launcher,
-      options,
-      () => this.sandboxWorks(),
-      () => this.reviewBlocked(options),
+    return new CodexReview(this.config, this.launcher, options, () =>
+      this.reviewBlocked(options),
     ).run();
   }
 
   /**
-   * Why a review must not run with Codex here, `null` when it may: Codex
-   * command rules (`*.rules` in the account's and the base home's
-   * `rules/`, the working directory's `.codex/rules/`) could let commands
-   * run past the read-only setup.
+   * Why a review must not run with Codex here, `null` when it may: its
+   * sandbox cannot start, or Codex command rules (`*.rules` in the
+   * account's and the base home's `rules/`, `/etc/codex/rules/`, the
+   * working directory's `.codex/rules/`) could let commands run past it.
    */
-  reviewBlocked(options: {
+  async reviewBlocked(options: {
     account?: AgentAccount;
     cwd: string;
   }): Promise<string | null> {
+    if (!(await this.sandboxWorks())) {
+      return NO_SANDBOX_REASON;
+    }
     return codexRulesReason(
       [
         options.account?.configDir ?? this.config.baseHome,
@@ -407,18 +411,30 @@ export class CodexRunner implements AgentRunner {
     );
   }
 
-  private sandbox: Promise<boolean> | null = null;
+  /** The latest sandbox probe; a failed one only until `retryAt`. */
+  private sandbox: { works: Promise<boolean>; retryAt: number } | null = null;
 
   /**
    * Whether Codex's own sandbox (bubblewrap on Linux) starts on this
-   * machine as the session user: it needs user namespaces, which a
-   * container may not allow. Probed once per runner.
+   * machine as the session user: it needs unprivileged user namespaces,
+   * which a container may not allow. A success is kept; a failure (also a
+   * timeout or an error starting it) is probed again after
+   * {@link SANDBOX_RETRY_MS}.
    */
-  sandboxWorks(): Promise<boolean> {
-    this.sandbox ??= (
-      this.config.sandboxWorks ?? (() => this.probeSandbox())
-    )().catch(() => false);
-    return this.sandbox;
+  sandboxWorks(now = Date.now()): Promise<boolean> {
+    if (!this.sandbox || now >= this.sandbox.retryAt) {
+      const probe = { works: Promise.resolve(false), retryAt: Infinity };
+      probe.works = (this.config.sandboxWorks ?? (() => this.probeSandbox()))()
+        .catch(() => false)
+        .then((works) => {
+          if (!works) {
+            probe.retryAt = Date.now() + SANDBOX_RETRY_MS;
+          }
+          return works;
+        });
+      this.sandbox = probe;
+    }
+    return this.sandbox.works;
   }
 
   private probeSandbox(): Promise<boolean> {
@@ -451,7 +467,7 @@ export class CodexRunner implements AgentRunner {
         clearTimeout(timer);
         if (code !== 0) {
           new Logger('CodexRunner').warn(
-            `Codex's sandbox cannot start here; reviews run without it, refusing every command that is not known to only read: ${stderr.trim()}`,
+            `Codex's sandbox cannot start here, so reviews run with Claude Code instead: ${stderr.trim()}`,
           );
         }
         resolve(code === 0);
@@ -571,41 +587,27 @@ export const REVIEW_FEATURES = {
   'features.image_generation': false,
 };
 
-/** Git configuration that makes a reading git command run a program. */
-export const GIT_RUNS_PROGRAMS =
-  '^(core\\.fsmonitor|diff\\.external|diff\\..+\\.(textconv|command)|filter\\..+)$';
-
 /**
- * Whether the git configuration seen in `cwd` (as the session user)
- * sets none of {@link GIT_RUNS_PROGRAMS}: `git config --get-regexp` finds
- * nothing (exit 1); anything else (a match, an error) counts as not.
+ * Configuration of a review's thread on top of {@link REVIEW_FEATURES}:
+ * the working directory's project configuration (`.codex/config.toml`,
+ * which a repository may bring) does not load (the project counts as
+ * explicitly untrusted), commands get only the core environment (no
+ * variables set by configuration), and web search answers from the cache
+ * (no live requests).
  */
-export function gitRunsNothing(
-  launcher: ProcessLauncher,
-  cwd: string,
-): Promise<boolean> {
-  const command = launcher.command('session', 'git', [
-    'config',
-    '--get-regexp',
-    GIT_RUNS_PROGRAMS,
-  ]);
-  return new Promise<boolean>((resolve) => {
-    const child = spawn(command.command, command.args, {
-      cwd,
-      env: launcher.environment('session', {}),
-      stdio: 'ignore',
-    });
-    const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
-    timer.unref?.();
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve(code === 1);
-    });
-  });
+export function reviewThreadConfig(cwd: string): Record<string, unknown> {
+  return {
+    ...REVIEW_FEATURES,
+    projects: { [cwd]: { trust_level: 'untrusted' } },
+    shell_environment_policy: {
+      inherit: 'core',
+      ignore_default_excludes: false,
+      exclude: [],
+      set: {},
+      include_only: [],
+    },
+    web_search: 'cached',
+  };
 }
 
 /** One review (see `CodexRunner.review`). */
@@ -624,18 +626,10 @@ class CodexReview {
     reject: (error: Error) => void;
   } | null = null;
 
-  /**
-   * Codex's sandbox cannot start: the thread has full access and asks
-   * before every command not known to be safe; the app answers (see
-   * `serverRequest`).
-   */
-  private unsandboxed = false;
-
   constructor(
     private readonly config: CodexRunnerConfig,
     private readonly launcher: ProcessLauncher,
     private readonly options: AgentReviewOptions,
-    private readonly sandboxWorks: () => Promise<boolean>,
     private readonly blocked: () => Promise<string | null>,
   ) {}
 
@@ -648,9 +642,8 @@ class CodexReview {
     // Checked before the review was chosen too; again right before it.
     const reason = await this.blocked();
     if (reason) {
-      throw new Error(reason);
+      throw new AgentReviewRefused(reason);
     }
-    this.unsandboxed = !(await this.sandboxWorks());
     const ended = new Promise<AgentTurnResult>((resolve, reject) => {
       this.settle = { resolve, reject };
     });
@@ -667,7 +660,7 @@ class CodexReview {
         home: this.options.account?.configDir ?? this.config.baseHome,
         cwd: this.options.cwd,
         onNotification: (method, params) => this.notification(method, params),
-        onRequest: async (method, params) => this.serverRequest(method, params),
+        onRequest: async (method) => this.serverRequest(method),
         onExit: (error) =>
           this.settle?.reject(error ?? new Error('Codex ended')),
       });
@@ -685,14 +678,17 @@ class CodexReview {
         'thread/start',
         {
           cwd: this.options.cwd,
-          ...this.access(),
+          // Reads anywhere the session user may, writes nowhere, no
+          // network; never asks (nobody would answer).
+          sandbox: 'read-only',
+          approvalPolicy: 'never',
           approvalsReviewer: 'user',
           // No rollout, nothing in the history.
           ephemeral: true,
           config: {
             ...CODEX_THREAD_CONFIG,
             ...(await withoutMcpServers(server, this.options.cwd)),
-            ...REVIEW_FEATURES,
+            ...reviewThreadConfig(this.options.cwd),
           },
           ...(this.options.model ? { model: this.options.model } : {}),
           developerInstructions,
@@ -721,7 +717,7 @@ class CodexReview {
           input: [
             { type: 'text', text: this.options.prompt, text_elements: [] },
           ],
-          approvalPolicy: this.access().approvalPolicy,
+          approvalPolicy: 'never',
           approvalsReviewer: 'user',
           ...(this.options.model ? { model: this.options.model } : {}),
           effort,
@@ -798,46 +794,11 @@ class CodexReview {
     }
   }
 
-  /**
-   * The thread's access: Codex's read-only sandbox (writes nothing, no
-   * network) that never asks; where the sandbox cannot start, full access
-   * that asks before every command (`untrusted`), answered by the app.
-   */
-  private access() {
-    return this.unsandboxed
-      ? { sandbox: 'danger-full-access', approvalPolicy: 'untrusted' as const }
-      : { sandbox: 'read-only', approvalPolicy: 'never' as const };
-  }
-
-  /**
-   * Requests of the review's thread. Without the sandbox, a command that
-   * only reads (`isReadOnlyCommand`) runs once; everything else (other
-   * commands, file changes, permissions, questions, MCP) is refused. With
-   * the sandbox nothing should ask (`never`): refused too.
-   */
-  private async serverRequest(
-    method: string,
-    params: unknown,
-  ): Promise<unknown> {
-    const p = (params ?? {}) as Record<string, unknown>;
-    if (method === 'item/commandExecution/requestApproval') {
-      const command = typeof p['command'] === 'string' ? p['command'] : '';
-      if (
-        this.unsandboxed &&
-        p['kind'] !== 'writeStdin' &&
-        isReadOnlyCommand(command) &&
-        (!isGitCommand(command) ||
-          (await this.gitConfigSafe(
-            typeof p['cwd'] === 'string' ? p['cwd'] : this.options.cwd,
-          )))
-      ) {
-        return { decision: 'accept' };
-      }
-      this.logger.log(`Review command refused: ${command.slice(0, 200)}`);
-      return { decision: 'decline' };
-    }
+  /** Requests of a read-only thread that never asks: refused. */
+  private serverRequest(method: string): unknown {
     this.logger.warn(`Codex sent ${method} during a review; refused`);
     switch (method) {
+      case 'item/commandExecution/requestApproval':
       case 'item/fileChange/requestApproval':
         return { decision: 'decline' };
       case 'item/tool/requestUserInput':
@@ -849,24 +810,6 @@ class CodexReview {
       default:
         throw new Error(`${method} is not supported during a review`);
     }
-  }
-
-  /** Per directory: its git configuration runs no programs on a read. */
-  private readonly gitChecks = new Map<string, Promise<boolean>>();
-
-  /**
-   * Whether git commands that only read run nothing else in `cwd`: no
-   * `core.fsmonitor`, `diff.external`, diff drivers' `textconv` or
-   * `command`, or `filter.*` drivers in its configuration (read as the
-   * session user once per directory and review; unknown counts as not).
-   */
-  private gitConfigSafe(cwd: string): Promise<boolean> {
-    let check = this.gitChecks.get(cwd);
-    if (!check) {
-      check = gitRunsNothing(this.launcher, cwd);
-      this.gitChecks.set(cwd, check);
-    }
-    return check;
   }
 
   private async interrupt(): Promise<void> {

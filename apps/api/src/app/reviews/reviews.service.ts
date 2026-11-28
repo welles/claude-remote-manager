@@ -32,7 +32,11 @@ import {
   reviewEffortFor,
 } from '@claude-remote-manager/shared-types';
 import { AgentEngines } from '../agent/agent-engines';
-import { AgentRunner, type AgentAccount } from '../agent/agent-runner';
+import {
+  AgentReviewRefused,
+  AgentRunner,
+  type AgentAccount,
+} from '../agent/agent-runner';
 import { AccountsService } from '../accounts/accounts.service';
 import type { UntrustedContext } from '../agent/untrusted-context';
 import { requireObject } from '../common/validation';
@@ -514,7 +518,15 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     let usage: UsageTotals | null = null;
     let durationMs = 0;
     // What the reviewer reported it ran with, if it differs.
-    const ranWith: { model?: string | null; effort?: ReviewEffort | null } = {};
+    // What the reviewer ran with where it differs from the start (the
+    // model and effort it reported; Claude Code when the engine refused).
+    const ranWith: {
+      engine?: AgentEngineId;
+      fallbackFrom?: AgentEngineId | null;
+      fallbackReason?: string | null;
+      model?: string | null;
+      effort?: ReviewEffort | null;
+    } = {};
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -523,10 +535,9 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     timer.unref?.();
     try {
       let accountId: string | null = null;
-      const runner = this.runnerOf(dto.engine);
       const review = (account?: AgentAccount & { id: string }) => {
         accountId = account?.id ?? null;
-        return runner.review({
+        return this.runnerOf(dto.engine).review({
           ...(account
             ? { account: { configDir: account.configDir, main: account.main } }
             : {}),
@@ -542,11 +553,39 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       };
       // With an account of the reviewer's provider (the session's own if
       // it is one, else the provider's default), in use meanwhile.
-      const result = this.accounts
-        ? await this.accounts.withAccount(record.accountId, review, {
-            provider: ENGINE_PROVIDERS[dto.engine],
-          })
-        : await review();
+      const withAccount = () =>
+        this.accounts
+          ? this.accounts.withAccount(record.accountId, review, {
+              provider: ENGINE_PROVIDERS[dto.engine],
+            })
+          : review();
+      let result;
+      try {
+        result = await withAccount();
+      } catch (failure) {
+        if (
+          !(failure instanceof AgentReviewRefused) ||
+          dto.engine === DEFAULT_REVIEW_ENGINE
+        ) {
+          throw failure;
+        }
+        // Refused when it was about to start (e.g. rules written since the
+        // review was chosen): Claude Code instead, as when choosing.
+        const defaults = this.defaults.get();
+        Object.assign(ranWith, {
+          engine: DEFAULT_REVIEW_ENGINE,
+          fallbackFrom: dto.engine,
+          fallbackReason: failure.message,
+          model: reviewDefaultModel(defaults, DEFAULT_REVIEW_ENGINE),
+          effort: reviewEffortFor(DEFAULT_REVIEW_ENGINE, dto.effort),
+        });
+        Object.assign(dto, ranWith);
+        this.logger.log(
+          `Review ${dto.id} of session ${sessionId} runs with Claude Code: ${failure.message}`,
+        );
+        this.sessions.reviewChanged(sessionId);
+        result = await withAccount();
+      }
       durationMs = result.durationMs;
       if (result.model !== undefined && result.model !== dto.model) {
         ranWith.model = result.model;

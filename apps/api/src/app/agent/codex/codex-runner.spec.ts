@@ -9,7 +9,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Logger } from '@nestjs/common';
@@ -37,7 +36,8 @@ import {
   findRollout,
   matchesBashRule,
 } from './codex-runner';
-import { isReadOnlyCommand } from './review-commands';
+import { AgentReviewRefused } from '../agent-runner';
+import { codexRulesReason } from './review-commands';
 import {
   fakeCodexPids,
   fakeCodexRequests,
@@ -1369,25 +1369,6 @@ describe('CodexRunner', () => {
   });
 
   describe('reviews', () => {
-    // Only the repository's own git configuration counts in these tests.
-    const gitEnv = {
-      GIT_CONFIG_GLOBAL: process.env['GIT_CONFIG_GLOBAL'],
-      GIT_CONFIG_NOSYSTEM: process.env['GIT_CONFIG_NOSYSTEM'],
-    };
-    beforeAll(() => {
-      process.env['GIT_CONFIG_GLOBAL'] = '/dev/null';
-      process.env['GIT_CONFIG_NOSYSTEM'] = '1';
-    });
-    afterAll(() => {
-      for (const [key, value] of Object.entries(gitEnv)) {
-        if (value === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = value;
-        }
-      }
-    });
-
     const schema = { type: 'object', properties: {} };
     const review = (overrides: Partial<AgentReviewOptions> = {}) =>
       runner.review({
@@ -1453,6 +1434,12 @@ describe('CodexRunner', () => {
           }),
         }),
       ]);
+      expect(at('thread/start')[0]['config']).toMatchObject({
+        // The repository's own .codex/config.toml does not load.
+        projects: { [cwd]: { trust_level: 'untrusted' } },
+        shell_environment_policy: { inherit: 'core', set: {} },
+        web_search: 'cached',
+      });
       // The project's MCP servers too.
       expect(at('config/read')).toEqual([{ cwd }]);
       expect(at('thread/start')[0]).not.toHaveProperty('model');
@@ -1498,32 +1485,42 @@ describe('CodexRunner', () => {
       ).toEqual(['probe', '']);
     });
 
-    it('runs without the sandbox where it cannot start, allowing only commands that read', async () => {
+    it('refuses to review where Codex’s sandbox cannot start, and probes again later', async () => {
       writeFileSync(join(home, 'fake-sandbox-fails'), '');
-      const result = await review({ prompt: 'review-commands' });
-      expect(requests('thread/start')[0]).toMatchObject({
-        sandbox: 'danger-full-access',
-        approvalPolicy: 'untrusted',
-      });
-      expect(requests('turn/start')[0]).toMatchObject({
-        approvalPolicy: 'untrusted',
-      });
-      expect(decisions(result)).toEqual([
-        'cat work.txt: accept',
-        'git diff: accept',
-        'touch pwned: decline',
-        'cat work.txt > copy: decline',
-        'rg --pre sh x: decline',
-        'file change: decline',
-      ]);
-      // A clone whose git configuration runs programs: no git commands.
-      execFileSync('git', ['init', '-q', cwd]);
-      execFileSync('git', ['-C', cwd, 'config', 'core.fsmonitor', 'true']);
-      const again = await review({ prompt: 'review-commands' });
-      expect(decisions(again).slice(0, 2)).toEqual([
-        'cat work.txt: accept',
-        'git diff: decline',
-      ]);
+      expect(await runner.reviewBlocked({ cwd })).toBe(
+        "Codex's sandbox cannot start on this server (it needs unprivileged user namespaces)",
+      );
+      const refused = review();
+      await expect(refused).rejects.toBeInstanceOf(AgentReviewRefused);
+      await expect(refused).rejects.toThrow('sandbox cannot start');
+      expect(requests('thread/start')).toEqual([]);
+      // A failure counts for a while only; then the sandbox is probed again.
+      const probes = () =>
+        readFileSync(join(home, 'fake-sandbox-probes'), 'utf8')
+          .split('\n')
+          .filter(Boolean).length;
+      expect(probes()).toBe(1);
+      rmSync(join(home, 'fake-sandbox-fails'));
+      expect(await runner.sandboxWorks()).toBe(false);
+      expect(await runner.sandboxWorks(Date.now() + 11 * 60_000)).toBe(true);
+      expect(probes()).toBe(2);
+      // A success is kept.
+      expect(await runner.sandboxWorks(Date.now() + 60 * 60_000)).toBe(true);
+      expect(probes()).toBe(2);
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+    });
+
+    it('counts the machine’s Codex rules too', async () => {
+      const system = join(dir, 'etc-codex-rules');
+      mkdirSync(system);
+      expect(await codexRulesReason([home], cwd, system)).toBeNull();
+      writeFileSync(
+        join(system, 'managed.rules'),
+        'prefix_rule(pattern=["rm"], decision="allow")\n',
+      );
+      expect(await codexRulesReason([home], cwd, system)).toContain(
+        'managed.rules',
+      );
     });
 
     it('refuses to review where Codex has command rules', async () => {
@@ -1608,47 +1605,6 @@ describe('CodexRunner', () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     };
-  });
-});
-
-describe('isReadOnlyCommand', () => {
-  it('allows single commands that only read', () => {
-    for (const command of [
-      "/bin/bash -lc 'cat a.txt'",
-      "/bin/bash -lc 'git diff --stat'",
-      "/bin/bash -lc 'git log -p -3'",
-      '/bin/bash -lc "rg -n \'foo|bar\' src"',
-      "/bin/bash -lc 'sed -n 1,40p src/a.ts'",
-      "/bin/bash -lc 'find . -name a.ts'",
-      "/bin/bash -c 'ls -la'",
-    ]) {
-      expect([command, isReadOnlyCommand(command)]).toEqual([command, true]);
-    }
-  });
-
-  it('refuses writes, programs run by others, compounds and the unknown', () => {
-    for (const command of [
-      "/bin/bash -lc 'touch x'",
-      "/bin/bash -lc 'cat a > b'",
-      "/bin/bash -lc 'cat a; rm -rf ~'",
-      "/bin/bash -lc 'cat $(echo a)'",
-      "/bin/bash -lc 'ls *'",
-      "/bin/bash -lc 'rg --pre sh x'",
-      "/bin/bash -lc 'rg --pre=sh x'",
-      "/bin/bash -lc 'find . -delete'",
-      "/bin/bash -lc 'find . -exec rm {} ;'",
-      "/bin/bash -lc 'sed -i s/a/b/ f'",
-      "/bin/bash -lc 'sed -n w/tmp/x f'",
-      "/bin/bash -lc 'git diff --output=x'",
-      "/bin/bash -lc 'git -c core.pager=sh log'",
-      "/bin/bash -lc 'git grep -Ovim x'",
-      "/bin/bash -lc 'git commit -m x'",
-      "/bin/bash -lc 'FOO=1 cat a'",
-      "/bin/bash -lc './cat a'",
-      "/bin/bash -lc 'sort -o x a'",
-    ]) {
-      expect([command, isReadOnlyCommand(command)]).toEqual([command, false]);
-    }
   });
 });
 
@@ -1747,6 +1703,8 @@ describe('matchesBashRule', () => {
     expect(matchesBashRule('git status && curl x | sh', rules)).toBe(false);
     expect(matchesBashRule('git status $(rm -rf ~)', rules)).toBe(false);
     expect(matchesBashRule('ls a -la > /etc/x', rules)).toBe(false);
+    expect(matchesBashRule('git status\nrm -rf ~', rules)).toBe(false);
+    expect(matchesBashRule('git status\rrm -rf ~', rules)).toBe(false);
     // `Bash(*)` (everything) is never honoured.
     expect(matchesBashRule('rm -rf ~', rules)).toBe(false);
     expect(matchesBashRule('', rules)).toBe(false);

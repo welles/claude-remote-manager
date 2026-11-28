@@ -8,7 +8,7 @@ import type {
 import type { AccountProvider } from '@claude-remote-manager/shared-types';
 import type { AccountsService } from '../accounts/accounts.service';
 import { AgentEngines, CODEX_CAPABILITIES } from '../agent/agent-engines';
-import type { AgentAccount } from '../agent/agent-runner';
+import { AgentReviewRefused, type AgentAccount } from '../agent/agent-runner';
 import { accounts, usageRecords as usageTable } from '../db/schema';
 import { SessionEventRepository } from '../sessions/session-event.repository';
 import { SessionDiffService } from '../diffs/session-diff.service';
@@ -506,6 +506,44 @@ describe('ReviewsService', () => {
       expect(reviewEvents(session.id, 'review.started')[0]).toMatchObject({
         fallbackFrom: 'codex',
         fallbackReason: 'Codex has command rules (/homes/rules/default.rules)',
+      });
+    });
+
+    it('switches to Claude Code when Codex refuses the review as it starts', async () => {
+      restart();
+      codex.review = async () => {
+        throw new AgentReviewRefused('Codex has command rules (late)');
+      };
+      const session = await changedSession();
+      reviews.updateDefaults({ engine: 'codex' });
+      const started = await reviews.start(session.id);
+      expect(started.engine).toBe('codex');
+      await waitFor(() => harness.runner.reviews.length === 1);
+      expect(harness.service.get(session.id).review?.running).toMatchObject({
+        engine: 'claude-code',
+        fallbackFrom: 'codex',
+        fallbackReason: 'Codex has command rules (late)',
+        model: 'claude-fable-5-2',
+      });
+      expect(harness.runner.reviews[0].options).toMatchObject({
+        model: 'claude-fable-5-2',
+        account: { configDir: '/homes/claude-a' },
+      });
+      expect(harness.runner.reviews[0].options.instructions).toContain(
+        'Read, Grep and Glob',
+      );
+      harness.runner.reviews[0].finish({
+        output: { summary: 'Fine.', findings: [] },
+      });
+      await waitFor(
+        () => reviewEvents(session.id, 'review.finished').length > 0,
+      );
+      expect(reviewEvents(session.id, 'review.finished')[0]).toMatchObject({
+        outcome: 'finished',
+        engine: 'claude-code',
+        fallbackFrom: 'codex',
+        fallbackReason: 'Codex has command rules (late)',
+        model: 'claude-fable-5-2',
       });
     });
 

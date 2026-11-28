@@ -549,6 +549,13 @@ export interface ReviewFinishedEvent extends SessionEventBase {
    */
   model?: string | null;
   effort?: ReviewEffort | null;
+  /**
+   * Set when the engine refused the review as it started: it ran with
+   * Claude Code instead (see `ReviewStartedEvent`).
+   */
+  engine?: AgentEngineId;
+  fallbackFrom?: AgentEngineId | null;
+  fallbackReason?: string | null;
 }
 
 export type SessionEvent =

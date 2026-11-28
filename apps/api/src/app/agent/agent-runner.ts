@@ -244,6 +244,13 @@ export interface AgentReviewOptions {
   signal: AbortSignal;
 }
 
+/**
+ * An engine refuses to run a review here (its read-only setup cannot be
+ * kept, e.g. Codex without its sandbox or with command rules); the reason
+ * is shown to the user. The app reviews with Claude Code instead.
+ */
+export class AgentReviewRefused extends Error {}
+
 /** What a review process ended with. */
 export interface AgentReviewResult {
   /** The answer in the schema; `null` when it failed. */
