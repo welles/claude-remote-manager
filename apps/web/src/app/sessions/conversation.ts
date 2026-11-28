@@ -46,6 +46,8 @@ export type ConversationItem =
       contextLength: number | null;
       /** `app`: composed by the app (PR automation), not typed by the user. */
       origin: 'user' | 'app';
+      /** When it went into the conversation; `null` when not known. */
+      at: string | null;
     }
   | {
       kind: 'assistant';
@@ -145,6 +147,8 @@ export type ConversationItem =
   | {
       kind: 'turn';
       key: string;
+      /** When the turn ended; `null` when not known. */
+      at: string | null;
       usage: UsageTotals;
       durationMs: number;
       interrupted: boolean;
@@ -286,6 +290,7 @@ export function applyEvent(
           references: event.references ?? [],
           contextLength: event.contextLength ?? null,
           origin: event.origin ?? 'user',
+          at: event.at,
         },
       ];
     case 'assistant.delta': {
@@ -586,6 +591,7 @@ export function applyEvent(
         {
           kind: 'turn',
           key: `turn:${event.seq}`,
+          at: event.at,
           usage: event.usage,
           durationMs: event.durationMs,
           interrupted: event.interrupted,

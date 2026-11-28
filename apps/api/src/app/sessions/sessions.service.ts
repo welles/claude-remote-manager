@@ -79,6 +79,7 @@ import {
   MessageContextRepository,
   type MessageContextSummary,
 } from './message-context.repository';
+import { MessageTimeRepository } from './message-time.repository';
 import {
   ToolApprover,
   type PermissionResolvedInput,
@@ -759,6 +760,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // Without it every session runs with `runner` (Claude Code).
     @Optional()
     private readonly engines?: AgentEngines,
+    // Without it messages show no time after the history is rebuilt.
+    @Optional()
+    private readonly messageTimes?: MessageTimeRepository,
   ) {}
 
   /**
@@ -2228,6 +2232,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Nothing else is logged before the history is loaded.
       const images = this.attachments?.forSession(record.id) ?? new Map();
       const contexts = this.contexts?.forSession(record.id) ?? new Map();
+      const times = this.messageTimes?.forSession(record.id) ?? new Map();
       // Freshly, with the environment's current secrets.
       live.mask = undefined;
       const mask = this.maskFor(live);
@@ -2250,7 +2255,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         (event, at) => ({ event, at }),
       );
       for (const item of history) {
-        live.log.append(extras(item.event), item.at);
+        live.log.append(
+          extras(item.event),
+          item.at ?? sentAt(item.event, times),
+        );
       }
       if (failed) {
         // Live-only: the transcript may be readable next time.
@@ -6064,6 +6072,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         : {}),
       ...(message.origin === 'app' ? { origin: 'app' as const } : {}),
     });
+    const sent = live.log.findLast('user.message');
+    if (sent?.id === message.id && sent.at) {
+      this.messageTimes?.save(live.id, message.id, new Date(sent.at));
+    }
     // Claude Code uses the message ID as the transcript entry's UUID.
     live.anchor = { uuid: message.id, userId: message.id };
   }
@@ -6393,6 +6405,17 @@ function findResolution(
       event.type === 'permission.resolved' &&
       (event as PermissionResolvedInput).requestId === requestId,
   );
+}
+
+/**
+ * When a user message event from a transcript (which has no times) went
+ * into the conversation, if the app recorded it; `null` for other events.
+ */
+function sentAt(
+  event: SessionEventInput,
+  times: Map<string, string>,
+): string | null {
+  return event.type === 'user.message' ? (times.get(event.id) ?? null) : null;
 }
 
 /** A user message event with its images from the attachment store. */

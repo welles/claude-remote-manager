@@ -3,6 +3,7 @@ import {
   formatDate,
   formatIsoMinute,
   formatRelative,
+  formatStamp,
   supportedTimeZone,
 } from './dates';
 
@@ -35,6 +36,16 @@ describe('dates', () => {
   it('adds the weekday to clock times of other days', () => {
     expect(formatClock(new Date(2026, 10, 13, 21, 15), now)).toBe('21:15');
     expect(formatClock(new Date(2026, 10, 16, 21, 15), now)).toBe('Mon 21:15');
+  });
+
+  it('adds the date to conversation times of other days', () => {
+    expect(formatStamp(new Date(2026, 10, 13, 9, 5), now)).toBe('09:05');
+    expect(formatStamp(new Date(2026, 10, 12, 21, 15), now)).toBe(
+      '12 Nov, 21:15',
+    );
+    expect(formatStamp(new Date(2025, 10, 12, 21, 15), now)).toBe(
+      '12 Nov 2025, 21:15',
+    );
   });
 
   it('formats yyyy-MM-dd HH:mm in the given time zone', () => {

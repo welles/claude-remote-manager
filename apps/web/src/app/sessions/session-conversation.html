@@ -3,8 +3,16 @@
 } @for (item of entries(); track item.key) { @switch (item.kind) { @case
 ('user') {
 <!-- prettier-ignore -->
-<div class="user-message wrap-anywhere" [class]="item.origin === 'app' ? 'self-stretch border-l-2 border-outline-variant py-0.5 pl-2.5 type-body-medium text-on-surface-variant' : 'max-w-[86%] self-end rounded-[10px_10px_2px_10px] bg-surface-container-high px-3 py-2 type-body-large'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="block type-label-small whitespace-normal" data-testid="app-message-label">Sent by the app · {{ appMessageSource(item.text) }}</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" [showRepository]="multiRepository()" /></div>
-@if (item.contextLength) {
+<div class="user-message wrap-anywhere" [class]="item.origin === 'app' ? 'self-stretch border-l-2 border-outline-variant py-0.5 pl-2.5 type-body-medium text-on-surface-variant' : 'max-w-[86%] self-end rounded-[10px_10px_2px_10px] bg-surface-container-high px-3 py-2 type-body-large'" [attr.data-origin]="item.origin" [attr.data-anchor]="item.id">@if (item.origin === 'app') {<span class="block type-label-small whitespace-normal" data-testid="app-message-label">Sent by the app · {{ appMessageSource(item.text) }}@if (item.at) { · <time data-testid="message-time" [attr.datetime]="item.at" [title]="fullTime(item.at)">{{ stamp(item.at) }}</time>}</span>}@if (item.attachments.length > 0) {<app-message-images [attachments]="item.attachments" />}<app-message-text [text]="item.text" [references]="item.references" [showRepository]="multiRepository()" /></div>
+@if (item.at && item.origin === 'user') {
+<time
+  class="-mt-1.5 self-end type-label-small text-on-surface-variant"
+  data-testid="message-time"
+  [attr.datetime]="item.at"
+  [title]="fullTime(item.at)"
+  >{{ stamp(item.at) }}</time
+>
+} @if (item.contextLength) {
 <app-message-context
   [sessionId]="sessionId()"
   [messageId]="item.id"
@@ -237,7 +245,14 @@
   <span
     >@if (item.interrupted) { Interrupted · } {{ item.durationMs / 1000 |
     number: '1.1-1' }} s · {{ formatTokens(totalTokens(item.usage)) }} tokens ·
-    {{ formatCost(item.usage.costUsd) }}</span
+    {{ formatCost(item.usage.costUsd) }}@if (item.at) { ·
+    <time
+      data-testid="turn-time"
+      [attr.datetime]="item.at"
+      [title]="fullTime(item.at)"
+      >{{ stamp(item.at) }}</time
+    >
+    }</span
   >
 </p>
 } } } @if (running() && pendingRequests() === 0) {

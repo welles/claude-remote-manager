@@ -52,6 +52,7 @@ import { pngImage } from '../attachments/testing/images';
 import { GitHubIssues } from '../github/github-issues';
 import { GitHubReferencesService } from '../github-references/github-references.service';
 import { MessageContextRepository } from './message-context.repository';
+import { MessageTimeRepository } from './message-time.repository';
 
 const MSG_2 = '2b1f4c2e-8f3a-4d6b-9c1e-0a7d5e3f2b10';
 const MSG_3 = '3c2e5d3f-9a4b-4e7c-8d2f-1b8e6f4a3c21';
@@ -123,6 +124,11 @@ describe('SessionsService', () => {
       undefined,
       undefined,
       slashCommands,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      new MessageTimeRepository(db),
     );
     created.backgroundReportGraceMs = 0;
     await created.onModuleInit();
@@ -2329,6 +2335,54 @@ describe('SessionsService', () => {
       expect(transcripts.reads).toHaveLength(1);
     });
 
+    it("keeps the times of the user's messages across a restart", async () => {
+      const session = await startSession();
+      runner.last.emit({
+        type: 'system',
+        subtype: 'init',
+        session_id: 'sdk-1',
+      });
+      await flush();
+      const sentAt = lastEvent('user.message')?.at;
+      expect(sentAt).toEqual(expect.any(String));
+      await service.onModuleDestroy();
+
+      transcripts.transcripts.set('sdk-1', [
+        {
+          type: 'user',
+          uuid: runner.last.sent[0].id,
+          session_id: 'sdk-1',
+          parent_tool_use_id: null,
+          parent_agent_id: null,
+          message: { role: 'user', content: 'Reply with pong' },
+        },
+        {
+          type: 'assistant',
+          uuid: 'a1',
+          session_id: 'sdk-1',
+          parent_tool_use_id: null,
+          parent_agent_id: null,
+          message: {
+            id: 'm1',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'pong' }],
+          },
+        },
+      ]);
+      service = await createService();
+
+      const history = await service.subscribe(session.id);
+      expect(
+        conversation(history.events)
+          .filter((event) => event.type !== 'notice')
+          .map(({ type, at }) => ({ type, at })),
+      ).toEqual([
+        { type: 'user.message', at: sentAt },
+        // The transcript has no times for the rest of the conversation.
+        { type: 'assistant.text', at: null },
+      ]);
+    });
+
     it('marks sessions left running by a crash as waiting, with a notice', async () => {
       const session = await startSession();
       // Simulate a server that died without shutting down.
@@ -3210,7 +3264,7 @@ describe('SessionsService', () => {
       ]);
       expect(
         conversation(rebuilt.events).map((event) => event.at === null),
-      ).toEqual([true, true, false, false, true, true, false, false]);
+      ).toEqual([false, true, false, false, true, true, false, false]);
       expect(rebuilt.session.context).toMatchObject({ usedTokens: 1200 });
 
       // Kept while subscribed, released after the last unsubscribe.

@@ -2,6 +2,7 @@ import { Logger, Module } from '@nestjs/common';
 import { AttachmentsModule } from '../attachments/attachments.module';
 import { GitHubReferencesModule } from '../github-references/github-references.module';
 import { MessageContextRepository } from './message-context.repository';
+import { MessageTimeRepository } from './message-time.repository';
 import { PreviewsModule } from '../previews/previews.module';
 import { PreviewsService } from '../previews/previews.service';
 import { ShownFilesModule } from '../shown-files/shown-files.module';
@@ -101,6 +102,7 @@ const logger = new Logger('SessionsModule');
     SessionRepository,
     SessionEventRepository,
     MessageContextRepository,
+    MessageTimeRepository,
     UsageRepository,
     SessionsService,
     SessionManagementService,

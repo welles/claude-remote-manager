@@ -42,6 +42,7 @@ describe('openDatabase', () => {
       'environment_entries',
       'environments',
       'message_contexts',
+      'message_times',
       'previews',
       'pull_requests',
       'push_subscriptions',
