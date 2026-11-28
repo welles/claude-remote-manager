@@ -401,12 +401,32 @@
       <app-icon matButtonIcon name="plus" />Add repository
     </button>
     } @if (enginesStore.several()) {
-    <p
-      class="m-0 text-on-surface-variant"
-      data-testid="environment-presets-engine"
+    <mat-form-field
+      appearance="outline"
+      class="min-w-0 self-stretch"
+      subscriptSizing="dynamic"
     >
-      Model and permissions are presets for Claude Code sessions.
-    </p>
+      <mat-label>Engine</mat-label>
+      <mat-select
+        name="presetEngine"
+        [ngModel]="d.presetEngine"
+        (ngModelChange)="change({ presetEngine: $event })"
+        data-testid="environment-engine"
+      >
+        <mat-option value="">No preset</mat-option>
+        @for (engine of enginesStore.engines(); track engine.id) {
+        <mat-option [value]="engine.id">{{ engine.label }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    } @for (engine of enginesStore.engines(); track engine.id) { @if
+    (enginesStore.several()) {
+    <h4
+      class="m-0 type-title-small"
+      [attr.data-testid]="'environment-presets-' + engine.id"
+    >
+      {{ engine.label }}
+    </h4>
     }
     <div class="flex flex-wrap items-center gap-x-3 gap-y-2 self-stretch">
       <mat-form-field
@@ -416,13 +436,13 @@
       >
         <mat-label>Model</mat-label>
         <mat-select
-          name="model"
-          [ngModel]="d.model"
-          (ngModelChange)="change({ model: $event })"
-          data-testid="environment-model"
+          [name]="'model-' + engine.id"
+          [ngModel]="d.presets[engine.id].model"
+          (ngModelChange)="changePreset(engine.id, { model: $event })"
+          [attr.data-testid]="'environment-model-' + engine.id"
         >
           <mat-option value="">No preset</mat-option>
-          @for (option of modelOptions(); track option.value) {
+          @for (option of modelOptions(engine.id); track option.value) {
           <mat-option [value]="option.value">{{ option.label }}</mat-option>
           }
         </mat-select>
@@ -434,13 +454,13 @@
       >
         <mat-label>Permissions</mat-label>
         <mat-select
-          name="permissionMode"
-          [ngModel]="d.permissionMode"
-          (ngModelChange)="change({ permissionMode: $event })"
-          data-testid="environment-mode"
+          [name]="'permissionMode-' + engine.id"
+          [ngModel]="d.presets[engine.id].permissionMode"
+          (ngModelChange)="changePreset(engine.id, { permissionMode: $event })"
+          [attr.data-testid]="'environment-mode-' + engine.id"
         >
           <mat-option value="">No preset</mat-option>
-          @for (option of modeOptions; track option.value) {
+          @for (option of modeOptions(engine.id); track option.value) {
           <mat-option
             [value]="option.value"
             [title]="option.description"
@@ -453,6 +473,7 @@
         </mat-select>
       </mat-form-field>
     </div>
+    }
   </section>
 
   @if (error(); as text) {

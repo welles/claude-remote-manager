@@ -89,8 +89,16 @@ export const environments = sqliteTable('environments', {
   name: text('name').notNull().unique(),
   instructions: text('instructions'),
   setupScript: text('setup_script'),
+  /** Claude Code's presets of the new-session form. */
   model: text('model'),
   permissionMode: text('permission_mode').$type<SessionPermissionMode>(),
+  /** Codex's presets of the new-session form. */
+  codexModel: text('codex_model'),
+  codexPermissionMode: text(
+    'codex_permission_mode',
+  ).$type<SessionPermissionMode>(),
+  /** Engine the new-session form preselects; `null`: none. */
+  presetEngine: text('preset_engine').$type<AgentEngineId>(),
   /** Preset repositories in order (the first is the main repository). */
   repositories: text('repositories', { mode: 'json' })
     .$type<SessionRepositoryRequest[]>()

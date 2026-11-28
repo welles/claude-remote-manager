@@ -1,3 +1,4 @@
+import type { AgentEngineId } from './engines';
 import type {
   SessionPermissionMode,
   SessionRepositoryRequest,
@@ -126,6 +127,17 @@ export interface EnvironmentSessionDto {
   archived: boolean;
 }
 
+/** An environment's presets of the new-session form for one engine. */
+export interface EnginePresets {
+  /** In the engine's terms; `null`: no preset (the engine's default). */
+  model: string | null;
+  /** One of the engine's modes; `null`: no preset. */
+  permissionMode: SessionPermissionMode | null;
+}
+
+/** Presets for every engine (also one this server does not have). */
+export type EnvironmentPresets = Record<AgentEngineId, EnginePresets>;
+
 export interface EnvironmentDto {
   id: string;
   name: string;
@@ -133,9 +145,13 @@ export interface EnvironmentDto {
   instructions: string | null;
   /** Run once when a session is prepared, after the repositories' scripts. */
   setupScript: string | null;
-  /** Presets of the new-session form. */
-  model: string | null;
-  permissionMode: SessionPermissionMode | null;
+  /** Engine the new-session form preselects; `null`: none. */
+  presetEngine: AgentEngineId | null;
+  /**
+   * Model and permission mode presets of the new-session form per engine;
+   * the form applies those of the engine the session is created with.
+   */
+  presets: EnvironmentPresets;
   /** In order; the first is the main repository. */
   repositories: SessionRepositoryRequest[];
   /** Chosen in the new-session form unless the user picks another. */
@@ -181,6 +197,13 @@ export interface SaveEnvironmentRequest {
   name: string;
   instructions?: string | null;
   setupScript?: string | null;
+  presetEngine?: AgentEngineId | null;
+  /** Per engine; an engine left out has no presets. */
+  presets?: Partial<Record<AgentEngineId, Partial<EnginePresets>>>;
+  /**
+   * Claude Code's presets as older clients send them; used only when
+   * `presets` names no `claude-code`.
+   */
   model?: string | null;
   permissionMode?: SessionPermissionMode | null;
   repositories?: SessionRepositoryRequest[];

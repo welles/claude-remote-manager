@@ -15,6 +15,7 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { flushEngines } from '../engines/testing/engines';
+import { enginePresets } from '../environments/testing/environments';
 import { NewSessionForm, type RepositoryChoice } from './new-session-form';
 import { sessionDto } from './testing/session-dto';
 import { EditorDriver } from '../testing/editor';
@@ -423,8 +424,8 @@ describe('NewSessionForm', () => {
     name: 'Staging',
     instructions: null,
     setupScript: null,
-    model: null,
-    permissionMode: null,
+    presetEngine: null,
+    presets: enginePresets(),
     repositories: [],
     isDefault: false,
     variables: [],
@@ -442,8 +443,7 @@ describe('NewSessionForm', () => {
         environment({ id: 'e0', name: 'Other' }),
         environment({
           isDefault: true,
-          model: 'haiku',
-          permissionMode: 'plan',
+          presets: enginePresets({ model: 'haiku', permissionMode: 'plan' }),
           repositories: [
             { repositoryId: 'r2', baseBranch: 'release' },
             { repositoryId: 'r1' },
@@ -535,7 +535,7 @@ describe('NewSessionForm', () => {
       environments: [
         environment({
           isDefault: true,
-          model: 'haiku',
+          presets: enginePresets({ model: 'haiku' }),
           repositories: [{ repositoryId: 'r2' }],
         }),
       ],
@@ -687,14 +687,16 @@ describe('NewSessionForm', () => {
       ).toMatchObject({ engine: 'claude-code', permissionMode: 'auto' });
     });
 
-    it("applies an environment's model and mode only to Claude Code", async () => {
+    it("applies the environment's presets of the engine in use", async () => {
       const { form } = await render(
         [],
         [
           environment({
             isDefault: true,
-            model: 'haiku',
-            permissionMode: 'plan',
+            presets: enginePresets(
+              { model: 'haiku', permissionMode: 'plan' },
+              { model: 'gpt-5', permissionMode: 'on-request' },
+            ),
           }),
         ],
         {
@@ -702,21 +704,88 @@ describe('NewSessionForm', () => {
           accounts: [accountDto(), chatgpt()],
         },
       );
+      expect(form.engine()).toBe('claude-code');
       expect(form.model).toBe('haiku');
       expect(form.permissionMode).toBe('plan');
 
       form.pickEngine('codex');
       codexModels();
-      expect(form.model).toBe('');
-      expect(form.permissionMode).toBe('untrusted');
-      // Choosing the environment again keeps Codex's own choices.
-      form.chooseEnvironment('e1');
-      expect(form.model).toBe('');
-      expect(form.permissionMode).toBe('untrusted');
+      expect(form.model).toBe('gpt-5');
+      expect(form.permissionMode).toBe('on-request');
 
       form.pickEngine('claude-code');
       expect(form.model).toBe('haiku');
       expect(form.permissionMode).toBe('plan');
+    });
+
+    it("preselects the environment's engine with its presets", async () => {
+      const { form } = await render(
+        [],
+        [
+          environment({
+            isDefault: true,
+            presetEngine: 'codex',
+            presets: enginePresets(
+              { model: 'haiku' },
+              { permissionMode: 'never' },
+            ),
+          }),
+        ],
+        {
+          engines: ['claude-code', 'codex'],
+          accounts: [accountDto(), chatgpt()],
+        },
+      );
+      codexModels();
+      expect(form.engine()).toBe('codex');
+      expect(form.model).toBe('');
+      expect(form.permissionMode).toBe('never');
+      form.prompt = 'Hi';
+      form.setMode('scratch');
+      form.create();
+      expect(
+        http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
+      ).toMatchObject({
+        engine: 'codex',
+        permissionMode: 'never',
+        environmentId: 'e1',
+      });
+    });
+
+    it('keeps the engine the user picked and ignores engines the server lacks', async () => {
+      const { form } = await render([], [], {
+        engines: ['claude-code', 'codex'],
+        accounts: [accountDto(), chatgpt()],
+      });
+      form.pickEngine('codex');
+      codexModels();
+      // Picked by the user: an environment's engine does not change it.
+      (
+        form as unknown as { environments: { set(v: EnvironmentDto[]): void } }
+      ).environments.set([
+        environment({
+          presetEngine: 'claude-code',
+          presets: enginePresets({ model: 'haiku' }, { model: 'gpt-5' }),
+        }),
+      ]);
+      form.chooseEnvironment('e1');
+      expect(form.engine()).toBe('codex');
+      expect(form.model).toBe('gpt-5');
+    });
+
+    it('stays with Claude Code when the server has no Codex', async () => {
+      const { form } = await render(
+        [],
+        [
+          environment({
+            isDefault: true,
+            presetEngine: 'codex',
+            presets: enginePresets({ model: 'haiku' }, { model: 'gpt-5' }),
+          }),
+        ],
+      );
+      expect(form.engine()).toBe('claude-code');
+      expect(form.model).toBe('haiku');
     });
 
     it('points to the settings while the engine has no account', async () => {
