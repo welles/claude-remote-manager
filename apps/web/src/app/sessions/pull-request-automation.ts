@@ -92,8 +92,9 @@ export const TRIGGER_LABELS: Record<AutofixTrigger, string> = {
           class="my-0.5 type-body-small text-error"
           data-testid="automerge-held"
         >
-          Automerge paused: Claude asks for your decision ({{ held.reason }}).
-          Your next message lets it continue.
+          Automerge paused: {{ agent() }} asks for your decision ({{
+            held.reason
+          }}). Your next message lets it continue.
         </p>
       } @else if (automerge.failure) {
         <p
@@ -131,6 +132,8 @@ export class PullRequestAutomation {
 
   readonly sessionId = input.required<string>();
   readonly pull = input.required<PullRequestDto>();
+  /** The session's agent in sentences ("Claude", "Codex"). */
+  readonly agent = input('Claude');
 
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);

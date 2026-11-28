@@ -89,11 +89,14 @@ export const MODE_LABELS: Record<ReviewMode, { label: string; hint: string }> =
     },
   };
 
-/** How a review started, for its card and the session's details. */
-export function triggerLabel(trigger: ReviewTrigger): string {
+/**
+ * How a review started, for its card and the session's details; `agent`
+ * names the session's agent ("Claude", "Codex").
+ */
+export function triggerLabel(trigger: ReviewTrigger, agent = 'Claude'): string {
   return trigger === 'auto'
     ? 'Auto-review'
     : trigger === 'claude'
-      ? 'Review requested by Claude'
+      ? `Review requested by ${agent}`
       : 'Review';
 }

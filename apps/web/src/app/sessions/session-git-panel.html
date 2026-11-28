@@ -169,11 +169,13 @@
           >#{{ pull.number }} {{ pull.title }}</a
         >
         @if (pull.headBranch !== clone.directory.branch && clone.showBranch) {
-        <code class="min-w-0 wrap-anywhere" data-testid="pull-request-branch">{{ pull.headBranch }}</code>
+        <code class="min-w-0 wrap-anywhere" data-testid="pull-request-branch"
+          >{{ pull.headBranch }}</code
+        >
         }
         <span
           class="basis-full type-body-small text-on-surface-variant empty:hidden"
-          >{{ pull.createdBy === 'claude' ? 'by Claude' : '' }}</span
+          >{{ pull.createdBy === 'claude' ? 'by ' + agent() : '' }}</span
         >
         @if (pull.state === 'open') { @if (pull.checks; as checks) {
         <app-pull-request-checks class="basis-full" [checks]="checks" />
@@ -182,6 +184,7 @@
           class="basis-full"
           [sessionId]="session().id"
           [pull]="pull"
+          [agent]="agent()"
         />
         }
       </li>
@@ -223,10 +226,12 @@
           rel="noopener"
           >#{{ pull.number }} {{ pull.title }}</a
         >
-        <code class="min-w-0 wrap-anywhere" data-testid="pull-request-branch">{{ pull.headBranch }}</code>
+        <code class="min-w-0 wrap-anywhere" data-testid="pull-request-branch"
+          >{{ pull.headBranch }}</code
+        >
         <span
           class="basis-full type-body-small text-on-surface-variant empty:hidden"
-          >{{ pull.createdBy === 'claude' ? 'by Claude' : '' }}</span
+          >{{ pull.createdBy === 'claude' ? 'by ' + agent() : '' }}</span
         >
       </li>
       }

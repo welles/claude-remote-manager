@@ -94,12 +94,15 @@ COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/app-entrypoint
 
 # Data layout, see README.md. The directories are created here so that named
 # volumes start with the right owner. CODEX_HOME: the Codex home the ChatGPT
-# accounts share, on the Claude volume.
+# accounts share, on the Claude volume. CODEX_INSTRUCTIONS_FILE: Codex gets the
+# global instructions below as developer instructions (Claude Code reads them
+# itself).
 ENV DATA_DIR=/data \
     WORKSPACE_DIR=/data/workspace \
     DB_DIR=/data/db \
     CLAUDE_CONFIG_DIR=/data/claude \
     CODEX_HOME=/data/claude/codex \
+    CODEX_INSTRUCTIONS_FILE=/etc/claude-code/CLAUDE.md \
     GIT_CONFIG_GLOBAL=/data/git/gitconfig \
     DISABLE_AUTOUPDATER=1 \
     PATH=/home/${USER_NAME}/.nix-profile/bin:${PATH} \

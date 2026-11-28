@@ -72,6 +72,7 @@
       [session]="s"
       [context]="context()"
       [todos]="todos()"
+      [engine]="engineLabel()"
       [model]="modelName()"
       [mode]="modeName()"
       (opened)="openPanel($event)"
@@ -141,6 +142,7 @@
           [enabled]="connected() && !answering().has(request.requestId)"
           [position]="requests().length > 1 ? '1 of ' + requests().length : null"
           [directories]="session()?.directories ?? []"
+          [agent]="agent()"
           (answer)="respond(request, $event)"
         />
         }
@@ -156,8 +158,8 @@
       />
       } @if (limitWait(); as wait) {
       <app-banner data-testid="limit-wait">
-        The usage limit stopped the last turn. Claude continues by itself once
-        it has reset{{ wait.resumes ? ' (' + wait.resumes + ')' : '' }};
+        The usage limit stopped the last turn. {{ agent() }} continues by itself
+        once it has reset{{ wait.resumes ? ' (' + wait.resumes + ')' : '' }};
         messages you send meanwhile wait until then.
         <div banner-actions>
           <button
@@ -255,6 +257,8 @@
         [sessionId]="sessionId()"
         [showRepository]="(session()?.directories?.length ?? 0) > 1"
         [githubRepositories]="githubRepositories()"
+        [agent]="agent()"
+        [slashCommands]="capabilities().slashCommands"
         (send)="send($event)"
         (interrupt)="interrupt()"
       />
@@ -293,10 +297,11 @@
       <p class="text-error">{{ s.lastError }}</p>
       }
     </section>
+    @if (capabilities().contextUsage) {
     <section class="panel-section" id="details-context">
-      <app-context-meter [context]="context()" />
+      <app-context-meter [context]="context()" [agent]="agent()" />
     </section>
-    @if (todos().length > 0) {
+    } @if (todos().length > 0) {
     <section class="panel-section" id="details-tasks">
       <app-todo-panel [todos]="todos()" />
     </section>
@@ -327,6 +332,14 @@
       id="details-settings"
     >
       <h3 class="app-section-label">Settings</h3>
+      @if (engineLabel(); as label) {
+      <p
+        class="mt-1 mb-0 flex flex-wrap items-baseline gap-2"
+        data-testid="session-engine"
+      >
+        <span class="hint-text">Engine</span>{{ label }}
+      </p>
+      }
       <mat-form-field appearance="outline" subscriptSizing="dynamic">
         <mat-label>Model</mat-label>
         <mat-select
@@ -353,7 +366,7 @@
           [disabled]="!connected() || s.status === 'preparing'"
           data-testid="mode-select"
         >
-          @for (mode of modes; track mode) {
+          @for (mode of modes(); track mode) {
           <mat-option
             [value]="mode"
             [title]="modeInfo[mode].description"
@@ -520,7 +533,11 @@
   (done)="session.set($event.session)"
   (archived)="toList()"
 />
-<app-delete-session-dialog [sessionId]="s.id" (deleted)="toList()" />
+<app-delete-session-dialog
+  [sessionId]="s.id"
+  [engine]="engine()"
+  (deleted)="toList()"
+/>
 } @if (viewing(); as file) {
 <app-file-viewer [file]="file" (closed)="viewing.set(null)" />
 } @if (embedded(); as preview) {

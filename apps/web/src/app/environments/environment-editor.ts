@@ -27,6 +27,7 @@ import {
   errorMessage,
 } from '../repositories/repositories-api';
 import { ModelsStore } from '../sessions/models-store';
+import { EnginesStore } from '../engines/engines-store';
 import { AppIcon } from '../ui/icon';
 import {
   draftOf,
@@ -66,6 +67,7 @@ export class EnvironmentEditor implements OnInit {
   private readonly api = inject(EnvironmentsApi);
   private readonly repositoriesApi = inject(RepositoriesApi);
   private readonly modelsStore = inject(ModelsStore);
+  protected readonly enginesStore = inject(EnginesStore);
 
   /** The environment to edit; `null` for a new one. */
   readonly environment = input<EnvironmentDto | null>(null);
@@ -105,6 +107,7 @@ export class EnvironmentEditor implements OnInit {
       }
     }
     this.modelsStore.load();
+    this.enginesStore.load();
     this.repositoriesApi.list().subscribe({
       next: ({ repositories }) => this.repositories.set(repositories),
       error: () => undefined,

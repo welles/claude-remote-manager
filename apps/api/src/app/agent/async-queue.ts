@@ -4,7 +4,10 @@
  */
 export class AsyncQueue<T> implements AsyncIterable<T> {
   private readonly items: T[] = [];
-  private readonly waiting: ((result: IteratorResult<T>) => void)[] = [];
+  private readonly waiting: {
+    resolve: (result: IteratorResult<T>) => void;
+    reject: (error: Error) => void;
+  }[] = [];
   private closed = false;
   private failure: Error | null = null;
 
@@ -12,9 +15,9 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
     if (this.closed) {
       throw new Error('Queue is closed');
     }
-    const resolve = this.waiting.shift();
-    if (resolve) {
-      resolve({ value: item, done: false });
+    const waiter = this.waiting.shift();
+    if (waiter) {
+      waiter.resolve({ value: item, done: false });
     } else {
       this.items.push(item);
     }
@@ -22,8 +25,8 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
 
   close(): void {
     this.closed = true;
-    for (const resolve of this.waiting.splice(0)) {
-      resolve({ value: undefined, done: true });
+    for (const waiter of this.waiting.splice(0)) {
+      waiter.resolve({ value: undefined, done: true });
     }
   }
 
@@ -37,8 +40,9 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
     }
     this.failure = error;
     this.closed = true;
-    for (const resolve of this.waiting.splice(0)) {
-      resolve({ value: undefined, done: true });
+    // Consumers already waiting get the error too, not a clean end.
+    for (const waiter of this.waiting.splice(0)) {
+      waiter.reject(error);
     }
   }
 
@@ -58,7 +62,9 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
             ? Promise.reject(this.failure)
             : Promise.resolve({ value: undefined, done: true });
         }
-        return new Promise((resolve) => this.waiting.push(resolve));
+        return new Promise((resolve, reject) =>
+          this.waiting.push({ resolve, reject }),
+        );
       },
       return: () => {
         this.close();

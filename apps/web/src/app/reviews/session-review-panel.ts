@@ -20,6 +20,7 @@ import {
 } from '@claude-remote-manager/shared-types';
 import { errorMessage } from '../repositories/repositories-api';
 import { ModelsStore } from '../sessions/models-store';
+import { agentName, engineOf } from '../engines/engines-store';
 import { Toasts } from '../ui/toasts';
 import {
   EFFORT_LABELS,
@@ -46,7 +47,7 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
     <div class="flex flex-wrap items-center gap-2">
       @if (review?.running; as running) {
         <span class="flex-1 type-body-medium" data-testid="review-running"
-          >{{ triggerLabel(running.trigger) }} runs ({{
+          >{{ triggerLabel(running.trigger, agent()) }} runs ({{
             modelLabel(running.model)
           }})…</span
         >
@@ -67,7 +68,9 @@ import { ReviewDefaultsState, ReviewsApi } from './reviews-api';
           [disabled]="busy() || !reviewable()"
           [title]="
             reviewable()
-              ? 'An independent Claude reviews the changes of this session; its findings go to Claude to fix'
+              ? 'An independent Claude reviews the changes of this session; its findings go to ' +
+                agent() +
+                ' to fix'
               : 'Only sessions with repositories that can continue can be reviewed'
           "
           data-testid="review-start"
@@ -155,6 +158,10 @@ export class SessionReviewPanel implements OnInit {
   private readonly toasts = inject(Toasts);
 
   readonly session = input.required<SessionDto>();
+  /** "Claude", "Codex": the session's agent in sentences. */
+  protected readonly agent = computed(() =>
+    agentName(engineOf(this.session())),
+  );
   /** Connected to the server. */
   readonly enabled = input(true);
   /** The session after a change of its review settings. */

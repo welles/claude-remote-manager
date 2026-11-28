@@ -1,0 +1,808 @@
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { SessionEventInput } from '@claude-remote-manager/shared-types';
+import { SINGLE_USER } from '../../common/process-isolation';
+import type {
+  AgentApprovalCall,
+  AgentApprovalResult,
+  AgentEvent,
+} from '../agent-events';
+import type {
+  AgentRun,
+  AgentStartOptions,
+  AgentTool,
+  AgentUserMessage,
+} from '../agent-runner';
+import {
+  CodexRunner,
+  CodexTranscriptReader,
+  codexInput,
+  codexPolicy,
+  findRollout,
+} from './codex-runner';
+import {
+  fakeCodexPids,
+  fakeCodexRequests,
+  processEnded,
+  writeFakeCodex,
+} from './testing/fake-codex';
+
+// The ES module Zod needs a VM flag in Jest; its CommonJS build is the same.
+jest.mock('../sdk-agent-runner', () => ({
+  loadZod: () => Promise.resolve(jest.requireActual('zod')),
+}));
+
+jest.setTimeout(20_000);
+
+type Result = Extract<AgentEvent, { type: 'result' }>;
+
+/** Reads a run's events batch by batch. */
+class EventReader {
+  private readonly iterator: AsyncIterator<AgentEvent[]>;
+  /** Everything read so far. */
+  readonly all: AgentEvent[] = [];
+
+  constructor(run: AgentRun) {
+    this.iterator = run.events[Symbol.asyncIterator]();
+  }
+
+  /** Reads until an event matches; returns the events read meanwhile. */
+  async until(
+    match: (event: AgentEvent) => boolean,
+    timeoutMs = 10_000,
+  ): Promise<AgentEvent[]> {
+    const read: AgentEvent[] = [];
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const next = await Promise.race([
+        this.iterator.next(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('No matching event in time')),
+            Math.max(0, deadline - Date.now()),
+          ).unref(),
+        ),
+      ]);
+      if (next.done) {
+        throw new Error('The events ended');
+      }
+      read.push(...next.value);
+      this.all.push(...next.value);
+      if (next.value.some(match)) {
+        return read;
+      }
+    }
+  }
+
+  /** Reads until the next turn result and returns it with what came before. */
+  async result(): Promise<{ result: Result; events: AgentEvent[] }> {
+    const events = await this.until((event) => event.type === 'result');
+    return {
+      result: events.find((event) => event.type === 'result') as Result,
+      events,
+    };
+  }
+
+  /** The end of the events (`null`) or the error they end with. */
+  async end(): Promise<Error | null> {
+    try {
+      for (;;) {
+        const next = await this.iterator.next();
+        if (next.done) {
+          return null;
+        }
+        this.all.push(...next.value);
+      }
+    } catch (error) {
+      return error as Error;
+    }
+  }
+}
+
+const logOf = (events: AgentEvent[]): SessionEventInput[] =>
+  events.flatMap((event) => (event.type === 'output' ? event.events : []));
+
+const texts = (events: AgentEvent[]) =>
+  logOf(events)
+    .filter((event) => event.type === 'assistant.text')
+    .map((event) => (event as { text: string }).text);
+
+let counter = 0;
+const message = (text: string): AgentUserMessage => ({
+  id: `client-${++counter}`,
+  text,
+});
+
+describe('CodexRunner', () => {
+  let dir: string;
+  let home: string;
+  let cwd: string;
+  let runner: CodexRunner;
+  let runs: AgentRun[];
+  let approve: jest.Mock<Promise<AgentApprovalResult>, [AgentApprovalCall]>;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'crm-codex-runner-'));
+    home = join(dir, 'codex-home');
+    cwd = join(dir, 'work');
+    mkdirSync(home);
+    mkdirSync(cwd);
+    runner = new CodexRunner(
+      { executable: writeFakeCodex(dir), baseHome: home },
+      SINGLE_USER,
+    );
+    runs = [];
+    approve = jest.fn<Promise<AgentApprovalResult>, [AgentApprovalCall]>(
+      async () => ({ behavior: 'allow' }),
+    );
+  });
+  afterEach(() => {
+    for (const run of runs) {
+      run.close();
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const options = (
+    overrides: Partial<AgentStartOptions> = {},
+  ): AgentStartOptions => ({
+    cwd,
+    additionalDirectories: [],
+    model: null,
+    permissionMode: 'untrusted',
+    resume: null,
+    sessionId: null,
+    approve,
+    ...overrides,
+  });
+
+  const start = async (
+    first: AgentUserMessage,
+    overrides: Partial<AgentStartOptions> = {},
+  ) => {
+    const run = await runner.start(options(overrides), first);
+    runs.push(run);
+    return { run, events: new EventReader(run) };
+  };
+
+  const requests = (method: string, at = home) =>
+    fakeCodexRequests(at)
+      .filter((request) => request.method === method)
+      .map((request) => request.params ?? {});
+
+  it('probes the models and the plan usage with the account’s home', async () => {
+    const account = join(dir, 'account');
+    mkdirSync(account);
+    const answer = await runner.probe(
+      async (probe) => ({
+        models: await probe.supportedModels(),
+        usage: await probe.planUsage(),
+        commands: await probe.supportedCommands(),
+      }),
+      { configDir: account, main: false },
+    );
+    expect(answer.models).toEqual([
+      {
+        value: null,
+        label: 'GPT-5.5 Codex',
+        description: 'GPT-5.5 Codex model',
+        resolvedModel: 'gpt-5.5-codex',
+      },
+      {
+        value: 'gpt-5.4',
+        label: 'GPT-5.4',
+        description: 'GPT-5.4 model',
+        resolvedModel: 'gpt-5.4',
+      },
+    ]);
+    expect(answer.usage).toEqual({
+      subscriptionType: 'plus',
+      windows: [
+        expect.objectContaining({ window: 'five_hour', utilization: 25 }),
+        expect.objectContaining({ window: 'seven_day', utilization: 60 }),
+      ],
+    });
+    expect(answer.commands).toEqual([]);
+    expect(fakeCodexRequests(account).map((r) => r.method)).toEqual([
+      'initialize',
+      'initialized',
+      'model/list',
+      'account/rateLimits/read',
+    ]);
+    expect(fakeCodexRequests(home)).toEqual([]);
+  });
+
+  it('starts a thread, runs the first message and reports its events', async () => {
+    const { run, events } = await start(message('hello there'), {
+      instructions: 'Be brief.',
+      env: { SESSION_VAR: '1' },
+    });
+    const { result, events: turn } = await events.result();
+    const started = events.all[0];
+    expect(started).toEqual({
+      type: 'started',
+      engineSessionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      permissionMode: null,
+      terminalCommands: [],
+    });
+    const threadId = (started as { engineSessionId: string }).engineSessionId;
+
+    expect(turn).toContainEqual({ type: 'activity' });
+    expect(logOf(turn).filter((e) => e.type === 'assistant.delta')).toEqual([
+      expect.objectContaining({ text: 'Echo: hel' }),
+      expect.objectContaining({ text: 'lo there' }),
+    ]);
+    expect(texts(turn)).toEqual(['Echo: hello there']);
+    // The user's message anchors what follows.
+    expect(turn).toContainEqual(
+      expect.objectContaining({ type: 'output', anchor: `client-${counter}` }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        isError: false,
+        text: null,
+        engineSessionId: threadId,
+        queuedTurns: 0,
+        usage: {
+          'gpt-5.5-codex': expect.objectContaining({ outputTokens: 200 }),
+        },
+      }),
+    );
+    expect(turn).toContainEqual(
+      expect.objectContaining({
+        type: 'rate-limit',
+        limit: expect.objectContaining({ window: 'five_hour' }),
+      }),
+    );
+
+    expect(requests('thread/start')).toEqual([
+      {
+        cwd,
+        sandbox: 'danger-full-access',
+        approvalPolicy: 'untrusted',
+        developerInstructions: 'Be brief.',
+        dynamicTools: [],
+      },
+    ]);
+    expect(requests('turn/start')).toEqual([
+      {
+        threadId,
+        clientUserMessageId: `client-${counter}`,
+        input: [{ type: 'text', text: 'hello there', text_elements: [] }],
+        approvalPolicy: 'untrusted',
+      },
+    ]);
+
+    expect(await run.contextUsage()).toEqual({
+      model: 'gpt-5.5-codex',
+      usedTokens: 1000,
+      maxTokens: 200000,
+      percentage: 0.5,
+    });
+    expect(await run.planUsage()).toEqual(
+      expect.objectContaining({ subscriptionType: 'plus' }),
+    );
+    expect(await run.supportedCommands()).toEqual([]);
+    expect(run.stderrTail()).toEqual(['fake codex app-server ready']);
+    expect(await findRollout(home, threadId)).toMatch(
+      new RegExp(
+        `/sessions/\\d{4}/\\d{2}/\\d{2}/rollout-.*-${threadId}\\.jsonl$`,
+      ),
+    );
+  });
+
+  it('has no context usage before Codex reported it', async () => {
+    const { run, events } = await start(message('slow'));
+    await events.until((event) => event.type === 'started');
+    await expect(run.contextUsage()).rejects.toThrow(/not reported/);
+  });
+
+  it('asks for a command’s approval and answers with Codex’s decisions', async () => {
+    const { run, events } = await start(message('run-command'));
+    let turn = await events.result();
+    expect(approve).toHaveBeenCalledTimes(1);
+    const call = approve.mock.calls[0][0];
+    expect(call).toEqual(
+      expect.objectContaining({
+        toolName: 'Bash',
+        input: { command: 'echo hi', cwd },
+        toolUseId: expect.stringMatching(/^cmd-/),
+        description: 'Wants to say hi',
+        mcpServer: null,
+        suggestions: [
+          {
+            type: 'addRules',
+            rules: [{ toolName: 'Bash', ruleContent: 'echo hi' }],
+            behavior: 'allow',
+            destination: 'session',
+          },
+        ],
+      }),
+    );
+    expect(texts(turn.events)).toEqual(['decision: accept']);
+    expect(logOf(turn.events)).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.result',
+        toolUseId: call.toolUseId,
+        isError: false,
+        content: 'hi\n',
+      }),
+    );
+
+    const answers: [AgentApprovalResult, string][] = [
+      [
+        {
+          behavior: 'allow',
+          updatedPermissions: [
+            {
+              type: 'addRules',
+              rules: [{ toolName: 'Bash', ruleContent: 'echo hi' }],
+              behavior: 'allow',
+              destination: 'session',
+            },
+          ],
+        },
+        'decision: acceptForSession',
+      ],
+      [{ behavior: 'deny', message: 'no' }, 'decision: decline'],
+      [
+        { behavior: 'allow', updatedInput: { command: 'echo other' } },
+        'decision: decline',
+      ],
+    ];
+    for (const [answer, text] of answers) {
+      approve.mockResolvedValueOnce(answer);
+      run.send(message('run-command'));
+      turn = await events.result();
+      expect(texts(turn.events)).toEqual([text]);
+    }
+
+    // Denied with interrupt: Codex cancels the turn.
+    approve.mockResolvedValueOnce({
+      behavior: 'deny',
+      message: 'stop',
+      interrupt: true,
+    });
+    run.send(message('run-command'));
+    turn = await events.result();
+    expect(texts(turn.events)).toEqual([]);
+    expect(turn.result.isError).toBe(false);
+    expect(logOf(turn.events)).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.result',
+        isError: true,
+        content: 'Declined',
+      }),
+    );
+  });
+
+  it('asks for a file change’s approval with its changes', async () => {
+    const { events } = await start(message('edit-file'));
+    const turn = await events.result();
+    expect(approve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: 'Edit',
+        toolUseId: expect.stringMatching(/^patch-/),
+        input: {
+          file_path: join(cwd, 'notes.txt'),
+          changes: [
+            {
+              path: join(cwd, 'notes.txt'),
+              kind: 'update',
+              diff: '@@ -1 +1 @@\n-old\n+new\n',
+            },
+          ],
+        },
+      }),
+    );
+    expect(texts(turn.events)).toEqual(['decision: accept']);
+    expect(logOf(turn.events)).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.diff',
+        diff: expect.objectContaining({ additions: 1, deletions: 1 }),
+      }),
+    );
+  });
+
+  describe('the app’s own tools', () => {
+    const handler = jest.fn(async (input: Record<string, unknown>) => ({
+      text: `got ${JSON.stringify(input)}`,
+    }));
+    const tool: AgentTool = {
+      name: 'echo_tool',
+      description: 'Echoes',
+      inputSchema: (z) => ({ value: z.number() }),
+      handler,
+    };
+    beforeEach(() => handler.mockClear());
+
+    it('offers them as dynamic tools and runs allowed ones without asking', async () => {
+      const { events } = await start(message('app-tool:echo_tool'), {
+        tools: [tool],
+        allowedTools: ['mcp__crm__echo_tool'],
+      });
+      const turn = await events.result();
+      expect(requests('thread/start')[0]['dynamicTools']).toEqual([
+        {
+          type: 'function',
+          name: 'echo_tool',
+          description: 'Echoes',
+          inputSchema: expect.objectContaining({
+            type: 'object',
+            properties: { value: expect.objectContaining({ type: 'number' }) },
+          }),
+        },
+      ]);
+      expect(approve).not.toHaveBeenCalled();
+      expect(handler).toHaveBeenCalledWith(
+        { value: 42 },
+        { toolUseId: expect.stringMatching(/^call-/) },
+      );
+      expect(texts(turn.events)).toEqual(['tool said: got {"value":42}']);
+      expect(logOf(turn.events)).toContainEqual(
+        expect.objectContaining({
+          type: 'tool.call',
+          name: 'mcp__crm__echo_tool',
+          input: { value: 42 },
+        }),
+      );
+    });
+
+    it('asks for the others, and runs them with the approved input', async () => {
+      approve.mockResolvedValueOnce({
+        behavior: 'allow',
+        updatedInput: { value: 7 },
+      });
+      const { run, events } = await start(message('app-tool:echo_tool'), {
+        tools: [tool],
+      });
+      let turn = await events.result();
+      expect(approve).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolName: 'mcp__crm__echo_tool',
+          input: { value: 42 },
+          mcpServer: { name: 'crm', source: 'sdk' },
+        }),
+      );
+      expect(texts(turn.events)).toEqual(['tool said: got {"value":7}']);
+
+      approve.mockResolvedValueOnce({ behavior: 'deny', message: 'Not now' });
+      run.send(message('app-tool:echo_tool'));
+      turn = await events.result();
+      expect(texts(turn.events)).toEqual(['tool said: Not now']);
+      expect(logOf(turn.events)).toContainEqual(
+        expect.objectContaining({ type: 'tool.result', isError: true }),
+      );
+
+      run.send(message('app-tool:missing'));
+      turn = await events.result();
+      expect(texts(turn.events)).toEqual(['tool said: Unknown tool missing']);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('follows the gate, and reports a failing handler', async () => {
+      const gate = jest
+        .fn()
+        .mockResolvedValueOnce({ decision: 'deny', reason: 'Automerge is off' })
+        .mockResolvedValueOnce({ decision: 'ask', reason: 'Really?' })
+        .mockResolvedValueOnce({ decision: 'allow', reason: '' });
+      handler.mockRejectedValueOnce(new Error('exploded'));
+      const { run, events } = await start(message('app-tool:echo_tool'), {
+        tools: [tool],
+        allowedTools: ['mcp__crm__echo_tool'],
+        gate,
+      });
+      let turn = await events.result();
+      expect(gate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolName: 'mcp__crm__echo_tool',
+          input: { value: 42 },
+          mcpServer: { name: 'crm', source: 'sdk' },
+        }),
+      );
+      expect(texts(turn.events)).toEqual(['tool said: Automerge is off']);
+      expect(handler).not.toHaveBeenCalled();
+
+      // `ask` asks although the tool is allowed; the handler fails.
+      run.send(message('app-tool:echo_tool'));
+      turn = await events.result();
+      expect(approve).toHaveBeenCalledWith(
+        expect.objectContaining({ description: 'Really?' }),
+      );
+      expect(texts(turn.events)).toEqual(['tool said: exploded']);
+
+      approve.mockClear();
+      run.send(message('app-tool:echo_tool'));
+      turn = await events.result();
+      expect(approve).not.toHaveBeenCalled();
+      expect(texts(turn.events)).toEqual(['tool said: got {"value":42}']);
+    });
+  });
+
+  it('queues a message behind the running turn', async () => {
+    const { run, events } = await start(message('first'));
+    run.send(message('second'));
+    run.send(message('third'));
+    const first = await events.result();
+    expect(texts(first.events)).toEqual(['Echo: first']);
+    expect(first.result.queuedTurns).toBe(2);
+    const second = await events.result();
+    expect(texts(second.events)).toEqual(['Echo: second']);
+    expect(second.result.queuedTurns).toBe(1);
+    const third = await events.result();
+    expect(texts(third.events)).toEqual(['Echo: third']);
+    expect(third.result.queuedTurns).toBe(0);
+    expect(requests('turn/start')).toHaveLength(3);
+  });
+
+  it('keeps a subagent’s turns apart from the thread’s own', async () => {
+    const { run, events } = await start(message('subagent run-command'));
+    run.send(message('after'));
+    // The subagent's turn ends while the approval is open: the queued
+    // message must wait for the thread's own turn.
+    const first = await events.result();
+    expect(texts(first.events)).toEqual(['decision: accept']);
+    expect(first.result.queuedTurns).toBe(1);
+    const second = await events.result();
+    expect(texts(second.events)).toEqual(['Echo: after']);
+    expect(logOf(events.all).filter((e) => e.type === 'error')).toEqual([]);
+  });
+
+  it('interrupts the running turn', async () => {
+    const { run, events } = await start(message('slow'));
+    // The user's message completes once the turn has started.
+    await events.until(
+      (event) =>
+        event.type === 'output' && event.anchor === `client-${counter}`,
+    );
+    await run.interrupt();
+    const { result } = await events.result();
+    expect(result.isError).toBe(false);
+    const [interrupt] = requests('turn/interrupt');
+    expect(interrupt).toEqual({
+      threadId: (events.all[0] as { engineSessionId: string }).engineSessionId,
+      turnId: expect.stringMatching(/^turn-/),
+    });
+    // Nothing runs: nothing to interrupt.
+    await run.interrupt();
+    expect(requests('turn/interrupt')).toHaveLength(1);
+  });
+
+  it('reports the usage limit', async () => {
+    const { events } = await start(message('limit'));
+    const { result, events: turn } = await events.result();
+    expect(turn).toContainEqual({ type: 'limit-hit' });
+    expect(result).toEqual(
+      expect.objectContaining({
+        isError: true,
+        text: "You've hit your usage limit.",
+      }),
+    );
+  });
+
+  it('reports a turn Codex refuses to start, and goes on', async () => {
+    const { run, events } = await start(message('fail-start'));
+    const { result, events: turn } = await events.result();
+    expect(logOf(turn)).toEqual([
+      {
+        type: 'error',
+        message: 'Codex did not start the turn: turn refused',
+      },
+    ]);
+    expect(result).toEqual(
+      expect.objectContaining({
+        isError: true,
+        text: 'The turn could not start.',
+      }),
+    );
+    run.send(message('again'));
+    expect(texts((await events.result()).events)).toEqual(['Echo: again']);
+  });
+
+  it('switches model and approval policy for the next turn', async () => {
+    const { run, events } = await start(message('one'), {
+      model: 'gpt-5.4',
+      permissionMode: 'on-request',
+    });
+    await events.result();
+    await run.setModel('gpt-5.5-codex');
+    await run.setPermissionMode('never');
+    run.send(message('two'));
+    const { result } = await events.result();
+    expect(requests('thread/start')[0]).toEqual(
+      expect.objectContaining({
+        model: 'gpt-5.4',
+        approvalPolicy: 'on-request',
+      }),
+    );
+    expect(requests('turn/start')).toEqual([
+      expect.objectContaining({
+        model: 'gpt-5.4',
+        approvalPolicy: 'on-request',
+      }),
+      expect.objectContaining({
+        model: 'gpt-5.5-codex',
+        approvalPolicy: 'never',
+      }),
+    ]);
+    // Usage counts for the new model from then on.
+    expect(Object.keys(result.usage)).toEqual(['gpt-5.5-codex']);
+    // `null`: Codex's default, sent as no model.
+    await run.setModel(null);
+    run.send(message('three'));
+    await events.result();
+    expect(requests('turn/start')[2]).not.toHaveProperty('model');
+  });
+
+  it('resumes a thread by its rollout, also from another account’s home, and reads its history', async () => {
+    const first = await start(message('remember this'));
+    await first.events.result();
+    const threadId = (first.events.all[0] as { engineSessionId: string })
+      .engineSessionId;
+    first.run.close();
+    expect(await first.events.end()).toBeNull();
+
+    // An account's home shares the base home's sessions.
+    const account = join(dir, 'account');
+    mkdirSync(account);
+    symlinkSync(join(home, 'sessions'), join(account, 'sessions'));
+    const second = await start(message('and this'), {
+      resume: threadId,
+      account: { configDir: account, main: false },
+    });
+    await second.events.result();
+    expect(second.events.all[0]).toEqual(
+      expect.objectContaining({ type: 'started', engineSessionId: threadId }),
+    );
+    const [resume] = requests('thread/resume', account);
+    expect(resume).toEqual(
+      expect.objectContaining({
+        threadId,
+        path: expect.stringMatching(
+          new RegExp(`^${account}/sessions/.*-${threadId}\\.jsonl$`),
+        ),
+        cwd,
+        approvalPolicy: 'untrusted',
+      }),
+    );
+    expect(requests('thread/start', account)).toEqual([]);
+    second.run.close();
+
+    const history = await runner.history(threadId, cwd);
+    const users = history.filter((entry) => entry.isUserMessage);
+    expect(users.map((entry) => entry.events)).toEqual([
+      [{ type: 'user.message', id: expect.any(String), text: 'remember this' }],
+      [{ type: 'user.message', id: expect.any(String), text: 'and this' }],
+    ]);
+    expect(
+      history.flatMap((entry) =>
+        entry.events
+          .filter((event) => event.type === 'assistant.text')
+          .map((event) => (event as { text: string }).text),
+      ),
+    ).toEqual(['Echo: remember this', 'Echo: and this']);
+    expect(
+      await runner.history('00000000-0000-0000-0000-000000000000', cwd),
+    ).toEqual([]);
+
+    const reader = new CodexTranscriptReader(runner, home);
+    expect(await reader.exists(threadId)).toBe(true);
+    expect(await reader.exists('unknown')).toBe(false);
+    expect(await reader.stamp(threadId)).toMatch(/^\d+@[\d.]+$/);
+    expect(await reader.stamp('unknown')).toBeNull();
+    expect((await reader.read(threadId, cwd)).length).toBe(history.length);
+  });
+
+  it('ends the events with an error when Codex exits', async () => {
+    const { events } = await start(message('crash'));
+    await events.until((event) => event.type === 'started');
+    const error = await events.end();
+    expect(error?.message).toMatch(/^Codex ended \(exit code 3\)/);
+    expect(error?.message).toContain('panicked: fake crash');
+  });
+
+  it('ends Codex when the thread cannot be resumed', async () => {
+    await expect(
+      runner.start(
+        options({ resume: '00000000-0000-0000-0000-000000000000' }),
+        message('hello'),
+      ),
+    ).rejects.toThrow(/no rollout found/);
+    const [pid] = fakeCodexPids(home);
+    expect(await processEnded(pid)).toBe(true);
+  });
+
+  it('fails to start when Codex is missing', async () => {
+    const missing = new CodexRunner(
+      { executable: join(dir, 'no-codex'), baseHome: home },
+      SINGLE_USER,
+    );
+    await expect(missing.start(options(), message('hello'))).rejects.toThrow();
+  });
+
+  it('runs no reviews', async () => {
+    await expect(
+      runner.review({} as Parameters<CodexRunner['review']>[0]),
+    ).rejects.toThrow(/do not run with Codex/);
+  });
+});
+
+describe('codexPolicy', () => {
+  it('maps Codex’s modes and falls back to untrusted', () => {
+    expect(codexPolicy('untrusted')).toBe('untrusted');
+    expect(codexPolicy('on-request')).toBe('on-request');
+    expect(codexPolicy('never')).toBe('never');
+    expect(codexPolicy('default')).toBe('untrusted');
+    expect(codexPolicy('bypassPermissions')).toBe('untrusted');
+  });
+});
+
+describe('codexInput', () => {
+  it('sends context and note before images and the text', () => {
+    expect(
+      codexInput({
+        id: 'm',
+        text: 'Do it',
+        context: { id: 'c', text: 'GitHub says' },
+        note: { id: 'n', text: 'A note' },
+        images: [{ mediaType: 'image/png', data: 'AAAA' }],
+      }),
+    ).toEqual([
+      { type: 'text', text: 'GitHub says', text_elements: [] },
+      { type: 'text', text: 'A note', text_elements: [] },
+      { type: 'image', url: 'data:image/png;base64,AAAA' },
+      { type: 'text', text: 'Do it', text_elements: [] },
+    ]);
+  });
+
+  it('leaves an empty text out', () => {
+    expect(
+      codexInput({
+        id: 'm',
+        text: '',
+        images: [{ mediaType: 'image/jpeg', data: 'BB' }],
+      }),
+    ).toEqual([{ type: 'image', url: 'data:image/jpeg;base64,BB' }]);
+  });
+});
+
+describe('findRollout', () => {
+  let home: string;
+  const THREAD = '019a0000-1111-7222-8333-444455556666';
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'crm-codex-rollout-'));
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  const put = (day: string, name: string) => {
+    const at = join(home, 'sessions', ...day.split('/'));
+    mkdirSync(at, { recursive: true });
+    writeFileSync(join(at, name), '');
+    return join(at, name);
+  };
+
+  it('finds the newest rollout of a thread, also a compressed one', async () => {
+    expect(await findRollout(home, THREAD)).toBeNull();
+    put('2026/10/01', `rollout-2026-10-01T10-00-00-${THREAD}.jsonl`);
+    const newer = put(
+      '2026/11/27',
+      `rollout-2026-11-27T10-00-00-${THREAD}.jsonl.zst`,
+    );
+    put('2026/11/28', 'rollout-2026-11-28T10-00-00-other.jsonl');
+    expect(await findRollout(home, THREAD)).toBe(newer);
+    expect(await findRollout(home, 'other-thread')).toBeNull();
+  });
+
+  it('does not look deeper than the days', async () => {
+    put('2026/11/27/deeper', `rollout-x-${THREAD}.jsonl`);
+    expect(await findRollout(home, THREAD)).toBeNull();
+  });
+});

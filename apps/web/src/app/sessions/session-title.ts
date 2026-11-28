@@ -20,6 +20,7 @@ import { errorMessage } from '../repositories/repositories-api';
 import { AppDialog } from '../ui/dialog';
 import { AppIcon } from '../ui/icon';
 import { SessionsApi } from './sessions-api';
+import { agentName, engineOf } from '../engines/engines-store';
 
 /** `acme/app + acme/lib · claude/fix-…`, `Scratch`, or empty. */
 export function sessionSubtitle(session: SessionDto): string {
@@ -105,8 +106,9 @@ export function sessionSubtitle(session: SessionDto): string {
           <p class="hint-text">
             Only the title changes:
             {{ branchNote(s) }}
-            the directory names stay as they are. After saving, Claude no longer
-            changes the title, also when you keep it as it is.
+            the directory names stay as they are. After saving,
+            {{ agent() }} no longer changes the title, also when you keep it as
+            it is.
           </p>
           @if (error(); as text) {
             <p class="m-0 text-error" role="alert">{{ text }}</p>
@@ -135,6 +137,10 @@ export class SessionTitle {
   private readonly dialog = viewChild.required(AppDialog);
 
   readonly session = input.required<SessionDto>();
+  /** "Claude", "Codex": the session's agent in sentences. */
+  protected readonly agent = computed(() =>
+    agentName(engineOf(this.session())),
+  );
   readonly renamed = output<SessionDto>();
 
   protected readonly subtitle = computed(() => sessionSubtitle(this.session()));

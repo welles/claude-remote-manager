@@ -22,7 +22,7 @@ export type DetailSection =
 /**
  * The session at a glance, under the app bar while the conversation
  * scrolls: state (what it needs), context use, pull request, tasks,
- * previews, model and permissions. Each chip opens the details at its
+ * previews, engine (when there is a choice), model and permissions. Each chip opens the details at its
  * section; the state chip of a session that needs the user goes to the
  * request at the bottom instead.
  */
@@ -103,6 +103,9 @@ export type DetailSection =
       (click)="opened.emit('settings')"
       data-testid="strip-settings"
     >
+      @if (engine(); as name) {
+        <span data-testid="strip-engine">{{ name }}</span> ·
+      }
       {{ model() }} · {{ mode() }}
     </button>
     @if (s.archivedAt) {
@@ -118,6 +121,8 @@ export class SessionStrip {
   readonly session = input.required<SessionDto>();
   readonly context = input<ContextUsage | null>(null);
   readonly todos = input<Todo[]>([]);
+  /** The engine's name, when the UI names engines; else `null`. */
+  readonly engine = input<string | null>(null);
   /** Display names of the model and the permission mode. */
   readonly model = input('Default');
   readonly mode = input('');

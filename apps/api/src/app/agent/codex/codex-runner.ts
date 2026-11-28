@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionPermissionMode } from '@claude-remote-manager/shared-types';
@@ -107,6 +107,12 @@ export interface CodexRunnerConfig {
   executable: string;
   /** The Codex home whose `sessions/` all accounts share (history reads). */
   baseHome: string;
+  /**
+   * The machine's rules for all sessions that Claude Code reads itself as
+   * managed policy (`/etc/claude-code/CLAUDE.md` in the image); Codex gets
+   * them first in its developer instructions (`CODEX_INSTRUCTIONS_FILE`).
+   */
+  instructionsFile?: string | null;
 }
 
 /**
@@ -252,7 +258,13 @@ class CodexProcess implements AgentRun {
     firstMessage: AgentUserMessage,
   ): Promise<CodexProcess> {
     const run = new CodexProcess(config, launcher, options);
-    await run.open();
+    try {
+      await run.open();
+    } catch (error) {
+      // The app server may run already (e.g. a refused thread/resume).
+      run.close();
+      throw error;
+    }
     run.send(firstMessage);
     return run;
   }
@@ -286,15 +298,19 @@ class CodexProcess implements AgentRun {
         }
       },
     });
+    const developerInstructions = [
+      await machineInstructions(this.config.instructionsFile ?? null),
+      this.options.instructions ?? null,
+    ]
+      .filter((part): part is string => !!part)
+      .join('\n\n');
     const common = {
       cwd: this.options.cwd,
       // Full access, as Claude Code has; asking is the approval policy's.
       sandbox: 'danger-full-access',
       approvalPolicy: this.policy,
       ...(this.model ? { model: this.model } : {}),
-      ...(this.options.instructions
-        ? { developerInstructions: this.options.instructions }
-        : {}),
+      ...(developerInstructions ? { developerInstructions } : {}),
     };
     let started: CodexThreadStartResponse;
     if (this.options.resume) {
@@ -369,6 +385,11 @@ class CodexProcess implements AgentRun {
           },
           this.failedResult(),
         ]);
+        // Messages queued behind it are not left waiting.
+        const next = this.pending.shift();
+        if (next && this.server.running) {
+          this.startTurn(next);
+        }
       });
   }
 
@@ -389,6 +410,12 @@ class CodexProcess implements AgentRun {
 
   private notification(method: string, params: unknown): void {
     if (!this.translator) {
+      return;
+    }
+    const threadId = (params as { threadId?: unknown } | null)?.threadId;
+    if (typeof threadId === 'string' && threadId !== this.threadId) {
+      // Another thread's (a subagent's) turns are not this thread's: they
+      // must not end the running turn or start a queued message.
       return;
     }
     if (method === 'item/started') {
@@ -658,4 +685,18 @@ async function dynamicTools(tools: AgentTool[] | undefined) {
     description: tool.description,
     inputSchema: z.toJSONSchema(z.object(tool.inputSchema(z))),
   }));
+}
+
+/** The machine's rules for sessions, read for every process; `null`: none. */
+async function machineInstructions(
+  file: string | null,
+): Promise<string | null> {
+  if (!file) {
+    return null;
+  }
+  try {
+    return (await readFile(file, 'utf8')).trim() || null;
+  } catch {
+    return null;
+  }
 }

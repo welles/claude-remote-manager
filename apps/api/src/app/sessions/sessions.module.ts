@@ -142,7 +142,11 @@ const logger = new Logger('SessionsModule');
           // Offered where the server has Codex.
           const baseHome = codexBaseHome(launcher);
           const codex = new CodexRunner(
-            { executable: config.codexExecutable, baseHome },
+            {
+              executable: config.codexExecutable,
+              baseHome,
+              instructionsFile: config.codexInstructionsFile,
+            },
             launcher,
           );
           engines.register('codex', {

@@ -19,7 +19,7 @@
   [innerHTML]="item.text | markdown"
 ></div>
 } @case ('tool') { @if (questionCard(item); as card) {
-<!-- A question of Claude's with the user's answers: a card of its own, so
+<!-- A question of the agent's with the user's answers: a card of its own, so
      the answers can be read again. -->
 <section
   class="flex flex-col gap-2.5 rounded-sm border border-l-[3px] border-outline-variant bg-surface-container-low px-3 py-2.5 wrap-anywhere [--app-icon-size:16px]"
@@ -35,7 +35,7 @@
   <p
     class="m-0 flex items-center gap-1.5 type-label-medium text-on-surface-variant"
   >
-    <app-icon name="info" /><span>Claude asked · {{ card.state }}</span>
+    <app-icon name="info" /><span>{{ agent() }} asked · {{ card.state }}</span>
   </p>
   @for (entry of card.questions; track $index) {
   <div class="flex flex-col items-start gap-0.5" data-testid="question">
@@ -181,6 +181,7 @@
 <app-review-card
   [item]="item"
   [sessionId]="sessionId()"
+  [agent]="agent()"
   [runningId]="session()?.review?.running?.id ?? null"
 />
 } @case ('settings') {
@@ -214,7 +215,7 @@
       [class.text-error]="step.state === 'failed'"
       data-testid="progress"
     >
-      {{ progressText(step) }}
+      {{ progressText(step, agent()) }}
     </p>
     } @else {
     <ng-container
@@ -244,7 +245,7 @@
   <span
     class="state-dot inline-block [--tone-bg:var(--app-status-running)] motion-safe:animate-pulse-soft"
   ></span
-  >Claude is working…
+  >{{ agent() }} is working…
 </p>
 } @else if (preparing()) {
 <p class="m-0 flex items-center gap-2 type-body-small text-on-surface-variant">

@@ -11,6 +11,9 @@ import {
 } from '../sessions/testing/fake-websocket';
 import { AccountSettings } from './account-settings';
 import { accountDto } from './testing/accounts';
+import { flushEngines } from '../engines/testing/engines';
+import type { AgentEngineId } from '@claude-remote-manager/shared-types';
+import { Toasts } from '../ui/toasts';
 
 describe('AccountSettings', () => {
   let http: HttpTestingController;
@@ -37,9 +40,13 @@ describe('AccountSettings', () => {
     email: 'work@example.test',
   });
 
-  const render = (accounts = [accountDto(), work]) => {
+  const render = (
+    accounts = [accountDto(), work],
+    engines: AgentEngineId[] = ['claude-code'],
+  ) => {
     const fixture = TestBed.createComponent(AccountSettings);
     fixture.detectChanges();
+    flushEngines(http, ...engines);
     http.expectOne('/api/accounts').flush({ accounts });
     http.expectOne('/api/limits').flush({ accounts: [] });
     fixture.detectChanges();
@@ -95,7 +102,7 @@ describe('AccountSettings', () => {
     expect(create.request.body).toEqual({ provider: 'claude', name: 'Work' });
     create.flush({
       ...work,
-      login: { status: 'starting', url: null, error: null },
+      login: { status: 'starting', url: null, userCode: null, error: null },
     });
     http.expectOne('/api/accounts').flush({
       accounts: [
@@ -106,6 +113,7 @@ describe('AccountSettings', () => {
           login: {
             status: 'waiting',
             url: 'https://claude.com/cai/oauth/authorize?x=1',
+            userCode: null,
             error: null,
           },
         },
@@ -135,7 +143,10 @@ describe('AccountSettings', () => {
       type: 'accounts.changed',
       accounts: [
         accountDto(),
-        { ...work, login: { status: 'done', url: null, error: null } },
+        {
+          ...work,
+          login: { status: 'done', url: null, userCode: null, error: null },
+        },
       ],
     });
     fixture.detectChanges();
@@ -165,5 +176,116 @@ describe('AccountSettings', () => {
     http.expectOne('/api/accounts').flush({ accounts: [accountDto()] });
     fixture.detectChanges();
     expect(all(fixture, 'account')).toHaveLength(1);
+  });
+
+  it("offers adding accounts only for the providers of the server's engines", () => {
+    const claudeOnly = render([accountDto()]);
+    expect(all(claudeOnly, 'account-add-claude')).toHaveLength(1);
+    expect(all(claudeOnly, 'account-add-chatgpt')).toHaveLength(0);
+    // One provider: no groups, the list as it always was.
+    expect(all(claudeOnly, 'account-group-claude')).toHaveLength(0);
+    expect(all(claudeOnly, 'account-provider')).toHaveLength(1);
+  });
+
+  it('groups the accounts by provider when the server has Codex too', () => {
+    const chatgpt = accountDto({
+      id: 'c1',
+      provider: 'chatgpt',
+      name: 'ChatGPT',
+      position: 1,
+      isDefault: true,
+      main: false,
+    });
+    const fixture = render(
+      [accountDto(), chatgpt, { ...work, position: 2 }],
+      ['claude-code', 'codex'],
+    );
+    expect(all(fixture, 'account-add-chatgpt')).toHaveLength(1);
+    expect(all(fixture, 'account-group-claude')).toHaveLength(1);
+    expect(all(fixture, 'account-group-chatgpt')).toHaveLength(1);
+    expect(
+      all(fixture, 'account-name').map((e) => e.textContent?.trim()),
+    ).toEqual(['Claude', 'Work', 'ChatGPT']);
+    // Each provider has its default.
+    expect(all(fixture, 'account-default')).toHaveLength(2);
+
+    // Work moves up past the ChatGPT account, to before the main one.
+    const up = all(fixture, 'account-up');
+    expect(up).toHaveLength(1);
+    up[0].click();
+    const order = http.expectOne({ method: 'PUT', url: '/api/accounts/order' });
+    expect(order.request.body).toEqual({ ids: ['a1', 'c1', 'main'] });
+    order.flush({ accounts: [] });
+    http.expectOne('/api/accounts').flush({ accounts: [accountDto()] });
+  });
+
+  it('shows a ChatGPT device login: the page, the code to enter, no paste form', async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    const toasts = TestBed.inject(Toasts);
+    const show = vi.spyOn(toasts, 'show');
+    const fixture = render(
+      [
+        accountDto(),
+        accountDto({
+          id: 'c1',
+          provider: 'chatgpt',
+          name: 'ChatGPT',
+          position: 1,
+          main: false,
+          loggedIn: false,
+          email: null,
+          login: {
+            status: 'waiting',
+            url: 'https://auth.openai.com/codex/device',
+            userCode: 'ABCD-1234',
+            error: null,
+          },
+        }),
+      ],
+      ['claude-code', 'codex'],
+    );
+    expect(one(fixture, 'account-login-url').getAttribute('href')).toBe(
+      'https://auth.openai.com/codex/device',
+    );
+    expect(one(fixture, 'account-login-user-code').textContent?.trim()).toBe(
+      'ABCD-1234',
+    );
+    expect(one(fixture, 'account-login-flow').textContent).toContain(
+      'ChatGPT account',
+    );
+    expect(all(fixture, 'account-login-waiting')).toHaveLength(1);
+    expect(all(fixture, 'account-login-code')).toHaveLength(0);
+    expect(all(fixture, 'account-login-submit')).toHaveLength(0);
+    expect(all(fixture, 'account-login-cancel')).toHaveLength(1);
+
+    one(fixture, 'account-login-copy').click();
+    await fixture.whenStable();
+    expect(writeText).toHaveBeenCalledWith('ABCD-1234');
+    expect(show).toHaveBeenCalledWith({ title: 'Code copied' });
+  });
+
+  it('adds a ChatGPT account', async () => {
+    const fixture = render([accountDto()], ['claude-code', 'codex']);
+    one(fixture, 'account-add-chatgpt').click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const input = one(fixture, 'account-name-input') as HTMLInputElement;
+    input.value = 'Private';
+    input.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    (fixture.nativeElement as HTMLElement)
+      .querySelector('form#account-name-form')
+      ?.dispatchEvent(new Event('submit'));
+    const create = http.expectOne({ method: 'POST', url: '/api/accounts' });
+    expect(create.request.body).toEqual({
+      provider: 'chatgpt',
+      name: 'Private',
+    });
+    create.flush(accountDto({ id: 'c1', provider: 'chatgpt', main: false }));
+    http.expectOne('/api/accounts').flush({ accounts: [accountDto()] });
   });
 });

@@ -15,6 +15,7 @@ import { errorMessage } from '../repositories/repositories-api';
 import { AppBanner } from '../ui/banner';
 import { directoryName } from './session-directories';
 import { SessionsApi } from './sessions-api';
+import { agentName, engineOf } from '../engines/engines-store';
 
 /**
  * Repositories added while the session ran that did not become part of it:
@@ -31,8 +32,9 @@ import { SessionsApi } from './sessions-api';
       @let name = directoryName(directory);
       <app-banner kind="attention" data-testid="addition-banner">
         @if (directory.addition?.state === 'held') {
-          The setup script of <strong>{{ name }}</strong> failed, so Claude does
-          not have it yet: run it again, use it anyway, or remove it.
+          The setup script of <strong>{{ name }}</strong> failed, so
+          {{ agent() }}
+          does not have it yet: run it again, use it anyway, or remove it.
         } @else {
           <strong>{{ name }}</strong> could not be added:
           {{ directory.addition?.error ?? 'the clone failed' }}.
@@ -80,6 +82,10 @@ export class AdditionBanners {
   private readonly api = inject(SessionsApi);
 
   readonly session = input.required<SessionDto>();
+  /** "Claude", "Codex": the session's agent in sentences. */
+  protected readonly agent = computed(() =>
+    agentName(engineOf(this.session())),
+  );
   readonly enabled = input(true);
   readonly changed = output<SessionDto>();
 
