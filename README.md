@@ -1010,7 +1010,11 @@ notification (`turn_finished`) reads "Usage limit: …" with how long until it c
   first (if that is not its own) and waits for that reset. An account found exhausted when the
   app reads its limits before continuing makes it wait for that one in turn; each limit that ends
   a turn moves on to the next account. The wait remembers its account (`accountId`) and the
-  account whose limit stopped the session (`limitedAccountId`).
+  account whose limit stopped the session (`limitedAccountId`). The switch stores the new account on the
+  session (also for one that followed the default account), so that it does not go back to the
+  exhausted one; each account is tried at most once until a turn gets through, the user waits,
+  continues or changes the account, or the session ends. An account the user chose during the
+  turn stands, and one switched to is tried even when its limits cannot be read.
 - **When it continues:** at the reset plus a minute. It reads the plan usage first (the probe
   process, as for the limits display): a window of the session still at 100 % (5-hour, weekly,
   or the one that was rejected) means waiting for its new reset; otherwise it continues. A

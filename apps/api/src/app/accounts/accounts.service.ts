@@ -603,6 +603,11 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     return best;
   }
 
+  /** Whether a session can (still) use the account: see switchable. */
+  isSwitchable(id: string): boolean {
+    return this.switchable().some((row) => row.id === id);
+  }
+
   /** Accounts a session can switch to: logged in (or unknown), not removed. */
   private switchable(): AccountRow[] {
     return this.rows().filter(

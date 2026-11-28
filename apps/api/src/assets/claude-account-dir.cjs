@@ -173,7 +173,23 @@ function takeLock(lock) {
     if (Date.now() - stats.mtimeMs < STALE_LOCK_MS) {
       return false;
     }
-    fs.rmSync(lock, { recursive: true, force: true });
+    // Renamed first (atomic): of two helpers only one takes it over.
+    const stale = `${lock}.stale-${crypto.randomBytes(6).toString('hex')}`;
+    try {
+      fs.renameSync(lock, stale);
+    } catch {
+      continue;
+    }
+    if (Date.now() - fs.statSync(stale).mtimeMs < STALE_LOCK_MS) {
+      // Another helper took it over in between: give its lock back.
+      try {
+        fs.renameSync(stale, lock);
+      } catch {
+        fs.rmSync(stale, { recursive: true, force: true });
+      }
+      return false;
+    }
+    fs.rmSync(stale, { recursive: true, force: true });
   }
   return false;
 }

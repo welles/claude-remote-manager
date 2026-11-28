@@ -283,6 +283,11 @@ export interface LimitWait {
    * the user was told nothing yet: told when it turns out longer.
    */
   quiet?: boolean;
+  /**
+   * The account was switched to (automatically or by the user) and is to
+   * be tried even when its limits cannot be read: the turn tells.
+   */
+  switched?: boolean;
 }
 
 /**

@@ -763,6 +763,24 @@ describe('accounts', () => {
       expect(work.id).toBeTruthy();
     });
 
+    it('does not park the session on an account exhausted for days when its own reset is unknown', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      app.app
+        .get(LimitsService)
+        .account(work.id)
+        .updateFromRateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'seven_day',
+          resetsAt: Math.floor((Date.now() + 3 * 86_400_000) / 1000),
+        });
+      const session = await startOn('main');
+      hitLimit(Date.now(), null);
+      await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
+      await settle();
+      expect((await get(session.id)).accountId).toBe('main');
+    });
+
     it('stays with the only account', async () => {
       const session = (
         await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })

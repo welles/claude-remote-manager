@@ -252,7 +252,11 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
       }
       watched.turnOpen = false;
     } else if (previous === '') {
-      // First seen (e.g. an update of an old session): no transition.
+      // First seen (e.g. an update of an old session): no transition. A
+      // wait that was to end at once (from before a restart) is reported
+      // if it turns out longer.
+      watched.limitPending =
+        state === 'waiting/limit' && this.continuesAtOnce(session);
     } else if (state === 'waiting/limit') {
       watched.turnOpen = false;
       if (this.continuesAtOnce(session)) {

@@ -1076,6 +1076,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     const body = requireObject(message);
     const { text, attachmentIds } = this.messageContent(body, 'text');
+    if (!this.sessions.get(sessionId)?.limitWait) {
+      // A new turn of the user (not one held for a limit): every account
+      // counts again for the automatic switch.
+      this.limitChains.delete(sessionId);
+    }
     await this.sendMessage(sessionId, {
       // The ID goes to Claude Code as the message UUID.
       id: optionalUuid(body, 'id'),
@@ -1608,7 +1613,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     let until: Date | null = null;
     if (!to) {
       const earliest = accounts.earliestReset(windows, now);
-      const own = this.limits.account(from).exhaustedUntil(windows, now);
+      // An unknown reset of its own account counts as the next look at it.
+      const own =
+        this.limits.account(from).exhaustedUntil(windows, now) ??
+        new Date(now + this.limitRecheckMs(live));
       if (!earliest || earliest.id === from || (own && own <= earliest.at)) {
         return null;
       }
@@ -1683,6 +1691,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (!force && wait.accountId === accountId) {
       return null;
     }
+    // The account is the user's choice now (or followed one): no automatic
+    // move on from it; tried even when its limits cannot be read.
+    this.tellLimitWait(sessionId, wait);
     const updated = this.sessions.update(sessionId, {
       limitWait: {
         ...wait,
@@ -1690,6 +1701,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         window: null,
         resumeAt: new Date().toISOString(),
         resetKnown: false,
+        quiet: false,
+        switched: true,
       },
     });
     this.scheduleLimitCheck(sessionId);
@@ -2507,6 +2520,20 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.publishStatus(live);
     }
     live.closing = null;
+    const wait = this.requireRecord(live.id).limitWait;
+    if (
+      wait?.switched &&
+      !wait.resetKnown &&
+      wait.accountId &&
+      wait.accountId !== live.accountId
+    ) {
+      // The process of the previous account was what the session waited
+      // for (kept for previews or background tasks): go on now.
+      this.sessions.update(live.id, {
+        limitWait: { ...wait, resumeAt: new Date().toISOString() },
+      });
+      this.scheduleLimitCheck(live.id);
+    }
     this.releaseIfUnused(live);
   }
 
@@ -4873,6 +4900,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     // Ended first: a timer firing meanwhile does not continue it.
     this.dropLimitWait(sessionId);
+    this.limitChains.delete(sessionId);
     const live = this.liveSession(sessionId);
     live.limitRetries = 0;
     await this.ensureHistory(live, record);
@@ -4924,6 +4952,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             accountId: switchedTo,
             limitedAccountId: previous?.limitedAccountId ?? live.accountId,
             quiet: true,
+            switched: true,
           }
         : switched?.kind === 'earliest' && switched.until
           ? {
@@ -5069,6 +5098,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const accountId = this.accountOf(
       this.sessions.get(sessionId)?.accountId ?? null,
     );
+    if (
+      this.accounts &&
+      !this.accounts.isSwitchable(accountId) &&
+      this.moveOnFromExhausted(sessionId, accountId, new Date(8.64e15))
+    ) {
+      // Logged out (or removed) meanwhile: another account goes on.
+      return;
+    }
     const limits = this.limits.account(accountId);
     const read = await limits.readNow();
     const current = this.sessions.get(sessionId)?.limitWait;
@@ -5099,7 +5136,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     // A switch to an account whose limits cannot be read goes ahead: the
     // turn's result tells.
-    if (until || (!read && !current.resetKnown && !current.quiet)) {
+    if (until || (!read && !current.resetKnown && !current.switched)) {
       this.tellLimitWait(sessionId, current);
       const updated = this.sessions.update(sessionId, {
         limitWait: {
@@ -5138,7 +5175,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.scheduleLimitCheck(sessionId);
       return;
     }
-    if (!current.quiet) {
+    if (!current.switched) {
       // Waited for a reset: the accounts tried before may have room again.
       this.limitChains.delete(sessionId);
     }
@@ -5205,6 +5242,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             earliest.at.getTime() + this.limitResumeMarginMs,
           ).toISOString(),
           resetKnown: true,
+          switched: false,
         },
       });
       this.tellLimitWait(sessionId, wait);
@@ -5227,6 +5265,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         accountId: next,
         resumeAt: new Date().toISOString(),
         resetKnown: false,
+        switched: true,
       },
     });
     this.append(this.liveSession(sessionId), {
@@ -5256,7 +5295,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (!wait) {
       return;
     }
-    live.limitRetries = auto ? retries + 1 : 0;
+    // A continuation on an account switched to is no retry of the last.
+    live.limitRetries = auto && !wait.switched ? retries + 1 : 0;
     if (live.queue.length === 0) {
       // A message the user is sending right now goes first (as it is, no
       // longer held); the continuation only without one.
