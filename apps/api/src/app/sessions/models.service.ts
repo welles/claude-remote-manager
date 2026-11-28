@@ -50,8 +50,14 @@ export const FALLBACK_MODELS: ModelOption[] = [
 @Injectable()
 export class ModelsService {
   private readonly logger = new Logger(ModelsService.name);
-  private cached: { response: ModelListResponse; until: number } | null = null;
-  private loading: Promise<ModelListResponse> | null = null;
+  /** By the default account it was read for (see `defaultAccountKey`). */
+  private cached: {
+    key: string;
+    response: ModelListResponse;
+    until: number;
+  } | null = null;
+  private loading: { key: string; list: Promise<ModelListResponse> } | null =
+    null;
 
   /** Clock; replaced in tests. */
   now: () => number = Date.now;
@@ -60,29 +66,30 @@ export class ModelsService {
     private readonly runner: AgentRunner,
     // The models of the default account; without it the main one.
     @Optional() private readonly accounts?: AccountsService,
-  ) {
-    // Another default account (or login): its own list.
-    let key: string | null = null;
-    accounts?.changes$.subscribe((list) => {
-      const next = defaultAccountKey(list);
-      if (key !== null && next !== key) {
-        this.cached = null;
-      }
-      key = next;
-    });
-  }
+  ) {}
 
   list(): Promise<ModelListResponse> {
-    if (this.cached && this.cached.until > this.now()) {
+    // Another default account (or login) has a list of its own.
+    const key = this.accounts ? defaultAccountKey(this.accounts.list()) : '';
+    if (
+      this.cached &&
+      this.cached.key === key &&
+      this.cached.until > this.now()
+    ) {
       return Promise.resolve(this.cached.response);
     }
-    this.loading ??= this.load().finally(() => {
-      this.loading = null;
-    });
-    return this.loading;
+    if (this.loading?.key !== key) {
+      const list = this.load(key).finally(() => {
+        if (this.loading?.list === list) {
+          this.loading = null;
+        }
+      });
+      this.loading = { key, list };
+    }
+    return this.loading.list;
   }
 
-  private async load(): Promise<ModelListResponse> {
+  private async load(key: string): Promise<ModelListResponse> {
     try {
       const task = (probe: AgentProbe) => probe.supportedModels();
       // The default account's models.
@@ -99,7 +106,7 @@ export class ModelsService {
         source: 'claude-code',
         updatedAt: new Date(this.now()).toISOString(),
       };
-      this.cached = { response, until: this.now() + MODELS_CACHE_MS };
+      this.cached = { key, response, until: this.now() + MODELS_CACHE_MS };
       return response;
     } catch (error) {
       this.logger.warn(`Could not read the models: ${String(error)}`);
@@ -108,7 +115,7 @@ export class ModelsService {
         source: 'fallback',
         updatedAt: null,
       };
-      this.cached = { response, until: this.now() + MODELS_RETRY_MS };
+      this.cached = { key, response, until: this.now() + MODELS_RETRY_MS };
       return response;
     }
   }

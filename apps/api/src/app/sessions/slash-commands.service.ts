@@ -56,8 +56,16 @@ export class SlashCommandsService {
   private readonly logger = new Logger(SlashCommandsService.name);
   private readonly sessions = new Map<string, SlashCommandOption[]>();
   private readonly terminal = new Set(TERMINAL_COMMANDS);
-  private user: { commands: SlashCommandOption[]; until: number } | null = null;
-  private loading: Promise<SlashCommandOption[]> | null = null;
+  /** By the default account it was read for (see `defaultAccountKey`). */
+  private user: {
+    key: string;
+    commands: SlashCommandOption[];
+    until: number;
+  } | null = null;
+  private loading: {
+    key: string;
+    list: Promise<SlashCommandOption[]>;
+  } | null = null;
 
   /** Clock; replaced in tests. */
   now: () => number = Date.now;
@@ -66,17 +74,7 @@ export class SlashCommandsService {
     private readonly runner: AgentRunner,
     // The commands of the default account; without it the main one.
     @Optional() private readonly accounts?: AccountsService,
-  ) {
-    // Another default account (or login): its own list.
-    let key: string | null = null;
-    accounts?.changes$.subscribe((list) => {
-      const next = defaultAccountKey(list);
-      if (key !== null && next !== key) {
-        this.user = null;
-      }
-      key = next;
-    });
-  }
+  ) {}
 
   async forSession(sessionId: string): Promise<SlashCommandsResponse> {
     const reported = this.sessions.get(sessionId);
@@ -110,13 +108,20 @@ export class SlashCommandsService {
   }
 
   private userCommands(): Promise<SlashCommandOption[]> {
-    if (this.user && this.user.until > this.now()) {
+    // Another default account (or login) has a list of its own.
+    const key = this.accounts ? defaultAccountKey(this.accounts.list()) : '';
+    if (this.user && this.user.key === key && this.user.until > this.now()) {
       return Promise.resolve(this.user.commands);
     }
-    this.loading ??= this.load().finally(() => {
-      this.loading = null;
-    });
-    return this.loading;
+    if (this.loading?.key !== key) {
+      const list = this.load(key).finally(() => {
+        if (this.loading?.list === list) {
+          this.loading = null;
+        }
+      });
+      this.loading = { key, list };
+    }
+    return this.loading.list;
   }
 
   /** The commands of the default account's Claude Code. */
@@ -130,15 +135,23 @@ export class SlashCommandsService {
       : this.runner.probe(task);
   }
 
-  private async load(): Promise<SlashCommandOption[]> {
+  private async load(key: string): Promise<SlashCommandOption[]> {
     try {
       const commands = uniqueCommands(await this.probeCommands());
-      this.user = { commands, until: this.now() + USER_COMMANDS_CACHE_MS };
+      this.user = {
+        key,
+        commands,
+        until: this.now() + USER_COMMANDS_CACHE_MS,
+      };
       return commands;
     } catch (error) {
       this.logger.warn(`Listing the slash commands failed: ${String(error)}`);
-      const commands = this.user?.commands ?? [];
-      this.user = { commands, until: this.now() + USER_COMMANDS_RETRY_MS };
+      const commands = this.user?.key === key ? this.user.commands : [];
+      this.user = {
+        key,
+        commands,
+        until: this.now() + USER_COMMANDS_RETRY_MS,
+      };
       return commands;
     }
   }

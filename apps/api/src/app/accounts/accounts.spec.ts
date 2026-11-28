@@ -927,4 +927,14 @@ describe('accounts', () => {
       /Settings/,
     );
   });
+
+  it('reads the models again for another default account', async () => {
+    const work = await addAccount('Work', 'work@example.test');
+    await call('GET', '/api/models');
+    await call('GET', '/api/models');
+    const probes = app.runner.probes;
+    await call('PATCH', `/api/accounts/${work.id}`, { isDefault: true });
+    await call('GET', '/api/models');
+    expect(app.runner.probes).toBe(probes + 1);
+  });
 });
