@@ -595,6 +595,24 @@ describe('CodexEventTranslator', () => {
     expect(
       translate('turn/completed', { turn: turn({ status: 'failed' }) }),
     ).toEqual([expect.objectContaining({ text: 'The turn failed.' })]);
+    // Named only in the turn's error: limit-hit before the result.
+    expect(
+      translate('turn/completed', {
+        turn: turn({
+          status: 'failed',
+          error: {
+            message: '',
+            codexErrorInfo: 'usageLimitExceeded',
+            additionalDetails: null,
+          },
+        }),
+      }),
+    ).toEqual([
+      { type: 'limit-hit' },
+      expect.objectContaining({
+        text: 'The usage limit of the ChatGPT account was reached.',
+      }),
+    ]);
     // Other errors are left to the turn's result.
     expect(
       translate('error', {

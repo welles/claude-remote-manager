@@ -849,8 +849,14 @@ export class CodexEventTranslator {
         }
         return [];
       }
-      case 'turn/completed':
-        return [this.result(p['turn'] as CodexTurn)];
+      case 'turn/completed': {
+        const turn = p['turn'] as CodexTurn;
+        // A limit only the turn's own error names still stops the session.
+        const unannounced =
+          !this.limited && isUsageLimit(turn.error?.codexErrorInfo);
+        const result = this.result(turn);
+        return unannounced ? [{ type: 'limit-hit' }, result] : [result];
+      }
       default:
         return [];
     }

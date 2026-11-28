@@ -263,6 +263,28 @@ async function withoutMcpServers(
   }
 }
 
+/**
+ * Turns per thread: a history read and the start of a session's process
+ * never have the same thread open in two homes at once (each waits for the
+ * other's app server to have ended, or for the start to have resumed).
+ */
+export class ThreadGate {
+  private readonly tails = new Map<string, Promise<unknown>>();
+
+  async run<T>(threadId: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(threadId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(task);
+    const tail = next.catch(() => undefined);
+    this.tails.set(threadId, tail);
+    void tail.then(() => {
+      if (this.tails.get(threadId) === tail) {
+        this.tails.delete(threadId);
+      }
+    });
+    return next;
+  }
+}
+
 /** Where the runner finds Codex. */
 export interface CodexRunnerConfig {
   executable: string;
@@ -283,6 +305,8 @@ export interface CodexRunnerConfig {
  */
 @Injectable()
 export class CodexRunner implements AgentRunner {
+  /** Shared by the history reads and the sessions' process starts. */
+  private readonly threads = new ThreadGate();
   constructor(
     private readonly config: CodexRunnerConfig,
     private readonly launcher: ProcessLauncher,
@@ -292,12 +316,10 @@ export class CodexRunner implements AgentRunner {
     options: AgentStartOptions,
     firstMessage: AgentUserMessage,
   ): Promise<AgentRun> {
-    return CodexProcess.start(
-      this.config,
-      this.launcher,
-      options,
-      firstMessage,
-    );
+    const start = () =>
+      CodexProcess.start(this.config, this.launcher, options, firstMessage);
+    // A resumed thread waits for a history read of it to end.
+    return options.resume ? this.threads.run(options.resume, start) : start();
   }
 
   async probe<T>(
@@ -360,7 +382,11 @@ export class CodexRunner implements AgentRunner {
    * session's first directory, removed since), without the user's MCP
    * servers and without the turns in the resume's answer.
    */
-  async history(threadId: string): Promise<AgentHistoryEntry[]> {
+  history(threadId: string): Promise<AgentHistoryEntry[]> {
+    return this.threads.run(threadId, () => this.readHistory(threadId));
+  }
+
+  private async readHistory(threadId: string): Promise<AgentHistoryEntry[]> {
     const path = await findRollout(this.config.baseHome, threadId);
     if (!path) {
       return [];
@@ -387,7 +413,8 @@ export class CodexRunner implements AgentRunner {
       }>('thread/read', { threadId, includeTurns: true });
       return codexHistory(answer.thread.turns ?? []);
     } finally {
-      server.close();
+      // Ended before the session's own process may resume the thread.
+      await server.close();
     }
   }
 }

@@ -2418,9 +2418,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.rejectedWindow = null;
     // A changed secret is masked from this process on.
     live.mask = undefined;
-    // In use from now on: by the account it will pick (see `pickId`).
+    // In use from now on: by the account it will pick (see `pickId`); a
+    // provider without accounts fails below, in the try.
     live.accountId =
-      this.accounts?.pickId(
+      this.accounts?.effectiveId(
         this.requireRecord(live.id).accountId,
         this.providerOf(this.requireRecord(live.id)),
       ) ?? MAIN_ACCOUNT_ID;

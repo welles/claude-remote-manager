@@ -271,6 +271,32 @@ describe('Codex sessions', () => {
     );
   });
 
+  it('fails visibly when no ChatGPT account is left', async () => {
+    const session = (await create({ engine: 'codex' })).json<SessionDto>();
+    await waitFor(() => codex.runs.length === 1);
+    codex.last.emit(resultMessage(1, 0));
+    await waitFor(
+      async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>()
+          .status === 'waiting',
+    );
+    codex.last.close();
+    await waitFor(() => codex.runs[0].closed);
+    for (const id of ['chatgpt-a', 'chatgpt-b']) {
+      expect((await call('DELETE', `/api/accounts/${id}`)).status).toBe(204);
+    }
+    await call('POST', `/api/sessions/${session.id}/messages`, {
+      text: 'Next',
+    });
+    // Not stuck in `running`: the start fails and says why.
+    await waitFor(
+      async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>()
+          .status === 'failed',
+    );
+    expect(codex.runs).toHaveLength(1);
+  });
+
   it('switches to the next ChatGPT account at the usage limit', async () => {
     const session = (await create({ engine: 'codex' })).json<SessionDto>();
     await waitFor(() => codex.runs.length === 1);
