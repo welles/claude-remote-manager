@@ -213,6 +213,7 @@ describe('SessionList', () => {
     });
     http.expectOne('/api/limits');
     http.expectOne('/api/accounts');
+    http.expectOne('/api/engines');
   });
 
   it('marks the session open beside the list as the current page', async () => {
