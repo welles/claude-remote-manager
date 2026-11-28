@@ -1976,6 +1976,22 @@ describe('SessionsService', () => {
       expect(service.get(session.id).status).toBe('running');
     });
 
+    it('records the time of a queued message when it is sent, not queued', async () => {
+      const session = await startSession();
+      await service.send(session.id, { id: MSG_2, text: 'Also this' });
+      const queuedAt = lastEvent('message.queued')?.at ?? '';
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      runner.last.emit(resultMessage(1, 0));
+      await flush();
+      const sent = lastEvent('user.message');
+      expect(sent?.id).toBe(MSG_2);
+      expect(Date.parse(sent?.at ?? '')).toBeGreaterThan(Date.parse(queuedAt));
+      expect(
+        new MessageTimeRepository(db).forSession(session.id).get(MSG_2),
+      ).toBe(sent?.at);
+    });
+
     it('lets the user remove a queued message, but not a sent one', async () => {
       const session = await startSession();
       await service.send(session.id, { id: MSG_2, text: 'Never mind' });

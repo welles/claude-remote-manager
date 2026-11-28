@@ -5963,7 +5963,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Adds an event to the session log, stores it if it is not part of the
-   * transcript, and publishes it.
+   * transcript, and publishes it; returns it as logged (`undefined` for
+   * streamed pieces held back).
    */
   private append(
     live: LiveSession,
@@ -5976,7 +5977,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       /** Already masked (output flushed from the stream masker). */
       raw?: boolean;
     } = {},
-  ): void {
+  ): SessionEvent | undefined {
     // Secrets of the environment never reach the log, the database, the
     // clients or the hooks (notifications, search).
     const mask = this.maskFor(live);
@@ -5991,7 +5992,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         mask,
       );
       if (!text) {
-        return;
+        return undefined;
       }
       input = { ...unmasked, text };
     } else if (
@@ -6007,7 +6008,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         mask,
       );
       if (!text) {
-        return;
+        return undefined;
       }
       input = { ...unmasked, text };
     } else if (
@@ -6052,12 +6053,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.support.toolFinished(live.id, input.toolUseId);
     }
     this.events.next({ sessionId: live.id, event });
+    return event;
   }
 
   private appendUserMessage(live: LiveSession, message: UserMessage): void {
     // A suggestion still to come belongs to the turn before.
     live.suggestionOpen = false;
-    this.append(live, {
+    const sent = this.append(live, {
       type: 'user.message',
       id: message.id,
       text: message.text,
@@ -6072,8 +6074,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         : {}),
       ...(message.origin === 'app' ? { origin: 'app' as const } : {}),
     });
-    const sent = live.log.findLast('user.message');
-    if (sent?.id === message.id && sent.at) {
+    if (sent?.at) {
       this.messageTimes?.save(live.id, message.id, new Date(sent.at));
     }
     // Claude Code uses the message ID as the transcript entry's UUID.

@@ -1,6 +1,7 @@
 import {
   formatClock,
   formatDate,
+  formatExact,
   formatIsoMinute,
   formatRelative,
   formatStamp,
@@ -45,6 +46,9 @@ describe('dates', () => {
     );
     expect(formatStamp(new Date(2025, 10, 12, 21, 15), now)).toBe(
       '12 Nov 2025, 21:15',
+    );
+    expect(formatExact(new Date(2026, 10, 13, 16, 27, 43))).toBe(
+      'Fri, 13 Nov 2026, 16:27:43',
     );
   });
 

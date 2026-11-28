@@ -140,6 +140,16 @@ export function formatStamp(
   ).format(date);
 }
 
+/** The exact time with seconds, e.g. `Fri, 13 Nov 2026, 16:27:43`. */
+export function formatExact(
+  value: string | number | Date,
+  locale?: string,
+): string {
+  return dateFormat({ ...STYLES.long, second: '2-digit' }, locale).format(
+    toDate(value),
+  );
+}
+
 export function formatDate(
   value: string | number | Date,
   style: DateStyle = 'dateTime',
