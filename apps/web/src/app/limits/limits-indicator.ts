@@ -48,13 +48,12 @@ interface Headline {
         type="button"
         class="chip"
         [class]="
-          view?.level === 'exhausted'
+          (view?.level === 'exhausted'
             ? 'tone-error'
             : view?.level === 'high'
               ? 'tone-error-line'
-              : ''
+              : '') + ($first ? '' : ' ml-1.5')
         "
-        [class.ml-1.5]="!$first"
         (click)="details.open()"
         [attr.aria-label]="entry.label"
         data-testid="limits"

@@ -73,6 +73,7 @@ describe('LimitsIndicator', () => {
         .filter(Boolean)
         .join(' '),
       label: chip.getAttribute('aria-label'),
+      spaced: chip.classList.contains('ml-1.5'),
     }));
   };
 
@@ -90,6 +91,7 @@ describe('LimitsIndicator', () => {
       {
         text: '5h 40%',
         label: expect.stringMatching(/^Plan limits: .* 40%, resets in/),
+        spaced: false,
       },
     ]);
   });
@@ -117,6 +119,8 @@ describe('LimitsIndicator', () => {
       'ChatGPT 5h 80%',
     ]);
     expect(chips[1].label).toMatch(/^ChatGPT plan limits: .* 80%/);
+    // The second chip keeps its distance from the first.
+    expect(chips.map((chip) => chip.spaced)).toEqual([false, true]);
   });
 
   it('leaves out providers whose engine the server does not have', async () => {
