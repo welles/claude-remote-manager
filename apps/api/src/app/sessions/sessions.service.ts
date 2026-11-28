@@ -2493,6 +2493,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             ...(offersReview ? [this.requestReviewTool(live)] : []),
           ].filter((tool) => allTools || !tool.unavailable),
           usageBaseline: recordedUsage,
+          sessionAllows: allowed.rules,
           settings: extras.settings,
           ...(extras.instructions ? { instructions: extras.instructions } : {}),
         },
@@ -2525,6 +2526,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<{ resume: string | null; sessionId: string | null }> {
     if (record.sdkSessionId) {
       return { resume: record.sdkSessionId, sessionId: null };
+    }
+    if (this.engines?.namesSessions(record.engine)) {
+      // No conversation of its own yet: nothing to look up.
+      return { resume: null, sessionId: null };
     }
     let exists = false;
     try {

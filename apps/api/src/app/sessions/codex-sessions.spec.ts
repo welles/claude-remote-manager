@@ -7,13 +7,34 @@ import { DATABASE, type AppDatabase } from '../db/database';
 import { accounts } from '../db/schema';
 import { rawRequest, startTestApp, type TestApp } from '../testing/test-app';
 import { NO_GITHUB_REASON } from './session-agent-support';
-import { LIMIT_SWITCH_CONTINUE_TEXT } from './sessions.service';
+import { AccountsService } from '../accounts/accounts.service';
+import { SessionManagementService } from './session-management.service';
+import { SessionRepository } from './session.repository';
+import {
+  LIMIT_SWITCH_CONTINUE_TEXT,
+  SessionsService,
+} from './sessions.service';
 import {
   FakeAgentRunner,
   FakeTranscriptReader,
   resultMessage,
   waitFor,
 } from './testing/fake-agent';
+
+/** Codex's reader: removes a deleted session's thread. */
+class CodexReader extends FakeTranscriptReader {
+  readonly removed: string[] = [];
+  readonly looked: string[] = [];
+
+  override async exists(id: string): Promise<boolean> {
+    this.looked.push(id);
+    return super.exists(id);
+  }
+
+  async remove(threadId: string): Promise<void> {
+    this.removed.push(threadId);
+  }
+}
 
 const LOGGED_IN = {
   loggedIn: true,
@@ -31,6 +52,7 @@ const LOGGED_IN = {
 describe('Codex sessions', () => {
   let app: TestApp;
   let codex: FakeAgentRunner;
+  let reader: CodexReader;
   let homes: string;
 
   beforeEach(async () => {
@@ -53,11 +75,13 @@ describe('Codex sessions', () => {
     );
     homes = join(app.dir, 'codex');
     codex = new FakeAgentRunner();
+    reader = new CodexReader();
     app.app.get(AgentEngines).register('codex', {
       runner: codex,
-      transcripts: new FakeTranscriptReader(),
+      transcripts: reader,
       capabilities: CODEX_CAPABILITIES,
       fixedTools: true,
+      namesSessions: true,
     });
     const db = app.app.get<AppDatabase>(DATABASE);
     for (const [id, name, position] of [
@@ -106,7 +130,11 @@ describe('Codex sessions', () => {
       permissionMode: 'untrusted',
       account: { configDir: join(homes, 'chatgpt-a'), main: false },
       usageBaseline: {},
+      sessionAllows: [],
+      // Codex names its threads: nothing to look up for a new session.
+      resume: null,
     });
+    expect(reader.looked).toEqual([]);
 
     // Another engine's modes are refused, at creation and later.
     expect(
@@ -167,6 +195,47 @@ describe('Codex sessions', () => {
     expect(
       (app.runner.last.options.tools ?? []).some((tool) => tool.unavailable),
     ).toBe(false);
+  });
+
+  it('removes the thread of a deleted session', async () => {
+    const session = (await create({ engine: 'codex' })).json<SessionDto>();
+    await waitFor(() => codex.runs.length === 1);
+    codex.last.emit(
+      {
+        type: 'system',
+        subtype: 'init',
+        session_id: '01a22115-9256-7822-87d8-50c911ae76b2',
+      },
+      resultMessage(1, 0, {
+        session_id: '01a22115-9256-7822-87d8-50c911ae76b2',
+      }),
+    );
+    await waitFor(
+      () =>
+        app.app.get(SessionRepository).get(session.id)?.sdkSessionId ===
+        '01a22115-9256-7822-87d8-50c911ae76b2',
+    );
+    await app.app.get(SessionsService).end(session.id);
+    await app.app
+      .get(SessionManagementService)
+      .delete(session.id, { confirm: true, acceptLoss: true });
+    expect(reader.removed).toEqual(['01a22115-9256-7822-87d8-50c911ae76b2']);
+  });
+
+  it('removes a ChatGPT account also without Codex on the server', async () => {
+    // As if Codex were gone: the backend is not there any more.
+    const accounts = app.app.get(AccountsService) as unknown as {
+      chatgpt: unknown;
+    };
+    accounts.chatgpt = null;
+    const removed = await call('DELETE', '/api/accounts/chatgpt-b');
+    expect(removed.status).toBe(204);
+    expect(
+      app.app
+        .get(AccountsService)
+        .list()
+        .map((account) => account.id),
+    ).not.toContain('chatgpt-b');
   });
 
   it('switches to the next ChatGPT account at the usage limit', async () => {

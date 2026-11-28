@@ -26,6 +26,11 @@ export interface AgentEngine {
    * chosen by the user).
    */
   fixedTools?: boolean;
+  /**
+   * The engine names its sessions itself (Codex's thread IDs): a session
+   * that has none yet has nothing to resume, whatever its app ID.
+   */
+  namesSessions?: boolean;
 }
 
 /** What Codex offers (its own approval policies, no plan mode). */
@@ -98,6 +103,11 @@ export class AgentEngines {
 
   transcripts(id: AgentEngineId): TranscriptReader {
     return this.get(id).transcripts;
+  }
+
+  /** Whether an engine names its sessions itself (see `namesSessions`). */
+  namesSessions(id: AgentEngineId): boolean {
+    return this.engines.get(id)?.namesSessions === true;
   }
 
   /** Whether an engine fixes the app's tools at thread start. */

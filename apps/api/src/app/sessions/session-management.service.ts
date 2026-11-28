@@ -262,7 +262,9 @@ export class SessionManagementService {
       const cwd = transcriptDirectory(record);
       transcript =
         !!cwd &&
-        (await (this.engines?.transcripts(record.engine) ?? this.transcripts).exists(
+        (await (
+          this.engines?.transcripts(record.engine) ?? this.transcripts
+        ).exists(
           record.sdkSessionId ?? record.id,
           cwd,
           record.workingDirectory !== null,
@@ -327,7 +329,13 @@ export class SessionManagementService {
         await this.removeDirectory(record, entry.directory);
       }
       await this.removeEmptyParents(record);
-      const ids = new Set([record.id, record.sdkSessionId].filter(Boolean));
+      // Claude Code's data (another engine's session ID is not Claude Code's).
+      const ids = new Set(
+        [
+          record.id,
+          record.engine === 'claude-code' ? record.sdkSessionId : null,
+        ].filter(Boolean),
+      );
       // Also the copy in an earlier version's configuration directory.
       const configDirs = [
         claudeConfigDir(),
@@ -339,6 +347,22 @@ export class SessionManagementService {
         for (const configDir of configDirs) {
           await this.entries.removeClaudeSessionData(configDir, id as string);
         }
+      }
+      // What the session's engine keeps elsewhere (Codex's rollouts).
+      // (Not when this server no longer has the engine.)
+      const reader = !this.engines
+        ? this.transcripts
+        : this.engines.has(record.engine)
+          ? this.engines.transcripts(record.engine)
+          : null;
+      if (record.sdkSessionId && reader?.remove) {
+        await reader
+          .remove(record.sdkSessionId)
+          .catch((error: unknown) =>
+            this.logger.warn(
+              `Removing the conversation of ${sessionId} failed: ${errorText(error)}`,
+            ),
+          );
       }
       await this.attachmentStore?.removeSession(sessionId);
       await this.shownFileStore?.removeSession(sessionId);

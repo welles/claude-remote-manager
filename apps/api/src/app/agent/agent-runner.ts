@@ -115,6 +115,13 @@ export interface AgentStartOptions {
    * user allowed for the session; never written to settings files).
    */
   allowedTools?: string[];
+  /**
+   * The rules among `allowedTools` the user allowed for the session
+   * (`Allow for this session` of earlier approvals): an engine that matches
+   * rules itself (Codex) reads them as exact, never as prefixes or
+   * wildcards, since they are the literal command, file or tool approved.
+   */
+  sessionAllows?: string[];
   /** Variables added to the process environment (without app secrets). */
   env?: Record<string, string>;
   /** The app's own tools for this session. */

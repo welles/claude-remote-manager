@@ -267,9 +267,15 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     this.removing.add(id);
     let loggedOut = false;
     let removed = false;
+    // Without its engine on this server (a ChatGPT account without Codex)
+    // only the row goes: its directory stays where it is.
+    const available = row.provider !== 'chatgpt' || !!this.chatgpt;
     try {
       this.cancelLogin(id);
       try {
+        if (!available) {
+          throw new Error('Codex is not available on this server');
+        }
         await this.backend(row.provider).logout(this.agentAccountOf(row));
         loggedOut = true;
       } catch (error) {
@@ -282,7 +288,13 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
         throw busy();
       }
       // The directory first: if that fails, the account stays (retry).
-      await this.backend(row.provider).remove(row.directory);
+      if (available) {
+        await this.backend(row.provider).remove(row.directory);
+      } else {
+        this.logger.warn(
+          `Removed account ${id} without its directory ${row.directory ?? ''}: Codex is not available on this server`,
+        );
+      }
       // A login started meanwhile goes too.
       this.cancelLogin(id);
       this.deleteRow(row);
