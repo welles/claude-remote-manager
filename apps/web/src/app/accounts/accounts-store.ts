@@ -11,7 +11,7 @@ import {
 import { SessionSocket } from '../sessions/session-socket';
 
 /**
- * The Claude accounts for the whole app: loaded once, then updated live
+ * The accounts of every provider for the whole app: loaded once, then updated live
  * through `accounts.changed` frames (logins, limits, edits).
  */
 @Injectable({ providedIn: 'root' })
@@ -24,11 +24,9 @@ export class AccountsStore {
   readonly accounts = signal<AccountDto[] | null>(null);
   readonly failed = signal(false);
 
-  /** The default account's ID (the main one until loaded). */
+  /** The default Claude account's ID (the main one until loaded). */
   readonly defaultId = computed(
-    () =>
-      this.accounts()?.find((account) => account.isDefault)?.id ??
-      MAIN_ACCOUNT_ID,
+    () => this.defaultOf('claude')?.id ?? MAIN_ACCOUNT_ID,
   );
 
   start(): void {
@@ -55,13 +53,38 @@ export class AccountsStore {
     });
   }
 
-  /** The account a session uses (`null`: the default). */
-  effective(accountId: string | null | undefined): AccountDto | null {
-    const accounts = this.accounts() ?? [];
+  /** The accounts of a provider, in order. */
+  ofProvider(provider: AccountProvider): AccountDto[] {
+    return (this.accounts() ?? []).filter(
+      (account) => account.provider === provider,
+    );
+  }
+
+  /**
+   * A provider's default account (each provider has its own; for Claude
+   * the main one when none is marked), `null` while it has none.
+   */
+  defaultOf(provider: AccountProvider): AccountDto | null {
+    const own = this.ofProvider(provider);
     return (
-      accounts.find((account) => account.id === accountId) ??
-      accounts.find((account) => account.id === this.defaultId()) ??
+      own.find((account) => account.isDefault) ??
+      own.find((account) => account.main) ??
+      own[0] ??
       null
+    );
+  }
+
+  /**
+   * The account a session uses: its own (of the provider), else the
+   * provider's default (`null` for the account means the default).
+   */
+  effective(
+    accountId: string | null | undefined,
+    provider: AccountProvider = 'claude',
+  ): AccountDto | null {
+    return (
+      this.ofProvider(provider).find((account) => account.id === accountId) ??
+      this.defaultOf(provider)
     );
   }
 

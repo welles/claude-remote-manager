@@ -6,6 +6,7 @@ import {
   inject,
   input,
   signal,
+  untracked,
   type OnInit,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -35,6 +36,7 @@ import {
 } from '../ui/status-badge';
 import { formatCost, formatTokens, needLabel, totalTokens } from './format';
 import { ModelsStore, modelLabel } from './models-store';
+import { EnginesStore, engineOf } from '../engines/engines-store';
 import { loadSessionList, saveSessionList } from './session-list-cache';
 import { SessionSearch } from './session-search';
 import { SessionSocket } from './session-socket';
@@ -102,9 +104,8 @@ export class SessionList implements OnInit {
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;
   protected readonly totalTokens = totalTokens;
-  protected readonly modelLabel = modelLabel;
   private readonly modelsStore = inject(ModelsStore);
-  protected readonly models = this.modelsStore.models;
+  private readonly enginesStore = inject(EnginesStore);
 
   /** Ticks for the relative times. */
   protected readonly now = signal(Date.now());
@@ -171,6 +172,15 @@ export class SessionList implements OnInit {
   });
 
   constructor() {
+    // The models of every engine in the list, for their labels.
+    effect(() => {
+      const engines = new Set(this.sessions().map(engineOf));
+      untracked(() => {
+        for (const engine of engines) {
+          this.modelsStore.load(engine);
+        }
+      });
+    });
     // The list as last loaded, for starts without a connection.
     effect(() => {
       const sessions = this.sessions();
@@ -208,6 +218,7 @@ export class SessionList implements OnInit {
             : 'all',
     );
     this.modelsStore.load();
+    this.enginesStore.load();
     const timer = setInterval(() => this.now.set(Date.now()), 30_000);
     this.destroyRef.onDestroy(() => clearInterval(timer));
     this.socket.connect();
@@ -233,6 +244,18 @@ export class SessionList implements OnInit {
         }
       });
     this.load();
+  }
+
+  /**
+   * The session's model in its engine's terms, with the engine's name
+   * when the UI names engines ("Codex · GPT-5").
+   */
+  protected modelText(session: SessionDto): string {
+    const engine = engineOf(session);
+    const model = modelLabel(this.modelsStore.models(engine), session.model);
+    return this.enginesStore.showEngine(engine)
+      ? `${this.enginesStore.engine(engine).label} · ${model}`
+      : model;
   }
 
   protected load(): void {

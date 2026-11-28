@@ -11,7 +11,13 @@ import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import type { DeletionPreview } from '@claude-remote-manager/shared-types';
+import {
+  DEFAULT_ENGINE,
+  ENGINE_LABELS,
+  type AgentEngineId,
+  type DeletionPreview,
+} from '@claude-remote-manager/shared-types';
+import { agentName } from '../engines/engines-store';
 import { errorMessage } from '../repositories/repositories-api';
 import { formatCost } from './format';
 import { AppDialog } from '../ui/dialog';
@@ -51,7 +57,9 @@ import { Toasts } from '../ui/toasts';
             <ul class="pl-5 wrap-anywhere">
               <li>
                 the conversation{{
-                  preview.transcript ? " (Claude Code's transcript)" : ''
+                  preview.transcript
+                    ? ' (' + engineLabel() + "'s transcript)"
+                    : ''
                 }}
                 and the session's history
               </li>
@@ -59,7 +67,7 @@ import { Toasts } from '../ui/toasts';
                 <li>{{ preview.attachments }} attached image(s)</li>
               }
               @if (preview.shownFiles > 0) {
-                <li>{{ preview.shownFiles }} file(s) Claude showed</li>
+                <li>{{ preview.shownFiles }} file(s) {{ agent() }} showed</li>
               }
               @for (
                 directory of preview.directories;
@@ -141,6 +149,10 @@ export class DeleteSessionDialog {
   private readonly dialog = viewChild.required(AppDialog);
 
   readonly sessionId = input.required<string>();
+  /** The session's engine, to name its transcript and agent. */
+  readonly engine = input<AgentEngineId>(DEFAULT_ENGINE);
+  protected readonly engineLabel = computed(() => ENGINE_LABELS[this.engine()]);
+  protected readonly agent = computed(() => agentName(this.engine()));
   /** Emitted after the session was deleted. */
   readonly deleted = output<string>();
 

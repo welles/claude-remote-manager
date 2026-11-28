@@ -37,7 +37,7 @@
   <section class="flex flex-col items-start gap-2 [&>.app-section-label]:mb-0">
     <h3 class="app-section-label">Variables</h3>
     <p class="m-0 text-on-surface-variant">
-      Environment variables of Claude Code and every command it runs, and of the
+      Environment variables of the agent and every command it runs, and of the
       setup scripts. Secrets are stored encrypted, never shown again and masked
       as *** in the conversation.
     </p>
@@ -142,9 +142,9 @@
   <section class="flex flex-col items-start gap-2 [&>.app-section-label]:mb-0">
     <h3 class="app-section-label">Files</h3>
     <p class="m-0 text-on-surface-variant">
-      Written for each Claude Code process (and setup script) into a private
-      directory of the session, outside the clones, and removed when it ends.
-      The variable gets the file's path, e.g.
+      Written for each agent process (and setup script) into a private directory
+      of the session, outside the clones, and removed when it ends. The variable
+      gets the file's path, e.g.
       <code>GOOGLE_APPLICATION_CREDENTIALS</code>, <code>KUBECONFIG</code> or
       <code>NPM_CONFIG_USERCONFIG</code>.
     </p>
@@ -274,7 +274,7 @@
       class="w-full self-stretch"
       subscriptSizing="dynamic"
     >
-      <mat-label>Additional information for Claude</mat-label>
+      <mat-label>Additional information for the agent</mat-label>
       <textarea
         matInput
         name="instructions"
@@ -400,6 +400,13 @@
     >
       <app-icon matButtonIcon name="plus" />Add repository
     </button>
+    } @if (enginesStore.several()) {
+    <p
+      class="m-0 text-on-surface-variant"
+      data-testid="environment-presets-engine"
+    >
+      Model and permissions are presets for Claude Code sessions.
+    </p>
     }
     <div class="flex flex-wrap items-center gap-x-3 gap-y-2 self-stretch">
       <mat-form-field

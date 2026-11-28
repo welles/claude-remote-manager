@@ -20,7 +20,11 @@ import {
   ATTACHMENT_MEDIA_TYPES,
   PERMISSION_MODE_INFO,
   DANGEROUS_PERMISSION_MODES,
-  SESSION_PERMISSION_MODES,
+  DEFAULT_ENGINE,
+  ENGINE_DEFAULT_PERMISSION_MODE,
+  ENGINE_PROVIDERS,
+  ACCOUNT_PROVIDER_LABELS,
+  type AgentEngineId,
   type CreateSessionRequest,
   type EnvironmentDto,
   type RepositoryBranchesResponse,
@@ -44,6 +48,7 @@ import {
 } from '../repositories/repositories-api';
 import { ModelsStore } from './models-store';
 import { AccountsStore } from '../accounts/accounts-store';
+import { EnginesStore, agentName } from '../engines/engines-store';
 import { AttachmentDrafts, imageFiles } from '../attachments/attachment-drafts';
 import { AttachmentsApi } from '../attachments/attachments-api';
 import { DraftImages } from '../attachments/draft-images';
@@ -55,12 +60,33 @@ import {
 import { SessionsApi } from './sessions-api';
 import { EnvironmentsApi } from '../environments/environments-api';
 
-/** Permission modes offered for new sessions, in this order. */
-export const PERMISSION_MODE_OPTIONS = SESSION_PERMISSION_MODES.map((mode) => ({
-  value: mode,
-  ...PERMISSION_MODE_INFO[mode],
-  dangerous: DANGEROUS_PERMISSION_MODES.includes(mode),
-}));
+/** The choices of permission modes, in the engine's order. */
+export function permissionModeOptions(
+  modes: readonly SessionPermissionMode[],
+): {
+  value: SessionPermissionMode;
+  label: string;
+  description: string;
+  dangerous: boolean;
+}[] {
+  return modes.map((mode) => ({
+    value: mode,
+    ...PERMISSION_MODE_INFO[mode],
+    dangerous: DANGEROUS_PERMISSION_MODES.includes(mode),
+  }));
+}
+
+/**
+ * The mode new sessions of an engine start in: Claude Code's in `auto`
+ * (the owner's choice), the others in their engine's default.
+ */
+export function initialPermissionMode(
+  engine: AgentEngineId,
+): SessionPermissionMode {
+  return engine === 'claude-code'
+    ? 'auto'
+    : ENGINE_DEFAULT_PERMISSION_MODE[engine];
+}
 
 /** Same rule as the API: letters, digits, `.`, `_`, `-`. */
 export const PROJECT_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/;
@@ -118,13 +144,29 @@ export class NewSessionForm implements OnInit {
   private readonly repositoriesApi = inject(RepositoriesApi);
   private readonly modelsStore = inject(ModelsStore);
   private readonly accountsStore = inject(AccountsStore);
-  /** The accounts; the choice only shows with more than one. */
-  protected readonly accounts = computed(
-    () => this.accountsStore.accounts() ?? [],
+  protected readonly enginesStore = inject(EnginesStore);
+  /** The engine the session runs with; chosen only with several. */
+  protected readonly engine = signal<AgentEngineId>(DEFAULT_ENGINE);
+  private readonly provider = computed(() => ENGINE_PROVIDERS[this.engine()]);
+  protected readonly providerLabel = computed(
+    () => ACCOUNT_PROVIDER_LABELS[this.provider()],
   );
-  protected readonly defaultAccountName = computed(
-    () => this.accountsStore.effective(null)?.name ?? null,
+  /** "Claude", "Codex": the agent the prompt is for. */
+  protected readonly agent = computed(() => agentName(this.engine()));
+  /** The engine's accounts; the choice only shows with more than one. */
+  protected readonly accounts = computed(() => {
+    this.accountsStore.accounts();
+    return this.accountsStore.ofProvider(this.provider());
+  });
+  /** The engine's provider has no account yet (once the list is known). */
+  protected readonly noAccount = computed(
+    () =>
+      this.accountsStore.accounts() !== null && this.accounts().length === 0,
   );
+  protected readonly defaultAccountName = computed(() => {
+    this.accountsStore.accounts();
+    return this.accountsStore.defaultOf(this.provider())?.name ?? null;
+  });
   private readonly environmentsApi = inject(EnvironmentsApi);
 
   /** The session was created. */
@@ -134,14 +176,19 @@ export class NewSessionForm implements OnInit {
   private readonly promptField = viewChild(MarkdownEditor);
   protected readonly toolbar = inject(FormattingToolbarPreference);
 
-  /** Models from Claude Code; `''` stands for its default. */
+  /** The engine's models; `''` stands for its default. */
   protected readonly modelOptions = computed(() =>
-    this.modelsStore.models().map((option) => ({
+    this.modelsStore.models(this.engine()).map((option) => ({
       ...option,
       value: option.value ?? '',
     })),
   );
-  protected readonly modeOptions = PERMISSION_MODE_OPTIONS;
+  /** The engine's permission modes. */
+  protected readonly modeOptions = computed(() =>
+    permissionModeOptions(
+      this.enginesStore.capabilities(this.engine()).permissionModes,
+    ),
+  );
   protected readonly modeInfo = PERMISSION_MODE_INFO;
   protected readonly dangerousModes = DANGEROUS_PERMISSION_MODES;
   protected readonly repositories = signal<RepositoryDto[]>([]);
@@ -166,8 +213,9 @@ export class NewSessionForm implements OnInit {
    * exhausted, the next one that is not; decided by the server).
    */
   protected accountId = '';
-  /** New sessions start in `auto` (the owner's choice). */
-  protected permissionMode: SessionPermissionMode = 'auto';
+  /** See {@link initialPermissionMode}. */
+  protected permissionMode: SessionPermissionMode =
+    initialPermissionMode(DEFAULT_ENGINE);
   protected projectName = '';
   protected readonly environments = signal<EnvironmentDto[]>([]);
   /** Chosen environment; `''` for none. */
@@ -245,6 +293,7 @@ export class NewSessionForm implements OnInit {
 
   ngOnInit(): void {
     this.modelsStore.load();
+    this.enginesStore.load();
     this.accountsStore.start();
     this.repositoriesApi.list().subscribe({
       next: ({ repositories }) => {
@@ -274,6 +323,26 @@ export class NewSessionForm implements OnInit {
   protected pickEnvironment(id: string): void {
     this.touched = true;
     this.chooseEnvironment(id);
+  }
+
+  /**
+   * The user picked an engine: the account, model and permission mode
+   * follow it (its default account, model and mode); an environment's
+   * presets of model and mode are Claude Code's and apply only to it.
+   */
+  protected pickEngine(engine: AgentEngineId): void {
+    if (engine === this.engine()) {
+      return;
+    }
+    this.touched = true;
+    this.engine.set(engine);
+    this.modelsStore.load(engine);
+    this.accountId = '';
+    this.model = '';
+    this.permissionMode = initialPermissionMode(engine);
+    if (engine === 'claude-code') {
+      this.applyAgentPresets();
+    }
   }
 
   /** The user picked a mode (see {@link setMode}). */
@@ -313,12 +382,7 @@ export class NewSessionForm implements OnInit {
     if (!environment) {
       return;
     }
-    if (environment.model) {
-      this.model = environment.model;
-    }
-    if (environment.permissionMode) {
-      this.permissionMode = environment.permissionMode;
-    }
+    this.applyAgentPresets();
     const known = new Set(
       this.repositories().map((repository) => repository.id),
     );
@@ -337,6 +401,22 @@ export class NewSessionForm implements OnInit {
       for (const repository of presets) {
         this.loadBranches(repository.repositoryId);
       }
+    }
+  }
+
+  /** The chosen environment's model and mode, for Claude Code only. */
+  private applyAgentPresets(): void {
+    const environment = this.environments().find(
+      (entry) => entry.id === this.environmentId(),
+    );
+    if (!environment || this.engine() !== 'claude-code') {
+      return;
+    }
+    if (environment.model) {
+      this.model = environment.model;
+    }
+    if (environment.permissionMode) {
+      this.permissionMode = environment.permissionMode;
     }
   }
 
@@ -428,6 +508,7 @@ export class NewSessionForm implements OnInit {
       (!this.prompt.trim() && this.images.ids().length === 0) ||
       this.images.busy() ||
       this.creating() ||
+      this.noAccount() ||
       this.draftReferences.unresolved()
     ) {
       return false;
@@ -469,6 +550,11 @@ export class NewSessionForm implements OnInit {
       ...(this.mode() === 'scratch' ? { scratch: true } : {}),
       ...(this.environmentId() ? { environmentId: this.environmentId() } : {}),
       ...(this.accountId ? { accountId: this.accountId } : {}),
+      // Named whenever there is a choice; a server with one engine gets
+      // the requests it always got.
+      ...(this.enginesStore.several() || this.engine() !== DEFAULT_ENGINE
+        ? { engine: this.engine() }
+        : {}),
     };
     this.creating.set(true);
     this.createError.set(null);

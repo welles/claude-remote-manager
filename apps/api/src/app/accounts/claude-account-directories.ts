@@ -12,17 +12,99 @@ export const ACCOUNT_DIR_SCRIPT = 'claude-account-dir.cjs';
 
 const HELPER_TIMEOUT_MS = 30_000;
 
-/** Path of the helper script (next to the bundle, or in the sources). */
-export function accountDirScript(): string {
+/** Path of a helper script (next to the bundle, or in the sources). */
+export function accountDirScript(name = ACCOUNT_DIR_SCRIPT): string {
   const candidates = [
-    join(__dirname, 'assets', ACCOUNT_DIR_SCRIPT),
-    join(__dirname, '..', '..', 'assets', ACCOUNT_DIR_SCRIPT),
+    join(__dirname, 'assets', name),
+    join(__dirname, '..', '..', 'assets', name),
   ];
   const found = candidates.find((candidate) => existsSync(candidate));
   if (!found) {
-    throw new Error(`${ACCOUNT_DIR_SCRIPT} not found`);
+    throw new Error(`${name} not found`);
   }
   return found;
+}
+
+/**
+ * Runs a helper script as the session user; it answers with one JSON line
+ * `{"ok":true}` (optionally with `warnings`) or `{"ok":false,"message":...}`.
+ * Resolves with the warnings.
+ */
+export async function runAccountHelper(
+  launcher: ProcessLauncher,
+  script: string,
+  args: string[],
+): Promise<string[]> {
+  const result = await runAccountHelperJson(launcher, script, args);
+  return Array.isArray(result['warnings'])
+    ? result['warnings'].filter(
+        (warning): warning is string => typeof warning === 'string',
+      )
+    : [];
+}
+
+/** Runs a helper script (see `runAccountHelper`); resolves with its answer. */
+export function runAccountHelperJson(
+  launcher: ProcessLauncher,
+  script: string,
+  args: string[],
+): Promise<Record<string, unknown>> {
+  const command = launcher.command('session', process.execPath, [
+    accountDirScript(script),
+    ...args,
+  ]);
+  return new Promise((resolve, reject) => {
+    execFile(
+      command.command,
+      command.args,
+      {
+        cwd: '/',
+        env: launcher.environment('session'),
+        timeout: HELPER_TIMEOUT_MS,
+        maxBuffer: 64 * 1024,
+      },
+      (error, stdout) => {
+        let result: {
+          ok?: boolean;
+          message?: string;
+          warnings?: unknown;
+        } | null = null;
+        try {
+          result = JSON.parse(String(stdout).trim().split('\n').at(-1) ?? '');
+        } catch {
+          result = null;
+        }
+        if (result?.ok) {
+          resolve(result as Record<string, unknown>);
+        } else {
+          reject(
+            new Error(
+              `Preparing the account directory failed: ${result?.message ?? error?.message ?? 'no answer'}`,
+            ),
+          );
+        }
+      },
+    );
+  });
+}
+
+/** Runs the tasks of the same key one after the other. */
+export class SerialQueues {
+  private readonly queues = new Map<string, Promise<unknown>>();
+
+  run(key: string, task: () => Promise<void>): Promise<void> {
+    const previous = this.queues.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(task);
+    this.queues.set(key, next);
+    void next
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.queues.get(key) === next) {
+          this.queues.delete(key);
+        }
+      });
+    return next;
+  }
 }
 
 /**
@@ -40,7 +122,7 @@ export function accountDirScript(): string {
  * Requests for the same account run one after the other.
  */
 export class ClaudeAccountDirectories {
-  private readonly queues = new Map<string, Promise<unknown>>();
+  private readonly queues = new SerialQueues();
 
   constructor(
     /** The main directory. */
@@ -96,52 +178,12 @@ export class ClaudeAccountDirectories {
   }
 
   private serialized(key: string, task: () => Promise<void>): Promise<void> {
-    const previous = this.queues.get(key) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(task);
-    this.queues.set(key, next);
-    void next
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.queues.get(key) === next) {
-          this.queues.delete(key);
-        }
-      });
-    return next;
+    return this.queues.run(key, task);
   }
 
   private helper(args: string[]): Promise<void> {
-    const command = this.launcher.command('session', process.execPath, [
-      accountDirScript(),
-      ...args,
-    ]);
-    return new Promise((resolve, reject) => {
-      execFile(
-        command.command,
-        command.args,
-        {
-          cwd: '/',
-          env: this.launcher.environment('session'),
-          timeout: HELPER_TIMEOUT_MS,
-          maxBuffer: 64 * 1024,
-        },
-        (error, stdout) => {
-          let result: { ok?: boolean; message?: string } | null = null;
-          try {
-            result = JSON.parse(String(stdout).trim().split('\n').at(-1) ?? '');
-          } catch {
-            result = null;
-          }
-          if (result?.ok) {
-            resolve();
-          } else {
-            reject(
-              new Error(
-                `Preparing the account directory failed: ${result?.message ?? error?.message ?? 'no answer'}`,
-              ),
-            );
-          }
-        },
-      );
-    });
+    return runAccountHelper(this.launcher, ACCOUNT_DIR_SCRIPT, args).then(
+      () => undefined,
+    );
   }
 }

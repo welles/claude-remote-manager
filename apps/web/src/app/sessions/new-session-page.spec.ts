@@ -1,3 +1,4 @@
+import { flushEngines } from '../engines/testing/engines';
 import { mainAccountList } from '../accounts/testing/accounts';
 import { provideHttpClient } from '@angular/common/http';
 import {
@@ -34,6 +35,7 @@ describe('NewSessionPage', () => {
   const render = async () => {
     const fixture = TestBed.createComponent(NewSessionPage);
     fixture.detectChanges();
+    flushEngines(http);
     http
       .expectOne('/api/models')
       .flush({ models: [], source: 'fallback', updatedAt: null });

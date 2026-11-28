@@ -11,9 +11,9 @@ import { PreviewCard } from './preview-card';
       <section class="flex flex-col gap-1.5" data-testid="session-previews">
         <h3 class="app-section-label m-0">Previews</h3>
         <p class="hint-text mb-1" data-testid="previews-keep-running">
-          The session does not go idle while it has previews: Claude Code and
-          the dev servers it started keep running until you stop the previews or
-          end the session.
+          The session does not go idle while it has previews: the agent and the
+          dev servers it started keep running until you stop the previews or end
+          the session.
         </p>
         @for (preview of previews(); track preview.id) {
           <app-preview-card [preview]="preview" (embed)="embed.emit($event)" />

@@ -34,6 +34,14 @@ export abstract class TranscriptReader {
     cwd: string,
     anywhere?: boolean,
   ): Promise<string | null>;
+
+  /**
+   * Removes the engine's conversation of a deleted session, where the
+   * engine keeps it outside the session's directories and the app's own
+   * cleanup (Claude Code's transcripts are removed with the session's data
+   * already, so its reader has none).
+   */
+  remove?(engineSessionId: string): Promise<void>;
 }
 
 @Injectable()

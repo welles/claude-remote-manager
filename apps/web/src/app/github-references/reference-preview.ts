@@ -10,7 +10,7 @@ import {
 /**
  * The preview of a reference chip: kind, state, title, author, labels and
  * the start of the description (GitHub Markdown, rendered without remote
- * resources), the link to GitHub, what Claude got, and in the input the
+ * resources), the link to GitHub, what was included, and in the input the
  * choice to give Claude the comments and the diff. Loaded on first use.
  */
 @Component({
@@ -70,7 +70,7 @@ import {
             (change)="set('comments', $event)"
             data-testid="reference-comments"
           />
-          Give Claude the comments
+          Include the comments
         </label>
         @if (chip().kind === 'pull_request') {
           <label class="flex min-h-8 items-center gap-1.5">
@@ -80,7 +80,7 @@ import {
               (change)="set('diff', $event)"
               data-testid="reference-diff"
             />
-            Give Claude the diff
+            Include the diff
           </label>
         }
       }
@@ -89,7 +89,7 @@ import {
         class="mt-0 mb-1.5 type-body-small text-on-surface-variant"
         data-testid="reference-included"
       >
-        Claude got: {{ included() }}
+        Included: {{ included() }}
       </p>
       @for (note of chip().notes; track note) {
         <p class="mt-0 mb-1.5 type-body-small text-secondary">{{ note }}</p>

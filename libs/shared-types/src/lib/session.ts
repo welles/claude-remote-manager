@@ -109,12 +109,12 @@ export const SET_SESSION_TITLE_TOOL_NAME = 'mcp__crm__set_session_title';
 export const SET_WAITING_STATE_TOOL_NAME = 'mcp__crm__set_waiting_state';
 
 /**
- * Permission modes a session may use: the Agent SDK's modes. In `auto` a
- * model classifier of Claude Code approves or denies tool uses and asks the
- * user only when it cannot decide; `bypassPermissions` runs everything
- * without asking. Autofix runs in the chosen mode like any turn.
+ * Claude Code's permission modes (the Agent SDK's). In `auto` a model
+ * classifier of Claude Code approves or denies tool uses and asks the user
+ * only when it cannot decide; `bypassPermissions` runs everything without
+ * asking. Autofix runs in the chosen mode like any turn.
  */
-export type SessionPermissionMode =
+export type ClaudeCodePermissionMode =
   | 'default'
   | 'acceptEdits'
   | 'auto'
@@ -122,18 +122,38 @@ export type SessionPermissionMode =
   | 'dontAsk'
   | 'bypassPermissions';
 
+/**
+ * Codex's approval policies: `untrusted` asks for every command not known
+ * to be safe, `on-request` asks only when the model decides to (with full
+ * access it rarely does; not counted as dangerous, owner's decision),
+ * `never` runs everything without asking.
+ */
+export type CodexPermissionMode = 'untrusted' | 'on-request' | 'never';
+
+/** The permission mode of a session, in its engine's own terms. */
+export type SessionPermissionMode =
+  | ClaudeCodePermissionMode
+  | CodexPermissionMode;
+
+export const CLAUDE_CODE_PERMISSION_MODES: readonly ClaudeCodePermissionMode[] =
+  ['default', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions'];
+
+export const CODEX_PERMISSION_MODES: readonly CodexPermissionMode[] = [
+  'untrusted',
+  'on-request',
+  'never',
+];
+
+/** Every engine's modes (for validation; each engine offers its own). */
 export const SESSION_PERMISSION_MODES: readonly SessionPermissionMode[] = [
-  'default',
-  'acceptEdits',
-  'auto',
-  'plan',
-  'dontAsk',
-  'bypassPermissions',
+  ...CLAUDE_CODE_PERMISSION_MODES,
+  ...CODEX_PERMISSION_MODES,
 ];
 
 /** Modes in which tool uses run without asking anyone: shown as dangerous. */
 export const DANGEROUS_PERMISSION_MODES: readonly SessionPermissionMode[] = [
   'bypassPermissions',
+  'never',
 ];
 
 /**

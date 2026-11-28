@@ -17,7 +17,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import {
   DANGEROUS_PERMISSION_MODES,
   PERMISSION_MODE_INFO,
-  SESSION_PERMISSION_MODES,
+  CLAUDE_CODE_PERMISSION_MODES,
   type EnvironmentDto,
   type RepositoryBranchesResponse,
   type RepositoryDto,
@@ -27,6 +27,7 @@ import {
   errorMessage,
 } from '../repositories/repositories-api';
 import { ModelsStore } from '../sessions/models-store';
+import { EnginesStore } from '../engines/engines-store';
 import { AppIcon } from '../ui/icon';
 import {
   draftOf,
@@ -66,6 +67,7 @@ export class EnvironmentEditor implements OnInit {
   private readonly api = inject(EnvironmentsApi);
   private readonly repositoriesApi = inject(RepositoriesApi);
   private readonly modelsStore = inject(ModelsStore);
+  protected readonly enginesStore = inject(EnginesStore);
 
   /** The environment to edit; `null` for a new one. */
   readonly environment = input<EnvironmentDto | null>(null);
@@ -86,7 +88,7 @@ export class EnvironmentEditor implements OnInit {
   protected readonly modelOptions = computed(() =>
     this.modelsStore.models().filter((option) => option.value !== null),
   );
-  protected readonly modeOptions = SESSION_PERMISSION_MODES.map((mode) => ({
+  protected readonly modeOptions = CLAUDE_CODE_PERMISSION_MODES.map((mode) => ({
     value: mode,
     ...PERMISSION_MODE_INFO[mode],
     dangerous: DANGEROUS_PERMISSION_MODES.includes(mode),
@@ -105,6 +107,7 @@ export class EnvironmentEditor implements OnInit {
       }
     }
     this.modelsStore.load();
+    this.enginesStore.load();
     this.repositoriesApi.list().subscribe({
       next: ({ repositories }) => this.repositories.set(repositories),
       error: () => undefined,

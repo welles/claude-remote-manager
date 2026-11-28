@@ -1,3 +1,4 @@
+import { engineList } from '../engines/testing/engines';
 import { provideHttpClient } from '@angular/common/http';
 import {
   HttpTestingController,
@@ -61,6 +62,9 @@ describe('EnvironmentsPage', () => {
   const flushEditor = () => {
     for (const request of http.match('/api/models')) {
       request.flush({ models: [], source: 'fallback', updatedAt: null });
+    }
+    for (const request of http.match('/api/engines')) {
+      request.flush(engineList());
     }
     http
       .expectOne('/api/repositories')

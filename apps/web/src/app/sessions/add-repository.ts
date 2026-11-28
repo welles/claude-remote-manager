@@ -25,6 +25,7 @@ import {
 } from '../repositories/repositories-api';
 import { AppIcon } from '../ui/icon';
 import { SessionsApi } from './sessions-api';
+import { agentName, engineOf } from '../engines/engines-store';
 
 /** Same rule as the API (and the new-session form). */
 const PROJECT_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/;
@@ -59,6 +60,10 @@ export class AddRepository {
   private readonly repositoriesApi = inject(RepositoriesApi);
 
   readonly session = input.required<SessionDto>();
+  /** "Claude", "Codex": the session's agent in sentences. */
+  protected readonly agent = computed(() =>
+    agentName(engineOf(this.session())),
+  );
   /** Requests can be sent (connected). */
   readonly enabled = input(true);
   /** The session after the request was accepted. */

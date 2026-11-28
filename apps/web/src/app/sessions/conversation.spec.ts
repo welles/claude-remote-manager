@@ -785,7 +785,7 @@ describe('approval requests, queue and settings in the conversation', () => {
         outcome: 'removed',
         reason: null,
       }),
-    ].reduce(applyEvent, items);
+    ].reduce((all, input) => applyEvent(all, input), items);
     expect(items).toEqual([
       expect.objectContaining({
         kind: 'queued',
@@ -820,6 +820,30 @@ describe('approval requests, queue and settings in the conversation', () => {
       'Model: default',
       'Mode: Plan (changed by Claude)',
     ]);
+  });
+
+  it("names the session's agent in notices", () => {
+    const items = buildConversation(
+      [
+        event({
+          type: 'settings.changed',
+          title: 'Fix login',
+          cause: 'claude',
+        }),
+      ],
+      'Codex',
+    );
+    expect(
+      items.map((item) => (item.kind === 'settings' ? item.text : '')),
+    ).toEqual(['Title: Fix login (changed by Codex)']);
+    const live = applyEvent(
+      items,
+      event({ type: 'settings.changed', model: 'gpt-5', cause: 'claude' }),
+      'Codex',
+    );
+    expect(live.at(-1)).toMatchObject({
+      text: 'Model: gpt-5 (changed by Codex)',
+    });
   });
 
   it('notes title changes instead of the tool call that made them', () => {

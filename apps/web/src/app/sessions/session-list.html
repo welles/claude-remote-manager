@@ -175,8 +175,8 @@
     <span
       class="col-start-3 row-start-1 row-end-3 hidden justify-end gap-4 type-body-small whitespace-nowrap text-on-surface-variant tabular-nums md:flex"
     >
-      <span class="min-w-[7em] text-right"
-        >{{ modelLabel(models(), session.model) }}</span
+      <span class="min-w-[7em] text-right" data-testid="session-model"
+        >{{ modelText(session) }}</span
       >
       <span
         >{{ formatTokens(totalTokens(session.usage)) }} tokens · {{

@@ -90,10 +90,35 @@ interface MergeGrant {
   headSha: string;
 }
 
+/** What a process about to start needs of the app's tools. */
+export interface PrepareOptions {
+  /**
+   * Every tool of the integrations, those that cannot run for the session
+   * now marked `unavailable` (for engines that fix a thread's tools when
+   * it starts, see `AgentEngine.fixedTools`); otherwise only those that can.
+   */
+  allTools?: boolean;
+}
+
+/** A tool kept for a fixed tool set that refuses calls with `reason`. */
+export function unavailableTool(tool: AgentTool, reason: string): AgentTool {
+  return { ...tool, unavailable: reason };
+}
+
+/** Why the GitHub tools refuse in a session without GitHub repositories. */
+export const NO_GITHUB_REASON =
+  'This session has no GitHub repository, so this tool is not available. It becomes available once a GitHub repository is added to the session and Codex restarts.';
+/** Why the preview tools refuse when previews are off. */
+export const NO_PREVIEWS_REASON =
+  'Previews of dev servers are not configured on this server.';
+
 /** Hooks of the sessions service for the app's integrations. */
 export abstract class SessionAgentSupport {
   /** Environment, tools and settings for a process about to start. */
-  abstract prepare(record: SessionRecord): Promise<LaunchExtras>;
+  abstract prepare(
+    record: SessionRecord,
+    options?: PrepareOptions,
+  ): Promise<LaunchExtras>;
   /** Claude Code called a tool (whether or not it asked the user). */
   abstract toolCalled(
     sessionId: string,
@@ -322,7 +347,10 @@ export class SessionAgentSupportService extends SessionAgentSupport {
     }
   }
 
-  async prepare(record: SessionRecord): Promise<LaunchExtras> {
+  async prepare(
+    record: SessionRecord,
+    options: PrepareOptions = {},
+  ): Promise<LaunchExtras> {
     const clones = record.directories.filter(
       (directory) => directory.kind === 'clone' && directory.state === 'ready',
     );
@@ -354,24 +382,7 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         ...environment.env,
         ...this.githubTokenEnvironment(record.id, githubClones.length > 0),
       },
-      tools: [
-        this.showFileTool(record.id),
-        ...(githubClones.length > 0
-          ? [
-              this.createPullRequestTool(record.id),
-              this.replyToReviewThreadTool(record.id),
-              this.mergePullRequestTool(record.id),
-              this.setPrAutomationTool(record.id),
-              this.requestOwnerDecisionTool(record.id),
-            ]
-          : []),
-        ...(previews
-          ? [
-              this.exposePortTool(record.id, previews),
-              this.stopPreviewTool(record.id, previews),
-            ]
-          : []),
-      ],
+      tools: this.tools(record.id, githubClones.length > 0, options),
       settings,
       // Showing a file reads only inside the session's directories;
       // previews forward only the session user's own ports.
@@ -382,6 +393,41 @@ export class SessionAgentSupportService extends SessionAgentSupport {
         ...(previews ? [EXPOSE_PORT_TOOL_NAME, STOP_PREVIEW_TOOL_NAME] : []),
       ],
     };
+  }
+
+  /** The tools of the integrations for a process (see `PrepareOptions`). */
+  private tools(
+    sessionId: string,
+    hasGitHubClones: boolean,
+    options: PrepareOptions,
+  ): AgentTool[] {
+    const github = [
+      this.createPullRequestTool(sessionId),
+      this.replyToReviewThreadTool(sessionId),
+      this.mergePullRequestTool(sessionId),
+      this.setPrAutomationTool(sessionId),
+      this.requestOwnerDecisionTool(sessionId),
+    ];
+    const previews = this.previews
+      ? [
+          this.exposePortTool(sessionId, this.previews),
+          this.stopPreviewTool(sessionId, this.previews),
+        ]
+      : [];
+    const previewsOn = this.previews?.enabled === true;
+    return [
+      this.showFileTool(sessionId),
+      ...(hasGitHubClones
+        ? github
+        : options.allTools
+          ? github.map((tool) => unavailableTool(tool, NO_GITHUB_REASON))
+          : []),
+      ...(previewsOn
+        ? previews
+        : options.allTools
+          ? previews.map((tool) => unavailableTool(tool, NO_PREVIEWS_REASON))
+          : []),
+    ];
   }
 
   toolCalled(

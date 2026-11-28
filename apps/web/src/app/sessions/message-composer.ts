@@ -123,6 +123,10 @@ export class MessageComposer {
   readonly sessionId = input<string | null>(null);
   /** Name the repository of files (sessions with several directories). */
   readonly showRepository = input(false);
+  /** The session's agent in sentences ("Claude", "Codex"). */
+  readonly agent = input('Claude');
+  /** The engine has slash commands of its own: `/` lists them. */
+  readonly slashCommands = input(true);
   /**
    * GitHub repositories of the session, the main one first: `#` searches
    * them; `#12` refers to the one that has it (or the first, see
@@ -519,7 +523,7 @@ export class MessageComposer {
 
   /** A message starting with `/` and no space before the caret: commands. */
   private findCommand(field: TextField): boolean {
-    const id = this.sessionId();
+    const id = this.slashCommands() ? this.sessionId() : null;
     const match =
       id && field.selectionStart === field.selectionEnd
         ? SLASH.exec(field.value.slice(0, field.selectionStart))

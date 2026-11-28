@@ -92,7 +92,7 @@
         </mat-form-field>
       </fieldset>
       } @empty {
-      <p>Claude asks, but the questions could not be read.</p>
+      <p>{{ agent() }} asks, but the questions could not be read.</p>
       }
     </div>
     } @case ('plan') { @if (r.plan; as plan) {
@@ -102,7 +102,7 @@
       [innerHTML]="plan | markdown"
     ></div>
     } @else {
-    <p>Claude wants to leave plan mode and start implementing.</p>
+    <p>{{ agent() }} wants to leave plan mode and start implementing.</p>
     }
     <mat-radio-group
       class="flex flex-col"
@@ -278,16 +278,16 @@
         </dd>
       </div>
       <div>
-        <dt>Claude's reason</dt>
-        <!-- Claude's own words: kept as written, never rendered. -->
+        <dt>{{ agent() }}'s reason</dt>
+        <!-- The agent's own words: kept as written, never rendered. -->
         <!-- prettier-ignore -->
         <dd class="whitespace-pre-wrap" data-testid="addition-reason">{{ add.reason }}</dd>
       </div>
     </dl>
     <p class="hint-text">
       Clones it into this session on the session branch and runs its setup
-      script; Claude can then read and change it. Only this repository, only
-      this time.
+      script; {{ agent() }} can then read and change it. Only this repository,
+      only this time.
     </p>
     } @if (r.gitPushes.length > 0) {
     <div
@@ -332,8 +332,8 @@
       subscriptSizing="dynamic"
     >
       <mat-label
-        >{{ r.kind === 'plan' ? 'What should change? (optional)' : 'Message to
-        Claude (optional)' }}</mat-label
+        >{{ r.kind === 'plan' ? 'What should change? (optional)' : 'Message to '
+        + agent() + ' (optional)' }}</mat-label
       >
       <textarea
         matInput
@@ -346,9 +346,10 @@
       ></textarea>
     </mat-form-field>
     <p class="hint-text">
-      @if (r.kind === 'plan') { With feedback Claude revises the plan; without,
-      Claude stops and waits for your message. } @else { With a message Claude
-      continues with it; without, Claude stops and waits. }
+      @if (r.kind === 'plan') { With feedback {{ agent() }} revises the plan;
+      without, {{ agent() }} stops and waits for your message. } @else { With a
+      message {{ agent() }} continues with it; without, {{ agent() }} stops and
+      waits. }
     </p>
     } @else if (r.sessionAllow; as allowed) {
     <p class="hint-text [&_code]:mr-1" data-testid="session-allow">

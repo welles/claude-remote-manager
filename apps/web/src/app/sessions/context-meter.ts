@@ -35,7 +35,7 @@ import { formatTokens } from './format';
         <span
           class="type-body-small text-on-surface-variant"
           data-testid="context-unknown"
-          >known after Claude's next answer</span
+          >known after {{ agent() }}'s next answer</span
         >
       }
     </div>
@@ -48,5 +48,7 @@ import { formatTokens } from './format';
 })
 export class ContextMeter {
   readonly context = input<ContextUsage | null>(null);
+  /** The session's agent in sentences ("Claude", "Codex"). */
+  readonly agent = input('Claude');
   protected readonly formatTokens = formatTokens;
 }

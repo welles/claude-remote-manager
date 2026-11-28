@@ -22,12 +22,13 @@ import {
   CLAUDE_WAIT_LIMIT_MINUTES,
   isRetiredClone,
   DEFAULT_ENGINE,
+  ENGINE_DEFAULT_PERMISSION_MODE,
+  ENGINE_PERMISSION_MODES,
   ENGINE_PROVIDERS,
   AGENT_ENGINES,
   MAIN_ACCOUNT_ID,
   type AccountProvider,
   MAX_ATTACHMENTS_PER_MESSAGE,
-  SESSION_PERMISSION_MODES,
   summarizePendingRequests,
   type AttachmentDto,
   type ContextUsage,
@@ -507,6 +508,11 @@ interface LiveSession {
 
 /** How long shutdown waits for Claude Code processes to exit. */
 export const SHUTDOWN_GRACE_MS = 5000;
+/**
+ * How long a new process of a session waits for the end of the one closed
+ * before it (Codex ends within its kill timeout).
+ */
+export const PROCESS_EXIT_WAIT_MS = 10_000;
 
 /** Notice stored when a server stop interrupts a running turn. */
 export const RESTART_NOTICE =
@@ -694,6 +700,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     | ((sessionId: string, event: SessionEventInput) => void)
     | null = null;
 
+  /**
+   * The end of each session's last closed process, for engines whose
+   * processes must not overlap (Codex: a thread written from one home at a
+   * time): the session's next process starts after it.
+   */
+  private readonly exits = new Map<string, Promise<void>>();
+
   /** Events of all sessions, as they are added to the session logs. */
   readonly events$ = this.events.asObservable();
   /** Sessions after any change of their metadata, status or usage. */
@@ -774,7 +787,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** The history reader of a session's engine. */
-  private transcriptsFor(record: Pick<SessionRecord, 'engine'>): TranscriptReader {
+  private transcriptsFor(
+    record: Pick<SessionRecord, 'engine'>,
+  ): TranscriptReader {
     return this.engines?.transcripts(record.engine) ?? this.transcripts;
   }
 
@@ -960,7 +975,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         this.sessions.update(live.id, { status: 'waiting' });
       }
       live.closing = 'shutdown';
-      live.run.close();
+      this.closeRun(live, live.run);
       if (live.consuming) {
         exits.push(live.consuming);
       }
@@ -1040,9 +1055,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (model && !MODEL_PATTERN.test(model)) {
       throw new BadRequestException('model is not a valid model name');
     }
-    const permissionMode =
-      optionalEnum(body, 'permissionMode', SESSION_PERMISSION_MODES) ??
-      'default';
     const environment = this.environments
       ? this.environments.requireForSession(body['environmentId'])
       : null;
@@ -1053,6 +1065,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         `The engine ${engine} is not available on this server`,
       );
     }
+    const permissionMode =
+      optionalEnum(body, 'permissionMode', ENGINE_PERMISSION_MODES[engine]) ??
+      ENGINE_DEFAULT_PERMISSION_MODE[engine];
     const provider = ENGINE_PROVIDERS[engine];
     const requestedAccount = optionalString(body, 'accountId');
     let accountId = this.accounts
@@ -1559,10 +1574,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         throw new BadRequestException('model is not a valid model name');
       }
     }
+    // Only the modes of the session's engine.
     const permissionMode = optionalEnum(
       body,
       'permissionMode',
-      SESSION_PERMISSION_MODES,
+      ENGINE_PERMISSION_MODES[record.engine],
     );
     const changes: {
       model?: string | null;
@@ -1837,7 +1853,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live?.run) {
       live.closing = 'end';
       this.approver.cancelSession(sessionId, 'ended');
-      live.run.close();
+      this.closeRun(live, live.run);
     }
     if (this.requireRecord(sessionId).pendingMessage) {
       // Waiting after a failed setup script: the message is dropped.
@@ -2071,7 +2087,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (run) {
         this.approver.cancelSession(sessionId, 'ended');
         this.support.released(sessionId);
-        run.close();
+        this.closeRun(live, run);
       }
       this.live.delete(sessionId);
     }
@@ -2387,7 +2403,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     firstMessage: { id: string; text: string },
   ): Promise<void> {
     this.clearIdleTimer(live);
-    live.tracker = new UsageTracker(this.usage.totalsByModel(record.id));
+    const recordedUsage = this.usage.totalsByModel(record.id);
+    live.tracker = new UsageTracker(recordedUsage);
     live.interruptRequested = null;
     live.sendNow = null;
     live.closing = null;
@@ -2401,15 +2418,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.rejectedWindow = null;
     // A changed secret is masked from this process on.
     live.mask = undefined;
-    // In use from now on: by the account it will pick (see `pickId`).
+    // In use from now on: by the account it will pick (see `pickId`); a
+    // provider without accounts fails below, in the try.
     live.accountId =
-      this.accounts?.pickId(
+      this.accounts?.effectiveId(
         this.requireRecord(live.id).accountId,
         this.providerOf(this.requireRecord(live.id)),
       ) ?? MAIN_ACCOUNT_ID;
     live.launching = true;
     try {
-      const extras = await this.support.prepare(record);
+      // Engines that fix the tools at thread start get all of them.
+      const allTools = this.engines?.fixedTools(record.engine) === true;
+      const extras = await this.support.prepare(record, { allTools });
       // What the user allowed for the session applies to every process.
       const allowed = sessionAllows(this.storedEvents.list(record.id));
       const directories = additionalDirectories(record);
@@ -2438,6 +2458,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           )
         : null;
       live.accountId = account?.id ?? MAIN_ACCOUNT_ID;
+      // Never two processes of the session at once (e.g. a switch of the
+      // account: the old home's Codex still writing the thread).
+      await this.previousExit(live);
       const run = await this.runnerFor(current).start(
         {
           ...(account
@@ -2474,14 +2497,19 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           env: { ...SESSION_ENV, ...extras.env },
           tools: [
             ...extras.tools,
-            // A title the user chose stays: no tool to change it.
-            ...(record.titleSource === 'user' ? [] : [this.setTitleTool(live)]),
+            // A title the user chose stays: no tool to change it (the
+            // tool refuses it for engines that keep every tool).
+            ...(record.titleSource !== 'user' || allTools
+              ? [this.setTitleTool(live)]
+              : []),
             this.setWaitingStateTool(live),
             ...(this.additions ? [this.addRepositoryTool(live)] : []),
             ...(offersBranches ? [this.addBranchTool(live)] : []),
             this.switchDirectoryTool(live),
             ...(offersReview ? [this.requestReviewTool(live)] : []),
-          ],
+          ].filter((tool) => allTools || !tool.unavailable),
+          usageBaseline: recordedUsage,
+          sessionAllows: allowed.rules,
           settings: extras.settings,
           ...(extras.instructions ? { instructions: extras.instructions } : {}),
         },
@@ -2514,6 +2542,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<{ resume: string | null; sessionId: string | null }> {
     if (record.sdkSessionId) {
       return { resume: record.sdkSessionId, sessionId: null };
+    }
+    if (this.engines?.namesSessions(record.engine)) {
+      // No conversation of its own yet: nothing to look up.
+      return { resume: null, sessionId: null };
     }
     let exists = false;
     try {
@@ -3064,9 +3096,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private syncPermissionMode(live: LiveSession, mode: string): void {
     live.reportedMode = mode;
     const record = this.requireRecord(live.id);
-    if (!SESSION_PERMISSION_MODES.includes(mode as SessionPermissionMode)) {
+    if (
+      !ENGINE_PERMISSION_MODES[record.engine].includes(
+        mode as SessionPermissionMode,
+      )
+    ) {
       this.logger.warn(
-        `Claude Code of ${live.id} reports permission mode ${mode}, which this app does not use`,
+        `The engine of ${live.id} reports permission mode ${mode}, which this app does not use`,
       );
       return;
     }
@@ -3387,6 +3423,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
               ...input,
               command: reportCommand(outcome.output, outcome.ok),
             },
+            ranByApp: { ok: outcome.ok, output: outcome.output },
           };
         }
       }
@@ -3903,7 +3940,46 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     this.clearIdleTimer(live);
     live.closing = 'idle';
-    run.close();
+    this.closeRun(live, run);
+  }
+
+  /** Closes a process; the next one of the session waits for its end. */
+  private closeRun(live: LiveSession, run: AgentRun): void {
+    const ended = run.close();
+    if (ended) {
+      const previous = this.exits.get(live.id);
+      const entry = Promise.all([previous, ended]).then(
+        () => undefined,
+        () => undefined,
+      );
+      this.exits.set(live.id, entry);
+      // Forgotten once over (nothing to wait for any more).
+      void entry.then(() => {
+        if (this.exits.get(live.id) === entry) {
+          this.exits.delete(live.id);
+        }
+      });
+    }
+  }
+
+  /** Waits (bounded) until the session's last closed process has ended. */
+  private async previousExit(live: LiveSession): Promise<void> {
+    const exiting = this.exits.get(live.id);
+    if (!exiting) {
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      exiting,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, PROCESS_EXIT_WAIT_MS);
+        timer.unref?.();
+      }),
+    ]);
+    clearTimeout(timer);
+    if (this.exits.get(live.id) === exiting) {
+      this.exits.delete(live.id);
+    }
   }
 
   /**
@@ -5864,7 +5940,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       ) {
         this.logger.log(`Closing idle session ${live.id}`);
         live.closing = 'idle';
-        live.run.close();
+        this.closeRun(live, live.run);
       }
     }, this.config.sessionIdleTimeoutMs);
     live.idleTimer.unref?.();

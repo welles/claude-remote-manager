@@ -7,6 +7,7 @@ import {
   type ProcessIsolation,
 } from '../common/process-isolation';
 import { join, resolve } from 'node:path';
+import { resolveCodexExecutable } from '../agent/codex/codex-home';
 import type { GitIdentity } from '../git/git-auth';
 
 /** Settings of the API, read from the environment once at startup. */
@@ -35,6 +36,13 @@ export interface AppConfig {
   sessionIdleTimeoutMs: number;
   /** Claude Code executable; `null` uses the one bundled with the Agent SDK. */
   claudeExecutable: string | null;
+  /**
+   * Codex executable (see `resolveCodexExecutable`); `null`: none, the
+   * Codex engine is not offered.
+   */
+  codexExecutable: string | null;
+  /** Rules for all sessions Codex gets as developer instructions (`CODEX_INSTRUCTIONS_FILE`). */
+  codexInstructionsFile: string | null;
   /** Origins besides the server's own that may call the API. */
   allowedOrigins: string[];
   /** Host names besides the loopback names the server answers to. */
@@ -258,6 +266,11 @@ export function loadAppConfig(
     setupScriptTimeoutMs: minutes('SETUP_SCRIPT_TIMEOUT_MINUTES', 15, 0.1),
     sessionIdleTimeoutMs: minutes('SESSION_IDLE_TIMEOUT_MINUTES', 60, 0),
     claudeExecutable: value('CLAUDE_CODE_EXECUTABLE') ?? null,
+    codexExecutable: resolveCodexExecutable(
+      value('CODEX_EXECUTABLE') ?? null,
+      env,
+    ),
+    codexInstructionsFile: value('CODEX_INSTRUCTIONS_FILE') ?? null,
     allowedOrigins: [
       ...(env['NODE_ENV'] === 'production' ? [] : DEV_ORIGINS),
       ...list(value('ALLOWED_ORIGINS')).map((origin) => {
@@ -634,6 +647,8 @@ export function testAppConfig(
     setupScriptTimeoutMs: 10_000,
     sessionIdleTimeoutMs: 0,
     claudeExecutable: null,
+    codexExecutable: null,
+    codexInstructionsFile: null,
     allowedOrigins: [],
     allowedHosts: [],
     internalApiUrl: 'http://127.0.0.1:3000',

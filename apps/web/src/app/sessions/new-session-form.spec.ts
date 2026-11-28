@@ -8,10 +8,13 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type {
+  AccountDto,
+  AgentEngineId,
   EnvironmentDto,
   RepositoryDto,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
+import { flushEngines } from '../engines/testing/engines';
 import { NewSessionForm, type RepositoryChoice } from './new-session-form';
 import { sessionDto } from './testing/session-dto';
 import { EditorDriver } from '../testing/editor';
@@ -64,6 +67,10 @@ interface FormInternals {
   environmentId(): string;
   chooseEnvironment(id: string): void;
   touched: boolean;
+  engine(): AgentEngineId;
+  pickEngine(engine: AgentEngineId): void;
+  modeOptions(): { value: string }[];
+  modelOptions(): { value: string; label: string }[];
 }
 
 import type { AttachmentDrafts } from '../attachments/attachment-drafts';
@@ -88,6 +95,10 @@ describe('NewSessionForm', () => {
   const render = async (
     repositories: RepositoryDto[],
     environments: EnvironmentDto[] = [],
+    {
+      engines = ['claude-code'],
+      accounts = mainAccountList().accounts,
+    }: { engines?: AgentEngineId[]; accounts?: AccountDto[] } = {},
   ) => {
     const fixture = TestBed.createComponent(NewSessionForm);
     const created: SessionDto[] = [];
@@ -95,7 +106,8 @@ describe('NewSessionForm', () => {
       created.push(session),
     );
     fixture.detectChanges();
-    http.expectOne('/api/accounts').flush(mainAccountList());
+    flushEngines(http, ...engines);
+    http.expectOne('/api/accounts').flush({ accounts });
     http.expectOne('/api/models').flush({
       models: [
         {
@@ -495,6 +507,7 @@ describe('NewSessionForm', () => {
   const start = () => {
     const fixture = TestBed.createComponent(NewSessionForm);
     fixture.detectChanges();
+    flushEngines(http);
     http.expectOne('/api/accounts').flush(mainAccountList());
     http.expectOne('/api/models').flush({
       models: [],
@@ -557,5 +570,169 @@ describe('NewSessionForm', () => {
     });
     await fixture.whenStable();
     expect(form.choices()).toEqual([{ repositoryId: 'r1', baseBranch: '' }]);
+  });
+
+  describe('with several engines', () => {
+    const chatgpt = (overrides: Partial<AccountDto> = {}) =>
+      accountDto({
+        id: 'c1',
+        provider: 'chatgpt',
+        name: 'Personal',
+        position: 1,
+        isDefault: true,
+        main: false,
+        ...overrides,
+      });
+    const codexModels = () =>
+      http.expectOne('/api/models?engine=codex').flush({
+        models: [
+          {
+            value: null,
+            label: 'Default',
+            description: '',
+            resolvedModel: 'gpt-5-codex',
+          },
+          {
+            value: 'gpt-5',
+            label: 'GPT-5',
+            description: '',
+            resolvedModel: 'gpt-5',
+          },
+        ],
+        source: 'codex',
+        updatedAt: null,
+      });
+
+    it('shows no engine choice and sends no engine with Claude Code alone', async () => {
+      const { form, element } = await render([]);
+      expect(element.querySelector('[data-testid="engine"]')).toBeNull();
+      expect(element.textContent).toContain('What should Claude do?');
+      form.prompt = 'Hi';
+      form.setMode('scratch');
+      form.create();
+      const body = http.expectOne({ method: 'POST', url: '/api/sessions' })
+        .request.body;
+      expect(body.engine).toBeUndefined();
+    });
+
+    it('switches accounts, models and modes to the chosen engine', async () => {
+      const { form, fixture, element } = await render([], [], {
+        engines: ['claude-code', 'codex'],
+        accounts: [
+          accountDto(),
+          chatgpt(),
+          chatgpt({ id: 'c2', name: 'Work', isDefault: false, position: 2 }),
+        ],
+      });
+      expect(element.querySelector('[data-testid="engine"]')).not.toBeNull();
+      expect(form.engine()).toBe('claude-code');
+      expect(form.permissionMode).toBe('auto');
+      // One Claude account: no account choice.
+      expect(element.querySelector('[data-testid="account"]')).toBeNull();
+
+      form.pickEngine('codex');
+      codexModels();
+      fixture.detectChanges();
+      expect(element.textContent).toContain('What should Codex do?');
+      expect(form.permissionMode).toBe('untrusted');
+      expect(form.modeOptions().map((option) => option.value)).toEqual([
+        'untrusted',
+        'on-request',
+        'never',
+      ]);
+      expect(form.modelOptions().map((option) => option.label)).toEqual([
+        'Default',
+        'GPT-5',
+      ]);
+      // Two ChatGPT accounts: the choice, with their default.
+      expect(element.querySelector('[data-testid="account"]')).not.toBeNull();
+      expect(
+        (form as unknown as { accounts(): AccountDto[] })
+          .accounts()
+          .map((account) => account.id),
+      ).toEqual(['c1', 'c2']);
+      expect(
+        (
+          form as unknown as { defaultAccountName(): string | null }
+        ).defaultAccountName(),
+      ).toBe('Personal');
+
+      form.prompt = 'Refactor';
+      form.setMode('scratch');
+      form.model = 'gpt-5';
+      form.accountId = 'c2';
+      form.create();
+      expect(
+        http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
+      ).toEqual({
+        prompt: 'Refactor',
+        model: 'gpt-5',
+        permissionMode: 'untrusted',
+        scratch: true,
+        accountId: 'c2',
+        engine: 'codex',
+      });
+    });
+
+    it('names Claude Code when it is chosen among several', async () => {
+      const { form } = await render([], [], {
+        engines: ['claude-code', 'codex'],
+        accounts: [accountDto(), chatgpt()],
+      });
+      form.prompt = 'Hi';
+      form.setMode('scratch');
+      form.create();
+      expect(
+        http.expectOne({ method: 'POST', url: '/api/sessions' }).request.body,
+      ).toMatchObject({ engine: 'claude-code', permissionMode: 'auto' });
+    });
+
+    it("applies an environment's model and mode only to Claude Code", async () => {
+      const { form } = await render(
+        [],
+        [
+          environment({
+            isDefault: true,
+            model: 'haiku',
+            permissionMode: 'plan',
+          }),
+        ],
+        {
+          engines: ['claude-code', 'codex'],
+          accounts: [accountDto(), chatgpt()],
+        },
+      );
+      expect(form.model).toBe('haiku');
+      expect(form.permissionMode).toBe('plan');
+
+      form.pickEngine('codex');
+      codexModels();
+      expect(form.model).toBe('');
+      expect(form.permissionMode).toBe('untrusted');
+      // Choosing the environment again keeps Codex's own choices.
+      form.chooseEnvironment('e1');
+      expect(form.model).toBe('');
+      expect(form.permissionMode).toBe('untrusted');
+
+      form.pickEngine('claude-code');
+      expect(form.model).toBe('haiku');
+      expect(form.permissionMode).toBe('plan');
+    });
+
+    it('points to the settings while the engine has no account', async () => {
+      const { form, fixture, element } = await render([], [], {
+        engines: ['claude-code', 'codex'],
+      });
+      form.prompt = 'Hi';
+      form.setMode('scratch');
+      expect(element.querySelector('[data-testid="no-account"]')).toBeNull();
+      form.pickEngine('codex');
+      codexModels();
+      fixture.detectChanges();
+      expect(
+        element.querySelector('[data-testid="no-account"]')?.textContent,
+      ).toContain('Codex needs a ChatGPT account');
+      expect(form.canStart()).toBe(false);
+    });
   });
 });

@@ -1,8 +1,10 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject, signal } from '@angular/core';
-import type {
-  ModelListResponse,
-  ModelOption,
+import {
+  DEFAULT_ENGINE,
+  type AgentEngineId,
+  type ModelListResponse,
+  type ModelOption,
 } from '@claude-remote-manager/shared-types';
 
 /** Until the list is loaded (or if it cannot be): Claude Code's aliases. */
@@ -18,30 +20,76 @@ export const FALLBACK_MODEL_OPTIONS: ModelOption[] = [
   { value: 'haiku', label: 'Haiku', description: '', resolvedModel: null },
 ];
 
-/** The models a session can use, loaded once from `GET /api/models`. */
+/** Until an engine's list is loaded (or if it cannot be), per engine. */
+export const FALLBACK_MODELS: Record<AgentEngineId, ModelOption[]> = {
+  'claude-code': FALLBACK_MODEL_OPTIONS,
+  codex: [
+    {
+      value: null,
+      label: 'Default',
+      description: "Codex's default",
+      resolvedModel: null,
+    },
+  ],
+};
+
+interface EngineModels {
+  models: ModelOption[];
+  source: ModelListResponse['source'];
+}
+
+/**
+ * The models a session of an engine can use, loaded once per engine from
+ * `GET /api/models?engine=…` (Claude Code's without the parameter). Callers
+ * that name no engine get Claude Code's.
+ */
 @Injectable({ providedIn: 'root' })
 export class ModelsStore {
   private readonly http = inject(HttpClient);
-  private requested = false;
+  private readonly requested = new Set<AgentEngineId>();
+  private readonly lists = signal<ReadonlyMap<AgentEngineId, EngineModels>>(
+    new Map(),
+  );
 
-  readonly models = signal<ModelOption[]>(FALLBACK_MODEL_OPTIONS);
-  readonly source = signal<ModelListResponse['source'] | 'loading'>('loading');
+  /** The engine's models; its fallback list until loaded. */
+  models(engine: AgentEngineId = DEFAULT_ENGINE): ModelOption[] {
+    return (
+      this.lists().get(engine)?.models ??
+      FALLBACK_MODELS[engine] ??
+      FALLBACK_MODEL_OPTIONS
+    );
+  }
 
-  load(): void {
-    if (this.requested) {
+  /** Where the engine's list came from (`loading` until known). */
+  source(
+    engine: AgentEngineId = DEFAULT_ENGINE,
+  ): ModelListResponse['source'] | 'loading' {
+    return this.lists().get(engine)?.source ?? 'loading';
+  }
+
+  /** Loads the engine's list unless it was (or is being) loaded. */
+  load(engine: AgentEngineId = DEFAULT_ENGINE): void {
+    if (this.requested.has(engine)) {
       return;
     }
-    this.requested = true;
-    this.http.get<ModelListResponse>('/api/models').subscribe({
-      next: (response) => {
-        this.models.set(response.models);
-        this.source.set(response.source);
-      },
+    this.requested.add(engine);
+    const url =
+      engine === DEFAULT_ENGINE
+        ? '/api/models'
+        : `/api/models?engine=${encodeURIComponent(engine)}`;
+    this.http.get<ModelListResponse>(url).subscribe({
+      next: (response) =>
+        this.set(engine, { models: response.models, source: response.source }),
       error: () => {
-        this.requested = false;
-        this.source.set('fallback');
+        // Tried again by the next caller; the fallback list meanwhile.
+        this.requested.delete(engine);
+        this.set(engine, { models: this.models(engine), source: 'fallback' });
       },
     });
+  }
+
+  private set(engine: AgentEngineId, entry: EngineModels): void {
+    this.lists.update((lists) => new Map(lists).set(engine, entry));
   }
 }
 

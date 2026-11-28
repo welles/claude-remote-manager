@@ -1,3 +1,4 @@
+import type { AgentEngineId } from './engines';
 import type { PermissionModeOverride, SessionPermissionMode } from './session';
 
 /**
@@ -233,6 +234,21 @@ export const PERMISSION_MODE_INFO: Record<
     description:
       'Everything runs without asking: commands, file changes, pushes, pull requests, sudo, with all your rights on this machine. Only for work you trust.',
   },
+  untrusted: {
+    label: 'Untrusted',
+    description:
+      'Codex asks before every command that is not known to be safe (reading, searching) and before file changes.',
+  },
+  'on-request': {
+    label: 'On request',
+    description:
+      'Full access, and the model decides when to ask: Codex runs commands, file changes and pushes on its own and asks only when it thinks it should, which it rarely does. Not marked dangerous, but close to Never ask; choose Untrusted to approve each command.',
+  },
+  never: {
+    label: 'Never ask (dangerous)',
+    description:
+      'Codex runs everything without asking: commands, file changes, pushes, pull requests, sudo, with all your rights on this machine. Only for work you trust.',
+  },
 };
 
 /** Why a session runs in another mode than the chosen one, for the UI. */
@@ -262,15 +278,15 @@ export interface ModelOption {
   resolvedModel: string | null;
 }
 
-/** Response of `GET /api/models`. */
+/** Response of `GET /api/models?engine=…` (Claude Code without). */
 export interface ModelListResponse {
   models: ModelOption[];
   /**
-   * `claude-code`: the list Claude Code reported for the logged-in
-   * account; `fallback`: a fixed list because Claude Code could not be asked.
+   * The engine that reported the list for its default account;
+   * `fallback`: a fixed list because the engine could not be asked.
    */
-  source: 'claude-code' | 'fallback';
-  /** When the list was read from Claude Code (ISO 8601). */
+  source: AgentEngineId | 'fallback';
+  /** When the list was read from the engine (ISO 8601). */
   updatedAt: string | null;
 }
 

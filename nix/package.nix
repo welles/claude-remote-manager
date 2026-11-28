@@ -1,6 +1,6 @@
 # The app as a Nix package: the built web app and the API bundle with its
 # production dependencies (better-sqlite3 compiled for this Node.js, the
-# Agent SDK's Claude Code binary made runnable on NixOS), migrations and the
+# Agent SDK's Claude Code binary made runnable on NixOS, Codex), migrations and the
 # helper scripts. Used by the NixOS module (nix/module.nix).
 {
   lib,
@@ -37,6 +37,7 @@ let
       x86_64-linux = {
         cpu = "x64";
         sdk = "linux-x64";
+        codexTriple = "x86_64-unknown-linux-musl";
       };
     }
     .${stdenv.hostPlatform.system}
@@ -124,12 +125,16 @@ stdenv.mkDerivation {
 
     claude=$(echo $app/node_modules/@anthropic-ai/claude-agent-sdk-${npmPlatform.sdk}/claude)
     test -x "$claude"
+    # Codex: the static (musl) binary of the pinned @openai/codex.
+    codex=$(echo $app/node_modules/@openai/codex-${npmPlatform.sdk}/vendor/${npmPlatform.codexTriple}/bin/codex)
+    test -x "$codex"
 
     makeWrapper ${lib.getExe runtimeNodejs} $out/bin/claude-remote-manager \
       --add-flags $app/main.js \
       --set-default NODE_ENV production \
       --set-default WEB_ROOT $app/public \
       --set-default CLAUDE_CODE_EXECUTABLE $out/libexec/claude-remote-manager/claude \
+      --set-default CODEX_EXECUTABLE $out/libexec/claude-remote-manager/codex \
       --set-default APP_VERSION ${lib.escapeShellArg version} \
       --set-default APP_COMMIT ${lib.escapeShellArg commit} \
       --set-default APP_COMMIT_TIME ${lib.escapeShellArg commitTime}
@@ -149,6 +154,10 @@ stdenv.mkDerivation {
         ]
       }
 
+    # Codex as the sessions run it, with the system's ps after the PATH.
+    makeWrapper "$codex" $out/libexec/claude-remote-manager/codex \
+      --suffix PATH : ${lib.makeBinPath [ procps ]}
+
     runHook postInstall
   '';
 
@@ -161,12 +170,14 @@ stdenv.mkDerivation {
     runHook preInstallCheck
     export HOME=$TMPDIR
     $out/libexec/claude-remote-manager/claude --version
+    $out/libexec/claude-remote-manager/codex --version
     ${lib.getExe runtimeNodejs} -e "new (require('$out/lib/claude-remote-manager/node_modules/better-sqlite3'))(':memory:').exec('create virtual table t using fts5(x, tokenize=trigram)')"
     test -f $out/lib/claude-remote-manager/public/sw.js
     test -f $out/lib/claude-remote-manager/public/index.html
     test -f $out/lib/claude-remote-manager/assets/session-files.cjs
     test -f $out/lib/claude-remote-manager/assets/stop-processes-in.cjs
     test -f $out/lib/claude-remote-manager/assets/claude-account-dir.cjs
+    test -f $out/lib/claude-remote-manager/assets/codex-account-dir.cjs
     ls $out/lib/claude-remote-manager/migrations/*.sql > /dev/null
     runHook postInstallCheck
   '';

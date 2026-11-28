@@ -147,7 +147,7 @@
         type="button"
         class="icon-btn text-error"
         (click)="interrupt.emit()"
-        title="Stop Claude"
+        [title]="'Stop ' + agent()"
         data-testid="interrupt"
       >
         <app-icon name="stop" /><span class="sr-only">Stop</span>

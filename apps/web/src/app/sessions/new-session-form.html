@@ -4,13 +4,13 @@
     <app-markdown-toolbar class="mb-1" (format)="promptField.format($event)" />
     }
     <mat-form-field appearance="outline" class="w-full">
-      <mat-label>What should Claude do?</mat-label>
+      <mat-label>What should {{ agent() }} do?</mat-label>
       <!-- Six lines high, growing up to 18, then it scrolls. -->
       <app-markdown-editor
         class="min-h-[calc(6*1.5em)] [--app-editor-font:inherit] [--app-editor-max-height:calc(18*1.5em)]"
         [(text)]="promptText"
         [attributes]="{
-          'aria-label': 'What should Claude do?',
+          'aria-label': 'What should ' + agent() + ' do?',
           'data-testid': 'new-prompt',
         }"
         (edited)="onPromptChange()"
@@ -237,6 +237,19 @@
         }
       </mat-select>
     </mat-form-field>
+    } @if (enginesStore.several()) {
+    <mat-form-field appearance="outline" class="w-40" subscriptSizing="dynamic">
+      <mat-label>Engine</mat-label>
+      <mat-select
+        [value]="engine()"
+        (selectionChange)="pickEngine($event.value)"
+        data-testid="engine"
+      >
+        @for (option of enginesStore.engines(); track option.id) {
+        <mat-option [value]="option.id">{{ option.label }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
     } @if (accounts().length > 1) {
     <mat-form-field appearance="outline" class="w-48" subscriptSizing="dynamic">
       <mat-label>Account</mat-label>
@@ -287,7 +300,7 @@
         (ngModelChange)="touched = true"
         data-testid="permission-mode"
       >
-        @for (option of modeOptions; track option.value) {
+        @for (option of modeOptions(); track option.value) {
         <mat-option
           [value]="option.value"
           [title]="option.description"
@@ -313,7 +326,12 @@
       Start session
     </button>
   </div>
-  @if (createError(); as error) {
+  @if (noAccount()) {
+  <p class="m-0 text-on-surface-variant" data-testid="no-account">
+    {{ agent() }} needs a {{ providerLabel() }} account:
+    <a routerLink="/settings">add one under Settings</a>.
+  </p>
+  } @if (createError(); as error) {
   <p class="text-error wrap-anywhere" data-testid="create-error">{{ error }}</p>
   }
 </form>

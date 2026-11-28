@@ -12,10 +12,12 @@ import type {
   SessionMessage,
   SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
-import type {
-  ModelOption,
-  SlashCommandOption,
-  UsageTotals,
+import {
+  CLAUDE_CODE_PERMISSION_MODES,
+  type ModelOption,
+  type SessionPermissionMode,
+  type SlashCommandOption,
+  type UsageTotals,
 } from '@claude-remote-manager/shared-types';
 import { SdkEventMapper, transcriptEntries } from './sdk-event-mapper';
 import type {
@@ -372,4 +374,14 @@ export function claudeCanUseTool(approve: AgentApprover): CanUseTool {
       ...(updates.length > 0 ? { updatedPermissions: updates } : {}),
     };
   };
+}
+
+/**
+ * Claude Code's permission mode for a session's mode: its own, `default`
+ * for another engine's (never reaches it through the API).
+ */
+export function claudeMode(mode: SessionPermissionMode): PermissionMode {
+  return (CLAUDE_CODE_PERMISSION_MODES as readonly string[]).includes(mode)
+    ? (mode as PermissionMode)
+    : 'default';
 }

@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -33,11 +34,18 @@ import {
 import type { AgentAccount } from '../agent/agent-runner';
 import { LimitsService } from '../limits/limits.service';
 import { ClaudeAccountDirectories } from './claude-account-directories';
-import type { ClaudeAuthStatus, ClaudeCli, ClaudeLogin } from './claude-cli';
+import type { ClaudeCli } from './claude-cli';
+import type {
+  AccountBackend,
+  AccountLogin,
+  AccountStatus,
+} from './account-backend';
 
 /** Nest tokens of the helpers (replaced in tests). */
 export const CLAUDE_CLI = Symbol('CLAUDE_CLI');
 export const CLAUDE_ACCOUNT_DIRECTORIES = Symbol('CLAUDE_ACCOUNT_DIRECTORIES');
+/** The ChatGPT accounts' backend (Codex homes); absent without Codex. */
+export const CHATGPT_ACCOUNTS = Symbol('CHATGPT_ACCOUNTS');
 
 type AccountRow = typeof accounts.$inferSelect;
 
@@ -54,7 +62,7 @@ const LOGIN_RESULT_MS = 10 * 60_000;
 const MAX_CODE_LENGTH = 2000;
 
 interface LoginState extends AccountLoginDto {
-  process: ClaudeLogin | null;
+  process: AccountLogin | null;
   /** Clears a finished login from the list. */
   timer: NodeJS.Timeout | null;
 }
@@ -92,6 +100,9 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     @Inject(CLAUDE_ACCOUNT_DIRECTORIES)
     private readonly directories: ClaudeAccountDirectories,
     private readonly limits: LimitsService,
+    @Optional()
+    @Inject(CHATGPT_ACCOUNTS)
+    private readonly chatgpt?: AccountBackend | null,
   ) {
     limits.setAccounts(
       () => this.rows().map((row) => row.id),
@@ -171,7 +182,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       optionalEnum(body, 'provider', ACCOUNT_PROVIDERS) ?? 'claude';
     const name = this.validName(body);
     const id = randomUUID();
-    await this.directories.prepare(id);
+    await this.backend(provider).prepare(id);
     const position =
       this.rows().reduce((max, row) => Math.max(max, row.position), -1) + 1;
     this.db
@@ -256,10 +267,16 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     this.removing.add(id);
     let loggedOut = false;
     let removed = false;
+    // Without its engine on this server (a ChatGPT account without Codex)
+    // only the row goes: its directory stays where it is.
+    const available = row.provider !== 'chatgpt' || !!this.chatgpt;
     try {
       this.cancelLogin(id);
       try {
-        await this.cli.logout(this.agentAccountOf(row));
+        if (!available) {
+          throw new Error('Codex is not available on this server');
+        }
+        await this.backend(row.provider).logout(this.agentAccountOf(row));
         loggedOut = true;
       } catch (error) {
         this.logger.warn(
@@ -271,7 +288,13 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
         throw busy();
       }
       // The directory first: if that fails, the account stays (retry).
-      await this.directories.remove(row.directory);
+      if (available) {
+        await this.backend(row.provider).remove(row.directory);
+      } else {
+        this.logger.warn(
+          `Removed account ${id} without its directory ${row.directory ?? ''}: Codex is not available on this server`,
+        );
+      }
       // A login started meanwhile goes too.
       this.cancelLogin(id);
       this.deleteRow(row);
@@ -328,20 +351,22 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   startLogin(id: string): AccountDto {
     const row = this.requireUsable(id);
     this.cancelLogin(id);
-    const process = this.cli.login(this.agentAccountOf(row));
+    const process = this.backend(row.provider).login(this.agentAccountOf(row));
     const state: LoginState = {
       status: 'starting',
       url: null,
+      userCode: null,
       error: null,
       process,
       timer: null,
     };
     this.logins.set(id, state);
-    process.url.then(
-      (url) => {
+    Promise.all([process.url, process.userCode ?? Promise.resolve(null)]).then(
+      ([url, userCode]) => {
         if (this.logins.get(id) === state && state.status === 'starting') {
           state.status = 'waiting';
           state.url = url;
+          state.userCode = userCode;
           this.publish();
         }
       },
@@ -391,7 +416,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       notBlank: true,
     });
     const state = this.logins.get(id);
-    if (!state?.process || state.status !== 'waiting') {
+    if (!state?.process?.submit || state.status !== 'waiting') {
       throw new ConflictException('No login waits for a code; start it again');
     }
     state.status = 'verifying';
@@ -417,7 +442,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     const row = this.requireUsable(id);
     this.cancelLogin(id);
     try {
-      await this.cli.logout(this.agentAccountOf(row));
+      await this.backend(row.provider).logout(this.agentAccountOf(row));
     } catch (error) {
       throw new ConflictException(`Logout failed: ${errorMessage(error)}`);
     }
@@ -437,9 +462,11 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     if (!row) {
       return false;
     }
-    let status: ClaudeAuthStatus;
+    let status: AccountStatus;
     try {
-      status = await this.cli.status(this.agentAccountOf(row));
+      status = await this.backend(row.provider).status(
+        this.agentAccountOf(row),
+      );
     } catch (error) {
       this.logger.warn(
         `Could not read the login of account ${id}: ${errorMessage(error)}`,
@@ -490,7 +517,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   ): Promise<AgentAccount & { id: string }> {
     const row = this.pick(accountId, provider);
     if (row.directory !== null) {
-      await this.directories.prepare(row.directory);
+      await this.backend(row.provider).prepare(row.directory);
     }
     return { id: row.id, ...this.agentAccountOf(row) };
   }
@@ -516,7 +543,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     this.leases.set(row.id, (this.leases.get(row.id) ?? 0) + 1);
     try {
       if (row.directory !== null) {
-        await this.directories.prepare(row.directory);
+        await this.backend(row.provider).prepare(row.directory);
       }
       return await task({ id: row.id, ...this.agentAccountOf(row) });
     } finally {
@@ -680,9 +707,29 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  /** How a provider's accounts live here; 409 for one without engine. */
+  private backend(provider: AccountProvider): AccountBackend {
+    if (provider === 'claude') {
+      return {
+        path: (directory) => this.directories.path(directory),
+        prepare: (directory) => this.directories.prepare(directory),
+        remove: (directory) => this.directories.remove(directory),
+        status: (account) => this.cli.status(account),
+        logout: (account) => this.cli.logout(account),
+        login: (account) => this.cli.login(account),
+      };
+    }
+    if (!this.chatgpt) {
+      throw new ConflictException(
+        'ChatGPT accounts need Codex, which this server does not have',
+      );
+    }
+    return this.chatgpt;
+  }
+
   private agentAccountOf(row: AccountRow): AgentAccount {
     return {
-      configDir: this.directories.path(row.directory),
+      configDir: this.backend(row.provider).path(row.directory),
       main: row.directory === null,
     };
   }
@@ -761,7 +808,12 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       loginExpiresAt: row.loginExpiresAt,
       limits: this.limits.get(row.id),
       login: login
-        ? { status: login.status, url: login.url, error: login.error }
+        ? {
+            status: login.status,
+            url: login.url,
+            userCode: login.userCode,
+            error: login.error,
+          }
         : null,
     };
   }
@@ -789,11 +841,8 @@ export function defaultAccountKey(
     own.find((account) => account.main) ??
     own[0];
   return chosen
-    ? [
-        chosen.id,
-        chosen.loggedIn,
-        chosen.email,
-        chosen.subscriptionType,
-      ].join('|')
+    ? [chosen.id, chosen.loggedIn, chosen.email, chosen.subscriptionType].join(
+        '|',
+      )
     : '';
 }

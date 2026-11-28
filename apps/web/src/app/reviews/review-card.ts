@@ -15,7 +15,7 @@ export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
 
 /**
  * An independent review in the conversation: running (with Cancel), its
- * findings and whether they went to Claude, or why it failed.
+ * findings and whether they went to the session's agent, or why it failed.
  */
 @Component({
   selector: 'app-review-card',
@@ -54,7 +54,9 @@ export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
               : 'text-on-surface-variant'
         "
       />
-      <span class="font-medium">{{ triggerLabel(review.trigger) }}</span>
+      <span class="font-medium">{{
+        triggerLabel(review.trigger, agent())
+      }}</span>
       <span class="text-on-surface-variant" data-testid="review-state">{{
         stateText()
       }}</span>
@@ -133,7 +135,7 @@ export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
     }
     @if (review.messageId) {
       <p class="m-0 hint-text" data-testid="review-sent">
-        The findings went to Claude to fix.
+        The findings went to {{ agent() }} to fix.
       </p>
     }
   `,
@@ -144,6 +146,8 @@ export class ReviewCard {
 
   readonly item = input.required<ReviewItem>();
   readonly sessionId = input.required<string>();
+  /** The session's agent in sentences ("Claude", "Codex"). */
+  readonly agent = input('Claude');
   /** The session's review running now, by ID (`null` without). */
   readonly runningId = input<string | null>(null);
 

@@ -163,6 +163,19 @@ describe('EnvironmentsService', () => {
         ],
       }),
     ).toThrow(BadRequestException);
+    // Presets are Claude Code's modes, never Codex's.
+    for (const permissionMode of [
+      'untrusted',
+      'on-request',
+      'never',
+    ] as const) {
+      expect(() => service.create({ name: 'X', permissionMode })).toThrow(
+        BadRequestException,
+      );
+    }
+    expect(
+      service.create({ name: 'Plan', permissionMode: 'plan' }).permissionMode,
+    ).toBe('plan');
     service.create({ name: 'X' });
     expect(() => service.create({ name: 'X' })).toThrow(ConflictException);
   });

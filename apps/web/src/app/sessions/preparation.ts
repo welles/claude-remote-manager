@@ -30,7 +30,10 @@ export type ShownItem =
  * they are one row, open only when a step failed. Adding a repository to
  * the running session is a group of its own (one per attempt).
  */
-export function groupPreparation(items: ConversationItem[]): ShownItem[] {
+export function groupPreparation(
+  items: ConversationItem[],
+  agent = 'Claude',
+): ShownItem[] {
   const shown: ShownItem[] = [];
   let group: PreparationGroup | null = null;
   for (const item of items) {
@@ -65,13 +68,13 @@ export function groupPreparation(items: ConversationItem[]): ShownItem[] {
       // An addition's row says how the addition went (its `add` step, which
       // later states replace in place), not its last git step.
       if (item.step === 'add') {
-        group.summary = progressText(item);
+        group.summary = progressText(item, agent);
         group.failed = item.state === 'failed';
         group.done = item.state !== 'started';
       }
       continue;
     }
-    group.summary = progressText(item);
+    group.summary = progressText(item, agent);
     group.failed ||= item.state === 'failed';
     group.done = item.state !== 'started';
   }

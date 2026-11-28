@@ -254,11 +254,13 @@ function commitsKey(event: CommitsAddedEvent): string {
 
 /**
  * Applies a session event to the conversation. Returns a new array when
- * something changed (so signals notice), otherwise the same one.
+ * something changed (so signals notice), otherwise the same one. `agent`
+ * names the session's agent in notices ("Claude", "Codex").
  */
 export function applyEvent(
   items: ConversationItem[],
   event: SessionEvent,
+  agent = 'Claude',
 ): ConversationItem[] {
   switch (event.type) {
     case 'user.message':
@@ -453,7 +455,7 @@ export function applyEvent(
           kind: 'notice',
           key: `preview-stopped:${event.seq}`,
           level: 'info',
-          text: previewStoppedText(event),
+          text: previewStoppedText(event, agent),
         },
       ];
     case 'permission.denied': {
@@ -564,7 +566,7 @@ export function applyEvent(
         {
           kind: 'settings',
           key: `settings:${event.seq}`,
-          text: settingsText(event),
+          text: settingsText(event, agent),
         },
       ];
     case 'turn.result':
@@ -710,18 +712,24 @@ export function applyEvent(
 }
 
 /** One line saying that a preview was stopped, and by whom. */
-export function previewStoppedText(event: PreviewStoppedEvent): string {
+export function previewStoppedText(
+  event: PreviewStoppedEvent,
+  agent = 'Claude',
+): string {
   const by =
     event.by === 'user'
       ? 'by you'
       : event.by === 'claude'
-        ? 'by Claude'
+        ? `by ${agent}`
         : 'because the session ended';
   return `Preview "${event.name}" (port ${event.port}) stopped ${by}`;
 }
 
 /** One line describing a change of model or permission mode. */
-export function settingsText(event: SettingsChangedEvent): string {
+export function settingsText(
+  event: SettingsChangedEvent,
+  agent = 'Claude',
+): string {
   const parts: string[] = [];
   if (event.model !== undefined) {
     parts.push(`Model: ${event.model ?? 'default'}`);
@@ -736,7 +744,7 @@ export function settingsText(event: SettingsChangedEvent): string {
     event.cause === 'plan'
       ? ' (plan approved)'
       : event.cause === 'claude'
-        ? ' (changed by Claude)'
+        ? ` (changed by ${agent})`
         : '';
   return `${parts.join(' · ')}${by}`;
 }
@@ -757,6 +765,7 @@ export function pendingRequests(
 /** One line describing a preparation step. */
 export function progressText(
   item: Extract<ConversationItem, { kind: 'progress' }>,
+  agent = 'Claude',
 ): string {
   const target = item.target ?? '';
   const detail = item.message ? ` · ${item.message}` : '';
@@ -779,7 +788,7 @@ export function progressText(
     case 'rollback':
       return `Removed ${target || item.path || 'the directory'} again`;
     case 'done':
-      return 'Ready. The message went to Claude.';
+      return `Ready. The message went to ${agent}.`;
     case 'add':
       return item.state === 'started'
         ? `Adding ${target} to the session${detail}…`
@@ -804,8 +813,14 @@ export function applyDraft(
   return index >= 0 ? replaceAt(items, index, item) : [...items, item];
 }
 
-export function buildConversation(events: SessionEvent[]): ConversationItem[] {
-  return events.reduce(applyEvent, [] as ConversationItem[]);
+export function buildConversation(
+  events: SessionEvent[],
+  agent = 'Claude',
+): ConversationItem[] {
+  return events.reduce<ConversationItem[]>(
+    (items, event) => applyEvent(items, event, agent),
+    [],
+  );
 }
 
 type ToolItem = Extract<ConversationItem, { kind: 'tool' }>;
@@ -899,7 +914,7 @@ export function questionCard(item: ConversationItem): QuestionCard | null {
 const CANCELLED: Record<string, string> = {
   interrupted: 'Cancelled: the turn was stopped',
   ended: 'Cancelled: the session was ended',
-  process_exit: 'Cancelled: Claude Code ended',
+  process_exit: "Cancelled: the agent's process ended",
   restart: 'Cancelled: the server stopped',
 };
 

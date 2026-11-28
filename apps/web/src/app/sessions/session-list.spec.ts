@@ -1,3 +1,4 @@
+import { flushEngines } from '../engines/testing/engines';
 import { provideHttpClient } from '@angular/common/http';
 import { mainAccountList } from '../accounts/testing/accounts';
 import {
@@ -35,6 +36,7 @@ describe('SessionList', () => {
   const render = async () => {
     const fixture = TestBed.createComponent(SessionList);
     fixture.detectChanges();
+    flushEngines(http);
     http
       .expectOne('/api/models')
       .flush({ models: [], source: 'fallback', updatedAt: null });
@@ -100,6 +102,42 @@ describe('SessionList', () => {
         '[data-testid="session"]',
       ),
     ].map((row) => row.textContent?.replace(/\s+/g, ' ').trim() ?? '');
+
+  it("labels each session's model in its engine's terms", async () => {
+    const fixture = await render();
+    http.expectOne('/api/sessions').flush({
+      sessions: [
+        sessionDto({ model: 'opus' }),
+        sessionDto({
+          id: 's2',
+          engine: 'codex',
+          model: 'gpt-5',
+          updatedAt: '2025-12-01T00:00:00.000Z',
+        }),
+      ],
+    });
+    await fixture.whenStable();
+    http.expectOne('/api/models?engine=codex').flush({
+      models: [
+        {
+          value: 'gpt-5',
+          label: 'GPT-5',
+          description: '',
+          resolvedModel: null,
+        },
+      ],
+      source: 'codex',
+      updatedAt: null,
+    });
+    await fixture.whenStable();
+    const models = [
+      ...(fixture.nativeElement as HTMLElement).querySelectorAll(
+        '[data-testid="session-model"]',
+      ),
+    ].map((model) => model.textContent?.trim());
+    // Claude Code alone on the server: only the other engine is named.
+    expect(models).toEqual(['opus', 'Codex · GPT-5']);
+  });
 
   it('shows only sessions that need the user from the "Waiting sessions" shortcut', async () => {
     await TestBed.inject(Router).navigateByUrl('/?waiting=1');
@@ -185,6 +223,7 @@ describe('SessionList', () => {
     for (const request of http.match((req) => req.url === '/api/models')) {
       request.flush({ models: [], source: 'fallback', updatedAt: null });
     }
+    flushEngines(http);
     http
       .expectOne((req) => req.url === '/api/sessions')
       .flush({

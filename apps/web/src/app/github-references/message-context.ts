@@ -4,7 +4,7 @@ import { ReferencesApi } from './references-api';
 
 /**
  * Below a sent message: the GitHub content the app gave Claude with it,
- * exactly as Claude got it, loaded when opened.
+ * exactly as the agent got it, loaded when opened.
  */
 @Component({
   selector: 'app-message-context',
@@ -14,7 +14,7 @@ import { ReferencesApi } from './references-api';
   template: `
     <details (toggle)="toggled($event)" data-testid="message-context">
       <summary class="cursor-pointer text-end">
-        GitHub context for Claude ({{ size() }})
+        GitHub context sent along ({{ size() }})
       </summary>
       @if (error(); as message) {
         <p class="text-error">{{ message }}</p>

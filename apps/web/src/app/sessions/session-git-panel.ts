@@ -17,6 +17,7 @@ import { DiscardCloneDialog } from './discard-clone-dialog';
 import { PullRequestAutomation } from './pull-request-automation';
 import { PullRequestChecks } from './pull-request-checks';
 import { SessionsApi } from './sessions-api';
+import { agentName, engineOf } from '../engines/engines-store';
 
 /** A clone of the session that can be pushed. */
 interface PushableClone {
@@ -68,6 +69,10 @@ export class SessionGitPanel {
   private readonly api = inject(SessionsApi);
 
   readonly session = input.required<SessionDto>();
+  /** "Claude", "Codex": the session's agent in sentences. */
+  protected readonly agent = computed(() =>
+    agentName(engineOf(this.session())),
+  );
 
   protected readonly stateLabels = PULL_REQUEST_STATE_LABELS;
   protected readonly clones = computed<PushableClone[]>(() => {

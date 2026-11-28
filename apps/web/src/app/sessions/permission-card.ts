@@ -75,6 +75,8 @@ export class PermissionCard {
   readonly answer = output<PermissionResponse>();
   /** The session's directories, to name changed files shortly. */
   readonly directories = input<SessionDirectoryDto[]>([]);
+  /** The session's agent in sentences ("Claude", "Codex"). */
+  readonly agent = input('Claude');
 
   protected readonly modeInfo = PERMISSION_MODE_INFO;
   protected readonly other = OTHER;
@@ -92,7 +94,7 @@ export class PermissionCard {
   protected readonly heading = computed(() => {
     switch (this.request().kind) {
       case 'question':
-        return 'Claude asks';
+        return `${this.agent()} asks`;
       case 'plan':
         return 'Plan for approval';
       default:
@@ -126,7 +128,7 @@ export class PermissionCard {
     Object.values(this.answers()).every((answer) => answer.trim() !== ''),
   );
 
-  /** Where a repository Claude wants to add comes from. */
+  /** Where a repository the agent wants to add comes from. */
   protected additionSource(addition: RepositoryAdditionCall): string {
     const registered = addition.registered ? '' : ', not registered yet';
     switch (addition.source) {

@@ -38,7 +38,7 @@ import {
   PERMISSION_MODE_INFO,
   PERMISSION_MODE_OVERRIDE_INFO,
   DANGEROUS_PERMISSION_MODES,
-  SESSION_PERMISSION_MODES,
+  ENGINE_PROVIDERS,
   type ContextUsage,
   type LogPosition,
   type PermissionRequestEvent,
@@ -58,6 +58,7 @@ import {
 } from './conversation';
 import { groupPreparation } from './preparation';
 import { AccountsStore } from '../accounts/accounts-store';
+import { EnginesStore, agentName, engineOf } from '../engines/engines-store';
 import { formatCost, formatTokens, needLabel, totalTokens } from './format';
 import {
   ModelsStore,
@@ -140,17 +141,41 @@ export class SessionView implements OnInit {
   private readonly destroyRef = inject(DestroyRef);
   private readonly modelsStore = inject(ModelsStore);
   private readonly accountsStore = inject(AccountsStore);
-  /** The accounts; the choice only shows with more than one. */
-  protected readonly accounts = computed(
-    () => this.accountsStore.accounts() ?? [],
+  private readonly enginesStore = inject(EnginesStore);
+  /** The session's engine (Claude Code for older sessions). */
+  protected readonly engine = computed(() => engineOf(this.session()));
+  /** What the session's engine offers. */
+  protected readonly capabilities = computed(() =>
+    this.enginesStore.capabilities(this.engine()),
   );
-  /** The account the session uses (its own, else the default). */
-  protected readonly sessionAccount = computed(() =>
-    this.accountsStore.effective(this.session()?.accountId),
+  /** "Claude", "Codex": the agent in sentences. */
+  protected readonly agent = computed(() => agentName(this.engine()));
+  /** The engine's name next to the model, when there is a choice of them. */
+  protected readonly engineLabel = computed(() =>
+    this.enginesStore.showEngine(this.engine())
+      ? this.enginesStore.engine(this.engine()).label
+      : null,
   );
+  private readonly provider = computed(() => ENGINE_PROVIDERS[this.engine()]);
+  /** The engine's accounts; the choice only shows with more than one. */
+  protected readonly accounts = computed(() => {
+    this.accountsStore.accounts();
+    return this.accountsStore.ofProvider(this.provider());
+  });
+  /** The account the session uses (its own, else its provider's default). */
+  protected readonly sessionAccount = computed(() => {
+    this.accountsStore.accounts();
+    return this.accountsStore.effective(
+      this.session()?.accountId,
+      this.provider(),
+    );
+  });
   private readonly host = inject(ElementRef);
 
-  protected readonly modes = SESSION_PERMISSION_MODES;
+  /** The permission modes of the session's engine. */
+  protected readonly modes = computed(
+    () => this.capabilities().permissionModes,
+  );
   protected readonly dangerousModes = DANGEROUS_PERMISSION_MODES;
   protected readonly modeInfo = PERMISSION_MODE_INFO;
   protected readonly overrideInfo = PERMISSION_MODE_OVERRIDE_INFO;
@@ -220,7 +245,7 @@ export class SessionView implements OnInit {
    * collapsible row ("Prepare: …"), open while a step failed.
    */
   protected readonly shownItems = computed(() =>
-    groupPreparation(this.items()),
+    groupPreparation(this.items(), this.agent()),
   );
   /** Name of the session's model for the strip. */
   protected readonly modelName = computed(() =>
@@ -243,12 +268,15 @@ export class SessionView implements OnInit {
       ? `${this.modeInfo[override.mode].label} (${this.overrideInfo[override.reason].label})`
       : this.modeInfo[session.permissionMode].label;
   });
-  /** Claude's task list. */
+  /** The agent's task list. */
   protected readonly todos = computed(() => todoList(this.items()));
   /** Models to choose from, including the session's own. */
   protected readonly normalizeModel = normalizeModel;
   protected readonly modelOptions = computed(() =>
-    modelOptionsWith(this.modelsStore.models(), this.session()?.model ?? null),
+    modelOptionsWith(
+      this.modelsStore.models(this.engine()),
+      this.session()?.model ?? null,
+    ),
   );
   /** Model the session's choice currently resolves to, when known. */
   protected readonly resolvedModel = computed(() => {
@@ -405,6 +433,11 @@ export class SessionView implements OnInit {
   private stickToBottom = true;
 
   constructor() {
+    // The models of the session's engine (Claude Code's load in any case).
+    effect(() => {
+      const engine = this.engine();
+      untracked(() => this.modelsStore.load(engine));
+    });
     // Unsent text stays with its session.
     effect(() => {
       const id = this.sessionId();
@@ -444,6 +477,7 @@ export class SessionView implements OnInit {
 
   ngOnInit(): void {
     this.modelsStore.load();
+    this.enginesStore.load();
     this.accountsStore.start();
     this.socket.messages$
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -837,9 +871,13 @@ export class SessionView implements OnInit {
         if (message.session.id === id) {
           this.endedAgain(message.session.status);
           this.session.set(message.session);
+          const agent = agentName(engineOf(message.session));
           let items = message.complete
-            ? buildConversation(message.events)
-            : message.events.reduce(applyEvent, this.items());
+            ? buildConversation(message.events, agent)
+            : message.events.reduce(
+                (all, event) => applyEvent(all, event, agent),
+                this.items(),
+              );
           items = message.drafts.reduce(applyDraft, items);
           this.items.set(items);
           this.suggestion.set(
@@ -875,7 +913,7 @@ export class SessionView implements OnInit {
           if (this.position) {
             this.position = { ...this.position, seq: event.seq };
           }
-          this.items.update((items) => applyEvent(items, event));
+          this.items.update((items) => applyEvent(items, event, this.agent()));
           this.suggestion.update((text) => applySuggestion(text, event));
           if (event.type === 'context.usage') {
             this.context.set(event.context);

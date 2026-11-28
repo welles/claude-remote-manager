@@ -340,6 +340,19 @@ describe('MessageComposer', () => {
     http.expectNone('/api/sessions/s1/slash-commands');
   });
 
+  it('offers no slash commands for an engine without them, and names its agent', async () => {
+    fixture.componentRef.setInput('sessionId', 's1');
+    fixture.componentRef.setInput('slashCommands', false);
+    fixture.componentRef.setInput('agent', 'Codex');
+    fixture.componentRef.setInput('running', true);
+    await fixture.whenStable();
+    new EditorDriver(element).type('/re');
+    await fixture.whenStable();
+    http.expectNone('/api/sessions/s1/slash-commands');
+    expect(element.querySelector('[data-testid="commands"]')).toBeNull();
+    expect(button('interrupt').title).toBe('Stop Codex');
+  });
+
   it('keeps the next line, drops stale lists and stays in range', async () => {
     fixture.componentRef.setInput('sessionId', 's1');
     await fixture.whenStable();

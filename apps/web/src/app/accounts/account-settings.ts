@@ -24,6 +24,8 @@ import { LimitsStore } from '../limits/limits-store';
 import { AppDialog } from '../ui/dialog';
 import { Toasts } from '../ui/toasts';
 import { AccountsStore } from './accounts-store';
+import { EnginesStore } from '../engines/engines-store';
+import { AppIcon } from '../ui/icon';
 
 /** "Max (5x)", "Pro"; `null` when unknown. */
 export function planLabel(account: AccountDto): string | null {
@@ -32,16 +34,20 @@ export function planLabel(account: AccountDto): string | null {
 }
 
 /**
- * The accounts of every provider on the Settings page: their login state and limits,
- * adding one with the login in the UI (open the login page, paste the
- * code), logging in again or out, renaming, the default and the order of
- * the automatic switch, removing.
+ * The accounts of every provider on the Settings page: their login state
+ * and limits, adding one with the login in the UI (Claude: open the login
+ * page, paste the code; ChatGPT: a device login, enter the shown code on
+ * the page), logging in again or out, renaming, the default and the order
+ * of the automatic switch (per provider), removing. Only providers whose
+ * engine the server has can be added; with several, the accounts are
+ * grouped by provider.
  */
 @Component({
   selector: 'app-account-settings',
   host: { class: 'flex flex-col gap-4' },
   imports: [
     AppDialog,
+    AppIcon,
     FormsModule,
     LimitWindows,
     MatButtonModule,
@@ -50,242 +56,298 @@ export function planLabel(account: AccountDto): string | null {
   ],
   template: `
     <p class="m-0 text-on-surface-variant">
-      Sessions work with a subscription account. New sessions use the default
-      account, or the next one in this order while its limit is used up; each
-      session can switch its account in its settings. Accounts of the same
-      provider share settings, skills, plugins, memory and conversations.
+      Sessions work with a subscription account of their engine's provider. New
+      sessions use the provider's default account, or the next one in this order
+      while its limit is used up; each session can switch its account in its
+      settings. Accounts of the same provider share settings, skills, plugins,
+      memory and conversations.
     </p>
     @if (store.failed()) {
       <p class="m-0 text-error">The accounts could not be loaded.</p>
       <button matButton type="button" (click)="store.load()">Retry</button>
     }
-    @for (
-      account of accounts();
-      track account.id;
-      let first = $first;
-      let last = $last
-    ) {
-      <section
-        class="flex flex-col gap-2 rounded-md border border-outline-variant p-3"
-        data-testid="account"
-      >
-        <div class="flex flex-wrap items-baseline gap-2">
-          <h3
-            class="type-title-medium m-0 wrap-anywhere"
-            data-testid="account-name"
-          >
-            {{ account.name }}
-          </h3>
-          <span class="badge" data-testid="account-provider">{{
-            providerLabels[account.provider]
-          }}</span>
-          @if (account.isDefault) {
-            <span class="badge" data-testid="account-default">default</span>
-          }
-          @if (account.loggedIn === false) {
-            <span class="badge tone-error" data-testid="account-logged-out"
-              >logged out</span
+    @for (group of groups(); track group.provider) {
+      @if (groups().length > 1) {
+        <h3
+          class="app-section-label m-0"
+          [attr.data-testid]="'account-group-' + group.provider"
+        >
+          {{ providerLabels[group.provider] }}
+        </h3>
+      }
+      @for (
+        account of group.accounts;
+        track account.id;
+        let first = $first;
+        let last = $last
+      ) {
+        <section
+          class="flex flex-col gap-2 rounded-md border border-outline-variant p-3"
+          data-testid="account"
+        >
+          <div class="flex flex-wrap items-baseline gap-2">
+            <h3
+              class="type-title-medium m-0 wrap-anywhere"
+              data-testid="account-name"
             >
-          }
-        </div>
-        @if (account.loggedIn) {
-          <p
-            class="m-0 text-on-surface-variant wrap-anywhere"
-            data-testid="account-login"
-          >
-            {{ account.email ?? 'Logged in' }}
-            @if (planLabel(account); as plan) {
-              · {{ plan }}
+              {{ account.name }}
+            </h3>
+            @if (groups().length <= 1) {
+              <span class="badge" data-testid="account-provider">{{
+                providerLabels[account.provider]
+              }}</span>
             }
-            @if (account.organization) {
-              · {{ account.organization }}
+            @if (account.isDefault) {
+              <span class="badge" data-testid="account-default">default</span>
             }
-          </p>
-        }
-        @if (account.login; as login) {
-          <div class="flex flex-col gap-2" data-testid="account-login-flow">
-            @switch (login.status) {
-              @case ('starting') {
-                <p class="m-0">Starting the login …</p>
-              }
-              @case ('waiting') {
-                <p class="m-0">
-                  Open the login page, sign in with the Claude account and paste
-                  the code shown there.
-                </p>
-                <div class="flex flex-wrap items-center gap-2">
-                  <a
-                    matButton="tonal"
-                    [href]="login.url"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    data-testid="account-login-url"
-                    >Open login page</a
-                  >
-                </div>
-                <form
-                  class="flex flex-wrap items-center gap-2"
-                  (ngSubmit)="submitCode(account)"
-                >
-                  <mat-form-field
-                    appearance="outline"
-                    subscriptSizing="dynamic"
-                    class="min-w-0 flex-[1_1_240px]"
-                  >
-                    <mat-label>Code</mat-label>
-                    <input
-                      matInput
-                      name="code"
-                      autocomplete="off"
-                      [(ngModel)]="codes[account.id]"
-                      data-testid="account-login-code"
-                    />
-                  </mat-form-field>
-                  <button
-                    matButton="filled"
-                    type="submit"
-                    [disabled]="!codes[account.id]?.trim() || busy()"
-                    data-testid="account-login-submit"
-                  >
-                    Log in
-                  </button>
-                </form>
-              }
-              @case ('verifying') {
-                <p class="m-0">Checking the code …</p>
-              }
-              @case ('done') {
-                <p
-                  class="m-0 text-on-surface-variant"
-                  data-testid="account-login-done"
-                >
-                  Logged in.
-                </p>
-              }
-              @case ('failed') {
-                <p
-                  class="m-0 text-error wrap-anywhere"
-                  data-testid="account-login-error"
-                >
-                  The login failed{{ login.error ? ': ' + login.error : '.' }}
-                </p>
-              }
+            @if (account.loggedIn === false) {
+              <span class="badge tone-error" data-testid="account-logged-out"
+                >logged out</span
+              >
             }
           </div>
-        }
-        @if (account.loggedIn) {
-          <details>
-            <summary class="cursor-pointer text-on-surface-variant">
-              Plan limits
-            </summary>
-            <div class="pt-2">
-              <app-limit-windows [accountId]="account.id" />
+          @if (account.loggedIn) {
+            <p
+              class="m-0 text-on-surface-variant wrap-anywhere"
+              data-testid="account-login"
+            >
+              {{ account.email ?? 'Logged in' }}
+              @if (planLabel(account); as plan) {
+                · {{ plan }}
+              }
+              @if (account.organization) {
+                · {{ account.organization }}
+              }
+            </p>
+          }
+          @if (account.login; as login) {
+            <div class="flex flex-col gap-2" data-testid="account-login-flow">
+              @switch (login.status) {
+                @case ('starting') {
+                  <p class="m-0">Starting the login …</p>
+                }
+                @case ('waiting') {
+                  @if (login.userCode; as userCode) {
+                    <p class="m-0">
+                      Open the login page, sign in with the
+                      {{ providerLabels[account.provider] }} account and enter
+                      this code there:
+                    </p>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <code
+                        class="type-title-large rounded-sm border border-outline-variant bg-surface-container-highest px-3 py-1.5 font-mono tracking-widest select-all"
+                        data-testid="account-login-user-code"
+                        >{{ userCode }}</code
+                      >
+                      <button
+                        type="button"
+                        class="icon-btn"
+                        title="Copy the code"
+                        (click)="copyCode(userCode)"
+                        data-testid="account-login-copy"
+                      >
+                        <app-icon name="copy" /><span class="sr-only"
+                          >Copy the code</span
+                        >
+                      </button>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <a
+                        matButton="tonal"
+                        [href]="login.url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-testid="account-login-url"
+                        >Open login page</a
+                      >
+                    </div>
+                    <p
+                      class="m-0 text-on-surface-variant"
+                      data-testid="account-login-waiting"
+                    >
+                      Waiting for the login to complete …
+                    </p>
+                  } @else {
+                    <p class="m-0">
+                      Open the login page, sign in with the
+                      {{ providerLabels[account.provider] }} account and paste
+                      the code shown there.
+                    </p>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <a
+                        matButton="tonal"
+                        [href]="login.url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-testid="account-login-url"
+                        >Open login page</a
+                      >
+                    </div>
+                    <form
+                      class="flex flex-wrap items-center gap-2"
+                      (ngSubmit)="submitCode(account)"
+                    >
+                      <mat-form-field
+                        appearance="outline"
+                        subscriptSizing="dynamic"
+                        class="min-w-0 flex-[1_1_240px]"
+                      >
+                        <mat-label>Code</mat-label>
+                        <input
+                          matInput
+                          name="code"
+                          autocomplete="off"
+                          [(ngModel)]="codes[account.id]"
+                          data-testid="account-login-code"
+                        />
+                      </mat-form-field>
+                      <button
+                        matButton="filled"
+                        type="submit"
+                        [disabled]="!codes[account.id]?.trim() || busy()"
+                        data-testid="account-login-submit"
+                      >
+                        Log in
+                      </button>
+                    </form>
+                  }
+                }
+                @case ('verifying') {
+                  <p class="m-0">Checking the code …</p>
+                }
+                @case ('done') {
+                  <p
+                    class="m-0 text-on-surface-variant"
+                    data-testid="account-login-done"
+                  >
+                    Logged in.
+                  </p>
+                }
+                @case ('failed') {
+                  <p
+                    class="m-0 text-error wrap-anywhere"
+                    data-testid="account-login-error"
+                  >
+                    The login failed{{ login.error ? ': ' + login.error : '.' }}
+                  </p>
+                }
+              }
             </div>
-          </details>
-        }
-        <div class="flex flex-wrap gap-1">
-          @if (
-            account.login?.status === 'starting' ||
-            account.login?.status === 'waiting' ||
-            account.login?.status === 'verifying'
-          ) {
-            <button
-              matButton
-              type="button"
-              (click)="
-                run(
-                  store.cancelLogin(account.id),
-                  'The login could not be cancelled'
-                )
-              "
-              data-testid="account-login-cancel"
-            >
-              Cancel login
-            </button>
-          } @else {
-            <button
-              matButton
-              type="button"
-              (click)="
-                run(
-                  store.startLogin(account.id),
-                  'The login could not be started'
-                )
-              "
-              data-testid="account-login-start"
-            >
-              {{ account.loggedIn ? 'Log in again' : 'Log in' }}
-            </button>
           }
           @if (account.loggedIn) {
+            <details>
+              <summary class="cursor-pointer text-on-surface-variant">
+                Plan limits
+              </summary>
+              <div class="pt-2">
+                <app-limit-windows [accountId]="account.id" />
+              </div>
+            </details>
+          }
+          <div class="flex flex-wrap gap-1">
+            @if (
+              account.login?.status === 'starting' ||
+              account.login?.status === 'waiting' ||
+              account.login?.status === 'verifying'
+            ) {
+              <button
+                matButton
+                type="button"
+                (click)="
+                  run(
+                    store.cancelLogin(account.id),
+                    'The login could not be cancelled'
+                  )
+                "
+                data-testid="account-login-cancel"
+              >
+                Cancel login
+              </button>
+            } @else {
+              <button
+                matButton
+                type="button"
+                (click)="
+                  run(
+                    store.startLogin(account.id),
+                    'The login could not be started'
+                  )
+                "
+                data-testid="account-login-start"
+              >
+                {{ account.loggedIn ? 'Log in again' : 'Log in' }}
+              </button>
+            }
+            @if (account.loggedIn) {
+              <button
+                matButton
+                type="button"
+                (click)="logout(account)"
+                data-testid="account-logout"
+              >
+                Log out
+              </button>
+            }
+            @if (!account.isDefault) {
+              <button
+                matButton
+                type="button"
+                (click)="
+                  run(
+                    store.update(account.id, { isDefault: true }),
+                    'The default could not be changed'
+                  )
+                "
+                data-testid="account-make-default"
+              >
+                Make default
+              </button>
+            }
             <button
               matButton
               type="button"
-              (click)="logout(account)"
-              data-testid="account-logout"
+              (click)="openRename(account)"
+              data-testid="account-rename"
             >
-              Log out
+              Rename
             </button>
-          }
-          @if (!account.isDefault) {
-            <button
-              matButton
-              type="button"
-              (click)="
-                run(
-                  store.update(account.id, { isDefault: true }),
-                  'The default could not be changed'
-                )
-              "
-              data-testid="account-make-default"
-            >
-              Make default
-            </button>
-          }
-          <button
-            matButton
-            type="button"
-            (click)="openRename(account)"
-            data-testid="account-rename"
-          >
-            Rename
-          </button>
-          @if (!first) {
-            <button
-              matButton
-              type="button"
-              (click)="move(account, -1)"
-              data-testid="account-up"
-            >
-              Move up
-            </button>
-          }
-          @if (!last) {
-            <button
-              matButton
-              type="button"
-              (click)="move(account, 1)"
-              data-testid="account-down"
-            >
-              Move down
-            </button>
-          }
-          @if (!account.main) {
-            <button
-              matButton
-              type="button"
-              class="text-error"
-              (click)="remove(account)"
-              data-testid="account-remove"
-            >
-              Remove
-            </button>
-          }
-        </div>
-      </section>
+            @if (!first) {
+              <button
+                matButton
+                type="button"
+                (click)="move(account, -1)"
+                data-testid="account-up"
+              >
+                Move up
+              </button>
+            }
+            @if (!last) {
+              <button
+                matButton
+                type="button"
+                (click)="move(account, 1)"
+                data-testid="account-down"
+              >
+                Move down
+              </button>
+            }
+            @if (!account.main) {
+              <button
+                matButton
+                type="button"
+                class="text-error"
+                (click)="remove(account)"
+                data-testid="account-remove"
+              >
+                Remove
+              </button>
+            }
+          </div>
+        </section>
+      }
     }
     <div class="flex flex-wrap gap-2">
-      @for (provider of providers; track provider) {
+      @for (provider of providers(); track provider) {
         <button
           matButton="tonal"
           type="button"
@@ -378,12 +440,35 @@ export class AccountSettings implements OnInit {
   private readonly limits = inject(LimitsStore);
   private readonly toasts = inject(Toasts);
 
+  private readonly engines = inject(EnginesStore);
+
   protected readonly accounts = computed(() => this.store.accounts() ?? []);
+  /**
+   * The accounts by provider, in the providers' order: every provider
+   * whose engine the server has, and any other that still has accounts.
+   */
+  protected readonly groups = computed(() => {
+    const available = this.engines.providers();
+    return ACCOUNT_PROVIDERS.map((provider) => ({
+      provider,
+      accounts: this.accounts().filter(
+        (account) => account.provider === provider,
+      ),
+    })).filter(
+      (group) =>
+        group.accounts.length > 0 || available.includes(group.provider),
+    );
+  });
+  /** Providers accounts can be added for: those of the server's engines. */
+  protected readonly providers = computed(() =>
+    ACCOUNT_PROVIDERS.filter((provider) =>
+      this.engines.providers().includes(provider),
+    ),
+  );
   protected readonly busy = signal(false);
   protected readonly renaming = signal<AccountDto | null>(null);
   protected readonly maxNameLength = MAX_ACCOUNT_NAME_LENGTH;
   protected readonly planLabel = planLabel;
-  protected readonly providers = ACCOUNT_PROVIDERS;
   protected readonly providerLabels = ACCOUNT_PROVIDER_LABELS;
   /** The provider of the account being added. */
   protected readonly adding = signal<AccountProvider>('claude');
@@ -400,6 +485,7 @@ export class AccountSettings implements OnInit {
   } | null>(null);
 
   ngOnInit(): void {
+    this.engines.load();
     this.store.start();
     this.limits.start();
   }
@@ -448,6 +534,18 @@ export class AccountSettings implements OnInit {
     );
   }
 
+  /** Copies the code of a device login, for pasting it on the page. */
+  protected copyCode(code: string): void {
+    void navigator.clipboard?.writeText(code).then(
+      () => this.toasts.show({ title: 'Code copied' }),
+      () =>
+        this.toasts.show({
+          title: 'The code could not be copied',
+          kind: 'error',
+        }),
+    );
+  }
+
   protected logout(account: AccountDto): void {
     this.confirming.set({ account, action: 'logout' });
     this.confirmDialog().open();
@@ -475,10 +573,19 @@ export class AccountSettings implements OnInit {
     );
   }
 
+  /** Moves an account past its neighbour of the same provider. */
   protected move(account: AccountDto, by: -1 | 1): void {
-    const ids = this.accounts().map((entry) => entry.id);
+    const accounts = this.accounts();
+    const ids = accounts.map((entry) => entry.id);
     const index = ids.indexOf(account.id);
-    const target = index + by;
+    let target = index + by;
+    while (
+      target >= 0 &&
+      target < accounts.length &&
+      accounts[target].provider !== account.provider
+    ) {
+      target += by;
+    }
     if (index < 0 || target < 0 || target >= ids.length) {
       return;
     }

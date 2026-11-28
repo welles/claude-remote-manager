@@ -120,6 +120,9 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long (never while the session has previews); `0` keeps them        |
 | `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                                            |
 | `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, skills, plugins, MCP servers, transcripts                          |
+| `CODEX_EXECUTABLE`                  | the binary of the pinned `@openai/codex`, else `codex` on the PATH                               | Other Codex executable for Codex sessions (see [Codex](#codex))                                          |
+| `CODEX_HOME`                        | `~/.codex` of the session user (image: `/data/claude/codex`)                                     | Codex home the ChatGPT accounts share; their own homes are below it                                      |
+| `CODEX_INSTRUCTIONS_FILE`           | none (image: `/etc/claude-code/CLAUDE.md`)                                                       | Rules for all sessions that Codex gets first in its developer instructions                               |
 | `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository (NixOS module: `<dataDir>/memory`)                              |
 | `CRM_GIT_AUTHOR_NAME`               | none (sessions with repositories are refused)                                                    | Author name of the commits in session clones (with `CRM_GIT_AUTHOR_EMAIL`)                               |
 | `CRM_GIT_AUTHOR_EMAIL`              | none                                                                                             | Author email of the commits in session clones                                                            |
@@ -1044,9 +1047,10 @@ notification (`turn_finished`) reads "Usage limit: …" with how long until it c
 
 ### Accounts
 
-Sessions can work with several subscription accounts (no API keys; Claude for now, ChatGPT
-accounts follow with Codex as an equal engine). Settings → Accounts
-lists them with their login (email, plan, organization from `claude auth status`),
+Sessions can work with several subscription accounts (no API keys): Claude accounts for Claude
+Code, ChatGPT accounts for Codex (see [Codex](#codex)). Settings → Accounts
+lists them with their login (email, plan, organization from `claude auth status` or Codex's
+`account/read`),
 their limits and the actions: add (name, then the login), log in again, log out, rename, make
 default, move up/down (the order), remove (not the main account).
 
@@ -1116,10 +1120,109 @@ Claude Code is the first adapter (`claude-events.ts`, `sdk-agent-runner.ts`, `sd
 transcripts into this model; only these files use the SDK. Accounts belong to a provider; a
 session uses accounts of its engine's provider (its own default account per provider, the
 automatic switch only among them). The tests drive the session core through the same adapter
-(the fake runner translates the SDK-shaped messages tests push). Still Claude Code only until the next engine
-  arrives (and then per engine): the model list, the slash commands before a process, the plan
-  usage probe and the independent review. A message an adapter cannot translate is logged and
-  skipped; the events of one engine message are handled as a whole.
+(the fake runner translates the SDK-shaped messages tests push). The model list
+(`GET /api/models?engine=…`), the plan usage probe and the permission modes are per engine;
+a session is validated against its engine's modes (`ENGINE_PERMISSION_MODES`) and starts in its
+engine's default (`ENGINE_DEFAULT_PERMISSION_MODE`) when none is chosen. A message an adapter
+cannot translate is logged and skipped; the events of one engine message are handled as a whole.
+The UI shows each engine in its own terms (its modes, its models) and leaves out what an engine
+does not offer (`EngineCapabilities`: plan mode, slash commands, …); with one engine it shows no
+engine choice. Still Claude Code only: the independent review.
+
+### Codex
+
+Codex (OpenAI) is the second adapter (`apps/api/src/app/agent/codex/`), offered wherever the
+server has it: the app depends on a pinned `@openai/codex` (`CODEX_VERSION`, the protocol types
+in `codex-protocol.ts` are written against it) and runs its native binary for the platform;
+`CODEX_EXECUTABLE` overrides it, `codex` on the PATH is the last resort. The image links it as
+`codex`; the Nix package wraps it.
+
+- **Process:** one `codex app-server` per session, as the session user, spoken to with JSON-RPC
+  over stdio (as OpenAI's IDE extension does), with `CODEX_HOME` set to the account's home. A
+  session is a Codex thread (`thread/start`, later `thread/resume` with the rollout's path);
+  each message is a turn (`turn/start`; messages sent during a turn wait for its end),
+  interrupting is `turn/interrupt` (also while the turn is still starting: sent once Codex names
+  it). Threads run with full access, as Claude Code does; whether Codex asks is its approval
+  policy, the session's mode: `untrusted` (the default: asks before commands not known to be
+  safe), `on-request` (full access, the model decides when to ask and rarely does; not marked
+  dangerous, the owner's decision), `never` (never asks; dangerous, like `bypassPermissions`).
+  The session instructions go in as developer instructions; the repository's `CLAUDE.md` is
+  read like an `AGENTS.md` where it has none (`project_doc_fallback_filenames`). Claude Code's
+  repository memory and settings do not apply to Codex. The app's tools (`show_file`,
+  `create_pull_request`, …) are dynamic tools that Codex calls back (`item/tool/call`); they
+  show as `mcp__crm__<tool>` like Claude Code's. Codex fixes a thread's dynamic tools at
+  `thread/start` and keeps them on `thread/resume`, so a Codex process always gets every tool
+  of the app (`AgentEngine.fixedTools`): those that cannot run now (the GitHub tools without a
+  GitHub repository, previews when they are off) are registered and refuse a call with the
+  reason (`AgentTool.unavailable`). A thread started before an upgrade that added a tool does
+  not have it (`thread/fork` would give a new thread without changing the tools either); such
+  a call is refused as unknown. Context the app sends with a message (GitHub content) and its
+  notes go in as the turn's `additionalContext` (`untrusted` resp. `application`), not as the
+  user's input, so the history shows only what the user typed.
+- **Translation** (`codex-events.ts`): command executions become `Bash` calls with their output
+  and the script the model wrote (Codex reports `/bin/bash -lc '<script>'`; unwrapped for the
+  tool calls, approvals and the push analysis),
+  file changes `Write`/`Edit` calls with their diff, plans the to-do list, agent messages text
+  (streamed), web searches and image views their tools; token usage the context meter; rate
+  limit windows (300 minutes → 5-hour, 10080 → weekly) the limits; an error
+  `usageLimitExceeded` ends the turn as a usage limit, so the automatic switch to the next
+  ChatGPT account works as for Claude. Approvals (`item/commandExecution/requestApproval`,
+  `item/fileChange/requestApproval`) are approval cards; "allow for this session" is Codex's
+  `acceptForSession` and an exact rule the app keeps (`Bash(<command>)`, `Edit(<path>)` per
+  changed file, the tool's name for the app's and the user's MCP tools), so later processes do
+  not ask again either. Rules from "allow for this session" are always compared exactly (a
+  command may contain `*`); only configured rules may be prefixes or wildcards, and those only
+  for a single simple command. Input for a running command (`writeStdin`) and commands run on
+  the user's behalf always ask, without "allow for this session"; a command whose quoting the
+  app cannot read shows Codex's raw command too and is never allowed by a rule. Approval
+  requests go to the user (`approvalsReviewer: 'user'`). The user's MCP tools ask through
+  `item/tool/requestUserInput` (question ID `mcp_tool_call_approval…`) or an elicitation
+  (`_meta.codex_approval_kind: mcp_tool_call`, the path Codex takes for user MCP servers; the
+  running call is matched by server, `_meta.tool_name`, `_meta.tool_params` and thread, else
+  the card is built from `_meta`): an approval card for `mcp__<server>__<tool>` with its
+  arguments; Codex is answered "allow once" or "cancel". Other questions of the model
+  use the question card. In `never` the app's tools run without asking unless the gate asks,
+  as in `bypassPermissions`. A request Codex resolves itself (`serverRequest/resolved`), or
+  one left open when Codex ends, closes its card. Switching the model back to the default
+  sends Codex's default model with each turn (Codex keeps the last turn's model). When the
+  app runs a git command itself (Autofix), Codex gets `decline` (it has no reason field) and the
+  outcome as a note of the app sent into the running turn (`turn/steer`, with a client ID
+  `crm-app:…` the history leaves out; with the next turn when the turn had ended). Requests the
+  app cannot put to the user (other MCP elicitations, extra permissions) are answered so the
+  turn goes on. Usage: Codex reports the thread's total for all models and restores it on
+  resume, so only its growth in this process's turns counts, for the turn's model, on top of
+  the usage the app recorded for the session (`AgentStartOptions.usageBaseline`). Limits:
+  windows of the plan's main bucket (`limitId` `codex`), sparse updates merged.
+- **History:** read with `thread/read` from the rollouts (`sessions/` of the base home, shared
+  by all accounts), so a session continues after a switch of its account. Codex knows another
+  home's thread only once resumed by its path, so the reader resumes it first, in the temporary
+  directory, without passing a working directory (the session's may be gone), without the
+  turns in the answer, with the user's MCP servers disabled (`config/read`, then
+  `mcp_servers.<name>.enabled = false`) and without hooks (`features.hooks = false`). Deleting
+  a session deletes its thread with `thread/delete` in every account home and the base home
+  (rollout and Codex's databases), then removes any rollout left
+  (`codex-account-dir.cjs remove-thread`, as the session user: only regular files with the
+  thread's name in `sessions/` and `archived_sessions/`, no symlinks followed). Rollouts are
+  looked up in `archived_sessions/` too. A session's next Codex process (e.g. after a switch of
+  the account) starts only once the previous one has ended (`AgentRun.close` resolves on exit,
+  SIGKILL after 5 s), so a thread is never written from two homes at once. Tools that had not finished show as not finished; the
+  to-do list is not kept by Codex as an item.
+- **Accounts:** ChatGPT accounts (subscription login only) have no main account: each has its
+  own Codex home `<CODEX_HOME>/crm-accounts/<id>` (base: `CODEX_HOME`, else `~/.codex` of the
+  session user; in the image `/data/claude/codex` on the Claude volume) with its own login
+  (`auth.json`) and state databases (never shared between homes), and relative symlinks to what
+  all share in the base home: `config.toml`, `AGENTS.md` (both created empty in the base home
+  when missing, so they are always linked), `hooks.json` (when there), `sessions/`,
+  `archived_sessions/`, `prompts/`, `skills/`, `rules/`. The helper `assets/codex-account-dir.cjs`
+  creates and removes them as the session user, like Claude's; an entry that should be a link
+  but is a file of the account's own (Codex may replace a link when it rewrites the file) is
+  kept and reported as a warning in the API log. Without Codex on the server, removing a
+  ChatGPT account removes only its entry (its home stays, logged). The login is ChatGPT's device
+  login through the app server (`account/login/start` with `chatgptDeviceCode`): the UI shows
+  the page to open and the code to enter there (`AccountLoginDto.userCode`) and waits for
+  `account/login/completed`; status and logout are `account/read` and `account/logout`.
+- **Not offered by Codex:** plan mode and slash commands (the UI leaves them out); the
+  independent review still runs with Claude Code.
 
 ## Previews of dev servers
 

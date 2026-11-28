@@ -10,6 +10,7 @@ import type {
 import type {
   ReviewEffort,
   SessionPermissionMode,
+  UsageTotals,
 } from '@claude-remote-manager/shared-types';
 import type * as Zod from 'zod';
 
@@ -36,6 +37,14 @@ export interface AgentTool {
   inputSchema: (z: typeof Zod) => Record<string, Zod.ZodType>;
   /** The tool only reads (MCP annotation `readOnlyHint`). */
   readOnly?: boolean;
+  /**
+   * The tool cannot run in this process, for this reason (e.g. the session
+   * has no GitHub repository). Only engines that fix a thread's tools when
+   * it starts get such tools (see `AgentEngine.fixedTools`), so the tool
+   * stays when the session changes; they refuse a call with the reason
+   * without asking anyone.
+   */
+  unavailable?: string;
   handler: (
     input: Record<string, unknown>,
     context: AgentToolContext,
@@ -106,10 +115,23 @@ export interface AgentStartOptions {
    * user allowed for the session; never written to settings files).
    */
   allowedTools?: string[];
+  /**
+   * The rules among `allowedTools` the user allowed for the session
+   * (`Allow for this session` of earlier approvals): an engine that matches
+   * rules itself (Codex) reads them as exact, never as prefixes or
+   * wildcards, since they are the literal command, file or tool approved.
+   */
+  sessionAllows?: string[];
   /** Variables added to the process environment (without app secrets). */
   env?: Record<string, string>;
   /** The app's own tools for this session. */
   tools?: AgentTool[];
+  /**
+   * The usage the app recorded for the session so far, per model: an
+   * engine whose totals do not survive a restart reports its cumulative
+   * usage on top of it (the usage tracker starts from it).
+   */
+  usageBaseline?: Record<string, UsageTotals>;
   /**
    * Settings on top of the user's, project's and local settings (Claude
    * Code's flag settings), e.g. the auto-memory directory.
@@ -183,8 +205,13 @@ export interface AgentRun {
    * with its next request. Rejects when this Claude Code cannot do it.
    */
   addDirectories(directories: string[]): Promise<void>;
-  /** Ends the input and terminates the process. */
-  close(): void;
+  /**
+   * Ends the input and terminates the process. An engine whose processes
+   * must not overlap (Codex: one thread, written from one home at a time)
+   * returns a promise that resolves once the process has ended; the
+   * session's next process starts after it.
+   */
+  close(): void | Promise<void>;
   /** The last lines Claude Code wrote to stderr, for error messages. */
   stderrTail(): string[];
 }

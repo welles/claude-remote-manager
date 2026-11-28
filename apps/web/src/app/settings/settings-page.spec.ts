@@ -1,3 +1,4 @@
+import { flushEngines } from '../engines/testing/engines';
 import { provideHttpClient } from '@angular/common/http';
 import { mainAccountList } from '../accounts/testing/accounts';
 import {
@@ -93,6 +94,7 @@ describe('SettingsPage', () => {
     http
       .expectOne('/api/settings/review')
       .flush({ model: 'claude-fable-5-2', effort: 'high' });
+    flushEngines(http);
     http.expectOne('/api/accounts').flush(mainAccountList());
     http.expectOne('/api/limits').flush({ accounts: [] });
     http.expectOne('/api/models').flush({
@@ -273,6 +275,7 @@ describe('SettingsPage review settings', () => {
     http
       .expectOne('/api/settings/review')
       .flush({ model: 'claude-fable-5-2', effort: 'high' });
+    flushEngines(http);
     http.expectOne('/api/accounts').flush(mainAccountList());
     http.expectOne('/api/limits').flush({ accounts: [] });
     http.expectOne('/api/models').flush({

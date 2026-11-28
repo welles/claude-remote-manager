@@ -188,6 +188,12 @@ export type AgentApprovalResult =
       updatedInput?: Record<string, unknown>;
       /** Applied to the session (e.g. allow rules, a mode switch). */
       updatedPermissions?: AgentPermissionUpdate[];
+      /**
+       * The app ran the command itself instead (Autofix's git commands):
+       * what came of it. `updatedInput` then holds a command that only
+       * reports it, for engines that run the updated input.
+       */
+      ranByApp?: { ok: boolean; output: string };
     }
   | {
       behavior: 'deny';

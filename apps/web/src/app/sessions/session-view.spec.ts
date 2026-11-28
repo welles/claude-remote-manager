@@ -6,6 +6,7 @@ import {
 import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import type {
+  AgentEngineId,
   SessionEvent,
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
@@ -22,6 +23,8 @@ import { pullRequestDto } from './testing/pull-request';
 import { sessionDto } from './testing/session-dto';
 import { EditorDriver } from '../testing/editor';
 import { preview } from '../previews/testing/preview';
+import { accountDto } from '../accounts/testing/accounts';
+import { flushEngines } from '../engines/testing/engines';
 
 const LOG = 'log-1';
 let seq = 0;
@@ -1372,7 +1375,7 @@ describe('SessionView', () => {
       '[data-testid="message-context"]',
     ) as HTMLDetailsElement;
     expect(words(context.querySelector('summary'))).toBe(
-      'GitHub context for Claude (2.0k characters)',
+      'GitHub context sent along (2.0k characters)',
     );
     context.open = true;
     context.dispatchEvent(new Event('toggle'));
@@ -1420,6 +1423,119 @@ describe('SessionView', () => {
       permissionMode: 'plan',
     });
     expect(socket.sent.at(-1)).not.toHaveProperty('model');
+  });
+
+  describe('engines', () => {
+    const chatgpt = (id: string, name: string, isDefault = false) =>
+      accountDto({
+        id,
+        provider: 'chatgpt',
+        name,
+        isDefault,
+        main: false,
+        position: 2,
+      });
+    const serve = (engines: AgentEngineId[]) => {
+      const http = TestBed.inject(HttpTestingController);
+      flushEngines(http, ...engines);
+      http.expectOne('/api/accounts').flush({
+        accounts: [
+          accountDto(),
+          accountDto({ id: 'a1', name: 'Work', isDefault: false, position: 1 }),
+          chatgpt('c1', 'Personal', true),
+          chatgpt('c2', 'Team'),
+        ],
+      });
+      return http;
+    };
+    type View = {
+      modes(): string[];
+      accounts(): { id: string }[];
+      sessionAccount(): { id: string } | null;
+      modelOptions(): { label: string }[];
+    };
+
+    it('shows a Codex session in its own terms', async () => {
+      const { harness, socket, element, text } = await open();
+      const http = serve(['claude-code', 'codex']);
+      history(
+        socket,
+        sessionDto({
+          engine: 'codex',
+          model: null,
+          permissionMode: 'untrusted',
+          accountId: null,
+        }),
+      );
+      await harness.fixture.whenStable();
+      http.expectOne('/api/models?engine=codex').flush({
+        models: [
+          {
+            value: null,
+            label: 'Default',
+            description: '',
+            resolvedModel: 'gpt-5-codex',
+          },
+          {
+            value: 'gpt-5',
+            label: 'GPT-5',
+            description: '',
+            resolvedModel: null,
+          },
+        ],
+        source: 'codex',
+        updatedAt: null,
+      });
+      await harness.fixture.whenStable();
+      expect(text('strip-engine')).toBe('Codex');
+      expect(text('strip-settings')).toContain('Untrusted');
+      expect(text('session-engine')).toContain('Codex');
+      expect(text('mode-hint')).toContain('Codex asks');
+      // Codex takes a new mode with its next turn.
+      expect(text('mode-next-turn')).toContain('from the next turn');
+      const view = harness.routeDebugElement?.componentInstance as View;
+      expect(view.modes()).toEqual(['untrusted', 'on-request', 'never']);
+      expect(view.modelOptions().map((option) => option.label)).toEqual([
+        'Default',
+        'GPT-5',
+      ]);
+      // Only ChatGPT accounts; the session uses their default.
+      expect(view.accounts().map((account) => account.id)).toEqual([
+        'c1',
+        'c2',
+      ]);
+      expect(view.sessionAccount()?.id).toBe('c1');
+      expect(
+        element.querySelector('[data-testid="account-select"]'),
+      ).not.toBeNull();
+    });
+
+    it('names no engine for Claude Code sessions on a server with it alone', async () => {
+      const { harness, socket, element, text } = await open();
+      serve(['claude-code']);
+      history(socket, sessionDto({ accountId: 'a1' }));
+      await harness.fixture.whenStable();
+      expect(element.querySelector('[data-testid="strip-engine"]')).toBeNull();
+      expect(
+        element.querySelector('[data-testid="session-engine"]'),
+      ).toBeNull();
+      expect(text('strip-settings')).toContain('Ask');
+      const view = harness.routeDebugElement?.componentInstance as View;
+      expect(view.modes()).toContain('auto');
+      expect(view.accounts().map((account) => account.id)).toEqual([
+        'main',
+        'a1',
+      ]);
+      expect(view.sessionAccount()?.id).toBe('a1');
+    });
+
+    it('names Claude Code when the server has several engines', async () => {
+      const { harness, socket, text } = await open();
+      serve(['claude-code', 'codex']);
+      history(socket, sessionDto());
+      await harness.fixture.whenStable();
+      expect(text('strip-engine')).toBe('Claude Code');
+    });
   });
 
   it('shows the permission mode in effect when it is not the chosen one', async () => {

@@ -50,8 +50,8 @@ import { LimitsStore } from './limits-store';
         </div>
       } @empty {
         <p class="type-body-small m-0 text-on-surface-variant">
-          Not known yet: Claude Code reports the limits with the first answer of
-          a session (or when they are read on request).
+          Not known yet: the limits are reported with the first answer of a
+          session (or when they are read on request).
         </p>
       }
       <!-- prettier-ignore -->

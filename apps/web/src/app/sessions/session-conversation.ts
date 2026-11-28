@@ -27,6 +27,7 @@ import {
   toolSummary,
   type ConversationItem,
 } from './conversation';
+import { agentName, engineOf } from '../engines/engines-store';
 import { formatCost, formatTokens, totalTokens } from './format';
 import { MarkdownPipe } from './markdown.pipe';
 import type { ShownItem } from './preparation';
@@ -92,6 +93,11 @@ export class SessionConversation {
   readonly embed = output<PreviewDto>();
   /** A message that was not sent goes back into the input. */
   readonly edit = output<QueuedItem>();
+
+  /** "Claude", "Codex": the session's agent in sentences. */
+  protected readonly agent = computed(() =>
+    agentName(engineOf(this.session())),
+  );
 
   /** Reference chips name the repository of `#12` (several repositories). */
   protected readonly multiRepository = computed(
