@@ -1,7 +1,9 @@
 import {
+  DEFAULT_ENGINE,
   PERMISSION_MODE_INFO,
   SET_SESSION_TITLE_TOOL_NAME,
   SET_WAITING_STATE_TOOL_NAME,
+  type AgentEngineId,
   type AssistantDraft,
   type AttachmentDto,
   type CommitsAddedEvent,
@@ -116,7 +118,15 @@ export type ConversationItem =
       key: string;
       reviewId: string;
       trigger: ReviewTrigger;
-      model: string;
+      /** The reviewer's engine (Claude Code for reviews before Codex). */
+      engine: AgentEngineId;
+      /** The chosen engine the server did not have. */
+      fallbackFrom: AgentEngineId | null;
+      /**
+       * The model (`null`: the engine's default) and effort, as the
+       * reviewer reported them once it finished.
+       */
+      model: string | null;
       effort: ReviewEffort;
       fileCount: number;
       repositories: string[];
@@ -592,6 +602,8 @@ export function applyEvent(
           key,
           reviewId: event.reviewId,
           trigger: event.trigger,
+          engine: event.engine ?? DEFAULT_ENGINE,
+          fallbackFrom: event.fallbackFrom ?? null,
           model: event.model,
           effort: event.effort,
           fileCount: event.fileCount,
@@ -622,6 +634,8 @@ export function applyEvent(
         durationMs: event.durationMs,
         usage: event.usage,
         messageId: event.messageId,
+        model: event.model !== undefined ? event.model : existing.model,
+        effort: event.effort ?? existing.effort,
       });
     }
     case 'notice':

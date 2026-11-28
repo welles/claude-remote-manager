@@ -1,11 +1,16 @@
 import type {
+  AgentEngineId,
   ModelOption,
   ReviewEffort,
   ReviewMode,
   ReviewSeverity,
   ReviewTrigger,
 } from '@claude-remote-manager/shared-types';
-import { DEFAULT_REVIEW_MODEL } from '@claude-remote-manager/shared-types';
+import {
+  DEFAULT_ENGINE,
+  DEFAULT_REVIEW_MODEL,
+  ENGINE_LABELS,
+} from '@claude-remote-manager/shared-types';
 
 export const EFFORT_LABELS: Record<ReviewEffort, string> = {
   low: 'Low',
@@ -30,14 +35,34 @@ const DEFAULT_OPTION: ModelOption = {
 };
 
 /**
- * Models a reviewer can use: Claude Code's list without its "Default"
- * row, plus Fable 5.2 and `current` when the list lacks them (a model
- * chosen earlier stays selectable).
+ * Models a reviewer of `engine` can use, plus `current` when the list
+ * lacks it (a model chosen earlier stays selectable). Claude Code: its
+ * list without its "Default" row, plus Fable 5.2 when the list lacks it.
+ * Codex: its list, with its default model (value `null`).
  */
 export function reviewModelOptions(
   models: readonly ModelOption[],
   current: string | null,
+  engine: AgentEngineId = DEFAULT_ENGINE,
 ): ModelOption[] {
+  if (engine !== 'claude-code') {
+    const options = [...models];
+    return current === null ||
+      options.some(
+        (option) =>
+          option.value === current || option.resolvedModel === current,
+      )
+      ? options
+      : [
+          ...options,
+          {
+            value: current,
+            label: current,
+            description: '',
+            resolvedModel: current,
+          },
+        ];
+  }
   const options = models.filter(
     (option): option is ModelOption & { value: string } =>
       option.value !== null,
@@ -61,16 +86,28 @@ export function reviewModelOptions(
   return [...extra, ...options];
 }
 
-/** A model's label in `options`, else the model itself. */
+/**
+ * A model's label in `options`, else the model itself; `null` (the
+ * engine's default model) names the model it stands for when known.
+ */
 export function reviewModelLabel(
   options: readonly ModelOption[],
-  model: string,
+  model: string | null,
 ): string {
+  if (model === null) {
+    const fallback = options.find((option) => option.value === null);
+    return fallback?.resolvedModel ? `Default (${fallback.label})` : 'Default';
+  }
   return (
     options.find(
       (option) => option.value === model || option.resolvedModel === model,
     )?.label ?? (model === DEFAULT_REVIEW_MODEL ? 'Fable 5.2' : model)
   );
+}
+
+/** "Codex is not available …": a review that ran with Claude Code instead. */
+export function fallbackText(engine: AgentEngineId): string {
+  return `${ENGINE_LABELS[engine] ?? engine} is not available on this server: reviews run with ${ENGINE_LABELS[DEFAULT_ENGINE]} instead.`;
 }
 
 export const MODE_LABELS: Record<ReviewMode, { label: string; hint: string }> =

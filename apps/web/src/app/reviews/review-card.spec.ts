@@ -4,6 +4,8 @@ import {
   provideHttpClientTesting,
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { EnginesStore } from '../engines/engines-store';
+import { flushEngines } from '../engines/testing/engines';
 import { words } from '../testing/text';
 import { ReviewCard, type ReviewItem } from './review-card';
 
@@ -12,6 +14,8 @@ const item = (overrides: Partial<ReviewItem> = {}): ReviewItem => ({
   key: 'review:r1',
   reviewId: 'r1',
   trigger: 'manual',
+  engine: 'claude-code',
+  fallbackFrom: null,
   model: 'claude-fable-5-2',
   effort: 'high',
   fileCount: 3,
@@ -103,6 +107,30 @@ describe('ReviewCard', () => {
       'The findings went to Claude to fix.',
     ]);
     expect(text('review-cancel')).toEqual([]);
+  });
+
+  it('names the engine only when the server has several, and says when it fell back', () => {
+    expect(render(item()).text('review-meta')[0]).toMatch(
+      /^claude-fable-5-2 · effort High/,
+    );
+    const engines = TestBed.inject(EnginesStore);
+    engines.load();
+    flushEngines(http, 'claude-code', 'codex');
+    expect(render(item()).text('review-meta')[0]).toMatch(
+      /^Claude Code · claude-fable-5-2 · effort High/,
+    );
+    const codex = render(
+      item({ engine: 'codex', model: null, effort: 'xhigh' }),
+    );
+    expect(codex.text('review-meta')[0]).toMatch(
+      /^Codex · default model · effort Extra high/,
+    );
+    expect(codex.text('review-fallback')).toEqual([]);
+    expect(
+      render(item({ fallbackFrom: 'codex' })).text('review-fallback'),
+    ).toEqual([
+      'Codex is not available on this server: reviews run with Claude Code instead.',
+    ]);
   });
 
   it('says when a review failed or was cut off', () => {
