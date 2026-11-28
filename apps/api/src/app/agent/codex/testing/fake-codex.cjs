@@ -44,7 +44,18 @@
 //   subagent     a subagent thread's turn starts and ends first
 //   fail-start   turn/start is refused
 //   crash        the process exits (code 3) in the middle of the turn
+//   review-json  a commentary message, then the final answer: review JSON
+//                (one finding naming the turn's effort and model)
+//   review-commands  asks for commands (reading and writing ones) and a
+//                file change, then answers review JSON whose finding's
+//                detail lists the decisions
+//
+// `codex sandbox -- <command>` exits 0, or 1 like bubblewrap without user
+// namespaces when $CODEX_HOME/fake-sandbox-fails exists (appended to
+// $CODEX_HOME/fake-sandbox-probes either way).
 // anything else: an agent message "Echo: <text>", streamed in two deltas.
+//
+// An `ephemeral` thread (thread/start) writes no rollout.
 'use strict';
 
 const fs = require('node:fs');
@@ -52,6 +63,19 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const home = process.env.CODEX_HOME || path.join(process.cwd(), '.codex');
+
+if (process.argv[2] === 'sandbox') {
+  fs.mkdirSync(home, { recursive: true });
+  fs.appendFileSync(path.join(home, 'fake-sandbox-probes'), 'probe\n');
+  if (fs.existsSync(path.join(home, 'fake-sandbox-fails'))) {
+    process.stderr.write(
+      'bwrap: No permissions to create a new namespace\n',
+      () => process.exit(1),
+    );
+  } else {
+    process.exit(0);
+  }
+}
 const threads = new Map();
 const serverRequests = new Map();
 const logins = new Map();
@@ -185,7 +209,7 @@ function threadView(thread, includeTurns) {
     forkedFromId: null,
     parentThreadId: null,
     preview: '',
-    ephemeral: false,
+    ephemeral: thread.ephemeral === true,
     section: null,
     sectionEnteredAt: null,
     projectId: null,
@@ -242,6 +266,9 @@ function rolloutPath(threadId, date) {
 
 /** Writes the thread's turns as its rollout (one turn per line). */
 function persist(thread) {
+  if (thread.ephemeral) {
+    return;
+  }
   if (!thread.path) {
     thread.path = rolloutPath(thread.id, new Date());
   }
@@ -653,6 +680,71 @@ async function runTurn(thread, turn, input) {
     };
     notify('error', { error, willRetry: false, threadId, turnId });
     status = 'failed';
+  } else if (/\breview-json\b/.test(prompt)) {
+    await message('Reading the changes.');
+    await message(
+      JSON.stringify({
+        summary: 'One problem.',
+        findings: [
+          {
+            severity: 'high',
+            repository: null,
+            file: 'work.txt',
+            line: 1,
+            title: `Found with ${turn.effort ?? 'no effort'} on ${turn.model ?? thread.model}`,
+            detail: `Schema: ${turn.outputSchema ? 'given' : 'none'}`,
+          },
+        ],
+      }),
+    );
+  } else if (/\breview-commands\b/.test(prompt)) {
+    const decisions = [];
+    for (const script of [
+      'cat work.txt',
+      'git diff',
+      'touch pwned',
+      'cat work.txt > copy',
+      'rg --pre sh x',
+    ]) {
+      const { decision } = await ask('item/commandExecution/requestApproval', {
+        kind: 'command',
+        threadId,
+        turnId,
+        itemId: id('cmd'),
+        startedAtMs: Date.now(),
+        approvalId: null,
+        environmentId: null,
+        reason: null,
+        command: shellWrapped(script),
+        cwd: thread.cwd,
+        commandActions: [{ type: 'unknown', command: script }],
+      });
+      decisions.push(`${script}: ${decision}`);
+    }
+    const change = await ask('item/fileChange/requestApproval', {
+      threadId,
+      turnId,
+      itemId: id('change'),
+      startedAtMs: Date.now(),
+      reason: null,
+      grantRoot: null,
+    });
+    decisions.push(`file change: ${change.decision}`);
+    await message(
+      JSON.stringify({
+        summary: 'Commands.',
+        findings: [
+          {
+            severity: 'low',
+            repository: null,
+            file: null,
+            line: null,
+            title: 'Decisions',
+            detail: decisions.join('\n'),
+          },
+        ],
+      }),
+    );
   } else if (/\bcrash\b/.test(prompt)) {
     process.stderr.write('panicked: fake crash\n', () => process.exit(3));
     return;
@@ -830,7 +922,17 @@ function handle(message) {
           : {
               data: [
                 model('gpt-5.5-codex', 'GPT-5.5 Codex', { isDefault: true }),
-                model('gpt-5.4', 'GPT-5.4'),
+                model('gpt-5.4', 'GPT-5.4', {
+                  supportedReasoningEfforts: [
+                    'low',
+                    'medium',
+                    'high',
+                    'xhigh',
+                  ].map((reasoningEffort) => ({
+                    reasoningEffort,
+                    description: '',
+                  })),
+                }),
               ],
               nextCursor: 'page-2',
             },
@@ -856,6 +958,7 @@ function handle(message) {
     case 'thread/start': {
       const thread = {
         id: crypto.randomUUID(),
+        ephemeral: params?.ephemeral === true,
         cwd: params?.cwd ?? process.cwd(),
         model: params?.model ?? 'gpt-5.5-codex',
         approvalPolicy: params?.approvalPolicy ?? 'on-request',
@@ -937,6 +1040,9 @@ function handle(message) {
       }
       const turn = {
         id: id('turn'),
+        effort: params?.effort ?? null,
+        model: params?.model ?? null,
+        outputSchema: params?.outputSchema ?? null,
         clientId: params?.clientUserMessageId ?? null,
         items: [],
         startedAt: Math.floor(Date.now() / 1000),

@@ -10,6 +10,7 @@ import {
   findingsMessage,
   MAX_FINDINGS,
   parseReviewOutput,
+  reviewerInstructions,
   reviewPrompt,
 } from './review-prompt';
 
@@ -177,12 +178,27 @@ describe('parseReviewOutput', () => {
   });
 });
 
+describe('reviewer instructions', () => {
+  it('describe how each engine reads', () => {
+    expect(reviewerInstructions('claude-code')).toContain(
+      'Read, Grep and Glob',
+    );
+    expect(reviewerInstructions('codex')).toContain('sandbox is read-only');
+    expect(reviewerInstructions('codex')).not.toContain('Read, Grep and Glob');
+  });
+});
+
 describe('findings for Claude', () => {
   it('words the message without @ and wraps the findings as untrusted', () => {
-    const text = findingsMessage(2, 'claude-fable-5-2', 'high');
+    const text = findingsMessage(2, 'claude-code', 'claude-fable-5-2', 'high');
     expect(text).toContain('found 2 issues');
-    expect(text).toContain('model claude-fable-5-2, effort high');
+    expect(text).toContain(
+      'a separate Claude Code process (model claude-fable-5-2, effort high)',
+    );
     expect(text).not.toMatch(/@|^\s*\//);
+    expect(findingsMessage(1, 'codex', null, 'xhigh')).toContain(
+      'a separate Codex process (model its default, effort xhigh)',
+    );
     const context = formatUntrustedContext(
       findingsContext('Summary', [
         {

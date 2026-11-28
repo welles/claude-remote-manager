@@ -6,15 +6,17 @@ import { REVIEW_DEFAULTS_KEY, ReviewDefaultsStore } from './review-defaults';
 describe('ReviewDefaultsStore', () => {
   let db: AppDatabase;
   let store: ReviewDefaultsStore;
+  const both = () => true;
 
   beforeEach(() => {
     db = openDatabase(':memory:');
     store = new ReviewDefaultsStore(db);
   });
 
-  it('defaults to Fable 5.2 with high effort', () => {
+  it('defaults to Claude Code with Fable 5.2 and high effort, Codex with its default model', () => {
     expect(store.get()).toEqual({
-      model: 'claude-fable-5-2',
+      engine: 'claude-code',
+      models: { 'claude-code': 'claude-fable-5-2', codex: null },
       effort: 'high',
     });
   });
@@ -23,18 +25,61 @@ describe('ReviewDefaultsStore', () => {
     store.update({ model: 'opus' });
     store.update({ effort: 'xhigh' });
     expect(new ReviewDefaultsStore(db).get()).toEqual({
-      model: 'opus',
+      engine: 'claude-code',
+      models: { 'claude-code': 'opus', codex: null },
       effort: 'xhigh',
     });
   });
 
-  it('ignores the former round limit in stored settings and requests', () => {
+  it('keeps a model per engine; the model of a request is the engine’s', () => {
+    store.update({ model: 'opus' });
+    store.update({ engine: 'codex', model: 'gpt-5.4' }, both);
+    expect(store.get()).toEqual({
+      engine: 'codex',
+      models: { 'claude-code': 'opus', codex: 'gpt-5.4' },
+      effort: 'high',
+    });
+    // `null`: the engine's default model of reviews.
+    store.update({ model: null }, both);
+    expect(store.get().models.codex).toBeNull();
+    store.update({ engine: 'claude-code', model: null }, both);
+    expect(store.get().models).toEqual({
+      'claude-code': 'claude-fable-5-2',
+      codex: null,
+    });
+  });
+
+  it('offers only the engines the server has', () => {
+    expect(() => store.update({ engine: 'codex' })).toThrow(
+      'not available on this server',
+    );
+    expect(() =>
+      store.update({ engine: 'gemini' as unknown as 'codex' }, both),
+    ).toThrow('engine must be one of');
+    expect(store.get().engine).toBe('claude-code');
+  });
+
+  it('changes Claude Code’s model when the stored engine is not on the server', () => {
+    store.update({ engine: 'codex', model: 'gpt-5.4' }, both);
+    store.update({ model: 'opus' });
+    expect(store.get()).toEqual({
+      engine: 'codex',
+      models: { 'claude-code': 'opus', codex: 'gpt-5.4' },
+      effort: 'high',
+    });
+  });
+
+  it('reads the settings from before Codex and ignores the former round limit', () => {
     store.update({ maxAutoRounds: 5 } as never);
     db.update(appSettings)
       .set({ value: { model: 'opus', effort: 'low', maxAutoRounds: 5 } })
       .where(eq(appSettings.key, REVIEW_DEFAULTS_KEY))
       .run();
-    expect(store.get()).toEqual({ model: 'opus', effort: 'low' });
+    expect(store.get()).toEqual({
+      engine: 'claude-code',
+      models: { 'claude-code': 'opus', codex: null },
+      effort: 'low',
+    });
   });
 
   it('refuses invalid values', () => {
@@ -43,6 +88,6 @@ describe('ReviewDefaultsStore', () => {
     expect(() =>
       store.update({ effort: 'extreme' as unknown as 'high' }),
     ).toThrow('effort');
-    expect(store.get().model).toBe('claude-fable-5-2');
+    expect(store.get().models['claude-code']).toBe('claude-fable-5-2');
   });
 });

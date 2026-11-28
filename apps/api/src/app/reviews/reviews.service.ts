@@ -11,6 +11,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import type { Subscription } from 'rxjs';
 import type {
+  AgentEngineId,
   ReviewDefaults,
   ReviewEffort,
   ReviewFinding,
@@ -22,8 +23,20 @@ import type {
   UpdateSessionReviewRequest,
   UsageTotals,
 } from '@claude-remote-manager/shared-types';
-import { REVIEW_MODES } from '@claude-remote-manager/shared-types';
-import { AgentRunner, type AgentAccount } from '../agent/agent-runner';
+import {
+  DEFAULT_REVIEW_ENGINE,
+  ENGINE_LABELS,
+  ENGINE_PROVIDERS,
+  REVIEW_MODES,
+  reviewDefaultModel,
+  reviewEffortFor,
+} from '@claude-remote-manager/shared-types';
+import { AgentEngines } from '../agent/agent-engines';
+import {
+  AgentReviewRefused,
+  AgentRunner,
+  type AgentAccount,
+} from '../agent/agent-runner';
 import { AccountsService } from '../accounts/accounts.service';
 import type { UntrustedContext } from '../agent/untrusted-context';
 import { requireObject } from '../common/validation';
@@ -42,6 +55,7 @@ import { UsageRepository } from '../sessions/usage.repository';
 import {
   ReviewDefaultsStore,
   requireReviewEffort,
+  requireReviewEngine,
   requireReviewModel,
 } from './review-defaults';
 import {
@@ -53,9 +67,21 @@ import {
   reviewOutcomeMessage,
   parseReviewOutput,
   REVIEW_SCHEMA,
-  REVIEWER_INSTRUCTIONS,
+  reviewerInstructions,
   reviewPrompt,
 } from './review-prompt';
+
+/** What a session's reviewer runs with (see `ReviewsService.reviewer`). */
+export interface ReviewerChoice {
+  engine: AgentEngineId;
+  /** The chosen engine when it was not used (see `fallbackReason`). */
+  fallbackFrom: AgentEngineId | null;
+  /** Why, when the server has it; `null` when it does not. */
+  fallbackReason: string | null;
+  /** `null`: the engine's default model. */
+  model: string | null;
+  effort: ReviewEffort;
+}
 
 /** A review that runs. */
 interface ActiveReview {
@@ -71,11 +97,12 @@ function errorText(error: unknown): string {
 }
 
 /**
- * Independent reviews of sessions' changes: a separate, read-only Claude
- * Code process (see `AgentRunner.review`) with a model and effort of its
- * own gets the session diff, and its findings go to the session's Claude
- * as a message of the app. Started by the user, or by auto-review after a
- * turn that changed the diff.
+ * Independent reviews of sessions' changes: a separate, read-only process
+ * of the reviewer's engine (see `AgentRunner.review`, Claude Code or
+ * Codex) with a model and effort of its own gets the session diff, and its
+ * findings go to the session's agent as a message of the app. Started by
+ * the user, by the agent, or by auto-review after a turn that changed the
+ * diff.
  */
 @Injectable()
 export class ReviewsService implements OnModuleInit, OnModuleDestroy {
@@ -100,8 +127,11 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     private readonly runner: AgentRunner,
     private readonly hooks: SessionAutomationHooks,
     private readonly defaults: ReviewDefaultsStore,
-    // Reviews run with the session's account; without it the main one.
+    // Reviews run with an account of the reviewer's provider: the
+    // session's when it is one, else the provider's default.
     @Optional() private readonly accounts?: AccountsService,
+    // The engines of this server; without, Claude Code (`runner`) alone.
+    @Optional() private readonly engines?: AgentEngines,
   ) {}
 
   onModuleInit(): void {
@@ -141,16 +171,109 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
   }
 
   updateDefaults(request: unknown): ReviewDefaults {
-    return this.defaults.update(requireObject(request));
+    return this.defaults.update(requireObject(request), (engine) =>
+      this.available(engine),
+    );
+  }
+
+  /** Whether the server has an engine (Claude Code alone without engines). */
+  private available(engine: AgentEngineId): boolean {
+    return this.engines
+      ? this.engines.has(engine)
+      : engine === DEFAULT_REVIEW_ENGINE;
+  }
+
+  /**
+   * What a session's reviewer runs with: the session's engine, model and
+   * effort, else the app's. An engine the server does not have falls back
+   * to Claude Code with the app's model of it. A model of the session's
+   * own counts only with the engine it belongs to; an effort the engine
+   * does not offer becomes the closest one it does.
+   */
+  reviewer(record: SessionRecord): ReviewerChoice {
+    const defaults = this.defaults.get();
+    const wanted = record.reviewEngine ?? defaults.engine;
+    const engine = this.available(wanted) ? wanted : DEFAULT_REVIEW_ENGINE;
+    // A model without engine is from before Codex: Claude Code's.
+    const modelEngine = record.reviewEngine ?? DEFAULT_REVIEW_ENGINE;
+    return {
+      engine,
+      fallbackFrom: engine === wanted ? null : wanted,
+      fallbackReason: null,
+      model:
+        record.reviewModel !== null && modelEngine === engine
+          ? record.reviewModel
+          : reviewDefaultModel(defaults, engine),
+      effort: reviewEffortFor(engine, record.reviewEffort ?? defaults.effort),
+    };
+  }
+
+  /**
+   * The reviewer of a review starting now: {@link reviewer}, and Claude
+   * Code instead when the chosen engine refuses this session's review
+   * (`AgentRunner.reviewBlocked`, e.g. Codex with command rules), with
+   * the reason.
+   */
+  private async choose(record: SessionRecord): Promise<ReviewerChoice> {
+    const choice = this.reviewer(record);
+    const runner = this.runnerOf(choice.engine);
+    const blocked = runner.reviewBlocked?.bind(runner);
+    if (choice.engine === DEFAULT_REVIEW_ENGINE || !blocked) {
+      return choice;
+    }
+    const check = (account?: AgentAccount) =>
+      blocked({
+        ...(account
+          ? { account: { configDir: account.configDir, main: account.main } }
+          : {}),
+        cwd: workingDirectory(record),
+      });
+    let reason: string | null;
+    try {
+      reason = this.accounts
+        ? await this.accounts.withAccount(record.accountId, check, {
+            provider: ENGINE_PROVIDERS[choice.engine],
+          })
+        : await check();
+    } catch (failure) {
+      // E.g. no account of the provider: the review fails visibly.
+      this.logger.warn(
+        `Could not check the ${choice.engine} reviewer of session ${record.id}: ${errorText(failure)}`,
+      );
+      return choice;
+    }
+    if (!reason) {
+      return choice;
+    }
+    const defaults = this.defaults.get();
+    return {
+      engine: DEFAULT_REVIEW_ENGINE,
+      fallbackFrom: choice.engine,
+      fallbackReason: reason,
+      model: reviewDefaultModel(defaults, DEFAULT_REVIEW_ENGINE),
+      effort: reviewEffortFor(
+        DEFAULT_REVIEW_ENGINE,
+        record.reviewEffort ?? defaults.effort,
+      ),
+    };
+  }
+
+  private runnerOf(engine: AgentEngineId): AgentRunner {
+    return this.engines?.has(engine)
+      ? this.engines.runner(engine)
+      : this.runner;
   }
 
   /** Changes a session's review settings; switching to `turn` may start a review. */
   updateSession(sessionId: string, request: unknown): SessionDto {
     const body = requireObject(request) as Record<string, unknown> &
       UpdateSessionReviewRequest;
-    this.requireRecord(sessionId);
+    const record = this.requireRecord(sessionId);
     const patch: Partial<
-      Pick<SessionRecord, 'reviewMode' | 'reviewModel' | 'reviewEffort'>
+      Pick<
+        SessionRecord,
+        'reviewMode' | 'reviewModel' | 'reviewEffort' | 'reviewEngine'
+      >
     > = {};
     if (body.mode !== undefined) {
       if (!(REVIEW_MODES as readonly unknown[]).includes(body.mode)) {
@@ -160,15 +283,43 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       }
       patch.reviewMode = body.mode;
     }
+    let reviewEngine = record.reviewEngine;
+    if (body.engine !== undefined) {
+      const engine =
+        body.engine === null
+          ? null
+          : requireReviewEngine(body.engine, 'engine', (id) =>
+              this.available(id),
+            );
+      if (engine !== record.reviewEngine) {
+        patch.reviewEngine = engine;
+        reviewEngine = engine;
+        // A model belongs to its engine.
+        patch.reviewModel = null;
+      }
+    }
+    // The engine the session's reviewer has after this request.
+    const defaultEngine = this.defaults.get().engine;
+    const engine = (() => {
+      const wanted = reviewEngine ?? defaultEngine;
+      return this.available(wanted) ? wanted : DEFAULT_REVIEW_ENGINE;
+    })();
     if (body.model !== undefined) {
       patch.reviewModel =
         body.model === null ? null : requireReviewModel(body.model, 'model');
+      if (patch.reviewModel !== null && reviewEngine !== engine) {
+        // The model is one of the engine it was chosen for: the session
+        // keeps that engine (also when the app's default changes).
+        patch.reviewEngine = engine;
+      }
     }
     if (body.effort !== undefined) {
       patch.reviewEffort =
         body.effort === null
           ? null
-          : requireReviewEffort(body.effort, 'effort');
+          : requireReviewEffort(body.effort, 'effort', engine);
+    } else if (patch.reviewEngine !== undefined && record.reviewEffort) {
+      patch.reviewEffort = reviewEffortFor(engine, record.reviewEffort);
     }
     this.records.update(sessionId, patch);
     const session = this.sessions.get(sessionId);
@@ -196,10 +347,16 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
           'The session has no changes to review (against the base branches)',
         );
       }
-      // Archived or cleaned up meanwhile?
+      // Chosen first (it may probe the engine for a while): the checks
+      // below see the session as it is when the reviewer starts.
+      const choice = await this.choose(this.requireRecord(sessionId));
+      // Archived, cleaned up or stopping meanwhile?
       const current = this.requireRecord(sessionId);
       this.requireReviewable(current);
-      return this.launch(current, diff, 'manual');
+      if (this.stopped) {
+        throw new ConflictException('The server is stopping');
+      }
+      return this.launch(current, diff, 'manual', choice);
     } finally {
       this.starting.delete(sessionId);
       if (!this.active.has(sessionId) && this.records.get(sessionId)) {
@@ -245,17 +402,27 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
           'The session has no changes against the base branches: nothing to review.',
         );
       }
+      const reviewedAlready = (record: SessionRecord) => {
+        if (record.reviewedDiff === diffFingerprint(diff)) {
+          throw new Error(
+            'Exactly these changes were reviewed already (committing or rebasing does not count as a change); no new review.',
+          );
+        }
+      };
+      reviewedAlready(this.requireRecord(sessionId));
+      // The checks again after choosing (it may take a while, see `start`).
+      const choice = await this.choose(this.requireRecord(sessionId));
       const current = this.requireRecord(sessionId);
-      if (current.reviewedDiff === diffFingerprint(diff)) {
-        throw new Error(
-          'Exactly these changes were reviewed already (committing or rebasing does not count as a change); no new review.',
-        );
-      }
-      if (current.reviewMode === 'off' || !this.reviewable(current)) {
+      reviewedAlready(current);
+      if (
+        current.reviewMode === 'off' ||
+        !this.reviewable(current) ||
+        this.stopped
+      ) {
         throw new Error('The session cannot be reviewed now.');
       }
-      const review = this.launch(current, diff, 'claude');
-      return `The independent review started (model ${review.model}, effort ${review.effort}, ${review.fileCount} changed files). Its findings will come as a message of the app, usually within minutes. End your turn now, or say with set_waiting_state "work" that you wait for the review.`;
+      const review = this.launch(current, diff, 'claude', choice);
+      return `The independent review started (${ENGINE_LABELS[review.engine]}, model ${review.model ?? 'its default'}, effort ${review.effort}, ${review.fileCount} changed files). Its findings will come as a message of the app, usually within minutes. End your turn now, or say with set_waiting_state "work" that you wait for the review.`;
     } finally {
       this.starting.delete(sessionId);
       if (!this.active.has(sessionId) && this.records.get(sessionId)) {
@@ -278,13 +445,15 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     record: SessionRecord,
     diff: SessionDiffResponse,
     trigger: ReviewTrigger,
+    choice: ReviewerChoice,
   ): RunningReviewDto {
-    const defaults = this.defaults.get();
-    const model = record.reviewModel ?? defaults.model;
-    const effort = record.reviewEffort ?? defaults.effort;
+    const { engine, fallbackFrom, fallbackReason, model, effort } = choice;
     const dto: RunningReviewDto = {
       id: randomUUID(),
       trigger,
+      engine,
+      fallbackFrom,
+      fallbackReason,
       model,
       effort,
       startedAt: new Date().toISOString(),
@@ -299,6 +468,9 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       type: 'review.started',
       reviewId: dto.id,
       trigger,
+      engine,
+      fallbackFrom,
+      fallbackReason,
       model,
       effort,
       fileCount: dto.fileCount,
@@ -307,7 +479,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       ),
     });
     this.logger.log(
-      `Review ${dto.id} of session ${record.id} started (${trigger}, ${model}, ${effort})`,
+      `Review ${dto.id} of session ${record.id} started (${trigger}, ${engine}${fallbackFrom ? ` instead of ${fallbackFrom}` : ''}, ${model ?? 'default model'}, ${effort})`,
     );
     void this.run(record, diff, dto, abort)
       .catch((failure: unknown) =>
@@ -356,6 +528,16 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     let error: string | null = null;
     let usage: UsageTotals | null = null;
     let durationMs = 0;
+    // What the reviewer reported it ran with, if it differs.
+    // What the reviewer ran with where it differs from the start (the
+    // model and effort it reported; Claude Code when the engine refused).
+    const ranWith: {
+      engine?: AgentEngineId;
+      fallbackFrom?: AgentEngineId | null;
+      fallbackReason?: string | null;
+      model?: string | null;
+      effort?: ReviewEffort | null;
+    } = {};
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -366,7 +548,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       let accountId: string | null = null;
       const review = (account?: AgentAccount & { id: string }) => {
         accountId = account?.id ?? null;
-        return this.runner.review({
+        return this.runnerOf(dto.engine).review({
           ...(account
             ? { account: { configDir: account.configDir, main: account.main } }
             : {}),
@@ -375,16 +557,62 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
           model: dto.model,
           effort: dto.effort as ReviewEffort,
           prompt: reviewPrompt(diff),
-          instructions: REVIEWER_INSTRUCTIONS,
+          instructions: reviewerInstructions(dto.engine),
           schema: REVIEW_SCHEMA,
           signal: abort.signal,
         });
       };
-      // With the session's account, which stays in use meanwhile.
-      const result = this.accounts
-        ? await this.accounts.withAccount(record.accountId, review)
-        : await review();
+      // With an account of the reviewer's provider (the session's own if
+      // it is one, else the provider's default), in use meanwhile.
+      const withAccount = () =>
+        this.accounts
+          ? this.accounts.withAccount(record.accountId, review, {
+              provider: ENGINE_PROVIDERS[dto.engine],
+            })
+          : review();
+      let result;
+      try {
+        result = await withAccount();
+      } catch (failure) {
+        if (
+          !(failure instanceof AgentReviewRefused) ||
+          dto.engine === DEFAULT_REVIEW_ENGINE
+        ) {
+          throw failure;
+        }
+        // Refused when it was about to start (e.g. rules written since the
+        // review was chosen): Claude Code instead, as when choosing.
+        const defaults = this.defaults.get();
+        Object.assign(ranWith, {
+          engine: DEFAULT_REVIEW_ENGINE,
+          fallbackFrom: dto.engine,
+          fallbackReason: failure.message,
+          model: reviewDefaultModel(defaults, DEFAULT_REVIEW_ENGINE),
+          effort: reviewEffortFor(DEFAULT_REVIEW_ENGINE, dto.effort),
+        });
+        Object.assign(dto, ranWith);
+        this.logger.log(
+          `Review ${dto.id} of session ${sessionId} runs with Claude Code: ${failure.message}`,
+        );
+        this.sessions.reviewChanged(sessionId);
+        this.sessions.recordEvent(sessionId, {
+          type: 'review.switched',
+          reviewId: dto.id,
+          engine: dto.engine,
+          fallbackFrom: dto.fallbackFrom,
+          fallbackReason: dto.fallbackReason,
+          model: dto.model,
+          effort: dto.effort,
+        });
+        result = await withAccount();
+      }
       durationMs = result.durationMs;
+      if (result.model !== undefined && result.model !== dto.model) {
+        ranWith.model = result.model;
+      }
+      if (result.effort !== undefined && result.effort !== dto.effort) {
+        ranWith.effort = result.effort;
+      }
       const byModel = new UsageTracker().consume(result.modelUsage);
       if (Object.keys(byModel).length > 0) {
         usage = sumUsage(Object.values(byModel));
@@ -434,7 +662,12 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     }
     if (outcome === 'finished' && findings.length > 0) {
       messageId = await this.deliver(current, dto, 'findings', {
-        text: findingsMessage(findings.length, dto.model, dto.effort),
+        text: findingsMessage(
+          findings.length,
+          dto.engine,
+          ranWith.model ?? dto.model,
+          ranWith.effort ?? dto.effort,
+        ),
         untrusted: findingsContext(summary, findings),
       });
     } else if (dto.trigger === 'claude') {
@@ -453,6 +686,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       durationMs,
       usage,
       messageId,
+      ...ranWith,
     });
     this.logger.log(
       `Review ${dto.id} of session ${sessionId} ${outcome}${outcome === 'finished' ? ` with ${findings.length} findings` : ''}${error ? `: ${error}` : ''}`,
@@ -549,18 +783,26 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     try {
       const diff = await this.diffs.sessionDiff(sessionId);
       const fingerprint = diffFingerprint(diff);
-      const current = this.records.get(sessionId);
-      if (
-        current?.reviewMode !== 'turn' ||
-        !this.reviewable(current) ||
-        current.reviewedDiff === fingerprint ||
-        changedRepositories(diff).length === 0 ||
+      // Whether the session (still) wants a review now, before and after
+      // choosing the reviewer (which may take a while, see `start`).
+      const wanted = (record: SessionRecord | undefined) =>
+        !this.stopped &&
+        record?.reviewMode === 'turn' &&
+        this.reviewable(record) &&
+        record.reviewedDiff !== fingerprint &&
+        changedRepositories(diff).length > 0 &&
         // A turn started meanwhile: auto-review follows its end.
-        !this.isTurnOver(this.sessions.get(sessionId))
-      ) {
+        this.isTurnOver(this.sessions.get(sessionId));
+      const before = this.records.get(sessionId);
+      if (!before || !wanted(before)) {
         return;
       }
-      this.launch(current, diff, 'auto');
+      const choice = await this.choose(before);
+      const current = this.records.get(sessionId);
+      if (!current || !wanted(current)) {
+        return;
+      }
+      this.launch(current, diff, 'auto', choice);
     } catch (failure) {
       this.logger.warn(
         `Auto-review of session ${sessionId} could not start: ${errorText(failure)}`,

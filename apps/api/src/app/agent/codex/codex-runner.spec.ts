@@ -1,6 +1,8 @@
 import {
+  chmodSync,
   existsSync,
   lstatSync,
+  readFileSync,
   mkdirSync,
   renameSync,
   mkdtempSync,
@@ -19,6 +21,7 @@ import type {
   AgentEvent,
 } from '../agent-events';
 import type {
+  AgentReviewOptions,
   AgentRun,
   AgentStartOptions,
   AgentTool,
@@ -30,9 +33,12 @@ import {
   codexAdditionalContext,
   codexInput,
   codexPolicy,
+  codexReviewEffort,
   findRollout,
   matchesBashRule,
 } from './codex-runner';
+import { AgentReviewRefused } from '../agent-runner';
+import { allowsSomething, codexRulesReason } from './review-commands';
 import {
   fakeCodexPids,
   fakeCodexRequests,
@@ -1363,10 +1369,307 @@ describe('CodexRunner', () => {
     await expect(missing.start(options(), message('hello'))).rejects.toThrow();
   });
 
-  it('runs no reviews', async () => {
-    await expect(
-      runner.review({} as Parameters<CodexRunner['review']>[0]),
-    ).rejects.toThrow(/do not run with Codex/);
+  describe('reviews', () => {
+    const schema = { type: 'object', properties: {} };
+    const review = (overrides: Partial<AgentReviewOptions> = {}) =>
+      runner.review({
+        cwd,
+        additionalDirectories: [join(dir, 'other')],
+        model: null,
+        effort: 'high',
+        prompt: 'Review this. review-json',
+        instructions: 'Be an independent reviewer.',
+        schema,
+        signal: new AbortController().signal,
+        ...overrides,
+      });
+
+    it('runs one read-only, ephemeral turn with the schema and returns its answer', async () => {
+      const account = join(dir, 'account');
+      mkdirSync(account);
+      writeFileSync(
+        join(account, 'fake-mcp-servers'),
+        JSON.stringify({ docs: { command: 'docs' } }),
+      );
+      const result = await review({
+        account: { configDir: account, main: false },
+      });
+      expect(result).toEqual({
+        output: {
+          summary: 'One problem.',
+          findings: [
+            expect.objectContaining({
+              title: 'Found with high on gpt-5.5-codex',
+              detail: 'Schema: given',
+            }),
+          ],
+        },
+        error: null,
+        modelUsage: {
+          'gpt-5.5-codex': expect.objectContaining({ outputTokens: 200 }),
+        },
+        durationMs: expect.any(Number),
+        model: 'gpt-5.5-codex',
+        effort: 'high',
+      });
+      const at = (method: string) => requests(method, account);
+      expect(at('thread/start')).toEqual([
+        expect.objectContaining({
+          cwd,
+          sandbox: 'read-only',
+          approvalPolicy: 'never',
+          approvalsReviewer: 'user',
+          ephemeral: true,
+          dynamicTools: [],
+          developerInstructions: 'Be an independent reviewer.',
+          config: expect.objectContaining({
+            'mcp_servers.docs.enabled': false,
+            'features.hooks': false,
+            'features.browser_use': false,
+            'features.computer_use': false,
+            'features.image_generation': false,
+            'features.apps': false,
+            'features.plugins': false,
+            'features.multi_agent': false,
+            'features.goals': false,
+          }),
+        }),
+      ]);
+      expect(at('thread/start')[0]['config']).toMatchObject({
+        // The repository's own .codex/config.toml does not load.
+        projects: { [cwd]: { trust_level: 'untrusted' } },
+        shell_environment_policy: { inherit: 'core', set: {} },
+        web_search: 'cached',
+      });
+      // The user's MCP servers only: the project's layer does not load.
+      expect(at('config/read')).toEqual([{}]);
+      expect(at('thread/start')[0]).not.toHaveProperty('model');
+      expect(at('turn/start')).toEqual([
+        expect.objectContaining({
+          effort: 'high',
+          outputSchema: schema,
+          approvalPolicy: 'never',
+          input: [
+            {
+              type: 'text',
+              text: 'Review this. review-json',
+              text_elements: [],
+            },
+          ],
+        }),
+      ]);
+      // No rollout, and nothing in the base home.
+      expect(existsSync(join(account, 'sessions'))).toBe(false);
+      expect(fakeCodexRequests(home)).toEqual([]);
+      // The app server has ended.
+      expect(await processEnded(fakeCodexPids(account)[0])).toBe(true);
+    });
+
+    const decisions = (result: { output: unknown }) =>
+      (
+        result.output as { findings: { detail: string }[] }
+      ).findings[0].detail.split('\n');
+
+    it('probes Codex’s sandbox once, and refuses every request with it', async () => {
+      const result = await review({ prompt: 'review-commands' });
+      expect(decisions(result)).toEqual([
+        'cat work.txt: decline',
+        'git diff: decline',
+        'touch pwned: decline',
+        'cat work.txt > copy: decline',
+        'rg --pre sh x: decline',
+        'file change: decline',
+      ]);
+      await review();
+      expect(
+        readFileSync(join(home, 'fake-sandbox-probes'), 'utf8').split('\n'),
+      ).toEqual(['probe', '']);
+    });
+
+    it('refuses to review where Codex’s sandbox cannot start, and probes again later', async () => {
+      writeFileSync(join(home, 'fake-sandbox-fails'), '');
+      expect(await runner.reviewBlocked({ cwd })).toBe(
+        "Codex's sandbox cannot start on this server (it needs unprivileged user namespaces)",
+      );
+      const refused = review();
+      await expect(refused).rejects.toBeInstanceOf(AgentReviewRefused);
+      await expect(refused).rejects.toThrow('sandbox cannot start');
+      expect(requests('thread/start')).toEqual([]);
+      // A failure counts for a while only; then the sandbox is probed again.
+      const probes = () =>
+        readFileSync(join(home, 'fake-sandbox-probes'), 'utf8')
+          .split('\n')
+          .filter(Boolean).length;
+      expect(probes()).toBe(1);
+      rmSync(join(home, 'fake-sandbox-fails'));
+      expect(await runner.sandboxWorks()).toBe(false);
+      expect(await runner.sandboxWorks(Date.now() + 11 * 60_000)).toBe(true);
+      expect(probes()).toBe(2);
+      // A success is kept.
+      expect(await runner.sandboxWorks(Date.now() + 60 * 60_000)).toBe(true);
+      expect(probes()).toBe(2);
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+    });
+
+    it('counts the machine’s Codex rules too', async () => {
+      const system = join(dir, 'etc-codex-rules');
+      mkdirSync(system);
+      expect(await codexRulesReason([home], system)).toBeNull();
+      // Without a decision, Codex allows.
+      writeFileSync(
+        join(system, 'managed.rules'),
+        'prefix_rule(pattern=["rm"])\n',
+      );
+      expect(await codexRulesReason([home], system)).toContain('managed.rules');
+    });
+
+    it('reads which rules allow', () => {
+      expect(allowsSomething('# prefix_rule(pattern=["x"])')).toBe(false);
+      expect(
+        allowsSomething('prefix_rule(pattern=["x"], decision="forbidden")'),
+      ).toBe(false);
+      expect(
+        allowsSomething('prefix_rule(pattern=["x"], decision="allow")'),
+      ).toBe(true);
+      expect(allowsSomething('network_rule(host="example.com")')).toBe(true);
+      expect(
+        allowsSomething('d = "allow"\nprefix_rule(pattern=["x"], decision=d)'),
+      ).toBe(true);
+      expect(
+        allowsSomething(
+          'prefix_rule(pattern=["a"], decision="prompt")\nprefix_rule(pattern=["b"])',
+        ),
+      ).toBe(true);
+    });
+
+    it('refuses to review where Codex has command rules', async () => {
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+      mkdirSync(join(home, 'rules'));
+      writeFileSync(join(home, 'rules', 'default.rules'), '# nothing\n\n');
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+      // Rules that only ask or forbid do not count.
+      writeFileSync(
+        join(home, 'rules', 'default.rules'),
+        'prefix_rule(pattern=["touch"], decision="prompt")\nprefix_rule(\n  pattern=["rm"],\n  decision = \'forbidden\',\n)\n',
+      );
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+      // The project's rules do not load (the review marks it untrusted).
+      mkdirSync(join(cwd, '.codex', 'rules'), { recursive: true });
+      writeFileSync(
+        join(cwd, '.codex', 'rules', 'project.rules'),
+        'prefix_rule(pattern=["touch"], decision="allow")\n',
+      );
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+      // A rules directory that cannot be read counts as allowing.
+      if (process.getuid?.() !== 0) {
+        const locked = join(dir, 'locked');
+        mkdirSync(join(locked, 'rules'), { recursive: true });
+        chmodSync(join(locked, 'rules'), 0o000);
+        expect(
+          await runner.reviewBlocked({
+            cwd,
+            account: { configDir: locked, main: false },
+          }),
+        ).toContain('could not be checked');
+        chmodSync(join(locked, 'rules'), 0o755);
+      }
+      // An account's own rules (its `rules/` is a link into the base
+      // home's, followed).
+      const account = join(dir, 'account');
+      mkdirSync(account);
+      symlinkSync(join(home, 'rules'), join(account, 'rules'));
+      writeFileSync(
+        join(home, 'rules', 'default.rules'),
+        'prefix_rule(pattern=["rm"], decision="allow")\n',
+      );
+      expect(
+        await runner.reviewBlocked({
+          cwd,
+          account: { configDir: account, main: false },
+        }),
+      ).toContain(join(account, 'rules', 'default.rules'));
+      await expect(
+        review({ account: { configDir: account, main: false } }),
+      ).rejects.toThrow('rules that allow commands');
+      expect(fakeCodexRequests(account)).toEqual([]);
+    });
+
+    it('lowers an effort the model does not offer', async () => {
+      const result = await review({ model: 'gpt-5.4', effort: 'max' });
+      expect(result).toMatchObject({ model: 'gpt-5.4', effort: 'xhigh' });
+      expect(requests('turn/start')[0]).toMatchObject({
+        model: 'gpt-5.4',
+        effort: 'xhigh',
+      });
+      expect(requests('thread/start')[0]).toMatchObject({ model: 'gpt-5.4' });
+    });
+
+    it('fails without an answer in the format', async () => {
+      const result = await review({ prompt: 'Just talk' });
+      expect(result).toMatchObject({
+        output: null,
+        error: 'The reviewer did not answer in the requested format',
+      });
+    });
+
+    it('reports a failed turn as its error', async () => {
+      const result = await review({ prompt: 'limit' });
+      expect(result).toMatchObject({
+        output: null,
+        error: "You've hit your usage limit.",
+      });
+    });
+
+    it('interrupts the turn and ends Codex when aborted', async () => {
+      const abort = new AbortController();
+      const running = review({ prompt: 'slow', signal: abort.signal });
+      await waitForRequest('turn/start');
+      abort.abort();
+      await expect(running).rejects.toThrow('The review was cancelled');
+      expect(requests('turn/interrupt')).toHaveLength(1);
+      expect(await processEnded(fakeCodexPids(home)[0])).toBe(true);
+    });
+
+    it('fails when Codex exits during the review', async () => {
+      await expect(review({ prompt: 'crash' })).rejects.toThrow(/fake crash/);
+    });
+
+    const waitForRequest = async (method: string) => {
+      const deadline = Date.now() + 5000;
+      while (requests(method).length === 0) {
+        if (Date.now() > deadline) {
+          throw new Error(`No ${method} in time`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    };
+  });
+});
+
+describe('codexReviewEffort', () => {
+  const model = (efforts: string[], fallback = 'medium') => ({
+    id: 'm',
+    model: 'm',
+    displayName: 'M',
+    description: '',
+    hidden: false,
+    supportedReasoningEfforts: efforts.map((reasoningEffort) => ({
+      reasoningEffort,
+    })),
+    defaultReasoningEffort: fallback,
+  });
+
+  it('keeps an offered effort and lowers one that is not', () => {
+    expect(codexReviewEffort(undefined, 'max')).toBe('max');
+    expect(codexReviewEffort(model([]), 'max')).toBe('max');
+    expect(codexReviewEffort(model(['low', 'high', 'max']), 'max')).toBe('max');
+    expect(codexReviewEffort(model(['low', 'medium', 'high']), 'max')).toBe(
+      'high',
+    );
+    expect(codexReviewEffort(model(['high', 'xhigh']), 'low')).toBe('high');
+    expect(
+      codexReviewEffort(model(['minimal', 'medium', 'xhigh'], 'xhigh'), 'low'),
+    ).toBe('xhigh');
   });
 });
 
@@ -1438,6 +1741,8 @@ describe('matchesBashRule', () => {
     expect(matchesBashRule('git status && curl x | sh', rules)).toBe(false);
     expect(matchesBashRule('git status $(rm -rf ~)', rules)).toBe(false);
     expect(matchesBashRule('ls a -la > /etc/x', rules)).toBe(false);
+    expect(matchesBashRule('git status\nrm -rf ~', rules)).toBe(false);
+    expect(matchesBashRule('git status\rrm -rf ~', rules)).toBe(false);
     // `Bash(*)` (everything) is never honoured.
     expect(matchesBashRule('rm -rf ~', rules)).toBe(false);
     expect(matchesBashRule('', rules)).toBe(false);

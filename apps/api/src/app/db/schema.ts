@@ -251,6 +251,11 @@ export const sessions = sqliteTable('sessions', {
     .$type<AgentEngineId>()
     .notNull()
     .default('claude-code'),
+  /**
+   * The reviewer's engine; `null`: the app's default. Set whenever
+   * `review_model` is (a model belongs to its engine).
+   */
+  reviewEngine: text('review_engine').$type<AgentEngineId>(),
 });
 
 /**

@@ -45,7 +45,7 @@
 
 - When a coherent work package is finished and checked locally (built, tested), and before you
   open a pull request or push that state, call the tool `request_review`: a separate,
-  read-only Claude reviews the session's whole diff without this conversation. It returns at
+  read-only reviewer reviews the session's whole diff without this conversation. It returns at
   once; end your turn (or say with `set_waiting_state` "work" that you wait for the review).
   Not for intermediate states.
 - The findings come as a message of the app. Check each against the code: fix the ones that

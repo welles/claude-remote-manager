@@ -131,15 +131,20 @@ const SHELL_OPERATORS = /[;&|<>()`$*?[\]{}~#!]/;
  * The words of a command line as a POSIX shell splits them, for the
  * quoting Codex writes (single quotes, double quotes with backslash
  * escapes, backslashes); `null` when it uses anything else outside quotes
- * (operators, globs, expansions) or expansions inside double quotes, or
- * the quotes do not end.
+ * (operators, globs, expansions, a newline or carriage return, which
+ * separate commands) or expansions inside double quotes, or the quotes do
+ * not end.
  */
 export function shellWords(line: string): string[] | null {
   const words: string[] = [];
   let word: string | null = null;
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
-    if (char === ' ' || char === '\t' || char === '\n') {
+    if (char === '\n' || char === '\r') {
+      // A second command (or a carriage return hiding one): not one line.
+      return null;
+    }
+    if (char === ' ' || char === '\t') {
       if (word !== null) {
         words.push(word);
         word = null;

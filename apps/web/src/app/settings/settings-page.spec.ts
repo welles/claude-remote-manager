@@ -91,9 +91,11 @@ describe('SettingsPage', () => {
     http.expectOne('/api/settings').flush(settings);
     http.expectOne('/api/github/status').flush(github);
     http.expectOne('/api/notifications').flush(notificationStatus());
-    http
-      .expectOne('/api/settings/review')
-      .flush({ model: 'claude-fable-5-2', effort: 'high' });
+    http.expectOne('/api/settings/review').flush({
+      engine: 'claude-code',
+      models: { 'claude-code': 'claude-fable-5-2', codex: null },
+      effort: 'high',
+    });
     flushEngines(http);
     http.expectOne('/api/accounts').flush(mainAccountList());
     http.expectOne('/api/limits').flush({ accounts: [] });
@@ -272,9 +274,11 @@ describe('SettingsPage review settings', () => {
     http.expectOne('/api/github/status').flush(status());
     http.expectOne('/api/notifications').flush(notificationStatus());
     http.expectOne('/api/health').flush(health());
-    http
-      .expectOne('/api/settings/review')
-      .flush({ model: 'claude-fable-5-2', effort: 'high' });
+    http.expectOne('/api/settings/review').flush({
+      engine: 'claude-code',
+      models: { 'claude-code': 'claude-fable-5-2', codex: null },
+      effort: 'high',
+    });
     flushEngines(http);
     http.expectOne('/api/accounts').flush(mainAccountList());
     http.expectOne('/api/limits').flush({ accounts: [] });

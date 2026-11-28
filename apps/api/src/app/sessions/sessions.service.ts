@@ -4149,7 +4149,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       name: REQUEST_REVIEW_TOOL,
       description:
         'Ask for an independent review of the changes of this session (only from the ' +
-        'main conversation, never from a subagent): a separate Claude process with ' +
+        'main conversation, never from a subagent): a separate reviewer process with ' +
         'read-only access reviews the whole session diff (all repositories against their ' +
         'base branches, with uncommitted files), without this conversation. Call it once a ' +
         'coherent work package is finished and checked locally (built, tested), before you ' +
@@ -6315,6 +6315,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       environment: this.environmentOf(record),
       review: {
         mode: record.reviewMode,
+        engine: record.reviewEngine ?? null,
         model: record.reviewModel,
         effort: record.reviewEffort,
         running: this.automation?.runningReview?.(record.id) ?? null,

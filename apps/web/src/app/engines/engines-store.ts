@@ -74,6 +74,8 @@ export class EnginesStore {
   readonly engines = computed(
     () => this.loaded() ?? [fallbackEngine(DEFAULT_ENGINE)],
   );
+  /** The server's list is known. */
+  readonly ready = computed(() => this.loaded() !== null);
   /** More than one engine: the UI lets the user choose and names them. */
   readonly several = computed(() => this.engines().length > 1);
   /** The account providers whose engine this server has. */

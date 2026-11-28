@@ -159,6 +159,9 @@ export interface CodexModel {
   description: string;
   hidden: boolean;
   isDefault?: boolean;
+  /** The reasoning efforts the model offers (any string to Codex). */
+  supportedReasoningEfforts?: { reasoningEffort: string }[];
+  defaultReasoningEffort?: string;
 }
 
 /** Whether an error is the account's usage limit (`usageLimitExceeded`). */

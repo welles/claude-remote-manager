@@ -1127,7 +1127,8 @@ engine's default (`ENGINE_DEFAULT_PERMISSION_MODE`) when none is chosen. A messa
 cannot translate is logged and skipped; the events of one engine message are handled as a whole.
 The UI shows each engine in its own terms (its modes, its models) and leaves out what an engine
 does not offer (`EngineCapabilities`: plan mode, slash commands, …); with one engine it shows no
-engine choice. Still Claude Code only: the independent review.
+engine choice. The independent reviewer runs with either engine (see
+[Independent review](#independent-review)).
 
 ### Codex
 
@@ -1221,8 +1222,9 @@ in `codex-protocol.ts` are written against it) and runs its native binary for th
   login through the app server (`account/login/start` with `chatgptDeviceCode`): the UI shows
   the page to open and the code to enter there (`AccountLoginDto.userCode`) and waits for
   `account/login/completed`; status and logout are `account/read` and `account/logout`.
-- **Not offered by Codex:** plan mode and slash commands (the UI leaves them out); the
-  independent review still runs with Claude Code.
+- **Not offered by Codex:** plan mode and slash commands (the UI leaves them out).
+- **Reviews:** `CodexRunner.review` runs the independent reviewer with Codex (see
+  [Independent review](#independent-review)).
 
 ## Previews of dev servers
 
@@ -2374,10 +2376,11 @@ Without a webhook (no secret) everything works through polling every two minutes
 
 ## Independent review
 
-A second Claude reviews a session's changes without knowing the session's conversation, and
-its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
+A second agent reviews a session's changes without knowing the session's conversation, and
+its findings go to the session's agent to fix (`apps/api/src/app/reviews`). The reviewer runs
+with the engine the settings choose, Claude Code or Codex, whatever the session's own engine.
 
-- **The reviewer** is a Claude Code process of its own that the API starts
+- **The reviewer with Claude Code** is a Claude Code process of its own that the API starts
   (`AgentRunner.review`, `buildReviewQueryOptions`), as the session user like a session: in
   the session's clones, with only `Read`, `Grep` and `Glob` (the `tools` option, so no other
   tool exists) and no allow rules: reads inside the session's directories need none, and
@@ -2390,11 +2393,80 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
   its base branch, with uncommitted and untracked files) as patches up to about 400 000
   characters; files beyond that are listed for it to read. Nothing of the conversation goes
   to it.
-- **Settings:** `GET`/`PUT /api/settings/review` (`app_settings` key `review`): model
-  (default `claude-fable-5-2`), effort (default `high`), on the Settings page (a stored
-  `maxAutoRounds` of the former round limit is ignored). Per session (`PUT /api/sessions/:id/review-settings`,
-  in the session's details): the review mode (`sessions.review_mode`), and a model and effort
-  of its own (`null`: the app's default).
+- **The reviewer with Codex** (`CodexRunner.review`) is a short-lived `codex app-server` as
+  the session user with the account's Codex home, in the session's first directory: one
+  ephemeral thread (`thread/start` with `ephemeral: true`: no rollout, nothing in the history),
+  sandbox `read-only`, approval policy `never` (`approvalsReviewer: 'user'`; a request that
+  comes anyway is declined), no dynamic tools, the user's MCP servers disabled (`config/read`,
+  then `mcp_servers.<name>.enabled = false`) and no hooks (`features.hooks = false`), the
+  reviewer's instructions as developer instructions (after the machine's rules, as for Codex
+  sessions; the repository's `CLAUDE.md` is read like an `AGENTS.md`). One turn with the same
+  prompt and the answer's JSON schema as `outputSchema`; the thread's last agent message is the
+  answer. The model's efforts (`model/list`, `supportedReasoningEfforts`) decide the effort: one
+  the model does not offer becomes the next lower it does; the card shows what it ran with
+  (also Codex's default model by name). Usage per model from Codex's token usage, as for
+  sessions. Cancelling (and the 30 minutes) interrupt the turn and end the process.
+  **Difference to Claude Code:** Codex's read-only sandbox forbids writes and the network but
+  can read anything the session user can (other clones, the accounts' Codex logins), not only
+  the session's directories; its instructions tell it to stay in the listed repositories, which
+  is not enforced. The thread also runs without the features `apps`, `plugins`,
+  `multi_agent`, `goals`, `browser_use`, `computer_use` and `image_generation`
+  (`REVIEW_FEATURES`; web search and image viewing stay). The user's MCP servers are disabled
+  by name (`config/read` without a working directory); the project's do not load, since the
+  project counts as untrusted (disabling a server of a layer that does not load would fail the
+  thread's start).
+- **How the Codex reviewer stays read-only** (`CodexRunner.review`, `reviewBlocked`,
+  `review-commands.ts`): only in Codex's own sandbox. The review runs with Claude Code instead
+  (`fallbackFrom: 'codex'` and `fallbackReason` in `review.started`, the card says why) when:
+  - **the sandbox cannot start:** Codex's sandbox (bubblewrap) needs unprivileged user
+    namespaces, which a container may not have. `codex sandbox -- true`, run as the session
+    user, tells; a success is kept, a failure (also a timeout) is probed again after 10 minutes
+    (`CodexRunnerConfig.sandboxWorks` overrides the probe). Reason: "Codex's sandbox cannot
+    start on this server (it needs unprivileged user namespaces)". A mode without the sandbox
+    that let only reading commands through was tried and dropped: the shell, git and Codex's
+    own configuration offer too many ways to run code from the repository.
+  - **Codex has rules that allow:** `prefix_rule(…, decision="allow")` would let commands run
+    past the sandbox and the approval policy. A `*.rules` file in the account's Codex home's
+    `rules/` (followed into the base home), the base home's or `/etc/codex/rules/` counts when
+    a rule call (`prefix_rule`, `network_rule`, …) has no literal `decision="prompt"` or
+    `"forbidden"` (Codex's default decision is `allow`, checked with `codex execpolicy check`;
+    a decision from a variable counts too); rules that only ask or forbid do not, and a rules
+    directory or file that cannot be read does. The project's `.codex/rules/` does not load
+    (the project is untrusted). No temporary `CODEX_HOME` (the login rotates its tokens).
+
+  Both are checked when the review is chosen and again as it starts (`AgentReviewRefused`);
+  a review refused as it starts switches to Claude Code: `review.switched` tells the card at
+  once, and `review.finished` carries the engine it ran with. The reviewer is chosen before the
+  last checks (archived, being prepared, server stopping, a turn started), so nothing launches
+  when they change while the probe runs. In the sandbox the thread is `read-only` with `never`, every request
+  declined; the repository's own `.codex/config.toml` does not load (the working directory is
+  marked `trust_level = "untrusted"` in the thread's configuration), commands get only the
+  core environment (`shell_environment_policy`: `inherit = "core"`, nothing `set`), and web
+  search answers from the cache (`web_search = "cached"`). Using Codex for reviews in the
+  container needs user namespaces there; that is a matter of the deployment (e.g. a seccomp
+  profile that allows `clone`/`unshare` with `CLONE_NEWUSER`, and on the host
+  `kernel.unprivileged_userns_clone=1` resp. no AppArmor restriction of unprivileged user
+  namespaces).
+
+- **Settings:** `GET`/`PUT /api/settings/review` (`app_settings` key `review`): the engine
+  (default `claude-code`; only engines the server has can be chosen), a model per engine
+  (`models`: Claude Code's default `claude-fable-5-2`, Codex's `null` = Codex's own default;
+  `PUT` with `model` sets the model of the engine the settings have after the request, `null`
+  its default) and the effort (default `high`; the same five levels for both engines, Codex's
+  reasoning efforts of the same names), on the Settings page (the engine choice only with more
+  than one engine on the server; the model choice shows that engine's models, `GET
+/api/models?engine=…`). Settings from before Codex (`model`) are read as Claude Code's model; a
+  stored `maxAutoRounds` of the former round limit is ignored. Per session (`PUT
+/api/sessions/:id/review-settings`, in the session's details): the review mode
+  (`sessions.review_mode`), and an engine, model and effort of its own (`null`: the app's
+  default; `sessions.review_engine`, `review_model`, `review_effort`). A session's model belongs
+  to its engine: choosing one keeps the engine it was chosen for in `review_engine` (also when
+  the app's default engine changes later), and changing the engine resets the model. An engine
+  the server does not have (Codex uninstalled) falls back to Claude Code with its model of the
+  settings; the run says so (`fallbackFrom` of `review.started`) and its card too.
+- **Account:** the reviewer runs with an account of its engine's provider: the session's own
+  account when it is one, else the provider's default (`AccountsService.withAccount` with the
+  provider); the account counts as in use meanwhile.
 - **Starting:** `POST /api/sessions/:id/review` ("Review now" in the session's details) starts
   one at once, also while Claude works; 409 while one runs or when nothing changed.
   `DELETE /api/sessions/:id/review` cancels it; after 30 minutes it fails, and archiving the
@@ -2425,11 +2497,13 @@ its findings go to the session's Claude to fix (`apps/api/src/app/reviews`).
   gets nothing, except for a review it asked for. The history shows a card per review
   (`review.started`, `review.finished`):
   running with Cancel, the findings, the summary, an error, model, effort, duration and
-  cost. A review cut off by a server stop shows as interrupted. Findings never go to an
+  cost, and the engine when the server has more than one (`review.started.engine`; older
+  reviews: Claude Code; `review.finished` adds the model and effort the engine reported when they
+  differ, e.g. Codex's default model by name). A review cut off by a server stop shows as interrupted. Findings never go to an
   archived session, and those of a review that started by itself (auto-review or Claude's
   request) not to a session that ended meanwhile (a manual review's resume it).
-- **Usage** of the reviewer counts for the session (`usage_records.review_id`), but not as the
-  baseline the session's own Claude Code totals start from.
+- **Usage** of the reviewer counts for the session (`usage_records.review_id`, with the
+  reviewer's account), but not as the baseline the session's own totals start from.
 - While a review runs, or auto-review is about to start one, the PR automation waits: no
   autofix run, no merge (`SessionAutomationHooks.reviewBusy`), and Claude's
   `merge_pull_request` asks as the mode says instead of merging unasked.

@@ -212,6 +212,8 @@ export class FakeAgentRunner implements AgentRunner {
   probes = 0;
   /** Review processes started, in order. */
   readonly reviews: FakeReview[] = [];
+  /** Set by tests of an engine that refuses some reviews. */
+  reviewBlocked?: AgentRunner['reviewBlocked'];
 
   review(options: AgentReviewOptions): Promise<AgentReviewResult> {
     const review = new FakeReview(options);

@@ -8,7 +8,14 @@ import { MarkdownPipe } from '../sessions/markdown.pipe';
 import { errorMessage } from '../repositories/repositories-api';
 import { AppIcon } from '../ui/icon';
 import { Toasts } from '../ui/toasts';
-import { EFFORT_LABELS, SEVERITY_LABELS, triggerLabel } from './review-labels';
+import { ENGINE_LABELS } from '@claude-remote-manager/shared-types';
+import { EnginesStore } from '../engines/engines-store';
+import {
+  EFFORT_LABELS,
+  fallbackText,
+  SEVERITY_LABELS,
+  triggerLabel,
+} from './review-labels';
 import { ReviewsApi } from './reviews-api';
 
 export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
@@ -16,6 +23,8 @@ export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
 /**
  * An independent review in the conversation: running (with Cancel), its
  * findings and whether they went to the session's agent, or why it failed.
+ * Names the reviewer's engine when the server has more than one, and says
+ * when the chosen engine was not there.
  */
 @Component({
   selector: 'app-review-card',
@@ -76,8 +85,24 @@ export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
     @if (state() === 'running') {
       <mat-progress-bar mode="indeterminate" />
     }
+    @if (review.fallbackFrom) {
+      <p class="m-0 hint-text" data-testid="review-fallback">
+        {{
+          review.fallbackReason
+            ? review.fallbackReason +
+              ': this review ran with ' +
+              engineLabels['claude-code'] +
+              ' instead.'
+            : fallbackText(review.fallbackFrom)
+        }}
+      </p>
+    }
     <p class="m-0 hint-text" data-testid="review-meta">
-      {{ review.model }} · effort {{ effortLabel() }} · {{ review.fileCount }}
+      @if (engines.several() || review.engine !== 'claude-code') {
+        {{ engineLabels[review.engine] ?? review.engine }} ·
+      }
+      {{ review.model ?? 'default model' }} · effort {{ effortLabel() }} ·
+      {{ review.fileCount }}
       {{ review.fileCount === 1 ? 'file' : 'files' }}
       @if (review.repositories.length > 1) {
         in {{ review.repositories.join(', ') }}
@@ -143,6 +168,7 @@ export type ReviewItem = Extract<ConversationItem, { kind: 'review' }>;
 export class ReviewCard {
   private readonly api = inject(ReviewsApi);
   private readonly toasts = inject(Toasts);
+  protected readonly engines = inject(EnginesStore);
 
   readonly item = input.required<ReviewItem>();
   readonly sessionId = input.required<string>();
@@ -152,6 +178,8 @@ export class ReviewCard {
   readonly runningId = input<string | null>(null);
 
   protected readonly severityLabels = SEVERITY_LABELS;
+  protected readonly engineLabels = ENGINE_LABELS;
+  protected readonly fallbackText = fallbackText;
   protected readonly triggerLabel = triggerLabel;
   protected readonly formatCost = formatCost;
   protected readonly formatTokens = formatTokens;

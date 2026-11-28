@@ -1,7 +1,9 @@
 import {
+  DEFAULT_ENGINE,
   PERMISSION_MODE_INFO,
   SET_SESSION_TITLE_TOOL_NAME,
   SET_WAITING_STATE_TOOL_NAME,
+  type AgentEngineId,
   type AssistantDraft,
   type AttachmentDto,
   type CommitsAddedEvent,
@@ -116,7 +118,16 @@ export type ConversationItem =
       key: string;
       reviewId: string;
       trigger: ReviewTrigger;
-      model: string;
+      /** The reviewer's engine (Claude Code for reviews before Codex). */
+      engine: AgentEngineId;
+      /** The chosen engine that was not used, and why (see `RunningReviewDto`). */
+      fallbackFrom: AgentEngineId | null;
+      fallbackReason: string | null;
+      /**
+       * The model (`null`: the engine's default) and effort, as the
+       * reviewer reported them once it finished.
+       */
+      model: string | null;
       effort: ReviewEffort;
       fileCount: number;
       repositories: string[];
@@ -592,6 +603,9 @@ export function applyEvent(
           key,
           reviewId: event.reviewId,
           trigger: event.trigger,
+          engine: event.engine ?? DEFAULT_ENGINE,
+          fallbackFrom: event.fallbackFrom ?? null,
+          fallbackReason: event.fallbackReason ?? null,
           model: event.model,
           effort: event.effort,
           fileCount: event.fileCount,
@@ -605,6 +619,22 @@ export function applyEvent(
           messageId: null,
         },
       ];
+    }
+    case 'review.switched': {
+      const key = `review:${event.reviewId}`;
+      const index = items.findIndex((existing) => existing.key === key);
+      const existing = items[index];
+      if (existing?.kind !== 'review') {
+        return items;
+      }
+      return replaceAt(items, index, {
+        ...existing,
+        engine: event.engine,
+        fallbackFrom: event.fallbackFrom,
+        fallbackReason: event.fallbackReason,
+        model: event.model,
+        effort: event.effort,
+      });
     }
     case 'review.finished': {
       const key = `review:${event.reviewId}`;
@@ -622,6 +652,17 @@ export function applyEvent(
         durationMs: event.durationMs,
         usage: event.usage,
         messageId: event.messageId,
+        model: event.model !== undefined ? event.model : existing.model,
+        effort: event.effort ?? existing.effort,
+        engine: event.engine ?? existing.engine,
+        fallbackFrom:
+          event.fallbackFrom !== undefined
+            ? event.fallbackFrom
+            : existing.fallbackFrom,
+        fallbackReason:
+          event.fallbackReason !== undefined
+            ? event.fallbackReason
+            : existing.fallbackReason,
       });
     }
     case 'notice':
