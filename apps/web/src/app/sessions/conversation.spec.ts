@@ -994,6 +994,41 @@ describe('independent reviews in the conversation', () => {
     ]);
   });
 
+  it('shows a running review’s switch to Claude Code at once', () => {
+    let items = buildConversation([
+      event({
+        type: 'review.started',
+        reviewId: 'r1',
+        trigger: 'manual',
+        engine: 'codex',
+        fallbackFrom: null,
+        model: null,
+        effort: 'max',
+        fileCount: 1,
+        repositories: ['alice/app'],
+      }),
+    ]);
+    items = applyEvent(
+      items,
+      event({
+        type: 'review.switched',
+        reviewId: 'r1',
+        engine: 'claude-code',
+        fallbackFrom: 'codex',
+        fallbackReason: 'Codex has rules that allow commands (x)',
+        model: 'claude-fable-5-2',
+        effort: 'max',
+      }),
+    );
+    expect(items[0]).toMatchObject({
+      engine: 'claude-code',
+      fallbackFrom: 'codex',
+      fallbackReason: 'Codex has rules that allow commands (x)',
+      model: 'claude-fable-5-2',
+      outcome: null,
+    });
+  });
+
   it('takes the engine a review switched to as it started', () => {
     let items = buildConversation([
       event({

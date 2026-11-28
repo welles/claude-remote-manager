@@ -620,6 +620,22 @@ export function applyEvent(
         },
       ];
     }
+    case 'review.switched': {
+      const key = `review:${event.reviewId}`;
+      const index = items.findIndex((existing) => existing.key === key);
+      const existing = items[index];
+      if (existing?.kind !== 'review') {
+        return items;
+      }
+      return replaceAt(items, index, {
+        ...existing,
+        engine: event.engine,
+        fallbackFrom: event.fallbackFrom,
+        fallbackReason: event.fallbackReason,
+        model: event.model,
+        effort: event.effort,
+      });
+    }
     case 'review.finished': {
       const key = `review:${event.reviewId}`;
       const index = items.findIndex((existing) => existing.key === key);
