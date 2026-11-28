@@ -94,10 +94,19 @@ describe('accounts', () => {
       subscriptionType: 'max',
       limits: { accountId: 'main', windows: [] },
     });
+    app.app
+      .get(LimitsService)
+      .account('main')
+      .updateFromRateLimitEvent({
+        status: 'rejected',
+        rateLimitType: 'five_hour',
+      });
     // The main account cannot be removed, only logged out.
     expect((await call('DELETE', '/api/accounts/main')).status).toBe(409);
     expect((await call('POST', '/api/accounts/main/logout')).status).toBe(201);
     expect(app.claudeCli.logouts).toEqual([mainDir]);
+    // The limits went with the login.
+    expect(app.app.get(LimitsService).get('main').windows).toEqual([]);
     expect((await list())[0].loggedIn).toBe(false);
   });
 

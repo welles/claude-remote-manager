@@ -341,6 +341,10 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
         // counts against it (an unreadable one is checked again later).
         const loggedIn = !read || this.row(id)?.loggedIn === true;
         state.status = loggedIn ? 'done' : 'failed';
+        if (loggedIn) {
+          // Perhaps another subscription now: its limits are read afresh.
+          this.limits.forget(id);
+        }
         state.error = loggedIn ? null : 'Claude Code is not logged in';
       } else {
         state.status = 'failed';
@@ -397,6 +401,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       throw new ConflictException(`Logout failed: ${errorMessage(error)}`);
     }
+    // The limits belonged to the login that is gone.
+    this.limits.forget(id);
     await this.refresh(id);
     return this.get(id);
   }
@@ -527,9 +533,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   /** The account a session effectively uses (`null`: the default). */
   effectiveId(accountId: string | null): string {
-    return (
-      (accountId ? this.row(accountId)?.id : undefined) ?? this.defaultRow().id
-    );
+    // As processes pick it: one being removed counts as the default.
+    return this.pick(accountId).id;
   }
 
   /**
