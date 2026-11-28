@@ -2411,8 +2411,10 @@ with the engine the settings choose, Claude Code or Codex, whatever the session'
   the session's directories; its instructions tell it to stay in the listed repositories, which
   is not enforced. The thread also runs without the features `apps`, `plugins`,
   `multi_agent`, `goals`, `browser_use`, `computer_use` and `image_generation`
-  (`REVIEW_FEATURES`; web search and image viewing stay), and `config/read` gets the working
-  directory so project MCP servers are disabled too.
+  (`REVIEW_FEATURES`; web search and image viewing stay). The user's MCP servers are disabled
+  by name (`config/read` without a working directory); the project's do not load, since the
+  project counts as untrusted (disabling a server of a layer that does not load would fail the
+  thread's start).
 - **How the Codex reviewer stays read-only** (`CodexRunner.review`, `reviewBlocked`,
   `review-commands.ts`): only in Codex's own sandbox. The review runs with Claude Code instead
   (`fallbackFrom: 'codex'` and `fallbackReason` in `review.started`, the card says why) when:
@@ -2423,15 +2425,20 @@ with the engine the settings choose, Claude Code or Codex, whatever the session'
     start on this server (it needs unprivileged user namespaces)". A mode without the sandbox
     that let only reading commands through was tried and dropped: the shell, git and Codex's
     own configuration offer too many ways to run code from the repository.
-  - **Codex has command rules:** `prefix_rule(…, decision="allow")` would let commands run past
-    the sandbox and the approval policy, so any `*.rules` file with more than comments in the
-    account's Codex home's `rules/` (followed into the base home), the base home's,
-    `/etc/codex/rules/` or the working directory's `.codex/rules/` counts. No temporary
-    `CODEX_HOME` (the login rotates its tokens).
+  - **Codex has rules that allow:** `prefix_rule(…, decision="allow")` would let commands run
+    past the sandbox and the approval policy. A `*.rules` file in the account's Codex home's
+    `rules/` (followed into the base home), the base home's or `/etc/codex/rules/` counts when
+    a rule call (`prefix_rule`, `network_rule`, …) has no literal `decision="prompt"` or
+    `"forbidden"` (Codex's default decision is `allow`, checked with `codex execpolicy check`;
+    a decision from a variable counts too); rules that only ask or forbid do not, and a rules
+    directory or file that cannot be read does. The project's `.codex/rules/` does not load
+    (the project is untrusted). No temporary `CODEX_HOME` (the login rotates its tokens).
 
   Both are checked when the review is chosen and again as it starts (`AgentReviewRefused`);
-  a review refused as it starts switches to Claude Code, and `review.finished` carries the
-  engine it ran with. In the sandbox the thread is `read-only` with `never`, every request
+  a review refused as it starts switches to Claude Code: `review.switched` tells the card at
+  once, and `review.finished` carries the engine it ran with. The reviewer is chosen before the
+  last checks (archived, being prepared, server stopping, a turn started), so nothing launches
+  when they change while the probe runs. In the sandbox the thread is `read-only` with `never`, every request
   declined; the repository's own `.codex/config.toml` does not load (the working directory is
   marked `trust_level = "untrusted"` in the thread's configuration), commands get only the
   core environment (`shell_environment_policy`: `inherit = "core"`, nothing `set`), and web
