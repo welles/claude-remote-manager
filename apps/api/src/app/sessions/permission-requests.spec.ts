@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentPermissionUpdate as PermissionUpdate } from '../agent/agent-events';
 import type { ToolApprovalRequest } from '../agent/tool-approval';
 import { CREATE_PULL_REQUEST_TOOL_NAME } from './app-tools';
 import {
@@ -75,7 +75,11 @@ describe('sessionAllowOffer', () => {
       mode: null,
     });
     // Never a settings file, never a mode switch.
-    expect(offer?.updates.map((update) => update.destination)).toEqual([
+    expect(
+      offer?.updates.map((update) =>
+        'destination' in update ? update.destination : null,
+      ),
+    ).toEqual([
       'session',
       'session',
     ]);

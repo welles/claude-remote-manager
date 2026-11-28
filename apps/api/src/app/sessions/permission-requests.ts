@@ -1,9 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import type {
-  PermissionResult,
-  PermissionRuleValue,
-  PermissionUpdate,
-} from '@anthropic-ai/claude-agent-sdk';
+  AgentApprovalResult as PermissionResult,
+  AgentPermissionRule as PermissionRuleValue,
+  AgentPermissionUpdate as PermissionUpdate,
+} from '../agent/agent-events';
 import type {
   PermissionRequestKind,
   PermissionResolutionCause,

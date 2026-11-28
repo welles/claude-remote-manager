@@ -11,8 +11,11 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { Subject } from 'rxjs';
-import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
-import type { AgentEvent, AgentTurnResult } from '../agent/agent-events';
+import type {
+  AgentApprover,
+  AgentEvent,
+  AgentTurnResult,
+} from '../agent/agent-events';
 import {
   CLAUDE_WAIT_LIMIT_MINUTES,
   isRetiredClone,
@@ -2401,7 +2404,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           model: record.model,
           permissionMode: record.permissionMode,
           ...(await this.resumeTarget(record)),
-          canUseTool: this.canUseTool(live),
+          approve: this.approveCall(live),
           gate: (call) => this.mergeGate(live, call),
           allowedTools: [
             ...allowed.rules,
@@ -3270,13 +3273,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private canUseTool(live: LiveSession): CanUseTool {
-    return async (toolName, input, options) => {
+  private approveCall(live: LiveSession): AgentApprover {
+    return async (call) => {
+      const { toolName, input } = call;
       if (
         APP_TOOLS_WITHOUT_APPROVAL.has(toolName) &&
-        (!options.mcpServer ||
-          (options.mcpServer.name === APP_MCP_SERVER &&
-            options.mcpServer.source === 'sdk'))
+        (!call.mcpServer ||
+          (call.mcpServer.name === APP_MCP_SERVER &&
+            call.mcpServer.source === 'sdk'))
       ) {
         // Showing a file reads only inside the session's directories;
         // previews forward only the session user's ports: never asks.
@@ -3284,9 +3288,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       if (
         live.autofixTurn?.delivered &&
-        autofixAppTool(toolName, options.mcpServer ?? null) &&
+        autofixAppTool(toolName, call.mcpServer) &&
         (input['resolve'] !== true ||
-          (await this.mayResolveUnasked(live, input, options.toolUseID)))
+          (await this.mayResolveUnasked(live, input, call.toolUseId)))
       ) {
         // During an Autofix run: replies touch only the session's own pull
         // requests (the tool refuses others); resolving only after the
@@ -3298,7 +3302,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         toolName === 'Bash' && typeof input['command'] === 'string'
           ? input['command']
           : null;
-      const mcpServer = options.mcpServer ?? null;
+      const mcpServer = call.mcpServer;
       const gitPushes = command
         ? await this.workspaces.analyzeGitPushes(live.id, command)
         : [];
@@ -3319,7 +3323,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         if (outcome) {
           this.append(live, {
             type: 'tool.by_app',
-            toolUseId: options.toolUseID,
+            toolUseId: call.toolUseId,
             outcome: outcome.ok ? 'succeeded' : 'failed',
             summary: outcome.summary,
           });
@@ -3386,17 +3390,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             ? this.pullRequestAutomationCall(live.id, input)
             : null,
         diff: await this.proposedChange(live.id, toolName, input),
-        toolUseId: options.toolUseID,
-        title: options.title ?? null,
-        description: options.description ?? null,
-        displayName: options.displayName ?? null,
-        decisionReason: options.decisionReason ?? null,
-        blockedPath: options.blockedPath ?? null,
-        agentId: options.agentID ?? null,
+        toolUseId: call.toolUseId,
+        title: call.title,
+        description: call.description,
+        displayName: call.displayName,
+        decisionReason: call.decisionReason,
+        blockedPath: call.blockedPath,
+        agentId: call.agentId,
         mcpServer,
-        suggestions: options.suggestions ?? [],
-        suppressAlwaysAllow: options.suppressAlwaysAllowRule === true,
-        signal: options.signal,
+        suggestions: call.suggestions,
+        suppressAlwaysAllow: call.suppressAlwaysAllow,
+        signal: call.signal,
         onRequest: (event) => {
           this.append(live, event);
           this.publishStatus(live);
@@ -3417,7 +3421,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       const approvedInput = result.updatedInput ?? input;
       if (addition) {
         // Exactly what the user saw, used once by the tool.
-        live.additionGrants.set(options.toolUseID, addition);
+        live.additionGrants.set(call.toolUseId, addition);
       }
       if (
         resolution.mode &&

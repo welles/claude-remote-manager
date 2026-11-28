@@ -1,5 +1,9 @@
 import type {
+  CanUseTool,
   ModelInfo,
+  PermissionMode,
+  PermissionUpdate,
+  PermissionUpdateDestination,
   ModelUsage,
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
@@ -18,10 +22,12 @@ import {
   transcriptEntries,
 } from '../sessions/sdk-event-mapper';
 import type {
+  AgentApprover,
   AgentContextUsage,
   AgentEvent,
   AgentHistoryEntry,
   AgentModelUsage,
+  AgentPermissionUpdate,
   AgentPlanUsage,
   AgentPlanWindow,
   AgentRateLimit,
@@ -272,4 +278,99 @@ export class ClaudeEventTranslator {
     }
     return events;
   }
+}
+
+function claudePermissionUpdate(update: PermissionUpdate): AgentPermissionUpdate {
+  switch (update.type) {
+    case 'addRules':
+      return {
+        type: 'addRules',
+        rules: update.rules.map((rule) => ({
+          toolName: rule.toolName,
+          ...(rule.ruleContent === undefined
+            ? {}
+            : { ruleContent: rule.ruleContent }),
+        })),
+        behavior: update.behavior,
+        destination: update.destination,
+      };
+    case 'addDirectories':
+      return {
+        type: 'addDirectories',
+        directories: update.directories,
+        destination: update.destination,
+      };
+    case 'setMode':
+      return {
+        type: 'setMode',
+        mode: update.mode,
+        destination: update.destination,
+      };
+    default:
+      return { type: 'other', raw: update };
+  }
+}
+
+function sdkPermissionUpdate(
+  update: AgentPermissionUpdate,
+): PermissionUpdate | null {
+  switch (update.type) {
+    case 'addRules':
+      return {
+        type: 'addRules',
+        rules: update.rules,
+        behavior: update.behavior,
+        destination: update.destination as PermissionUpdateDestination,
+      };
+    case 'addDirectories':
+      return {
+        type: 'addDirectories',
+        directories: update.directories,
+        destination: update.destination as PermissionUpdateDestination,
+      };
+    case 'setMode':
+      return {
+        type: 'setMode',
+        mode: update.mode as PermissionMode,
+        destination: update.destination as PermissionUpdateDestination,
+      };
+    default:
+      return null;
+  }
+}
+
+/** Claude Code's `canUseTool` callback for an engine-neutral approver. */
+export function claudeCanUseTool(approve: AgentApprover): CanUseTool {
+  return async (toolName, input, options) => {
+    const result = await approve({
+      toolName,
+      input,
+      toolUseId: options.toolUseID,
+      title: options.title ?? null,
+      description: options.description ?? null,
+      displayName: options.displayName ?? null,
+      decisionReason: options.decisionReason ?? null,
+      blockedPath: options.blockedPath ?? null,
+      agentId: options.agentID ?? null,
+      mcpServer: options.mcpServer ?? null,
+      suggestions: (options.suggestions ?? []).map(claudePermissionUpdate),
+      suppressAlwaysAllow: options.suppressAlwaysAllowRule === true,
+      signal: options.signal,
+    });
+    if (result.behavior === 'deny') {
+      return {
+        behavior: 'deny',
+        message: result.message,
+        ...(result.interrupt ? { interrupt: true } : {}),
+      };
+    }
+    const updates = (result.updatedPermissions ?? [])
+      .map(sdkPermissionUpdate)
+      .filter((update): update is PermissionUpdate => update !== null);
+    return {
+      behavior: 'allow',
+      ...(result.updatedInput ? { updatedInput: result.updatedInput } : {}),
+      ...(updates.length > 0 ? { updatedPermissions: updates } : {}),
+    };
+  };
 }

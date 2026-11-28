@@ -1,4 +1,5 @@
 import type {
+  CanUseTool,
   ModelInfo,
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
@@ -25,6 +26,7 @@ import type {
 } from '../../agent/agent-events';
 import {
   ClaudeEventTranslator,
+  claudeCanUseTool,
   claudeCommand,
   claudeContextUsage,
   claudeModel,
@@ -50,10 +52,14 @@ export class FakeRun implements AgentRun {
     percentage: 0.6,
   };
 
-  constructor(
-    readonly options: AgentStartOptions,
-    firstMessage: AgentUserMessage,
-  ) {
+  /**
+   * What the process was started with; `canUseTool` is the approver as
+   * Claude Code calls it (through the adapter), for tests to ask with.
+   */
+  readonly options: AgentStartOptions & { canUseTool: CanUseTool };
+
+  constructor(options: AgentStartOptions, firstMessage: AgentUserMessage) {
+    this.options = { ...options, canUseTool: claudeCanUseTool(options.approve) };
     this.sent.push(firstMessage);
   }
 

@@ -1,7 +1,7 @@
 import type {
-  PermissionResult,
-  PermissionUpdate,
-} from '@anthropic-ai/claude-agent-sdk';
+  AgentApprovalResult,
+  AgentPermissionUpdate,
+} from './agent-events';
 import type {
   FileDiff,
   GitPushAnalysis,
@@ -57,8 +57,8 @@ export interface ToolApprovalRequest {
   repositoryAddition?: RepositoryAdditionCall | null;
   /** For file changes: the change it would make. */
   diff?: FileDiff | null;
-  /** Claude Code's suggestions for not asking again (`canUseTool`). */
-  suggestions: PermissionUpdate[];
+  /** The agent's suggestions for not asking again. */
+  suggestions: AgentPermissionUpdate[];
   /** Claude Code says not to offer "don't ask again" for this request. */
   suppressAlwaysAllow: boolean;
   signal: AbortSignal;
@@ -69,7 +69,7 @@ export interface ToolApprovalRequest {
 }
 
 /** The answer for Claude Code plus how the request was resolved. */
-export type ToolApprovalDecision = PermissionResult & {
+export type ToolApprovalDecision = AgentApprovalResult & {
   resolution: PermissionResolvedInput;
 };
 

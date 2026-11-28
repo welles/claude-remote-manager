@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type {
-  PermissionResult,
-  PermissionUpdate,
-} from '@anthropic-ai/claude-agent-sdk';
+  AgentApprovalResult as PermissionResult,
+  AgentPermissionUpdate as PermissionUpdate,
+} from '../agent/agent-events';
 import type { PermissionResolutionCause } from '@claude-remote-manager/shared-types';
 import {
   ToolApprover,

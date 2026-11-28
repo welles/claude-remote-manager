@@ -1,5 +1,5 @@
-import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import type {
+  AgentApprover,
   AgentCommand,
   AgentContextUsage,
   AgentEvent,
@@ -89,7 +89,7 @@ export interface AgentStartOptions {
   /** Session ID for a new Claude Code session (ignored when resuming). */
   sessionId: string | null;
   /** Decides tool uses that need the user's approval. */
-  canUseTool: CanUseTool;
+  approve: AgentApprover;
   /**
    * Looks at a tool call before Claude Code's own permission check:
    * `allow` runs it without asking (deny rules still apply), `ask` sends it

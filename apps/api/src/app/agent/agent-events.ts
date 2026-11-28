@@ -135,3 +135,69 @@ export interface AgentHistoryEntry {
   isUserMessage: boolean;
   events: SessionEventInput[];
 }
+
+/** A permission rule: a tool and optionally what it applies to. */
+export interface AgentPermissionRule {
+  toolName: string;
+  ruleContent?: string;
+}
+
+/**
+ * A change of what the agent may do without asking, as an engine suggests
+ * it for a request or the app applies it with an approval.
+ */
+export type AgentPermissionUpdate =
+  | {
+      type: 'addRules';
+      rules: AgentPermissionRule[];
+      behavior: 'allow' | 'deny' | 'ask';
+      destination: string;
+    }
+  | { type: 'addDirectories'; directories: string[]; destination: string }
+  | { type: 'setMode'; mode: string; destination: string }
+  /** Something else the engine suggested; never applied by the app. */
+  | { type: 'other'; raw: unknown };
+
+/** A tool use the agent asks the app to decide. */
+export interface AgentApprovalCall {
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId: string;
+  /** The engine's sentence for it, e.g. "Claude wants to run …". */
+  title: string | null;
+  description: string | null;
+  displayName: string | null;
+  decisionReason: string | null;
+  blockedPath: string | null;
+  /** Set when a subagent asks. */
+  agentId: string | null;
+  /** For MCP tools: the server and where it is defined (`sdk`: ours). */
+  mcpServer: { name: string; source: string } | null;
+  /** The engine's suggestions for not asking again. */
+  suggestions: AgentPermissionUpdate[];
+  /** The engine says not to offer "don't ask again" for this request. */
+  suppressAlwaysAllow: boolean;
+  signal: AbortSignal;
+}
+
+/** The app's answer to an approval call. */
+export type AgentApprovalResult =
+  | {
+      behavior: 'allow';
+      /** The input to run the tool with (e.g. answers to questions). */
+      updatedInput?: Record<string, unknown>;
+      /** Applied to the session (e.g. allow rules, a mode switch). */
+      updatedPermissions?: AgentPermissionUpdate[];
+    }
+  | {
+      behavior: 'deny';
+      /** Told to the agent. */
+      message: string;
+      /** The turn ends. */
+      interrupt?: boolean;
+    };
+
+/** Decides the tool uses an agent asks about. */
+export type AgentApprover = (
+  call: AgentApprovalCall,
+) => Promise<AgentApprovalResult>;

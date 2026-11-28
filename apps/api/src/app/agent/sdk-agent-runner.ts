@@ -26,6 +26,7 @@ import { AsyncQueue } from './async-queue';
 import type { AgentEvent } from './agent-events';
 import {
   ClaudeEventTranslator,
+  claudeCanUseTool,
   claudeCommand,
   claudeContextUsage,
   claudeModel,
@@ -392,7 +393,7 @@ export function buildQueryOptions(
     // process runs (`setPermissionMode`); the mode itself is the session's
     // choice. As `--allow-dangerously-skip-permissions`.
     allowDangerouslySkipPermissions: true,
-    canUseTool: options.canUseTool,
+    canUseTool: claudeCanUseTool(options.approve),
     ...(options.gate ? { hooks: gateHooks(options.gate) } : {}),
     ...(options.resume
       ? { resume: options.resume }
