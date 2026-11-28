@@ -17,10 +17,7 @@ import type {
   SlashCommandOption,
   UsageTotals,
 } from '@claude-remote-manager/shared-types';
-import {
-  SdkEventMapper,
-  transcriptEntries,
-} from './sdk-event-mapper';
+import { SdkEventMapper, transcriptEntries } from './sdk-event-mapper';
 import type {
   AgentApprover,
   AgentContextUsage,
@@ -280,7 +277,9 @@ export class ClaudeEventTranslator {
   }
 }
 
-function claudePermissionUpdate(update: PermissionUpdate): AgentPermissionUpdate {
+function claudePermissionUpdate(
+  update: PermissionUpdate,
+): AgentPermissionUpdate {
   switch (update.type) {
     case 'addRules':
       return {

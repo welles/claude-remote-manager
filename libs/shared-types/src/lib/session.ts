@@ -1,3 +1,4 @@
+import type { AgentEngineId } from './engines';
 import type { SessionEnvironmentDto } from './environments';
 import type { MessageReferenceRequest } from './github-references';
 import type { PendingRequestSummary } from './pending-requests';
@@ -414,6 +415,8 @@ export interface SessionDto {
    * default account. Absent from older servers.
    */
   accountId?: string | null;
+  /** The agent engine the session runs with. Absent from older servers. */
+  engine?: AgentEngineId;
   createdAt: string;
   updatedAt: string;
   /** Summed usage of all requests of the session. */
@@ -489,6 +492,8 @@ export interface CreateSessionRequest {
    * script), fixed for its lifetime.
    */
   environmentId?: string;
+  /** The agent engine; without it the default one (`DEFAULT_ENGINE`). */
+  engine?: AgentEngineId;
   /** Account to work with; without it the default account (or the next
    * one in order whose limit is not exhausted). */
   accountId?: string;

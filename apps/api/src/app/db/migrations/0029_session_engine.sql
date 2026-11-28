@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `engine` text DEFAULT 'claude-code' NOT NULL;

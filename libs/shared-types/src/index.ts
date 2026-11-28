@@ -3,6 +3,7 @@ export * from './lib/accounts';
 export * from './lib/attachments';
 export * from './lib/commits';
 export * from './lib/diffs';
+export * from './lib/engines';
 export * from './lib/environments';
 export * from './lib/files';
 export * from './lib/github';

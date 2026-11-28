@@ -204,6 +204,13 @@
       "when": 1795817912302,
       "tag": "0028_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1795829966364,
+      "tag": "0029_session_engine",
+      "breakpoints": true
     }
   ]
 }

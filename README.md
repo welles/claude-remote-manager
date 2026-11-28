@@ -1094,6 +1094,30 @@ default, move up/down (the order), remove (not the main account).
   take the default account). The directory goes first: if that fails, the account stays.
   Limits are not read for logged-out accounts.
 
+### Engines
+
+The session core is engine-neutral: it starts processes through an `AgentRunner` of the session's
+engine (`sessions.engine`, `claude-code` for every session so far; `GET /api/engines` lists the
+engines with their provider of accounts and capabilities) and only knows the app's own model in
+`apps/api/src/app/agent/agent-events.ts`:
+
+- **Events** (`AgentEvent`): the process started (its conversation ID, mode, commands that need a
+  terminal), commands changed, background tasks, activity of the main agent, a mode change by the
+  agent, a limit window reported during a turn, a limit that ended the turn, a suggestion for the
+  next message, conversation output (session events with the transcript entry they follow,
+  images, whether the context grew) and the turn's result (cumulative usage per model).
+- **Approvals**: the engine asks an `AgentApprover` (`AgentApprovalCall` → `AgentApprovalResult`,
+  with `AgentPermissionUpdate`s for "allow for this session" and an approved plan's mode).
+- **Data**: limit windows and plan usage, context usage, models, commands and stored history in
+  engine-neutral types.
+
+Claude Code is the first adapter (`claude-events.ts`, `sdk-agent-runner.ts`, `sdk-event-mapper.ts`,
+`transcript-reader.ts`): it translates the Agent SDK's messages, `canUseTool`, usage answers and
+transcripts into this model; only these files use the SDK. Accounts belong to a provider; a
+session uses accounts of its engine's provider (its own default account per provider, the
+automatic switch only among them). The tests drive the session core through the same adapter
+(the fake runner translates the SDK-shaped messages tests push).
+
 ## Previews of dev servers
 
 Claude starts a dev server in its session (in the background, in the session's directory) and

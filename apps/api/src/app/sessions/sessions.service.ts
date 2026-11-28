@@ -21,7 +21,11 @@ import type {
 import {
   CLAUDE_WAIT_LIMIT_MINUTES,
   isRetiredClone,
+  DEFAULT_ENGINE,
+  ENGINE_PROVIDERS,
+  AGENT_ENGINES,
   MAIN_ACCOUNT_ID,
+  type AccountProvider,
   MAX_ATTACHMENTS_PER_MESSAGE,
   SESSION_PERMISSION_MODES,
   summarizePendingRequests,
@@ -123,6 +127,7 @@ import {
 import { TranscriptReader } from '../agent/transcript-reader';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { LimitsService } from '../limits/limits.service';
+import { AgentEngines } from '../agent/agent-engines';
 import { AccountsService } from '../accounts/accounts.service';
 import {
   SessionWorkspaceService,
@@ -738,11 +743,34 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // Without it every session uses the main account.
     @Optional()
     private readonly accounts?: AccountsService,
+    // Without it every session runs with `runner` (Claude Code).
+    @Optional()
+    private readonly engines?: AgentEngines,
   ) {}
 
   /** The account a session effectively uses (`null`: the default). */
-  private accountOf(accountId: string | null): string {
-    return this.accounts?.effectiveId(accountId) ?? MAIN_ACCOUNT_ID;
+  /** The account a session effectively uses (its own, else the default). */
+  private accountOf(
+    record: Pick<SessionRecord, 'accountId' | 'engine'> | null | undefined,
+  ): string {
+    return (
+      this.accounts?.effectiveId(
+        record?.accountId ?? null,
+        this.providerOf(record),
+      ) ?? MAIN_ACCOUNT_ID
+    );
+  }
+
+  /** Which accounts a session's engine runs with. */
+  private providerOf(
+    record: Pick<SessionRecord, 'engine'> | null | undefined,
+  ): AccountProvider {
+    return ENGINE_PROVIDERS[record?.engine ?? DEFAULT_ENGINE];
+  }
+
+  /** The runner of a session's engine. */
+  private runnerFor(record: Pick<SessionRecord, 'engine'>): AgentRunner {
+    return this.engines?.runner(record.engine) ?? this.runner;
   }
 
   private environmentOf(record: SessionRecord): SessionEnvironmentDto | null {
@@ -799,7 +827,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           live.run &&
           !live.closing &&
           !live.restartPending &&
-          this.accountOf(record.accountId) !== live.accountId
+          this.accountOf(record) !== live.accountId
         ) {
           this.restartWhenFree(live.id);
           live.accountRestart = live.restartPending;
@@ -1006,9 +1034,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const environment = this.environments
       ? this.environments.requireForSession(body['environmentId'])
       : null;
+    const engine =
+      optionalEnum(body, 'engine', AGENT_ENGINES) ?? DEFAULT_ENGINE;
+    if (this.engines && !this.engines.has(engine)) {
+      throw new BadRequestException(
+        `The engine ${engine} is not available on this server`,
+      );
+    }
+    const provider = ENGINE_PROVIDERS[engine];
     const requestedAccount = optionalString(body, 'accountId');
     let accountId = this.accounts
-      ? this.accounts.forNewSession(requestedAccount)
+      ? this.accounts.forNewSession(requestedAccount, provider)
       : null;
 
     this.attachmentStore(attachmentIds).check(attachmentIds);
@@ -1021,7 +1057,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (requestedAccount !== undefined) {
         throw new ConflictException('The account was removed meanwhile');
       }
-      accountId = this.accounts.forNewSession(undefined);
+      accountId = this.accounts.forNewSession(undefined, provider);
     }
     let record: SessionRecord;
     try {
@@ -1039,6 +1075,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         environmentId: environment?.id ?? null,
         environmentSetupStatus: environment?.setupScript ? 'pending' : 'none',
         accountId,
+        engine,
       });
     } catch (error) {
       if (
@@ -1528,9 +1565,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const requestedAccount = optionalString(body, 'accountId');
     if (
       requestedAccount !== undefined &&
-      !this.accounts?.exists(requestedAccount)
+      this.accounts?.providerOf(requestedAccount) !== this.providerOf(record)
     ) {
-      throw new BadRequestException('accountId is not a known account');
+      throw new BadRequestException(
+        "accountId is not a known account of the session's engine",
+      );
     }
     // Applied after the other changes went through.
     const switchAccount = () => {
@@ -1612,7 +1651,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
     const from = live.accountId;
-    if (this.accountOf(this.requireRecord(live.id).accountId) !== from) {
+    if (this.accountOf(this.requireRecord(live.id)) !== from) {
       // The user chose another account during the turn: that one goes on
       // (see followAccount).
       return null;
@@ -1639,7 +1678,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     let kind: 'available' | 'earliest' = 'available';
     let until: Date | null = null;
     if (!to) {
-      const earliest = accounts.earliestReset(windows, now);
+      const earliest = accounts.earliestReset(
+        windows,
+        now,
+        this.providerOf(this.requireRecord(live.id)),
+      );
       // An unknown reset of its own account counts as the next look at it.
       const own =
         this.limits.account(from).exhaustedUntil(windows, now) ??
@@ -1675,7 +1718,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const before = this.requireRecord(sessionId);
     let updated = this.sessions.update(sessionId, { accountId });
     const live = this.live.get(sessionId);
-    if (live && live.accountId !== this.accountOf(accountId)) {
+    if (live && live.accountId !== this.accountOf(updated)) {
       // Only for the account (also after earlier switches): undone when
       // the session switches back to the process's account.
       const accountOnly = !live.restartPending || live.accountRestart;
@@ -1707,7 +1750,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (!record || !wait || record.status !== 'waiting' || this.shuttingDown) {
       return null;
     }
-    const accountId = this.accountOf(record.accountId);
+    const accountId = this.accountOf(record);
     if (!force && wait.accountId === undefined) {
       // A wait from before accounts: it was for this account; nothing else
       // changes (its window stays).
@@ -2108,7 +2151,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       rejectedWindow: null,
       // Kept while the session had no live state (see releaseIfUnused).
       limitRetries: this.limitRetryMemory.get(id) ?? 0,
-      accountId: this.accountOf(this.sessions.get(id)?.accountId ?? null),
+      accountId: this.accountOf(this.sessions.get(id)),
       launching: false,
       accountRestart: false,
     };
@@ -2348,8 +2391,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.mask = undefined;
     // In use from now on: by the account it will pick (see `pickId`).
     live.accountId =
-      this.accounts?.pickId(this.requireRecord(live.id).accountId) ??
-      MAIN_ACCOUNT_ID;
+      this.accounts?.pickId(
+        this.requireRecord(live.id).accountId,
+        this.providerOf(this.requireRecord(live.id)),
+      ) ?? MAIN_ACCOUNT_ID;
     live.launching = true;
     try {
       const extras = await this.support.prepare(record);
@@ -2370,16 +2415,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // prepared counts.
       // Counted as in use from here (see `launching`), before its directory
       // is prepared.
+      const current = this.requireRecord(live.id);
       live.accountId =
-        this.accounts?.pickId(this.requireRecord(live.id).accountId) ??
+        this.accounts?.pickId(current.accountId, this.providerOf(current)) ??
         MAIN_ACCOUNT_ID;
       const account = this.accounts
         ? await this.accounts.agentAccount(
             this.requireRecord(live.id).accountId,
+            this.providerOf(current),
           )
         : null;
       live.accountId = account?.id ?? MAIN_ACCOUNT_ID;
-      const run = await this.runner.start(
+      const run = await this.runnerFor(current).start(
         {
           ...(account
             ? { account: { configDir: account.configDir, main: account.main } }
@@ -2432,9 +2479,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.runningDirectories.set(live.id, workingDirectory(record));
       this.countContext(live, first);
       live.consuming = this.consume(live, run);
-      if (
-        this.accountOf(this.requireRecord(live.id).accountId) !== live.accountId
-      ) {
+      if (this.accountOf(this.requireRecord(live.id)) !== live.accountId) {
         // Switched while the process started: restarted once it is free.
         this.restartWhenFree(live.id);
       }
@@ -4871,7 +4916,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * restarted now if it is free.
    */
   private keptOnOtherAccount(live: LiveSession): boolean {
-    const accountId = this.accountOf(this.requireRecord(live.id).accountId);
+    const accountId = this.accountOf(this.requireRecord(live.id));
     if (!live.run || live.closing || live.accountId === accountId) {
       return false;
     }
@@ -4940,7 +4985,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const until = this.limits
       .account(live.accountId)
       .exhaustedUntil(window ? [window] : [], now);
-    const switchedTo = this.accountOf(record.accountId);
+    const switchedTo = this.accountOf(record);
     // The user switched the session during the turn: like an automatic
     // switch, its account is looked at (and continued with) at once.
     const userSwitched = !switched && switchedTo !== live.accountId;
@@ -5101,9 +5146,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.scheduleLimitCheck(sessionId);
       return;
     }
-    const accountId = this.accountOf(
-      this.sessions.get(sessionId)?.accountId ?? null,
-    );
+    const accountId = this.accountOf(this.sessions.get(sessionId));
     if (
       this.accounts &&
       !this.accounts.isSwitchable(accountId) &&
@@ -5125,10 +5168,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Continued, cancelled or ended meanwhile.
       return;
     }
-    if (
-      this.accountOf(this.sessions.get(sessionId)?.accountId ?? null) !==
-      accountId
-    ) {
+    if (this.accountOf(this.sessions.get(sessionId)) !== accountId) {
       // Switched to another account meanwhile: its limits decide.
       this.scheduleLimitCheck(sessionId);
       return;
@@ -5245,7 +5285,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (!next) {
       // Every account is exhausted: wait for the one that resets first,
       // also the one the session came from.
-      const earliest = accounts.earliestReset(wait.window ? [wait.window] : []);
+      const earliest = accounts.earliestReset(
+        wait.window ? [wait.window] : [],
+        Date.now(),
+        this.providerOf(this.sessions.get(sessionId)),
+      );
       if (!earliest || earliest.id === accountId || earliest.at >= until) {
         return false;
       }
@@ -5348,7 +5392,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     const switchedAccount =
       wait.limitedAccountId !== undefined &&
-      wait.limitedAccountId !== this.accountOf(record.accountId);
+      wait.limitedAccountId !== this.accountOf(record);
     const send = (autofixRun: boolean) =>
       this.sendMessage(live.id, {
         text: switchedAccount
@@ -6117,6 +6161,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       model: record.model,
       permissionMode: record.permissionMode,
       accountId: record.accountId,
+      engine: record.engine,
       permissionModeOverride: this.permissionModeOverride(record),
       ...this.effectiveStatus(record),
       pendingRequests: this.pendingSummary(record),
