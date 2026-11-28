@@ -22,7 +22,13 @@ const path = require('node:path');
 
 const ACCOUNTS = 'crm-accounts';
 /** Shared directories, created in the base home when missing. */
-const SHARED_DIRECTORIES = ['sessions', 'archived_sessions', 'prompts', 'skills', 'rules'];
+const SHARED_DIRECTORIES = [
+  'sessions',
+  'archived_sessions',
+  'prompts',
+  'skills',
+  'rules',
+];
 /** Shared files, linked when the base home has them. */
 const SHARED_FILES = ['config.toml', 'AGENTS.md', 'hooks.json'];
 const ID = /^[0-9a-f-]{36}$/;

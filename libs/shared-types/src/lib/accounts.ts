@@ -9,7 +9,10 @@ import type { AccountLimits } from './limits';
  */
 export type AccountProvider = 'claude' | 'chatgpt';
 
-export const ACCOUNT_PROVIDERS: readonly AccountProvider[] = ['claude', 'chatgpt'];
+export const ACCOUNT_PROVIDERS: readonly AccountProvider[] = [
+  'claude',
+  'chatgpt',
+];
 
 /** ID of the account of the main Claude directory; it cannot be removed. */
 export const MAIN_ACCOUNT_ID = 'main';
