@@ -204,21 +204,25 @@ export function shellWords(line: string): string[] | null {
  * The script of a command Codex reports wrapped in the shell it runs it
  * with (`/bin/bash -lc '<script>'`, also `zsh`/`sh` and `-c`), so tool
  * calls, approvals and the push analysis see what the model wrote; any
- * other command as it is. `actions`: Codex's parsed actions of the
- * command, used when the quoting cannot be read and they name a single
- * command.
+ * other command as it is (`exact`: the command line itself says so).
+ * `actions`: Codex's parsed actions of the command, used when the quoting
+ * cannot be read and they name a single command; then `exact` is
+ * `false` (best effort, for display only).
  */
-export function unwrapShellCommand(
+export function shellScript(
   command: string,
   actions?: readonly { type?: string; command?: unknown }[] | null,
-): string {
+): { script: string; exact: boolean } {
   const words = shellWords(command);
   if (words?.length === 3) {
     const shell = words[0].slice(words[0].lastIndexOf('/') + 1);
-    return WRAPPING_SHELLS.has(shell) &&
-      (words[1] === '-lc' || words[1] === '-c')
-      ? words[2]
-      : command;
+    return {
+      script:
+        WRAPPING_SHELLS.has(shell) && (words[1] === '-lc' || words[1] === '-c')
+          ? words[2]
+          : command,
+      exact: true,
+    };
   }
   if (
     words === null &&
@@ -226,9 +230,17 @@ export function unwrapShellCommand(
     actions?.length === 1 &&
     typeof actions[0].command === 'string'
   ) {
-    return actions[0].command;
+    return { script: actions[0].command, exact: false };
   }
-  return command;
+  return { script: command, exact: true };
+}
+
+/** The script of a command (see `shellScript`). */
+export function unwrapShellCommand(
+  command: string,
+  actions?: readonly { type?: string; command?: unknown }[] | null,
+): string {
+  return shellScript(command, actions).script;
 }
 
 /** The tool call(s) an item starts. */

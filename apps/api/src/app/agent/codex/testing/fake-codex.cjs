@@ -26,6 +26,12 @@
 //                request itself (`serverRequest/resolved`) and ends
 //   fast         the turn/start answer and the whole turn in one write
 //   ask-user     asks the user questions (item/tool/requestUserInput)
+//   cmd:<b64>    like run-command, with the script base64-encoded
+//   stdin:<b64>  asks to write the decoded input to a running command
+//   mcp-tool     calls the user's MCP tool docs/search, approved through
+//                requestUserInput (Codex's MCP tool approval question)
+//   mcp-elicit   the same, approved through an MCP elicitation
+//   edit-file    may run in a subagent thread too (`subagent-edit`)
 //   stubborn     the process ignores SIGTERM and the end of its input
 //   edit-file    a file change that asks for approval first
 //   app-tool:<n> a call of the app's dynamic tool <n> (item/tool/call)
@@ -382,11 +388,14 @@ async function runTurn(thread, turn, input) {
 
   let status = 'completed';
   let error = null;
-  if (/\b(run-command|git-push|resolve-itself)\b/.test(prompt)) {
+  const encoded = /\b(cmd|stdin):(\S+)/.exec(prompt);
+  if (/\b(run-command|git-push|resolve-itself)\b/.test(prompt) || encoded) {
     const itemId = id('cmd');
-    const script = /\bgit-push\b/.test(prompt)
-      ? 'git push origin HEAD'
-      : "echo 'hi'";
+    const script = encoded
+      ? Buffer.from(encoded[2], 'base64').toString('utf8')
+      : /\bgit-push\b/.test(prompt)
+        ? 'git push origin HEAD'
+        : "echo 'hi'";
     const command = {
       type: 'commandExecution',
       id: itemId,
@@ -402,7 +411,7 @@ async function runTurn(thread, turn, input) {
     };
     started(command);
     const request = ask('item/commandExecution/requestApproval', {
-      kind: 'command',
+      kind: encoded?.[1] === 'stdin' ? 'writeStdin' : 'command',
       threadId,
       turnId,
       itemId,
@@ -410,7 +419,7 @@ async function runTurn(thread, turn, input) {
       approvalId: null,
       environmentId: null,
       reason: 'Wants to say hi',
-      command: command.command,
+      command: encoded?.[1] === 'stdin' ? script : command.command,
       cwd: thread.cwd,
       commandActions: command.commandActions,
     });
@@ -462,7 +471,85 @@ async function runTurn(thread, turn, input) {
       autoResolutionMs: null,
     });
     await message(`answers: ${JSON.stringify(answer.answers)}`);
-  } else if (/\bedit-file\b/.test(prompt)) {
+  } else if (/\bmcp-(tool|elicit)\b/.test(prompt)) {
+    const itemId = id('mcp');
+    const item = {
+      type: 'mcpToolCall',
+      id: itemId,
+      server: 'docs',
+      tool: 'search',
+      status: 'inProgress',
+      arguments: { q: 'codex' },
+      result: null,
+      error: null,
+      durationMs: null,
+    };
+    started(item);
+    let allowed;
+    let said;
+    if (/\bmcp-tool\b/.test(prompt)) {
+      const questionId = `mcp_tool_call_approval_${itemId}`;
+      const answer = await ask('item/tool/requestUserInput', {
+        threadId,
+        turnId,
+        itemId,
+        questions: [
+          {
+            id: questionId,
+            header: 'Approve app tool call?',
+            question: 'Allow the docs MCP server to run tool "search"?',
+            isOther: false,
+            isSecret: false,
+            options: [
+              { label: 'Allow', description: 'Run the tool and continue.' },
+              {
+                label: 'Allow for this session',
+                description:
+                  'Run the tool and remember this choice for this session.',
+              },
+              {
+                label: "Allow and don't ask me again",
+                description:
+                  'Run the tool and remember this choice for future tool calls.',
+              },
+              { label: 'Cancel', description: 'Cancel this tool call.' },
+            ],
+          },
+        ],
+        isBlocking: true,
+        autoResolutionMs: null,
+      });
+      said = answer.answers?.[questionId]?.answers?.[0] ?? 'none';
+      allowed = said === 'Allow';
+    } else {
+      const answer = await ask('mcpServer/elicitation/request', {
+        threadId,
+        turnId,
+        serverName: 'docs',
+        environmentId: null,
+        mode: 'form',
+        _meta: {
+          codex_approval_kind: 'mcp_tool_call',
+          tool_params_display: [{ name: 'q', value: 'codex' }],
+        },
+        message: 'Allow the docs MCP server to run tool "search"?',
+        requestedSchema: { type: 'object', properties: {} },
+      });
+      said = answer.action;
+      allowed = said === 'accept';
+    }
+    completed({
+      ...item,
+      status: allowed ? 'completed' : 'failed',
+      result: allowed ? { content: [{ type: 'text', text: 'found' }] } : null,
+      error: allowed ? null : { message: 'user rejected MCP tool call' },
+    });
+    await message(`mcp answer: ${said}`);
+  } else if (/\b(edit-file|subagent-edit)\b/.test(prompt)) {
+    // A subagent's change comes with the subagent's thread ID.
+    const changeThread = /\bsubagent-edit\b/.test(prompt)
+      ? `${threadId}-sub`
+      : threadId;
     const itemId = id('patch');
     const change = {
       path: path.join(thread.cwd, 'notes.txt'),
@@ -475,9 +562,14 @@ async function runTurn(thread, turn, input) {
       changes: [change],
       status: 'inProgress',
     };
-    started(item);
+    notify('item/started', {
+      item,
+      threadId: changeThread,
+      turnId,
+      startedAtMs: Date.now(),
+    });
     const { decision } = await ask('item/fileChange/requestApproval', {
-      threadId,
+      threadId: changeThread,
       turnId,
       itemId,
       startedAtMs: Date.now(),
@@ -486,7 +578,10 @@ async function runTurn(thread, turn, input) {
     });
     completed({
       ...item,
-      status: decision === 'accept' ? 'completed' : 'declined',
+      status:
+        decision === 'accept' || decision === 'acceptForSession'
+          ? 'completed'
+          : 'declined',
     });
     await message(`decision: ${decision}`);
   } else if (/\bapp-tool:(\S+)/.test(prompt)) {

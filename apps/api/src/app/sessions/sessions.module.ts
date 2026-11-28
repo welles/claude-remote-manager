@@ -151,9 +151,10 @@ const logger = new Logger('SessionsModule');
           );
           engines.register('codex', {
             runner: codex,
-            transcripts: new CodexTranscriptReader(codex, baseHome),
+            transcripts: new CodexTranscriptReader(codex, baseHome, launcher),
             capabilities: CODEX_CAPABILITIES,
             fixedTools: true,
+            namesSessions: true,
           });
         }
         return engines;

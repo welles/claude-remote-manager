@@ -11,6 +11,7 @@ import {
   codexRateLimits,
   codexToolName,
   codexUsageTotals,
+  shellScript,
   shellWords,
   unwrapShellCommand,
 } from './codex-events';
@@ -709,6 +710,14 @@ describe('unwrapShellCommand', () => {
   });
 
   it('falls back to Codex’s single parsed action when the quoting is beyond it', () => {
+    // Best effort only: not exact (never matched against allow rules).
+    expect(
+      shellScript('/bin/bash -lc "echo $HOME"', [{ command: 'echo $HOME' }]),
+    ).toEqual({ script: 'echo $HOME', exact: false });
+    expect(shellScript("/bin/bash -lc 'ls'")).toEqual({
+      script: 'ls',
+      exact: true,
+    });
     expect(
       unwrapShellCommand('/bin/bash -lc "echo $HOME"', [
         { type: 'unknown', command: 'echo $HOME' },

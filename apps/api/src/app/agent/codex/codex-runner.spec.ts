@@ -277,6 +277,7 @@ describe('CodexRunner', () => {
         cwd,
         sandbox: 'danger-full-access',
         approvalPolicy: 'untrusted',
+        approvalsReviewer: 'user',
         config: { project_doc_fallback_filenames: ['CLAUDE.md'] },
         developerInstructions: 'Be brief.',
         dynamicTools: [],
@@ -288,6 +289,7 @@ describe('CodexRunner', () => {
         clientUserMessageId: `client-${counter}`,
         input: [{ type: 'text', text: 'hello there', text_elements: [] }],
         approvalPolicy: 'untrusted',
+        approvalsReviewer: 'user',
       },
     ]);
 
@@ -662,10 +664,17 @@ describe('CodexRunner', () => {
       'gpt-5.5-codex': expect.objectContaining({ outputTokens: 200 }),
     });
     // `null`: Codex's default, sent as no model.
+    // `null`: back to Codex's default, named, since Codex keeps the last
+    // turn's model; usage counts for it.
     await run.setModel(null);
     run.send(message('three'));
-    await events.result();
-    expect(requests('turn/start')[2]).not.toHaveProperty('model');
+    const third = await events.result();
+    expect(requests('turn/start')[2]).toEqual(
+      expect.objectContaining({ model: 'gpt-5.5-codex' }),
+    );
+    expect(third.result.usage['gpt-5.5-codex']).toEqual(
+      expect.objectContaining({ outputTokens: 400 }),
+    );
   });
 
   it('resumes a thread by its rollout, also from another account’s home, and reads its history', async () => {
@@ -714,7 +723,10 @@ describe('CodexRunner', () => {
       threadId,
       path: expect.stringContaining(threadId),
       excludeTurns: true,
-      config: { 'mcp_servers.docs.enabled': false },
+      config: {
+        'mcp_servers.docs.enabled': false,
+        'features.hooks': false,
+      },
     });
     expect(existsSync(join(home, 'fake-mcp-started'))).toBe(false);
     const users = history.filter((entry) => entry.isUserMessage);
@@ -733,7 +745,7 @@ describe('CodexRunner', () => {
       await runner.history('00000000-0000-0000-0000-000000000000'),
     ).toEqual([]);
 
-    const reader = new CodexTranscriptReader(runner, home);
+    const reader = new CodexTranscriptReader(runner, home, SINGLE_USER);
     expect(await reader.exists(threadId)).toBe(true);
     expect(await reader.exists('unknown')).toBe(false);
     expect(await reader.stamp(threadId)).toMatch(/^\d+@[\d.]+$/);
@@ -959,9 +971,35 @@ describe('CodexRunner', () => {
     expect((signal as unknown as AbortSignal).aborted).toBe(true);
   });
 
-  it('answers questions it cannot put to the user without stalling the turn', async () => {
-    const { events } = await start(message('ask-user'));
-    const turn = await events.result();
+  it('asks the model’s questions with the question card', async () => {
+    approve.mockResolvedValueOnce({
+      behavior: 'allow',
+      updatedInput: { answers: { 'Which?': 'The second' } },
+    });
+    const { run, events } = await start(message('ask-user'));
+    let turn = await events.result();
+    expect(approve.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        toolName: 'AskUserQuestion',
+        input: {
+          questions: [
+            {
+              question: 'Which?',
+              header: 'Q',
+              options: [],
+              multiSelect: false,
+            },
+          ],
+        },
+      }),
+    );
+    expect(texts(turn.events)).toEqual([
+      'answers: {"q1":{"answers":["The second"]}}',
+    ]);
+    // Declined: no answers, the turn goes on.
+    approve.mockResolvedValueOnce({ behavior: 'deny', message: 'no' });
+    run.send(message('ask-user'));
+    turn = await events.result();
     expect(texts(turn.events)).toEqual(['answers: {}']);
   });
 
@@ -995,6 +1033,225 @@ describe('CodexRunner', () => {
     run.close();
     expect(await processEnded(pid, 1000)).toBe(false);
     expect(await processEnded(pid, 8000)).toBe(true);
+  });
+
+  const cmd = (script: string) =>
+    message(`cmd:${Buffer.from(script).toString('base64')}`);
+  const session = (toolName: string, ruleContent?: string) =>
+    ({
+      behavior: 'allow',
+      updatedPermissions: [
+        {
+          type: 'addRules',
+          rules: [
+            ruleContent === undefined
+              ? { toolName }
+              : { toolName, ruleContent },
+          ],
+          behavior: 'allow',
+          destination: 'session',
+        },
+      ],
+    }) as AgentApprovalResult;
+
+  it('reads commands allowed for the session exactly, never as wildcards', async () => {
+    // Allowed for the session by an earlier process: exactly this command.
+    const { run, events } = await start(cmd('rm -rf build/*'), {
+      allowedTools: ['Bash(rm -rf build/*)', 'Bash(git status:*)'],
+      sessionAllows: ['Bash(rm -rf build/*)'],
+    });
+    let turn = await events.result();
+    expect(approve).not.toHaveBeenCalled();
+    expect(texts(turn.events)).toEqual(['decision: accept']);
+    for (const script of [
+      'rm -rf build/ ~',
+      'rm -rf build/x',
+      'rm -rf build/* ~',
+    ]) {
+      approve.mockResolvedValueOnce({ behavior: 'deny', message: 'no' });
+      run.send(cmd(script));
+      turn = await events.result();
+      expect(texts(turn.events)).toEqual(['decision: decline']);
+    }
+    expect(approve).toHaveBeenCalledTimes(3);
+    // A configured rule (not a session allow) may be a prefix.
+    approve.mockClear();
+    run.send(cmd('git status --short'));
+    turn = await events.result();
+    expect(approve).not.toHaveBeenCalled();
+    // Allowed now for the session: exact as well.
+    approve.mockResolvedValueOnce(session('Bash', 'ls *'));
+    run.send(cmd('ls *'));
+    turn = await events.result();
+    expect(texts(turn.events)).toEqual(['decision: acceptForSession']);
+    approve.mockResolvedValueOnce({ behavior: 'deny', message: 'no' });
+    run.send(cmd('ls ~/.ssh'));
+    turn = await events.result();
+    expect(texts(turn.events)).toEqual(['decision: decline']);
+  });
+
+  it('always asks before input to a running command, without an allow for the session', async () => {
+    const { events } = await start(
+      message(`stdin:${Buffer.from('y').toString('base64')}`),
+      { allowedTools: ['Bash(y)'], sessionAllows: ['Bash(y)'] },
+    );
+    const turn = await events.result();
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(approve.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        title: 'Codex wants to send input to a running command',
+        input: expect.objectContaining({ stdin: 'y' }),
+        suggestions: [],
+        suppressAlwaysAllow: true,
+      }),
+    );
+    expect(texts(turn.events)).toEqual(['decision: accept']);
+  });
+
+  it('asks for the user’s MCP tools with a card, and remembers an allow for the session', async () => {
+    approve.mockResolvedValueOnce({ behavior: 'deny', message: 'no' });
+    const { run, events } = await start(message('mcp-tool'));
+    let turn = await events.result();
+    expect(approve.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        toolName: 'mcp__docs__search',
+        input: { q: 'codex' },
+        mcpServer: { name: 'docs', source: 'codex' },
+        description: 'Allow the docs MCP server to run tool "search"?',
+        suggestions: [
+          expect.objectContaining({
+            rules: [{ toolName: 'mcp__docs__search' }],
+          }),
+        ],
+      }),
+    );
+    expect(texts(turn.events)).toEqual(['mcp answer: Cancel']);
+    approve.mockResolvedValueOnce(session('mcp__docs__search'));
+    run.send(message('mcp-tool'));
+    turn = await events.result();
+    // Codex is told "allow once"; the app keeps the session's allow.
+    expect(texts(turn.events)).toEqual(['mcp answer: Allow']);
+    run.send(message('mcp-tool'));
+    turn = await events.result();
+    expect(approve).toHaveBeenCalledTimes(2);
+    expect(texts(turn.events)).toEqual(['mcp answer: Allow']);
+    // Through an elicitation as well.
+    run.send(message('mcp-elicit'));
+    turn = await events.result();
+    expect(texts(turn.events)).toEqual(['mcp answer: accept']);
+  });
+
+  it('declines an MCP elicitation approval the user denies', async () => {
+    approve.mockResolvedValueOnce({ behavior: 'deny', message: 'no' });
+    const { events } = await start(message('mcp-elicit'));
+    const turn = await events.result();
+    expect(approve.mock.calls[0][0].toolName).toBe('mcp__docs__search');
+    expect(texts(turn.events)).toEqual(['mcp answer: decline']);
+  });
+
+  it('shows a subagent’s file change in its approval', async () => {
+    const { events } = await start(message('subagent-edit'));
+    await events.result();
+    expect(approve.mock.calls[0][0].input).toEqual(
+      expect.objectContaining({ file_path: join(cwd, 'notes.txt') }),
+    );
+  });
+
+  it('allows changes of the same files for the session', async () => {
+    approve.mockResolvedValueOnce(session('Edit', join(cwd, 'notes.txt')));
+    const { run, events } = await start(message('edit-file'));
+    let turn = await events.result();
+    expect(approve.mock.calls[0][0].suggestions).toEqual([
+      expect.objectContaining({
+        rules: [{ toolName: 'Edit', ruleContent: join(cwd, 'notes.txt') }],
+      }),
+    ]);
+    expect(texts(turn.events)).toEqual(['decision: acceptForSession']);
+    run.send(message('edit-file'));
+    turn = await events.result();
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(texts(turn.events)).toEqual(['decision: accept']);
+  });
+
+  it('runs the app’s tools unasked in never, unless the gate asks; offers allowing one for the session', async () => {
+    const handler = jest.fn(async () => ({ text: 'ran' }));
+    const tool: AgentTool = {
+      name: 'echo_tool',
+      description: 'Echoes',
+      inputSchema: (z) => ({ value: z.number() }),
+      handler,
+    };
+    const never = await start(message('app-tool:echo_tool'), {
+      tools: [tool],
+      permissionMode: 'never',
+      gate: jest
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ decision: 'ask', reason: 'Check it' }),
+    });
+    let turn = await never.events.result();
+    expect(approve).not.toHaveBeenCalled();
+    expect(texts(turn.events)).toEqual(['tool said: ran']);
+    never.run.send(message('app-tool:echo_tool'));
+    await never.events.result();
+    expect(approve).toHaveBeenCalledTimes(1);
+    never.run.close();
+
+    approve.mockClear();
+    approve.mockResolvedValueOnce(session('mcp__crm__echo_tool'));
+    const asks = await start(message('app-tool:echo_tool'), { tools: [tool] });
+    await asks.events.result();
+    expect(approve.mock.calls[0][0].suggestions).toEqual([
+      expect.objectContaining({ rules: [{ toolName: 'mcp__crm__echo_tool' }] }),
+    ]);
+    asks.run.send(message('app-tool:echo_tool'));
+    turn = await asks.events.result();
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(texts(turn.events)).toEqual(['tool said: ran']);
+  });
+
+  it('closes open approvals when Codex exits', async () => {
+    let signal: AbortSignal | null = null;
+    approve.mockImplementationOnce(
+      (call) =>
+        new Promise((resolve) => {
+          signal = call.signal;
+          call.signal.addEventListener('abort', () =>
+            resolve({ behavior: 'deny', message: 'gone' }),
+          );
+        }),
+    );
+    const { events } = await start(message('run-command'));
+    for (let i = 0; i < 500 && signal === null; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const [pid] = fakeCodexPids(home);
+    process.kill(pid, 'SIGKILL');
+    expect(await events.end()).toBeInstanceOf(Error);
+    expect((signal as unknown as AbortSignal).aborted).toBe(true);
+  });
+
+  it('removes a deleted session’s rollouts, never through symlinks', async () => {
+    const { run, events } = await start(message('hello'));
+    await events.result();
+    const threadId = (events.all[0] as { engineSessionId: string })
+      .engineSessionId;
+    run.close();
+    const path = await findRollout(home, threadId);
+    expect(path).not.toBeNull();
+    // A link with a rollout's name, pointing outside: left alone.
+    const outside = join(dir, 'precious.txt');
+    writeFileSync(outside, 'keep');
+    mkdirSync(join(home, 'archived_sessions'), { recursive: true });
+    symlinkSync(
+      outside,
+      join(home, 'archived_sessions', `rollout-x-${threadId}.jsonl`),
+    );
+    const reader = new CodexTranscriptReader(runner, home, SINGLE_USER);
+    await reader.remove(threadId);
+    expect(existsSync(path as string)).toBe(false);
+    expect(await reader.exists(threadId)).toBe(false);
+    expect(existsSync(outside)).toBe(true);
   });
 
   it('ends the events with an error when Codex exits', async () => {

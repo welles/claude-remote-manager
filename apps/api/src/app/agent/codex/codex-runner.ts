@@ -24,6 +24,8 @@ import type {
 import { AsyncQueue } from '../async-queue';
 import { loadZod } from '../sdk-agent-runner';
 import type { TranscriptReader } from '../transcript-reader';
+import { runAccountHelper } from '../../accounts/claude-account-directories';
+import { CODEX_ACCOUNT_DIR_SCRIPT } from '../../accounts/codex-accounts';
 import { CodexAppServer } from './codex-app-server';
 import {
   CODEX_APP_INPUT_PREFIX,
@@ -34,7 +36,7 @@ import {
   codexModel,
   codexPlanUsage,
   codexToolName,
-  unwrapShellCommand,
+  shellScript,
 } from './codex-events';
 import type {
   CodexApprovalPolicy,
@@ -163,6 +165,15 @@ export function matchesBashRule(
 
 /** Found rollouts by home and thread (a thread keeps its file). */
 const rollouts = new Map<string, string>();
+
+/** Forgets the found rollouts of a thread (in every home). */
+function forgetRollouts(threadId: string): void {
+  for (const key of [...rollouts.keys()]) {
+    if (key.endsWith(`\0${threadId}`)) {
+      rollouts.delete(key);
+    }
+  }
+}
 
 /**
  * The rollout file of a thread under a Codex home's `sessions/` (shared by
@@ -295,25 +306,10 @@ export class CodexRunner implements AgentRunner {
     });
     try {
       return await task({
-        supportedModels: async () => {
-          const models: CodexModel[] = [];
-          let cursor: string | null = null;
-          // Page by page; a cursor seen before ends it (never loops).
-          const seen = new Set<string>();
-          do {
-            const answer: { data: CodexModel[]; nextCursor?: string | null } =
-              await server.request('model/list', cursor ? { cursor } : {});
-            models.push(...answer.data);
-            cursor = answer.nextCursor ?? null;
-            if (cursor !== null && seen.has(cursor)) {
-              break;
-            }
-            if (cursor !== null) {
-              seen.add(cursor);
-            }
-          } while (cursor !== null);
-          return models.filter((model) => !model.hidden).map(codexModel);
-        },
+        supportedModels: async () =>
+          (await listModels(server))
+            .filter((model) => !model.hidden)
+            .map(codexModel),
         supportedCommands: async () => [],
         planUsage: async () => readPlanUsage(server),
       });
@@ -352,7 +348,11 @@ export class CodexRunner implements AgentRunner {
         threadId,
         path,
         excludeTurns: true,
-        config: await withoutMcpServers(server),
+        config: {
+          ...(await withoutMcpServers(server)),
+          // No session hooks for a read (feature `hooks` of Codex 0.171).
+          'features.hooks': false,
+        },
       });
       const answer = await server.request<{
         thread: { turns?: CodexTurn[] };
@@ -362,6 +362,26 @@ export class CodexRunner implements AgentRunner {
       server.close();
     }
   }
+}
+
+/** Codex's models, page by page (a cursor seen before ends it). */
+async function listModels(server: CodexAppServer): Promise<CodexModel[]> {
+  const models: CodexModel[] = [];
+  let cursor: string | null = null;
+  const seen = new Set<string>();
+  do {
+    const answer: { data: CodexModel[]; nextCursor?: string | null } =
+      await server.request('model/list', cursor ? { cursor } : {});
+    models.push(...answer.data);
+    cursor = answer.nextCursor ?? null;
+    if (cursor !== null && seen.has(cursor)) {
+      break;
+    }
+    if (cursor !== null) {
+      seen.add(cursor);
+    }
+  } while (cursor !== null);
+  return models;
 }
 
 /** The plan limits, the main bucket where Codex reports buckets. */
@@ -378,7 +398,22 @@ export class CodexTranscriptReader implements TranscriptReader {
   constructor(
     private readonly runner: CodexRunner,
     private readonly baseHome: string,
+    private readonly launcher: ProcessLauncher,
   ) {}
+
+  /**
+   * Removes a deleted session's thread: its rollouts in the shared
+   * `sessions/` and `archived_sessions/`, as the session user who owns
+   * them (helper `codex-account-dir.cjs remove-thread`).
+   */
+  async remove(threadId: string): Promise<void> {
+    await runAccountHelper(this.launcher, CODEX_ACCOUNT_DIR_SCRIPT, [
+      'remove-thread',
+      this.baseHome,
+      threadId,
+    ]);
+    forgetRollouts(threadId);
+  }
 
   read(threadId: string): Promise<AgentHistoryEntry[]> {
     return this.runner.history(threadId);
@@ -398,6 +433,54 @@ export class CodexTranscriptReader implements TranscriptReader {
   }
 }
 
+/** The ID prefix of the question Codex asks to approve an MCP tool call. */
+export const MCP_APPROVAL_QUESTION_PREFIX = 'mcp_tool_call_approval';
+/** `_meta.codex_approval_kind` of an elicitation that approves an MCP tool. */
+export const MCP_APPROVAL_KIND = 'mcp_tool_call';
+
+/** A question of `item/tool/requestUserInput`. */
+interface CodexQuestion {
+  id: string;
+  header?: string;
+  question: string;
+  options?: { label: string; description?: string }[] | null;
+}
+
+/**
+ * The option of an MCP tool approval question that allows the call once
+ * (`allowed`) or cancels it. Codex's options (0.171): "Run the tool and
+ * continue.", "… remember this choice for this session.", "… for future
+ * tool calls.", "Cancel this tool call." (their descriptions; the labels
+ * are matched too). Never one that makes Codex remember the choice: the
+ * app keeps "allow for this session" itself.
+ */
+export function approvalOption(
+  options: readonly { label: string; description?: string }[],
+  allowed: boolean,
+): string | null {
+  const text = (option: { label: string; description?: string }) =>
+    `${option.label} ${option.description ?? ''}`.toLowerCase();
+  const cancels = (option: { label: string; description?: string }) =>
+    /cancel|decline|deny|reject/.test(text(option));
+  const remembers = (option: { label: string; description?: string }) =>
+    /remember|session|always|don't ask|future/.test(text(option));
+  const chosen = allowed
+    ? options.find((option) => !cancels(option) && !remembers(option))
+    : options.find(cancels);
+  return chosen?.label ?? null;
+}
+
+/** What every approval call of a request shares. */
+type ApprovalBase = {
+  title: string | null;
+  displayName: string | null;
+  decisionReason: string | null;
+  blockedPath: string | null;
+  agentId: string | null;
+  suppressAlwaysAllow: boolean;
+  signal: AbortSignal;
+};
+
 /** Input of the app's own sent into a running turn (see `steer`). */
 const APP_INPUT_TEXT =
   '[Message from the session manager, not from the user: see its note.]';
@@ -411,8 +494,29 @@ class CodexProcess implements AgentRun {
   private readonly fileChanges = new Map<string, CodexFileUpdateChange[]>();
   /** Open server requests by JSON-RPC ID: aborted once Codex resolves one. */
   private readonly openRequests = new Map<number | string, AbortController>();
-  /** Bash rules allowed for this session (stored ones and new ones). */
-  private readonly bashRules: string[];
+  /**
+   * Rules the user allowed for this session, each for exactly one call:
+   * `Bash(<command>)` for that command, `Edit(<path>)` for changes of that
+   * file, a tool name (`mcp__<server>__<tool>`) for that tool. Never read
+   * as prefixes or wildcards (a command may contain `*` itself).
+   */
+  private readonly sessionRules: Set<string>;
+  /**
+   * Bash rules configured for the session's processes (not from "Allow for
+   * this session"): these may be prefixes or wildcards.
+   */
+  private readonly patternRules: string[];
+  /** Running MCP tool calls by item ID (for their approval). */
+  private readonly mcpCalls = new Map<
+    string,
+    { server: string; tool: string; arguments: unknown }
+  >();
+  /**
+   * The model Codex reported as its default when the thread started
+   * without one; sent again after `setModel(null)` (`defaultInUse`).
+   */
+  private defaultModel: string | null = null;
+  private defaultInUse = false;
   /**
    * What the app tells Codex with the next turn, when it could not tell
    * the turn it belonged to (it had ended).
@@ -440,8 +544,9 @@ class CodexProcess implements AgentRun {
   ) {
     this.model = options.model;
     this.policy = codexPolicy(options.permissionMode);
-    this.bashRules = (options.allowedTools ?? []).filter((rule) =>
-      rule.startsWith('Bash('),
+    this.sessionRules = new Set(options.sessionAllows ?? []);
+    this.patternRules = (options.allowedTools ?? []).filter(
+      (rule) => rule.startsWith('Bash(') && !this.sessionRules.has(rule),
     );
   }
 
@@ -485,6 +590,10 @@ class CodexProcess implements AgentRun {
       onNotification: (method, params) => this.notification(method, params),
       onRequest: (method, params, id) => this.serverRequest(method, params, id),
       onExit: (error) => {
+        // Nobody answers them any more: their cards close.
+        for (const controller of this.openRequests.values()) {
+          controller.abort();
+        }
         if (error && !this.closed) {
           this.queue.fail(error);
         } else {
@@ -503,6 +612,8 @@ class CodexProcess implements AgentRun {
       // Full access, as Claude Code has; asking is the approval policy's.
       sandbox: 'danger-full-access',
       approvalPolicy: this.policy,
+      // Approvals come to the user (the app), never to a reviewer agent.
+      approvalsReviewer: 'user',
       config: CODEX_THREAD_CONFIG,
       ...(this.model ? { model: this.model } : {}),
       ...(developerInstructions ? { developerInstructions } : {}),
@@ -528,6 +639,9 @@ class CodexProcess implements AgentRun {
       );
     }
     this.threadId = started.thread.id;
+    if (!this.model && !this.options.resume) {
+      this.defaultModel = started.model ?? null;
+    }
     this.translator = new CodexEventTranslator(
       this.threadId,
       started.model ?? started.thread.model ?? 'codex',
@@ -572,7 +686,8 @@ class CodexProcess implements AgentRun {
           ? { additionalContext: context }
           : {}),
         approvalPolicy: this.policy,
-        ...(this.model ? { model: this.model } : {}),
+        approvalsReviewer: 'user',
+        ...(this.turnModel() ? { model: this.turnModel() } : {}),
       })
       .then((answer) => {
         // Only this request's turn, if no notification named it already
@@ -642,12 +757,7 @@ class CodexProcess implements AgentRun {
       }
       return;
     }
-    const threadId = p['threadId'];
-    if (typeof threadId === 'string' && threadId !== this.threadId) {
-      // Another thread's (a subagent's) turns are not this thread's: they
-      // must not end the running turn or start a queued message.
-      return;
-    }
+    // Also a subagent's: its approvals come to the app too.
     const item = p['item'] as CodexThreadItem | undefined;
     if (method === 'item/started' && item?.type === 'fileChange') {
       // Kept for the approval of the change.
@@ -656,8 +766,23 @@ class CodexProcess implements AgentRun {
         (item as { changes: CodexFileUpdateChange[] }).changes,
       );
     }
+    if (method === 'item/started' && item?.type === 'mcpToolCall') {
+      const call = item as Extract<CodexThreadItem, { type: 'mcpToolCall' }>;
+      this.mcpCalls.set(item.id, {
+        server: call.server,
+        tool: call.tool,
+        arguments: call.arguments,
+      });
+    }
     if (method === 'item/completed' && item) {
       this.fileChanges.delete(item.id);
+      this.mcpCalls.delete(item.id);
+    }
+    const threadId = p['threadId'];
+    if (typeof threadId === 'string' && threadId !== this.threadId) {
+      // Another thread's (a subagent's) turns are not this thread's: they
+      // must not end the running turn or start a queued message.
+      return;
     }
     if (method === 'turn/started') {
       this.turnKnown((p['turn'] as { id: string }).id);
@@ -666,7 +791,6 @@ class CodexProcess implements AgentRun {
     if (method === 'turn/completed') {
       this.turnId = null;
       this.interruptWanted = false;
-      this.fileChanges.clear();
       const next = this.pending.shift();
       for (const event of events) {
         if (event.type === 'result') {
@@ -719,94 +843,18 @@ class CodexProcess implements AgentRun {
       signal,
     };
     switch (method) {
-      case 'item/commandExecution/requestApproval': {
-        const raw = typeof p['command'] === 'string' ? p['command'] : '';
-        const actions = Array.isArray(p['commandActions'])
-          ? (p['commandActions'] as { command?: unknown }[])
-          : null;
-        // What the model wrote, not the shell Codex wraps it in.
-        const command = unwrapShellCommand(raw, actions);
-        if (command && matchesBashRule(command, this.bashRules)) {
-          // Allowed for the session earlier (also by an earlier process).
-          return { decision: 'accept' };
-        }
-        const result = await this.options.approve({
-          ...base,
-          toolName: 'Bash',
-          input: { command, cwd: p['cwd'] ?? this.options.cwd },
-          toolUseId: String(p['itemId'] ?? ''),
-          description: typeof p['reason'] === 'string' ? p['reason'] : null,
-          mcpServer: null,
-          // "Allow for this session" means Codex's own `acceptForSession`.
-          suggestions: command
-            ? [
-                {
-                  type: 'addRules',
-                  rules: [{ toolName: 'Bash', ruleContent: command }],
-                  behavior: 'allow',
-                  destination: 'session',
-                },
-              ]
-            : [],
-        });
-        if (result.behavior === 'deny') {
-          return { decision: result.interrupt ? 'cancel' : 'decline' };
-        }
-        const updated = result.updatedInput?.['command'];
-        if (
-          result.ranByApp ||
-          (typeof updated === 'string' && updated !== command)
-        ) {
-          // The app ran something itself instead (Autofix): Codex does not
-          // run it and learns what came of it.
-          this.tellOutcome(command, result.ranByApp ?? null);
-          return { decision: 'decline' };
-        }
-        this.rememberRules(result);
-        return {
-          decision:
-            (result.updatedPermissions?.length ?? 0) > 0
-              ? 'acceptForSession'
-              : 'accept',
-        };
-      }
-      case 'item/fileChange/requestApproval': {
-        const itemId = String(p['itemId'] ?? '');
-        const changes = this.fileChanges.get(itemId) ?? [];
-        const first = changes[0];
-        const result = await this.options.approve({
-          ...base,
-          toolName: first?.kind.type === 'add' ? 'Write' : 'Edit',
-          input: {
-            file_path: first?.path ?? '',
-            changes: changes.map((change) => ({
-              path: change.path,
-              kind: change.kind.type,
-              diff: change.diff,
-            })),
-          },
-          toolUseId: itemId,
-          description: typeof p['reason'] === 'string' ? p['reason'] : null,
-          mcpServer: null,
-          suggestions: [],
-        });
-        if (result.behavior === 'deny') {
-          return { decision: result.interrupt ? 'cancel' : 'decline' };
-        }
-        return { decision: 'accept' };
-      }
+      case 'item/commandExecution/requestApproval':
+        return this.commandApproval(p, base);
+      case 'item/fileChange/requestApproval':
+        return this.fileChangeApproval(p, base);
       case 'item/tool/call':
         return this.appTool(p, signal);
       // Requests the app cannot put to the user: answered so that the turn
       // goes on without them, never left waiting.
       case 'item/tool/requestUserInput':
-        this.logger.warn(
-          `Codex asked the user questions (${method}); answered with none`,
-        );
-        return { answers: {} };
+        return this.userInput(p, base);
       case 'mcpServer/elicitation/request':
-        this.logger.warn(`An MCP server asked for input (${method}); declined`);
-        return { action: 'decline', content: null, _meta: null };
+        return this.elicitation(p, base);
       case 'item/permissions/requestApproval':
         // Full access already: nothing more to grant.
         this.logger.warn(
@@ -828,7 +876,7 @@ class CodexProcess implements AgentRun {
     }
   }
 
-  /** Bash rules the user just allowed for the session count from now on. */
+  /** Rules the user just allowed for the session count from now on. */
   private rememberRules(result: AgentApprovalResult): void {
     if (result.behavior !== 'allow') {
       return;
@@ -836,12 +884,311 @@ class CodexProcess implements AgentRun {
     for (const update of result.updatedPermissions ?? []) {
       if (update.type === 'addRules' && update.behavior === 'allow') {
         for (const rule of update.rules) {
-          if (rule.toolName === 'Bash' && rule.ruleContent) {
-            this.bashRules.push(`Bash(${rule.ruleContent})`);
-          }
+          this.sessionRules.add(
+            rule.ruleContent === undefined
+              ? rule.toolName
+              : `${rule.toolName}(${rule.ruleContent})`,
+          );
         }
       }
     }
+  }
+
+  /** "Allow for this session" for exactly this rule. */
+  private sessionSuggestion(toolName: string, ruleContent?: string) {
+    return [
+      {
+        type: 'addRules' as const,
+        rules: [
+          ruleContent === undefined ? { toolName } : { toolName, ruleContent },
+        ],
+        behavior: 'allow' as const,
+        destination: 'session',
+      },
+    ];
+  }
+
+  private async commandApproval(
+    p: Record<string, unknown>,
+    base: ApprovalBase,
+  ): Promise<unknown> {
+    const raw = typeof p['command'] === 'string' ? p['command'] : '';
+    const kind = typeof p['kind'] === 'string' ? p['kind'] : 'command';
+    const cwd = p['cwd'] ?? this.options.cwd;
+    const reason = typeof p['reason'] === 'string' ? p['reason'] : null;
+    const toolUseId = String(p['itemId'] ?? '');
+    if (kind !== 'command') {
+      // Input for a running command, or a command run on the user's
+      // behalf: always asked, never allowed for the session.
+      const result = await this.options.approve({
+        ...base,
+        title:
+          kind === 'writeStdin'
+            ? 'Codex wants to send input to a running command'
+            : 'Codex wants to run a command on your behalf',
+        toolName: 'Bash',
+        input:
+          kind === 'writeStdin'
+            ? {
+                command: `(input to a running command)\n${raw}`,
+                stdin: raw,
+                cwd,
+              }
+            : { command: raw, cwd },
+        toolUseId,
+        description: reason,
+        mcpServer: null,
+        suggestions: [],
+        suppressAlwaysAllow: true,
+      });
+      if (result.behavior === 'deny') {
+        return { decision: result.interrupt ? 'cancel' : 'decline' };
+      }
+      return { decision: 'accept' };
+    }
+    const actions = Array.isArray(p['commandActions'])
+      ? (p['commandActions'] as { command?: unknown }[])
+      : null;
+    // What the model wrote, not the shell Codex wraps it in.
+    const { script: command, exact } = shellScript(raw, actions);
+    if (
+      exact &&
+      command &&
+      (this.sessionRules.has(`Bash(${command})`) ||
+        matchesBashRule(command, this.patternRules))
+    ) {
+      // Allowed for the session earlier (also by an earlier process).
+      return { decision: 'accept' };
+    }
+    const result = await this.options.approve({
+      ...base,
+      toolName: 'Bash',
+      input: { command, cwd },
+      toolUseId,
+      description: exact
+        ? reason
+        : [reason, `Codex runs exactly: ${raw}`].filter(Boolean).join('\n\n'),
+      mcpServer: null,
+      // "Allow for this session" means Codex's own `acceptForSession`, and
+      // exactly this command for later processes.
+      suggestions:
+        command && exact ? this.sessionSuggestion('Bash', command) : [],
+    });
+    if (result.behavior === 'deny') {
+      return { decision: result.interrupt ? 'cancel' : 'decline' };
+    }
+    const updated = result.updatedInput?.['command'];
+    if (
+      result.ranByApp ||
+      (typeof updated === 'string' && updated !== command)
+    ) {
+      // The app ran something itself instead (Autofix): Codex does not
+      // run it and learns what came of it.
+      this.tellOutcome(command, result.ranByApp ?? null);
+      return { decision: 'decline' };
+    }
+    this.rememberRules(result);
+    return {
+      decision:
+        (result.updatedPermissions?.length ?? 0) > 0
+          ? 'acceptForSession'
+          : 'accept',
+    };
+  }
+
+  /**
+   * A file change: "allow for this session" is Codex's `acceptForSession`
+   * (it stops asking for changes of these files) and an exact `Edit(<path>)`
+   * rule per file, so a later process does not ask for them either.
+   */
+  private async fileChangeApproval(
+    p: Record<string, unknown>,
+    base: ApprovalBase,
+  ): Promise<unknown> {
+    const itemId = String(p['itemId'] ?? '');
+    const changes = this.fileChanges.get(itemId) ?? [];
+    const first = changes[0];
+    const paths = [...new Set(changes.map((change) => change.path))];
+    if (
+      paths.length > 0 &&
+      paths.every((path) => this.sessionRules.has(`Edit(${path})`))
+    ) {
+      return { decision: 'accept' };
+    }
+    const result = await this.options.approve({
+      ...base,
+      toolName: first?.kind.type === 'add' ? 'Write' : 'Edit',
+      input: {
+        file_path: first?.path ?? '',
+        changes: changes.map((change) => ({
+          path: change.path,
+          kind: change.kind.type,
+          diff: change.diff,
+        })),
+      },
+      toolUseId: itemId,
+      description: typeof p['reason'] === 'string' ? p['reason'] : null,
+      mcpServer: null,
+      suggestions:
+        paths.length > 0
+          ? [
+              {
+                type: 'addRules',
+                rules: paths.map((path) => ({
+                  toolName: 'Edit',
+                  ruleContent: path,
+                })),
+                behavior: 'allow',
+                destination: 'session',
+              },
+            ]
+          : [],
+    });
+    if (result.behavior === 'deny') {
+      return { decision: result.interrupt ? 'cancel' : 'decline' };
+    }
+    this.rememberRules(result);
+    return {
+      decision:
+        (result.updatedPermissions?.length ?? 0) > 0
+          ? 'acceptForSession'
+          : 'accept',
+    };
+  }
+
+  /**
+   * Approval of a call of one of the user's MCP tools (Codex asks through
+   * \`requestUserInput\` or an elicitation): an approval card for
+   * \`mcp__<server>__<tool>\` with its arguments. "Allow for this session" is
+   * kept by the app (an exact rule with the tool's name); Codex is always
+   * answered "allow once" or "cancel". `true`: allowed.
+   */
+  private async mcpToolApproval(
+    itemId: string | null,
+    message: string | null,
+    base: ApprovalBase,
+  ): Promise<boolean> {
+    const call =
+      (itemId ? this.mcpCalls.get(itemId) : undefined) ??
+      [...this.mcpCalls.values()].at(-1);
+    const toolName = call ? codexToolName(call.server, call.tool) : 'mcp__?';
+    if (
+      this.sessionRules.has(toolName) ||
+      (this.options.allowedTools ?? []).includes(toolName)
+    ) {
+      return true;
+    }
+    const result = await this.options.approve({
+      ...base,
+      toolName,
+      input:
+        typeof call?.arguments === 'object' && call.arguments !== null
+          ? (call.arguments as Record<string, unknown>)
+          : {},
+      toolUseId: itemId ?? '',
+      description: message,
+      mcpServer: call ? { name: call.server, source: 'codex' } : null,
+      suggestions: call ? this.sessionSuggestion(toolName) : [],
+    });
+    if (result.behavior === 'deny') {
+      return false;
+    }
+    this.rememberRules(result);
+    return true;
+  }
+
+  /**
+   * \`item/tool/requestUserInput\`: an MCP tool approval (its question ID
+   * starts with \`mcp_tool_call_approval\`), else questions of the model as
+   * the app's question card (like Claude's \`AskUserQuestion\`).
+   */
+  private async userInput(
+    p: Record<string, unknown>,
+    base: ApprovalBase,
+  ): Promise<unknown> {
+    const questions = (
+      Array.isArray(p['questions']) ? p['questions'] : []
+    ) as CodexQuestion[];
+    const itemId = typeof p['itemId'] === 'string' ? p['itemId'] : null;
+    const approval = questions.find((question) =>
+      question.id.startsWith(MCP_APPROVAL_QUESTION_PREFIX),
+    );
+    if (approval) {
+      const allowed = await this.mcpToolApproval(
+        itemId,
+        approval.question,
+        base,
+      );
+      const label = approvalOption(approval.options ?? [], allowed);
+      return {
+        answers: label ? { [approval.id]: { answers: [label] } } : {},
+      };
+    }
+    if (questions.length === 0) {
+      return { answers: {} };
+    }
+    const result = await this.options.approve({
+      ...base,
+      toolName: 'AskUserQuestion',
+      input: {
+        questions: questions.map((question) => ({
+          question: question.question,
+          header: question.header ?? '',
+          options: (question.options ?? []).map((option) => ({
+            label: option.label,
+            description: option.description ?? '',
+          })),
+          multiSelect: false,
+        })),
+      },
+      toolUseId: itemId ?? '',
+      description: null,
+      mcpServer: null,
+      suggestions: [],
+    });
+    if (result.behavior === 'deny') {
+      return { answers: {} };
+    }
+    const given = (result.updatedInput?.['answers'] ?? {}) as Record<
+      string,
+      unknown
+    >;
+    return {
+      answers: Object.fromEntries(
+        questions
+          .filter((question) => typeof given[question.question] === 'string')
+          .map((question) => [
+            question.id,
+            { answers: [given[question.question] as string] },
+          ]),
+      ),
+    };
+  }
+
+  /**
+   * An MCP elicitation: Codex's own MCP tool approvals
+   * (\`_meta.codex_approval_kind\` \`mcp_tool_call\`) as an approval card;
+   * other servers' requests for input are declined (logged).
+   */
+  private async elicitation(
+    p: Record<string, unknown>,
+    base: ApprovalBase,
+  ): Promise<unknown> {
+    const meta = (p['_meta'] ?? null) as Record<string, unknown> | null;
+    if (meta?.['codex_approval_kind'] === MCP_APPROVAL_KIND) {
+      const allowed = await this.mcpToolApproval(
+        null,
+        typeof p['message'] === 'string' ? p['message'] : null,
+        base,
+      );
+      return allowed
+        ? { action: 'accept', content: {}, _meta: null }
+        : { action: 'decline', content: null, _meta: null };
+    }
+    this.logger.warn(
+      `The MCP server ${String(p['serverName'] ?? '?')} asked for input; declined`,
+    );
+    return { action: 'decline', content: null, _meta: null };
   }
 
   /**
@@ -940,7 +1287,10 @@ class CodexProcess implements AgentRun {
     const allowed =
       gate?.decision === 'allow' ||
       (gate?.decision !== 'ask' &&
-        (this.options.allowedTools ?? []).includes(fullName));
+        ((this.options.allowedTools ?? []).includes(fullName) ||
+          this.sessionRules.has(fullName) ||
+          // `never` asks for nothing, like Claude Code's bypass mode.
+          this.policy === 'never'));
     if (!allowed) {
       const result = await this.options.approve({
         toolName: fullName,
@@ -953,13 +1303,15 @@ class CodexProcess implements AgentRun {
         blockedPath: null,
         agentId: null,
         mcpServer: { name: CODEX_APP_TOOL_NAMESPACE, source: 'sdk' },
-        suggestions: [],
+        // The tool by its name, as for Claude Code.
+        suggestions: this.sessionSuggestion(fullName),
         suppressAlwaysAllow: false,
         signal,
       });
       if (result.behavior === 'deny') {
         return fail(result.message);
       }
+      this.rememberRules(result);
       approvedInput = result.updatedInput ?? input;
     }
     try {
@@ -1018,10 +1370,40 @@ class CodexProcess implements AgentRun {
     this.policy = codexPolicy(mode);
   }
 
+  /**
+   * `null` after an explicit model: Codex keeps a turn's model for the
+   * next ones, so the default goes with each turn from then on (the model
+   * Codex started the thread with, else the default of its model list).
+   */
   async setModel(model: string | null): Promise<void> {
     this.model = model;
+    this.defaultInUse = false;
     if (model) {
       this.translator.model = model;
+      return;
+    }
+    const fallback = this.defaultModel ?? (await this.listedDefault());
+    if (fallback) {
+      this.defaultModel = fallback;
+      this.defaultInUse = true;
+      this.translator.model = fallback;
+    }
+  }
+
+  /** The model a turn names (`null`: none, Codex's own choice). */
+  private turnModel(): string | null {
+    return this.model ?? (this.defaultInUse ? this.defaultModel : null);
+  }
+
+  private async listedDefault(): Promise<string | null> {
+    try {
+      const models = await listModels(this.server);
+      return models.find((model) => model.isDefault)?.model ?? null;
+    } catch (error) {
+      this.logger.warn(
+        `Could not read Codex's default model: ${String(error)}`,
+      );
+      return null;
     }
   }
 

@@ -18,6 +18,13 @@
 //   codex-account-dir.cjs remove <baseHome> <id>
 //     Removes <baseHome>/crm-accounts/<id> (symlinks, not their targets).
 //
+//   codex-account-dir.cjs remove-thread <baseHome> <threadId>
+//     Removes the rollouts of a thread (a deleted session's conversation):
+//     regular files named rollout-*-<threadId>.jsonl[.zst] in
+//     <baseHome>/sessions/YYYY/MM/DD or <baseHome>/archived_sessions. Only
+//     those directories themselves may be symlinks (the user's own base
+//     home); nothing below them is followed.
+//
 // Refuses an accounts directory or account directory that is a symlink.
 // Writes one JSON line: {"ok":true,"warnings":[...]} or
 // {"ok":false,"message":...}.
@@ -119,6 +126,48 @@ function prepare(baseHome, id) {
   return warnings;
 }
 
+/** The rollouts of a thread under a directory, `depth` levels deep. */
+function rollouts(dir, threadId, depth, found) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') {
+      return found;
+    }
+    throw error;
+  }
+  for (const entry of entries) {
+    const at = path.join(dir, entry.name);
+    // withFileTypes reports symlinks as such: never followed.
+    if (entry.isDirectory() && depth > 0) {
+      rollouts(at, threadId, depth - 1, found);
+    } else if (
+      entry.isFile() &&
+      entry.name.startsWith('rollout-') &&
+      (entry.name.endsWith(`-${threadId}.jsonl`) ||
+        entry.name.endsWith(`-${threadId}.jsonl.zst`))
+    ) {
+      found.push(at);
+    }
+  }
+  return found;
+}
+
+function removeThread(baseHome, threadId) {
+  const found = [
+    ...rollouts(path.join(baseHome, 'sessions'), threadId, 3, []),
+    ...rollouts(path.join(baseHome, 'archived_sessions'), threadId, 3, []),
+  ];
+  for (const file of found) {
+    // Checked again right before: a regular file, not a link.
+    if (fs.lstatSync(file).isFile()) {
+      fs.unlinkSync(file);
+    }
+  }
+  return found.length;
+}
+
 function remove(baseHome, id) {
   const root = path.join(baseHome, ACCOUNTS);
   let stats;
@@ -139,14 +188,21 @@ function remove(baseHome, id) {
 try {
   const [command, ...args] = process.argv.slice(2);
   let warnings = [];
+  let removed;
   if (command === 'prepare' && args.length === 2 && ID.test(args[1])) {
     warnings = prepare(args[0], args[1]);
   } else if (command === 'remove' && args.length === 2 && ID.test(args[1])) {
     remove(args[0], args[1]);
+  } else if (
+    command === 'remove-thread' &&
+    args.length === 2 &&
+    ID.test(args[1])
+  ) {
+    removed = removeThread(args[0], args[1]);
   } else {
-    throw new Error('usage: prepare|remove <baseHome> <id>');
+    throw new Error('usage: prepare|remove|remove-thread <baseHome> <id>');
   }
-  done({ ok: true, warnings });
+  done({ ok: true, warnings, ...(removed === undefined ? {} : { removed }) });
 } catch (error) {
   done({
     ok: false,
