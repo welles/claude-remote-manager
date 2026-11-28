@@ -16,7 +16,7 @@ import {
   MAX_ENVIRONMENT_NAME_LENGTH,
   MAX_ENVIRONMENT_SETUP_SCRIPT_LENGTH,
   MAX_ENVIRONMENT_VALUE_LENGTH,
-  SESSION_PERMISSION_MODES,
+  CLAUDE_CODE_PERMISSION_MODES,
   type EnvironmentDto,
   type SaveEnvironmentRequest,
   type SessionEnvironmentDto,
@@ -275,7 +275,9 @@ export class EnvironmentsService {
       throw new BadRequestException('model is not a valid model name');
     }
     const permissionMode =
-      optionalEnum(body, 'permissionMode', SESSION_PERMISSION_MODES) ?? null;
+      // Presets are Claude Code's terms (they apply to Claude Code sessions).
+      optionalEnum(body, 'permissionMode', CLAUDE_CODE_PERMISSION_MODES) ??
+      null;
     const isDefault = body['isDefault'];
     if (isDefault !== undefined && typeof isDefault !== 'boolean') {
       throw new BadRequestException('isDefault must be a boolean');
