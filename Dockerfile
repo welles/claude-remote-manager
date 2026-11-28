@@ -93,11 +93,13 @@ RUN mkdir -p /etc/claude-code \
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/app-entrypoint
 
 # Data layout, see README.md. The directories are created here so that named
-# volumes start with the right owner.
+# volumes start with the right owner. CODEX_HOME: the Codex home the ChatGPT
+# accounts share, on the Claude volume.
 ENV DATA_DIR=/data \
     WORKSPACE_DIR=/data/workspace \
     DB_DIR=/data/db \
     CLAUDE_CONFIG_DIR=/data/claude \
+    CODEX_HOME=/data/claude/codex \
     GIT_CONFIG_GLOBAL=/data/git/gitconfig \
     DISABLE_AUTOUPDATER=1 \
     PATH=/home/${USER_NAME}/.nix-profile/bin:${PATH} \
@@ -122,6 +124,13 @@ RUN claude="$(ls /app/node_modules/@anthropic-ai/claude-agent-sdk-linux-*/claude
     && test -x "${claude}" \
     && ln -s "${claude}" /usr/local/bin/claude \
     && claude --version
+
+# Codex likewise: the native binary of the app's pinned @openai/codex, for
+# logging in from a terminal and for sessions that run it themselves.
+RUN codex="$(ls /app/node_modules/@openai/codex-linux-*/vendor/*/bin/codex | head -n 1)" \
+    && test -x "${codex}" \
+    && ln -s "${codex}" /usr/local/bin/codex \
+    && codex --version
 
 # gh for sessions: a wrapper ahead of Debian's /usr/bin/gh on the PATH that
 # gets a read-only token of the GitHub App for the session's repositories.

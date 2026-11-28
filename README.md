@@ -120,6 +120,8 @@ session's `CLAUDE_*`/`ANTHROPIC_*` variables and passes them on to the sessions 
 | `SESSION_IDLE_TIMEOUT_MINUTES`      | `60`                                                                                             | Close Claude Code processes idle this long (never while the session has previews); `0` keeps them        |
 | `CLAUDE_CODE_EXECUTABLE`            | the binary bundled with the Agent SDK                                                            | Other Claude Code executable for the sessions                                                            |
 | `CLAUDE_CONFIG_DIR`                 | `~/.claude` (image: `/data/claude`)                                                              | Read by Claude Code: login, settings, skills, plugins, MCP servers, transcripts                          |
+| `CODEX_EXECUTABLE`                  | the binary of the pinned `@openai/codex`, else `codex` on the PATH                               | Other Codex executable for Codex sessions (see [Codex](#codex))                                          |
+| `CODEX_HOME`                        | `~/.codex` of the session user (image: `/data/claude/codex`)                                     | Codex home the ChatGPT accounts share; their own homes are below it                                      |
 | `MEMORY_DIR`                        | `$CLAUDE_CONFIG_DIR/repository-memory`, without it `~/.local/share/claude-remote-manager/memory` | Claude Code's auto-memory per repository (NixOS module: `<dataDir>/memory`)                              |
 | `CRM_GIT_AUTHOR_NAME`               | none (sessions with repositories are refused)                                                    | Author name of the commits in session clones (with `CRM_GIT_AUTHOR_EMAIL`)                               |
 | `CRM_GIT_AUTHOR_EMAIL`              | none                                                                                             | Author email of the commits in session clones                                                            |
@@ -1044,9 +1046,10 @@ notification (`turn_finished`) reads "Usage limit: …" with how long until it c
 
 ### Accounts
 
-Sessions can work with several subscription accounts (no API keys; Claude for now, ChatGPT
-accounts follow with Codex as an equal engine). Settings → Accounts
-lists them with their login (email, plan, organization from `claude auth status`),
+Sessions can work with several subscription accounts (no API keys): Claude accounts for Claude
+Code, ChatGPT accounts for Codex (see [Codex](#codex)). Settings → Accounts
+lists them with their login (email, plan, organization from `claude auth status` or Codex's
+`account/read`),
 their limits and the actions: add (name, then the login), log in again, log out, rename, make
 default, move up/down (the order), remove (not the main account).
 
@@ -1116,10 +1119,55 @@ Claude Code is the first adapter (`claude-events.ts`, `sdk-agent-runner.ts`, `sd
 transcripts into this model; only these files use the SDK. Accounts belong to a provider; a
 session uses accounts of its engine's provider (its own default account per provider, the
 automatic switch only among them). The tests drive the session core through the same adapter
-(the fake runner translates the SDK-shaped messages tests push). Still Claude Code only until the next engine
-  arrives (and then per engine): the model list, the slash commands before a process, the plan
-  usage probe and the independent review. A message an adapter cannot translate is logged and
-  skipped; the events of one engine message are handled as a whole.
+(the fake runner translates the SDK-shaped messages tests push). The model list
+(`GET /api/models?engine=…`), the plan usage probe and the permission modes are per engine;
+a session is validated against its engine's modes (`ENGINE_PERMISSION_MODES`) and starts in its
+engine's default (`ENGINE_DEFAULT_PERMISSION_MODE`) when none is chosen. A message an adapter
+cannot translate is logged and skipped; the events of one engine message are handled as a whole.
+The UI shows each engine in its own terms (its modes, its models) and leaves out what an engine
+does not offer (`EngineCapabilities`: plan mode, slash commands, …); with one engine it shows no
+engine choice. Still Claude Code only: the independent review.
+
+### Codex
+
+Codex (OpenAI) is the second adapter (`apps/api/src/app/agent/codex/`), offered wherever the
+server has it: the app depends on a pinned `@openai/codex` (`CODEX_VERSION`, the protocol types
+in `codex-protocol.ts` are written against it) and runs its native binary for the platform;
+`CODEX_EXECUTABLE` overrides it, `codex` on the PATH is the last resort. The image links it as
+`codex`; the Nix package wraps it.
+
+- **Process:** one `codex app-server` per session, as the session user, spoken to with JSON-RPC
+  over stdio (as OpenAI's IDE extension does), with `CODEX_HOME` set to the account's home. A
+  session is a Codex thread (`thread/start`, later `thread/resume` with the rollout's path);
+  each message is a turn (`turn/start`; messages sent during a turn wait for its end),
+  interrupting is `turn/interrupt`. Threads run with full access, as Claude Code does; whether
+  Codex asks is its approval policy, the session's mode: `untrusted` (the default: asks before
+  commands not known to be safe), `on-request` (the model decides when to ask), `never` (never
+  asks; dangerous, like `bypassPermissions`). The session instructions go in as developer
+  instructions, the app's tools (`show_file`, `create_pull_request`, …) as dynamic tools that
+  Codex calls back (`item/tool/call`); they show as `mcp__crm__<tool>` like Claude Code's.
+- **Translation** (`codex-events.ts`): command executions become `Bash` calls with their output,
+  file changes `Write`/`Edit` calls with their diff, plans the to-do list, agent messages text
+  (streamed), web searches and image views their tools; token usage the context meter; rate
+  limit windows (300 minutes → 5-hour, 10080 → weekly) the limits; an error
+  `usageLimitExceeded` ends the turn as a usage limit, so the automatic switch to the next
+  ChatGPT account works as for Claude. Approvals (`item/commandExecution/requestApproval`,
+  `item/fileChange/requestApproval`) are approval cards; "allow for this session" is Codex's
+  `acceptForSession`.
+- **History:** read with `thread/read` from the rollouts (`sessions/` of the base home, shared
+  by all accounts), so a session continues after a switch of its account.
+- **Accounts:** ChatGPT accounts (subscription login only) have no main account: each has its
+  own Codex home `<CODEX_HOME>/crm-accounts/<id>` (base: `CODEX_HOME`, else `~/.codex` of the
+  session user; in the image `/data/claude/codex` on the Claude volume) with its own login
+  (`auth.json`) and state databases (never shared between homes), and relative symlinks to what
+  all share in the base home: `config.toml`, `AGENTS.md`, `hooks.json`, `sessions/`,
+  `archived_sessions/`, `prompts/`, `skills/`, `rules/`. The helper `assets/codex-account-dir.cjs`
+  creates and removes them as the session user, like Claude's. The login is ChatGPT's device
+  login through the app server (`account/login/start` with `chatgptDeviceCode`): the UI shows
+  the page to open and the code to enter there (`AccountLoginDto.userCode`) and waits for
+  `account/login/completed`; status and logout are `account/read` and `account/logout`.
+- **Not offered by Codex:** plan mode and slash commands (the UI leaves them out); the
+  independent review still runs with Claude Code.
 
 ## Previews of dev servers
 

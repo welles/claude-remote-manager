@@ -2,12 +2,12 @@ import { homedir, tmpdir } from 'node:os';
 import { normalizeTeamDomain } from '../auth/access-jwt';
 import { AUTH_MODES, type AuthConfig } from '../auth/authenticator';
 import {
-  findExecutable,
   ISOLATION_MODES,
   lookupUser,
   type ProcessIsolation,
 } from '../common/process-isolation';
 import { join, resolve } from 'node:path';
+import { resolveCodexExecutable } from '../agent/codex/codex-home';
 import type { GitIdentity } from '../git/git-auth';
 
 /** Settings of the API, read from the environment once at startup. */
@@ -37,8 +37,8 @@ export interface AppConfig {
   /** Claude Code executable; `null` uses the one bundled with the Agent SDK. */
   claudeExecutable: string | null;
   /**
-   * Codex executable (`CODEX_EXECUTABLE`), else `codex` on the PATH; `null`:
-   * none, the Codex engine is not offered.
+   * Codex executable (see `resolveCodexExecutable`); `null`: none, the
+   * Codex engine is not offered.
    */
   codexExecutable: string | null;
   /** Origins besides the server's own that may call the API. */
@@ -264,10 +264,10 @@ export function loadAppConfig(
     setupScriptTimeoutMs: minutes('SETUP_SCRIPT_TIMEOUT_MINUTES', 15, 0.1),
     sessionIdleTimeoutMs: minutes('SESSION_IDLE_TIMEOUT_MINUTES', 60, 0),
     claudeExecutable: value('CLAUDE_CODE_EXECUTABLE') ?? null,
-    codexExecutable:
-      value('CODEX_EXECUTABLE') ??
-      findExecutable('codex', env['PATH'] ?? '') ??
-      null,
+    codexExecutable: resolveCodexExecutable(
+      value('CODEX_EXECUTABLE') ?? null,
+      env,
+    ),
     allowedOrigins: [
       ...(env['NODE_ENV'] === 'production' ? [] : DEV_ORIGINS),
       ...list(value('ALLOWED_ORIGINS')).map((origin) => {

@@ -1,3 +1,4 @@
+import { resolveCodexExecutable } from '../agent/codex/codex-home';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DEV_ORIGINS, loadAppConfig } from './app-config';
@@ -95,7 +96,7 @@ describe('loadAppConfig', () => {
       setupScriptTimeoutMs: 15 * 60_000,
       sessionIdleTimeoutMs: 60 * 60_000,
       claudeExecutable: null,
-      codexExecutable: null,
+      codexExecutable: resolveCodexExecutable(null, DEV),
       allowedOrigins: DEV_ORIGINS,
       allowedHosts: [],
       internalApiUrl: 'http://127.0.0.1:3000',
