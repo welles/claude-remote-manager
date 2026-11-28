@@ -426,6 +426,8 @@ describe('NewSessionForm', () => {
     setupScript: null,
     presetEngine: null,
     presets: enginePresets(),
+    model: null,
+    permissionMode: null,
     repositories: [],
     isDefault: false,
     variables: [],
@@ -771,6 +773,85 @@ describe('NewSessionForm', () => {
       form.chooseEnvironment('e1');
       expect(form.engine()).toBe('codex');
       expect(form.model).toBe('gpt-5');
+    });
+
+    it('goes back to the default engine when the next environment has none', async () => {
+      const { form } = await render(
+        [],
+        [
+          environment({
+            isDefault: true,
+            presetEngine: 'codex',
+            presets: enginePresets({}, { model: 'gpt-5' }),
+          }),
+          environment({
+            id: 'e2',
+            name: 'Plain',
+            presets: enginePresets({ model: 'haiku' }),
+          }),
+        ],
+        {
+          engines: ['claude-code', 'codex'],
+          accounts: [accountDto(), chatgpt()],
+        },
+      );
+      codexModels();
+      expect(form.engine()).toBe('codex');
+      expect(form.model).toBe('gpt-5');
+      form.chooseEnvironment('e2');
+      expect(form.engine()).toBe('claude-code');
+      expect(form.model).toBe('haiku');
+      expect(form.permissionMode).toBe('auto');
+    });
+
+    /** Loads everything but the engines, with a default environment for Codex. */
+    const startWithoutEngines = async () => {
+      const fixture = TestBed.createComponent(NewSessionForm);
+      fixture.detectChanges();
+      http
+        .expectOne('/api/accounts')
+        .flush({ accounts: [accountDto(), chatgpt()] });
+      http
+        .expectOne('/api/models')
+        .flush({ models: [], source: 'claude-code', updatedAt: null });
+      http
+        .expectOne('/api/repositories')
+        .flush({ repositories: [], strayDirectories: [] });
+      http.expectOne('/api/environments').flush({
+        environments: [
+          environment({
+            isDefault: true,
+            presetEngine: 'codex',
+            presets: enginePresets({}, { permissionMode: 'never' }),
+          }),
+        ],
+      });
+      await fixture.whenStable();
+      const form = fixture.componentInstance as unknown as FormInternals;
+      // Not known yet: Claude Code meanwhile.
+      expect(form.engine()).toBe('claude-code');
+      return { fixture, form };
+    };
+
+    it("switches to the environment's engine once the engines are known", async () => {
+      const { fixture, form } = await startWithoutEngines();
+      flushEngines(http, 'claude-code', 'codex');
+      fixture.detectChanges();
+      await fixture.whenStable();
+      codexModels();
+      expect(form.engine()).toBe('codex');
+      expect(form.permissionMode).toBe('never');
+    });
+
+    it('does not switch the engine late over changes the user made', async () => {
+      const { fixture, form } = await startWithoutEngines();
+      form.permissionMode = 'default';
+      form.touched = true;
+      flushEngines(http, 'claude-code', 'codex');
+      fixture.detectChanges();
+      await fixture.whenStable();
+      expect(form.engine()).toBe('claude-code');
+      expect(form.permissionMode).toBe('default');
     });
 
     it('stays with Claude Code when the server has no Codex', async () => {

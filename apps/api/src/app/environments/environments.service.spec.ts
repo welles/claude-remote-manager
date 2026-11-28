@@ -223,6 +223,30 @@ describe('EnvironmentsService', () => {
     }
   });
 
+  it('update with only top-level fields keeps Codex presets and presetEngine', () => {
+    const created = service.create({
+      name: 'Old',
+      presetEngine: 'codex',
+      presets: {
+        'claude-code': { model: 'sonnet' },
+        codex: { model: 'gpt-5.4', permissionMode: 'never' },
+      },
+    });
+    expect(created.model).toBe('sonnet');
+    // As a client from before the presets per engine saves it.
+    const updated = service.update(created.id, {
+      name: 'Old',
+      model: 'haiku',
+      permissionMode: 'plan',
+    });
+    expect(updated.presetEngine).toBe('codex');
+    expect(updated.presets).toEqual({
+      'claude-code': { model: 'haiku', permissionMode: 'plan' },
+      codex: { model: 'gpt-5.4', permissionMode: 'never' },
+    });
+    expect(updated).toMatchObject({ model: 'haiku', permissionMode: 'plan' });
+  });
+
   it('rejects an entry ID given twice', () => {
     const created = service.create({
       name: 'A',

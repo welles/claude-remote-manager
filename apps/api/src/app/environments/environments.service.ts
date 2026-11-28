@@ -337,8 +337,19 @@ export class EnvironmentsService {
       MAX_ENVIRONMENT_SETUP_SCRIPT_LENGTH,
     );
     const presets = parsePresets(body);
-    const presetEngine =
+    let presetEngine =
       optionalEnum(body, 'presetEngine', AGENT_ENGINES) ?? null;
+    if (body['presets'] === undefined && existing) {
+      // A client from before the presets per engine (e.g. a tab open since
+      // an update) knows only Claude Code's: the others stay as they are.
+      presets.codex = {
+        model: existing.codexModel,
+        permissionMode: existing.codexPermissionMode,
+      };
+      if (body['presetEngine'] === undefined) {
+        presetEngine = existing.presetEngine;
+      }
+    }
     const isDefault = body['isDefault'];
     if (isDefault !== undefined && typeof isDefault !== 'boolean') {
       throw new BadRequestException('isDefault must be a boolean');
@@ -658,6 +669,8 @@ export class EnvironmentsService {
       instructions: row.instructions,
       setupScript: row.setupScript,
       presetEngine: row.presetEngine,
+      model: row.model,
+      permissionMode: row.permissionMode,
       presets: {
         'claude-code': {
           model: row.model,

@@ -15,6 +15,8 @@ const saved: EnvironmentDto = {
   setupScript: null,
   presetEngine: null,
   presets: enginePresets({ model: 'haiku' }),
+  model: 'haiku',
+  permissionMode: null,
   repositories: [{ repositoryId: 'r1', baseBranch: 'dev' }],
   isDefault: true,
   variables: [

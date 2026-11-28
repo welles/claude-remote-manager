@@ -22,6 +22,8 @@ const environment = (
   setupScript: null,
   presetEngine: null,
   presets: enginePresets(),
+  model: null,
+  permissionMode: null,
   repositories: [],
   isDefault: false,
   variables: [],

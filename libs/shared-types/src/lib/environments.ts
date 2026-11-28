@@ -152,6 +152,13 @@ export interface EnvironmentDto {
    * the form applies those of the engine the session is created with.
    */
   presets: EnvironmentPresets;
+  /**
+   * @deprecated Claude Code's model preset (`presets['claude-code']`), kept
+   * for clients from before the presets per engine.
+   */
+  model: string | null;
+  /** @deprecated Claude Code's permission mode preset, as `model`. */
+  permissionMode: SessionPermissionMode | null;
   /** In order; the first is the main repository. */
   repositories: SessionRepositoryRequest[];
   /** Chosen in the new-session form unless the user picks another. */

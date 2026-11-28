@@ -272,12 +272,15 @@ export class NewSessionForm implements OnInit {
 
   constructor() {
     // An environment chosen before the engines were known: its engine once
-    // they are.
+    // they are, unless the user changed the form meanwhile.
     effect(() => {
       if (!this.enginesStore.ready()) {
         return;
       }
       untracked(() => {
+        if (this.touched) {
+          return;
+        }
         const environment = this.environments().find(
           (entry) => entry.id === this.environmentId(),
         );
@@ -371,20 +374,22 @@ export class NewSessionForm implements OnInit {
   }
 
   /**
-   * Preselects the environment's engine if this server has it and the
-   * user did not pick one.
+   * Preselects the environment's engine if this server has it, else the
+   * default one (so that an engine an earlier environment chose does not
+   * stick); not over an engine the user picked.
    */
   private applyPresetEngine(environment: EnvironmentDto): void {
-    const engine = environment.presetEngine;
-    if (
-      !engine ||
-      this.enginePicked ||
-      engine === this.engine() ||
-      !this.enginesStore.engines().some((entry) => entry.id === engine)
-    ) {
+    if (this.enginePicked) {
       return;
     }
-    this.setEngine(engine);
+    const preset = environment.presetEngine;
+    const engine =
+      preset && this.enginesStore.engines().some((entry) => entry.id === preset)
+        ? preset
+        : DEFAULT_ENGINE;
+    if (engine !== this.engine()) {
+      this.setEngine(engine);
+    }
   }
 
   /** The user picked a mode (see {@link setMode}). */
