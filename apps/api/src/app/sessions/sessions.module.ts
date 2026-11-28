@@ -153,6 +153,7 @@ const logger = new Logger('SessionsModule');
             runner: codex,
             transcripts: new CodexTranscriptReader(codex, baseHome),
             capabilities: CODEX_CAPABILITIES,
+            fixedTools: true,
           });
         }
         return engines;

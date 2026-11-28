@@ -18,6 +18,14 @@ export interface AgentEngine {
   runner: AgentRunner;
   transcripts: TranscriptReader;
   capabilities: EngineCapabilities;
+  /**
+   * The engine fixes the app's tools when a thread starts (Codex's dynamic
+   * tools) and keeps them when it is resumed: its processes get every tool
+   * of the app, those that cannot run marked `unavailable`, so a tool
+   * stays when the session changes (a GitHub repository added, a title
+   * chosen by the user).
+   */
+  fixedTools?: boolean;
 }
 
 /** What Codex offers (its own approval policies, no plan mode). */
@@ -90,6 +98,11 @@ export class AgentEngines {
 
   transcripts(id: AgentEngineId): TranscriptReader {
     return this.get(id).transcripts;
+  }
+
+  /** Whether an engine fixes the app's tools at thread start. */
+  fixedTools(id: AgentEngineId): boolean {
+    return this.engines.get(id)?.fixedTools === true;
   }
 
   list(): AgentEngineDto[] {

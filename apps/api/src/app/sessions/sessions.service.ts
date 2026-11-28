@@ -2391,7 +2391,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     firstMessage: { id: string; text: string },
   ): Promise<void> {
     this.clearIdleTimer(live);
-    live.tracker = new UsageTracker(this.usage.totalsByModel(record.id));
+    const recordedUsage = this.usage.totalsByModel(record.id);
+    live.tracker = new UsageTracker(recordedUsage);
     live.interruptRequested = null;
     live.sendNow = null;
     live.closing = null;
@@ -2413,7 +2414,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       ) ?? MAIN_ACCOUNT_ID;
     live.launching = true;
     try {
-      const extras = await this.support.prepare(record);
+      // Engines that fix the tools at thread start get all of them.
+      const allTools = this.engines?.fixedTools(record.engine) === true;
+      const extras = await this.support.prepare(record, { allTools });
       // What the user allowed for the session applies to every process.
       const allowed = sessionAllows(this.storedEvents.list(record.id));
       const directories = additionalDirectories(record);
@@ -2478,14 +2481,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           env: { ...SESSION_ENV, ...extras.env },
           tools: [
             ...extras.tools,
-            // A title the user chose stays: no tool to change it.
-            ...(record.titleSource === 'user' ? [] : [this.setTitleTool(live)]),
+            // A title the user chose stays: no tool to change it (the
+            // tool refuses it for engines that keep every tool).
+            ...(record.titleSource !== 'user' || allTools
+              ? [this.setTitleTool(live)]
+              : []),
             this.setWaitingStateTool(live),
             ...(this.additions ? [this.addRepositoryTool(live)] : []),
             ...(offersBranches ? [this.addBranchTool(live)] : []),
             this.switchDirectoryTool(live),
             ...(offersReview ? [this.requestReviewTool(live)] : []),
-          ],
+          ].filter((tool) => allTools || !tool.unavailable),
+          usageBaseline: recordedUsage,
           settings: extras.settings,
           ...(extras.instructions ? { instructions: extras.instructions } : {}),
         },
@@ -3395,6 +3402,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
               ...input,
               command: reportCommand(outcome.output, outcome.ok),
             },
+            ranByApp: { ok: outcome.ok, output: outcome.output },
           };
         }
       }

@@ -10,6 +10,7 @@ import type {
 import type {
   ReviewEffort,
   SessionPermissionMode,
+  UsageTotals,
 } from '@claude-remote-manager/shared-types';
 import type * as Zod from 'zod';
 
@@ -36,6 +37,14 @@ export interface AgentTool {
   inputSchema: (z: typeof Zod) => Record<string, Zod.ZodType>;
   /** The tool only reads (MCP annotation `readOnlyHint`). */
   readOnly?: boolean;
+  /**
+   * The tool cannot run in this process, for this reason (e.g. the session
+   * has no GitHub repository). Only engines that fix a thread's tools when
+   * it starts get such tools (see `AgentEngine.fixedTools`), so the tool
+   * stays when the session changes; they refuse a call with the reason
+   * without asking anyone.
+   */
+  unavailable?: string;
   handler: (
     input: Record<string, unknown>,
     context: AgentToolContext,
@@ -110,6 +119,12 @@ export interface AgentStartOptions {
   env?: Record<string, string>;
   /** The app's own tools for this session. */
   tools?: AgentTool[];
+  /**
+   * The usage the app recorded for the session so far, per model: an
+   * engine whose totals do not survive a restart reports its cumulative
+   * usage on top of it (the usage tracker starts from it).
+   */
+  usageBaseline?: Record<string, UsageTotals>;
   /**
    * Settings on top of the user's, project's and local settings (Claude
    * Code's flag settings), e.g. the auto-memory directory.
