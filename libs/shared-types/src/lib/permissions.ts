@@ -242,7 +242,7 @@ export const PERMISSION_MODE_INFO: Record<
   'on-request': {
     label: 'On request',
     description:
-      'Codex decides when to ask: it runs what it considers safe and asks before the rest.',
+      'Full access, and the model decides when to ask: Codex runs commands, file changes and pushes on its own and asks only when it thinks it should, which it rarely does. Not marked dangerous, but close to Never ask; choose Untrusted to approve each command.',
   },
   never: {
     label: 'Never ask (dangerous)',

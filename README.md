@@ -1141,29 +1141,61 @@ in `codex-protocol.ts` are written against it) and runs its native binary for th
   over stdio (as OpenAI's IDE extension does), with `CODEX_HOME` set to the account's home. A
   session is a Codex thread (`thread/start`, later `thread/resume` with the rollout's path);
   each message is a turn (`turn/start`; messages sent during a turn wait for its end),
-  interrupting is `turn/interrupt`. Threads run with full access, as Claude Code does; whether
-  Codex asks is its approval policy, the session's mode: `untrusted` (the default: asks before
-  commands not known to be safe), `on-request` (the model decides when to ask), `never` (never
-  asks; dangerous, like `bypassPermissions`). The session instructions go in as developer
-  instructions, the app's tools (`show_file`, `create_pull_request`, …) as dynamic tools that
-  Codex calls back (`item/tool/call`); they show as `mcp__crm__<tool>` like Claude Code's.
-- **Translation** (`codex-events.ts`): command executions become `Bash` calls with their output,
+  interrupting is `turn/interrupt` (also while the turn is still starting: sent once Codex names
+  it). Threads run with full access, as Claude Code does; whether Codex asks is its approval
+  policy, the session's mode: `untrusted` (the default: asks before commands not known to be
+  safe), `on-request` (full access, the model decides when to ask and rarely does; not marked
+  dangerous, the owner's decision), `never` (never asks; dangerous, like `bypassPermissions`).
+  The session instructions go in as developer instructions; the repository's `CLAUDE.md` is
+  read like an `AGENTS.md` where it has none (`project_doc_fallback_filenames`). Claude Code's
+  repository memory and settings do not apply to Codex. The app's tools (`show_file`,
+  `create_pull_request`, …) are dynamic tools that Codex calls back (`item/tool/call`); they
+  show as `mcp__crm__<tool>` like Claude Code's. Codex fixes a thread's dynamic tools at
+  `thread/start` and keeps them on `thread/resume`, so a Codex process always gets every tool
+  of the app (`AgentEngine.fixedTools`): those that cannot run now (the GitHub tools without a
+  GitHub repository, previews when they are off) are registered and refuse a call with the
+  reason (`AgentTool.unavailable`). A thread started before an upgrade that added a tool does
+  not have it (`thread/fork` would give a new thread without changing the tools either); such
+  a call is refused as unknown. Context the app sends with a message (GitHub content) and its
+  notes go in as the turn's `additionalContext` (`untrusted` resp. `application`), not as the
+  user's input, so the history shows only what the user typed.
+- **Translation** (`codex-events.ts`): command executions become `Bash` calls with their output
+  and the script the model wrote (Codex reports `/bin/bash -lc '<script>'`; unwrapped for the
+  tool calls, approvals and the push analysis),
   file changes `Write`/`Edit` calls with their diff, plans the to-do list, agent messages text
   (streamed), web searches and image views their tools; token usage the context meter; rate
   limit windows (300 minutes → 5-hour, 10080 → weekly) the limits; an error
   `usageLimitExceeded` ends the turn as a usage limit, so the automatic switch to the next
   ChatGPT account works as for Claude. Approvals (`item/commandExecution/requestApproval`,
   `item/fileChange/requestApproval`) are approval cards; "allow for this session" is Codex's
-  `acceptForSession`.
+  `acceptForSession`, and a command matching a `Bash(...)` rule allowed for the session (also
+  by an earlier process) runs without asking (prefixes and wildcards only for a single simple
+  command). A request Codex resolves itself (`serverRequest/resolved`) closes its card. When the
+  app runs a git command itself (Autofix), Codex gets `decline` (it has no reason field) and the
+  outcome as a note of the app sent into the running turn (`turn/steer`, with a client ID
+  `crm-app:…` the history leaves out; with the next turn when the turn had ended). Requests the
+  app cannot put to the user (questions, MCP elicitations, extra permissions) are answered so
+  the turn goes on. Usage: Codex reports the thread's total for all models and restores it on
+  resume, so only its growth in this process's turns counts, for the turn's model, on top of
+  the usage the app recorded for the session (`AgentStartOptions.usageBaseline`). Limits:
+  windows of the plan's main bucket (`limitId` `codex`), sparse updates merged.
 - **History:** read with `thread/read` from the rollouts (`sessions/` of the base home, shared
-  by all accounts), so a session continues after a switch of its account.
+  by all accounts), so a session continues after a switch of its account. Codex knows another
+  home's thread only once resumed by its path, so the reader resumes it first, in the temporary
+  directory, without passing a working directory (the session's may be gone), without the
+  turns in the answer and with the user's MCP servers disabled (`config/read`, then
+  `mcp_servers.<name>.enabled = false`). Tools that had not finished show as not finished; the
+  to-do list is not kept by Codex as an item.
 - **Accounts:** ChatGPT accounts (subscription login only) have no main account: each has its
   own Codex home `<CODEX_HOME>/crm-accounts/<id>` (base: `CODEX_HOME`, else `~/.codex` of the
   session user; in the image `/data/claude/codex` on the Claude volume) with its own login
   (`auth.json`) and state databases (never shared between homes), and relative symlinks to what
-  all share in the base home: `config.toml`, `AGENTS.md`, `hooks.json`, `sessions/`,
+  all share in the base home: `config.toml`, `AGENTS.md` (both created empty in the base home
+  when missing, so they are always linked), `hooks.json` (when there), `sessions/`,
   `archived_sessions/`, `prompts/`, `skills/`, `rules/`. The helper `assets/codex-account-dir.cjs`
-  creates and removes them as the session user, like Claude's. The login is ChatGPT's device
+  creates and removes them as the session user, like Claude's; an entry that should be a link
+  but is a file of the account's own (Codex may replace a link when it rewrites the file) is
+  kept and reported as a warning in the API log. The login is ChatGPT's device
   login through the app server (`account/login/start` with `chatgptDeviceCode`): the UI shows
   the page to open and the code to enter there (`AccountLoginDto.userCode`) and waits for
   `account/login/completed`; status and logout are `account/read` and `account/logout`.

@@ -124,8 +124,9 @@ export type ClaudeCodePermissionMode =
 
 /**
  * Codex's approval policies: `untrusted` asks for every command not known
- * to be safe, `on-request` asks when the model asks for it, `never` runs
- * everything without asking.
+ * to be safe, `on-request` asks only when the model decides to (with full
+ * access it rarely does; not counted as dangerous, owner's decision),
+ * `never` runs everything without asking.
  */
 export type CodexPermissionMode = 'untrusted' | 'on-request' | 'never';
 
