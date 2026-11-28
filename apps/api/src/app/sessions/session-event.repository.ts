@@ -34,6 +34,7 @@ export const STORED_EVENT_TYPES: ReadonlySet<SessionEventInput['type']> =
     'setup.result',
     'review.started',
     'review.finished',
+    'review.switched',
   ]);
 
 /** Where an event happened relative to the transcript. */

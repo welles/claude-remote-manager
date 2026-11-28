@@ -509,6 +509,26 @@ describe('ReviewsService', () => {
       });
     });
 
+    it('launches nothing when the session is archived while the reviewer is chosen', async () => {
+      restart();
+      const gate: { release?: (reason: string | null) => void } = {};
+      codex.reviewBlocked = () =>
+        new Promise<string | null>((resolve) => {
+          gate.release = resolve;
+        });
+      const session = await changedSession();
+      reviews.updateDefaults({ engine: 'codex' });
+      const starting = reviews.start(session.id);
+      // Archived while the reviewer is being chosen.
+      await waitFor(() => gate.release !== undefined);
+      harness.service.setArchived(session.id, new Date());
+      gate.release?.(null);
+      await expect(starting).rejects.toThrow('cannot be reviewed');
+      expect(codex.reviews).toHaveLength(0);
+      expect(harness.runner.reviews).toHaveLength(0);
+      expect(reviewEvents(session.id, 'review.started')).toEqual([]);
+    });
+
     it('switches to Claude Code when Codex refuses the review as it starts', async () => {
       restart();
       codex.review = async () => {
@@ -532,6 +552,25 @@ describe('ReviewsService', () => {
       expect(harness.runner.reviews[0].options.instructions).toContain(
         'Read, Grep and Glob',
       );
+      // The card learns the switch while the review runs.
+      expect(
+        harness.events
+          .filter(
+            (envelope) =>
+              envelope.sessionId === session.id &&
+              envelope.event.type === 'review.switched',
+          )
+          .map((envelope) => envelope.event),
+      ).toEqual([
+        expect.objectContaining({
+          reviewId: started.id,
+          engine: 'claude-code',
+          fallbackFrom: 'codex',
+          fallbackReason: 'Codex has command rules (late)',
+          model: 'claude-fable-5-2',
+          effort: 'high',
+        }),
+      ]);
       harness.runner.reviews[0].finish({
         output: { summary: 'Fine.', findings: [] },
       });

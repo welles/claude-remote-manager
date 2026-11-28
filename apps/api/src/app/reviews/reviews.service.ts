@@ -347,10 +347,16 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
           'The session has no changes to review (against the base branches)',
         );
       }
-      // Archived or cleaned up meanwhile?
+      // Chosen first (it may probe the engine for a while): the checks
+      // below see the session as it is when the reviewer starts.
+      const choice = await this.choose(this.requireRecord(sessionId));
+      // Archived, cleaned up or stopping meanwhile?
       const current = this.requireRecord(sessionId);
       this.requireReviewable(current);
-      return this.launch(current, diff, 'manual', await this.choose(current));
+      if (this.stopped) {
+        throw new ConflictException('The server is stopping');
+      }
+      return this.launch(current, diff, 'manual', choice);
     } finally {
       this.starting.delete(sessionId);
       if (!this.active.has(sessionId) && this.records.get(sessionId)) {
@@ -396,21 +402,26 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
           'The session has no changes against the base branches: nothing to review.',
         );
       }
+      const reviewedAlready = (record: SessionRecord) => {
+        if (record.reviewedDiff === diffFingerprint(diff)) {
+          throw new Error(
+            'Exactly these changes were reviewed already (committing or rebasing does not count as a change); no new review.',
+          );
+        }
+      };
+      reviewedAlready(this.requireRecord(sessionId));
+      // The checks again after choosing (it may take a while, see `start`).
+      const choice = await this.choose(this.requireRecord(sessionId));
       const current = this.requireRecord(sessionId);
-      if (current.reviewedDiff === diffFingerprint(diff)) {
-        throw new Error(
-          'Exactly these changes were reviewed already (committing or rebasing does not count as a change); no new review.',
-        );
-      }
-      if (current.reviewMode === 'off' || !this.reviewable(current)) {
+      reviewedAlready(current);
+      if (
+        current.reviewMode === 'off' ||
+        !this.reviewable(current) ||
+        this.stopped
+      ) {
         throw new Error('The session cannot be reviewed now.');
       }
-      const review = this.launch(
-        current,
-        diff,
-        'claude',
-        await this.choose(current),
-      );
+      const review = this.launch(current, diff, 'claude', choice);
       return `The independent review started (${ENGINE_LABELS[review.engine]}, model ${review.model ?? 'its default'}, effort ${review.effort}, ${review.fileCount} changed files). Its findings will come as a message of the app, usually within minutes. End your turn now, or say with set_waiting_state "work" that you wait for the review.`;
     } finally {
       this.starting.delete(sessionId);
@@ -584,6 +595,15 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
           `Review ${dto.id} of session ${sessionId} runs with Claude Code: ${failure.message}`,
         );
         this.sessions.reviewChanged(sessionId);
+        this.sessions.recordEvent(sessionId, {
+          type: 'review.switched',
+          reviewId: dto.id,
+          engine: dto.engine,
+          fallbackFrom: dto.fallbackFrom,
+          fallbackReason: dto.fallbackReason,
+          model: dto.model,
+          effort: dto.effort,
+        });
         result = await withAccount();
       }
       durationMs = result.durationMs;
@@ -763,18 +783,26 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     try {
       const diff = await this.diffs.sessionDiff(sessionId);
       const fingerprint = diffFingerprint(diff);
-      const current = this.records.get(sessionId);
-      if (
-        current?.reviewMode !== 'turn' ||
-        !this.reviewable(current) ||
-        current.reviewedDiff === fingerprint ||
-        changedRepositories(diff).length === 0 ||
+      // Whether the session (still) wants a review now, before and after
+      // choosing the reviewer (which may take a while, see `start`).
+      const wanted = (record: SessionRecord | undefined) =>
+        !this.stopped &&
+        record?.reviewMode === 'turn' &&
+        this.reviewable(record) &&
+        record.reviewedDiff !== fingerprint &&
+        changedRepositories(diff).length > 0 &&
         // A turn started meanwhile: auto-review follows its end.
-        !this.isTurnOver(this.sessions.get(sessionId))
-      ) {
+        this.isTurnOver(this.sessions.get(sessionId));
+      const before = this.records.get(sessionId);
+      if (!before || !wanted(before)) {
         return;
       }
-      this.launch(current, diff, 'auto', await this.choose(current));
+      const choice = await this.choose(before);
+      const current = this.records.get(sessionId);
+      if (!current || !wanted(current)) {
+        return;
+      }
+      this.launch(current, diff, 'auto', choice);
     } catch (failure) {
       this.logger.warn(
         `Auto-review of session ${sessionId} could not start: ${errorText(failure)}`,

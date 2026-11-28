@@ -4,33 +4,59 @@ import { join } from 'node:path';
 /** The machine's Codex rules (next to its managed configuration). */
 export const SYSTEM_CODEX_RULES = '/etc/codex/rules';
 
-/** A rules file says something (lines other than comments and blanks). */
-function hasRules(text: string): boolean {
-  return text
+/**
+ * Whether a rules file may allow something: a rule call (`prefix_rule(…)`,
+ * `network_rule(…)`, …) whose `decision` is not the literal `"prompt"` or
+ * `"forbidden"` (Codex's default decision is `allow`, checked with
+ * `codex execpolicy check` 0.171; a decision from a variable counts as
+ * allowing). Whole-line comments are left out.
+ */
+export function allowsSomething(text: string): boolean {
+  const code = text
     .split('\n')
-    .some((line) => line.trim() !== '' && !line.trim().startsWith('#'));
+    .filter((line) => !line.trim().startsWith('#'))
+    .join('\n');
+  const call = /\b[A-Za-z_]*_rule\s*\(/g;
+  for (const match of code.matchAll(call)) {
+    // The call's arguments, up to its balanced closing parenthesis.
+    let depth = 0;
+    let end = code.length;
+    for (
+      let i = (match.index ?? 0) + match[0].length - 1;
+      i < code.length;
+      i++
+    ) {
+      if (code[i] === '(') {
+        depth++;
+      } else if (code[i] === ')' && --depth === 0) {
+        end = i;
+        break;
+      }
+    }
+    const args = code.slice(match.index ?? 0, end);
+    if (!/\bdecision\s*=\s*(["'])(prompt|forbidden)\1/.test(args)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
- * Codex's command rules (`prefix_rule(…)` in `*.rules` files) that could
- * let commands run past a review's read-only setup: in each Codex home's
- * `rules/` (followed where it is a link into the base home), the
- * machine's `/etc/codex/rules/` and the working directory's
- * `.codex/rules/`. The reason not to review with
- * Codex, `null` when there are none. A directory that cannot be read
- * counts as having rules (it cannot be checked).
+ * Codex's rules that could let commands run past a review's read-only
+ * setup (see {@link allowsSomething}; rules that only ask or forbid do
+ * not count): in each Codex home's `rules/` (followed where it is a link
+ * into the base home) and the machine's `/etc/codex/rules/`. Not the
+ * working directory's `.codex/rules/`: the review marks the project
+ * untrusted, so Codex does not load them. The reason not to review with
+ * Codex, `null` when there are none. A directory or file that cannot be
+ * read counts as allowing (it cannot be checked).
  */
 export async function codexRulesReason(
   homes: readonly string[],
-  cwd: string,
   systemRules = SYSTEM_CODEX_RULES,
 ): Promise<string | null> {
   const dirs = [
-    ...new Set([
-      ...homes.map((home) => join(home, 'rules')),
-      systemRules,
-      join(cwd, '.codex', 'rules'),
-    ]),
+    ...new Set([...homes.map((home) => join(home, 'rules')), systemRules]),
   ];
   for (const dir of dirs) {
     let names: string[];
@@ -52,8 +78,8 @@ export async function codexRulesReason(
         }
         return `Codex's rules in ${dir} could not be checked`;
       }
-      if (hasRules(text)) {
-        return `Codex has command rules (${join(dir, name)}) that could let commands run past the reviewer's read-only setup`;
+      if (allowsSomething(text)) {
+        return `Codex has rules that allow commands (${join(dir, name)}), which could run past the reviewer's read-only setup`;
       }
     }
   }

@@ -526,6 +526,21 @@ export interface ReviewStartedEvent extends SessionEventBase {
 }
 
 /**
+ * A running review's engine refused it as it started (see
+ * `ReviewStartedEvent.fallbackReason`): it runs with Claude Code instead,
+ * with this model and effort. Stored.
+ */
+export interface ReviewSwitchedEvent extends SessionEventBase {
+  type: 'review.switched';
+  reviewId: string;
+  engine: AgentEngineId;
+  fallbackFrom: AgentEngineId | null;
+  fallbackReason: string | null;
+  model: string | null;
+  effort: ReviewEffort;
+}
+
+/**
  * An independent review ended. With findings, the app sent them to Claude
  * as a message of its own (`messageId`), queued while a turn ran.
  */
@@ -562,6 +577,7 @@ export type SessionEvent =
   | UserMessageEvent
   | ReviewStartedEvent
   | ReviewFinishedEvent
+  | ReviewSwitchedEvent
   | AssistantDeltaEvent
   | AssistantTextEvent
   | ToolCallEvent

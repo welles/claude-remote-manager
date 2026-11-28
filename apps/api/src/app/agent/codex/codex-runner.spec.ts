@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   readFileSync,
@@ -37,7 +38,7 @@ import {
   matchesBashRule,
 } from './codex-runner';
 import { AgentReviewRefused } from '../agent-runner';
-import { codexRulesReason } from './review-commands';
+import { allowsSomething, codexRulesReason } from './review-commands';
 import {
   fakeCodexPids,
   fakeCodexRequests,
@@ -1440,8 +1441,8 @@ describe('CodexRunner', () => {
         shell_environment_policy: { inherit: 'core', set: {} },
         web_search: 'cached',
       });
-      // The project's MCP servers too.
-      expect(at('config/read')).toEqual([{ cwd }]);
+      // The user's MCP servers only: the project's layer does not load.
+      expect(at('config/read')).toEqual([{}]);
       expect(at('thread/start')[0]).not.toHaveProperty('model');
       expect(at('turn/start')).toEqual([
         expect.objectContaining({
@@ -1513,14 +1514,32 @@ describe('CodexRunner', () => {
     it('counts the machine’s Codex rules too', async () => {
       const system = join(dir, 'etc-codex-rules');
       mkdirSync(system);
-      expect(await codexRulesReason([home], cwd, system)).toBeNull();
+      expect(await codexRulesReason([home], system)).toBeNull();
+      // Without a decision, Codex allows.
       writeFileSync(
         join(system, 'managed.rules'),
-        'prefix_rule(pattern=["rm"], decision="allow")\n',
+        'prefix_rule(pattern=["rm"])\n',
       );
-      expect(await codexRulesReason([home], cwd, system)).toContain(
-        'managed.rules',
-      );
+      expect(await codexRulesReason([home], system)).toContain('managed.rules');
+    });
+
+    it('reads which rules allow', () => {
+      expect(allowsSomething('# prefix_rule(pattern=["x"])')).toBe(false);
+      expect(
+        allowsSomething('prefix_rule(pattern=["x"], decision="forbidden")'),
+      ).toBe(false);
+      expect(
+        allowsSomething('prefix_rule(pattern=["x"], decision="allow")'),
+      ).toBe(true);
+      expect(allowsSomething('network_rule(host="example.com")')).toBe(true);
+      expect(
+        allowsSomething('d = "allow"\nprefix_rule(pattern=["x"], decision=d)'),
+      ).toBe(true);
+      expect(
+        allowsSomething(
+          'prefix_rule(pattern=["a"], decision="prompt")\nprefix_rule(pattern=["b"])',
+        ),
+      ).toBe(true);
     });
 
     it('refuses to review where Codex has command rules', async () => {
@@ -1528,15 +1547,34 @@ describe('CodexRunner', () => {
       mkdirSync(join(home, 'rules'));
       writeFileSync(join(home, 'rules', 'default.rules'), '# nothing\n\n');
       expect(await runner.reviewBlocked({ cwd })).toBeNull();
+      // Rules that only ask or forbid do not count.
+      writeFileSync(
+        join(home, 'rules', 'default.rules'),
+        'prefix_rule(pattern=["touch"], decision="prompt")\nprefix_rule(\n  pattern=["rm"],\n  decision = \'forbidden\',\n)\n',
+      );
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+      // The project's rules do not load (the review marks it untrusted).
       mkdirSync(join(cwd, '.codex', 'rules'), { recursive: true });
       writeFileSync(
         join(cwd, '.codex', 'rules', 'project.rules'),
         'prefix_rule(pattern=["touch"], decision="allow")\n',
       );
-      expect(await runner.reviewBlocked({ cwd })).toContain('project.rules');
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+      // A rules directory that cannot be read counts as allowing.
+      if (process.getuid?.() !== 0) {
+        const locked = join(dir, 'locked');
+        mkdirSync(join(locked, 'rules'), { recursive: true });
+        chmodSync(join(locked, 'rules'), 0o000);
+        expect(
+          await runner.reviewBlocked({
+            cwd,
+            account: { configDir: locked, main: false },
+          }),
+        ).toContain('could not be checked');
+        chmodSync(join(locked, 'rules'), 0o755);
+      }
       // An account's own rules (its `rules/` is a link into the base
       // home's, followed).
-      rmSync(join(cwd, '.codex'), { recursive: true });
       const account = join(dir, 'account');
       mkdirSync(account);
       symlinkSync(join(home, 'rules'), join(account, 'rules'));
@@ -1552,7 +1590,7 @@ describe('CodexRunner', () => {
       ).toContain(join(account, 'rules', 'default.rules'));
       await expect(
         review({ account: { configDir: account, main: false } }),
-      ).rejects.toThrow('command rules');
+      ).rejects.toThrow('rules that allow commands');
       expect(fakeCodexRequests(account)).toEqual([]);
     });
 

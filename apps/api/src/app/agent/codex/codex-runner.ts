@@ -255,13 +255,11 @@ async function scanRollouts(
  */
 async function withoutMcpServers(
   server: CodexAppServer,
-  cwd?: string,
 ): Promise<Record<string, boolean>> {
   try {
-    // With the working directory, the project's own servers too.
     const answer = await server.request<{
       config?: { mcp_servers?: Record<string, unknown> | null };
-    }>('config/read', cwd ? { cwd } : {});
+    }>('config/read', {});
     return Object.fromEntries(
       Object.keys(answer.config?.mcp_servers ?? {}).map((name) => [
         `mcp_servers.${name}.enabled`,
@@ -392,8 +390,8 @@ export class CodexRunner implements AgentRunner {
   /**
    * Why a review must not run with Codex here, `null` when it may: its
    * sandbox cannot start, or Codex command rules (`*.rules` in the
-   * account's and the base home's `rules/`, `/etc/codex/rules/`, the
-   * working directory's `.codex/rules/`) could let commands run past it.
+   * account's and the base home's `rules/`, `/etc/codex/rules/`; not the
+   * project's, which does not load) could let commands run past it.
    */
   async reviewBlocked(options: {
     account?: AgentAccount;
@@ -402,13 +400,10 @@ export class CodexRunner implements AgentRunner {
     if (!(await this.sandboxWorks())) {
       return NO_SANDBOX_REASON;
     }
-    return codexRulesReason(
-      [
-        options.account?.configDir ?? this.config.baseHome,
-        this.config.baseHome,
-      ],
-      options.cwd,
-    );
+    return codexRulesReason([
+      options.account?.configDir ?? this.config.baseHome,
+      this.config.baseHome,
+    ]);
   }
 
   /** The latest sandbox probe; a failed one only until `retryAt`. */
@@ -687,7 +682,11 @@ class CodexReview {
           ephemeral: true,
           config: {
             ...CODEX_THREAD_CONFIG,
-            ...(await withoutMcpServers(server, this.options.cwd)),
+            // The user's servers by name. Not the project's (with the
+            // working directory): it is untrusted, so its layer, servers
+            // included, does not load, and disabling a server of a layer
+            // that does not load fails the thread's start.
+            ...(await withoutMcpServers(server)),
             ...reviewThreadConfig(this.options.cwd),
           },
           ...(this.options.model ? { model: this.options.model } : {}),
