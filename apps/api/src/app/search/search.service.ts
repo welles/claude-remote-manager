@@ -293,6 +293,7 @@ export class SearchService implements OnModuleInit, OnModuleDestroy {
           status: record.status,
           archivedAt: record.archivedAt?.toISOString() ?? null,
           updatedAt: record.updatedAt.toISOString(),
+          engine: record.engine,
           repositories: repositoryNames(record),
           matches: matches.slice(0, MATCHES_PER_HIT),
           matchCount: matches.length,

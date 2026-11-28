@@ -110,6 +110,7 @@ describe('SearchService', () => {
     const hit = search.search('TOKEN expires').hits[0];
     expect(hit).toMatchObject({
       sessionId: first.id,
+      engine: 'claude-code',
       matches: [
         {
           kind: 'assistant',
@@ -129,6 +130,12 @@ describe('SearchService', () => {
     expect(ids('dark')).toEqual([second.id]);
     // Words must occur in the same message.
     expect(ids('login dark')).toEqual([]);
+
+    // The hit names the session's engine (whose agent answered).
+    harness.db.$client
+      .prepare("UPDATE sessions SET engine = 'codex' WHERE id = ?")
+      .run(second.id);
+    expect(search.search('dark').hits[0].engine).toBe('codex');
   });
 
   it('matches titles, repositories and branches, archived sessions too', async () => {

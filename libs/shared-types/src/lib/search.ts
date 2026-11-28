@@ -1,9 +1,10 @@
 import type { SessionStatus } from './session';
+import type { AgentEngineId } from './engines';
 
 /**
  * Full-text search over sessions (`GET /api/search?q=`): titles,
  * repositories and branches, and the conversation (the owner's messages and
- * Claude's answers), archived sessions included. The query is plain text:
+ * the agent's answers), archived sessions included. The query is plain text:
  * whitespace separates words, every word must occur (as a substring, any
  * case); there is no query syntax.
  */
@@ -23,7 +24,7 @@ export interface SearchMatch {
   /** `[start, end)` ranges of the query's words in `snippet`. */
   highlights: [number, number][];
   /**
-   * For conversation matches: the ID of the user message or of Claude's
+   * For conversation matches: the ID of the user message or of the agent's
    * message, to show that place in the history.
    */
   anchor: string | null;
@@ -35,6 +36,11 @@ export interface SearchHit {
   status: SessionStatus;
   archivedAt: string | null;
   updatedAt: string;
+  /**
+   * The agent engine the session runs with (names the agent of `assistant`
+   * matches). Absent from older servers.
+   */
+  engine?: AgentEngineId;
   /** `owner/name` of the session's repositories. */
   repositories: string[];
   /** The first matches (at most 3). */

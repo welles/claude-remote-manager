@@ -22,18 +22,26 @@ import {
 } from 'rxjs';
 import {
   SEARCH_QUERY_MAX_LENGTH,
+  type SearchHit,
   type SearchMatch,
   type SearchResponse,
 } from '@claude-remote-manager/shared-types';
+import { agentName } from '../engines/engines-store';
 import { SessionsApi } from './sessions-api';
 
-const KIND_LABELS: Record<SearchMatch['kind'], string> = {
+const KIND_LABELS: Record<Exclude<SearchMatch['kind'], 'assistant'>, string> = {
   title: 'Title',
   repository: 'Repository',
   branch: 'Branch',
   user: 'You',
-  assistant: 'Claude',
 };
+
+/** The badge of a match: answers are labelled with the session's agent. */
+export function matchLabel(match: SearchMatch, hit: SearchHit): string {
+  return match.kind === 'assistant'
+    ? agentName(hit.engine)
+    : KIND_LABELS[match.kind];
+}
 
 /** A snippet split into plain and highlighted parts (no HTML involved). */
 export function snippetParts(
@@ -122,7 +130,7 @@ export function snippetParts(
               @for (match of hit.matches; track $index) {
                 <!-- One line: whitespace here would show up around the highlights. -->
                 <!-- prettier-ignore -->
-                <span class="type-body-small [&_mark]:bg-primary/30 [&_mark]:text-inherit" data-testid="search-match"><span class="badge mr-1.5">{{ kindLabels[match.kind] }}</span>@for (part of parts(match); track $index) {@if (part.hit) {<mark>{{ part.text }}</mark>} @else {<span>{{ part.text }}</span>}}</span>
+                <span class="type-body-small [&_mark]:bg-primary/30 [&_mark]:text-inherit" data-testid="search-match"><span class="badge mr-1.5">{{ label(match, hit) }}</span>@for (part of parts(match); track $index) {@if (part.hit) {<mark>{{ part.text }}</mark>} @else {<span>{{ part.text }}</span>}}</span>
               }
             </a>
           }
@@ -145,7 +153,7 @@ export class SessionSearch implements OnInit {
   readonly active = output<boolean>();
 
   protected readonly maxLength = SEARCH_QUERY_MAX_LENGTH;
-  protected readonly kindLabels = KIND_LABELS;
+  protected readonly label = matchLabel;
   protected readonly parts = snippetParts;
   protected readonly query = signal('');
   protected readonly result = signal<SearchResponse | null>(null);
