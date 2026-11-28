@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Logger } from '@nestjs/common';
 import { SINGLE_USER } from '../common/process-isolation';
 import {
   fakeCodexPids,
@@ -71,7 +72,8 @@ describe('CodexAccounts', () => {
         join('..', '..', 'config.toml'),
       );
       expect(readFileSync(join(home(), 'AGENTS.md'), 'utf8')).toBe('# rules');
-      // Only shared files the base home has; never its login.
+      // Optional shared files only when the base home has them; never its
+      // login.
       expect(existsSync(join(home(), 'hooks.json'))).toBe(false);
       expect(existsSync(join(home(), 'auth.json'))).toBe(false);
       expect(lstatSync(home()).mode & 0o777).toBe(0o700);
@@ -83,8 +85,12 @@ describe('CodexAccounts', () => {
       expect(accounts.path(null)).toBe(base);
     });
 
-    it('leaves entries Codex made itself alone', async () => {
+    it('leaves entries Codex made itself alone, and warns about them', async () => {
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
       mkdirSync(home(), { recursive: true });
+      // E.g. Codex wrote the file anew where the link was.
       writeFileSync(join(home(), 'config.toml'), 'own = true\n');
       writeFileSync(join(base, 'config.toml'), 'shared = true\n');
       await accounts.prepare(ID);
@@ -93,6 +99,30 @@ describe('CodexAccounts', () => {
       );
       expect(readFileSync(join(home(), 'config.toml'), 'utf8')).toBe(
         'own = true\n',
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(
+          new RegExp(`^ChatGPT account ${ID}: .*config\\.toml is not a link`),
+        ),
+      );
+      warn.mockRestore();
+    });
+
+    it('creates the shared configuration and instructions when missing, so they are always linked', async () => {
+      await accounts.prepare(ID);
+      for (const name of ['config.toml', 'AGENTS.md']) {
+        expect(readFileSync(join(base, name), 'utf8')).toBe('');
+        expect(readlinkSync(join(home(), name))).toBe(join('..', '..', name));
+      }
+      // A file the user writes later applies to every account.
+      writeFileSync(join(base, 'config.toml'), 'model = "gpt-5.4"\n');
+      expect(readFileSync(join(home(), 'config.toml'), 'utf8')).toBe(
+        'model = "gpt-5.4"\n',
+      );
+      // Prepared again: an existing base file is never overwritten.
+      await accounts.prepare(ID);
+      expect(readFileSync(join(base, 'config.toml'), 'utf8')).toBe(
+        'model = "gpt-5.4"\n',
       );
     });
 

@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ProcessLauncher } from '../common/process-isolation';
@@ -55,6 +56,7 @@ export function codexAccountStatus(
  * ChatGPT's device login (a page and a code to enter there).
  */
 export class CodexAccounts implements AccountBackend {
+  private readonly logger = new Logger(CodexAccounts.name);
   private readonly queues = new SerialQueues();
 
   constructor(
@@ -70,25 +72,32 @@ export class CodexAccounts implements AccountBackend {
       : join(this.baseHome, ACCOUNTS_DIRECTORY, directory);
   }
 
+  /**
+   * Prepares the account's home; what the helper warns about (a shared
+   * file the account has a copy of its own of) is logged.
+   */
   async prepare(directory: string): Promise<string> {
-    await this.queues.run(directory, () =>
-      runAccountHelper(this.launcher, CODEX_ACCOUNT_DIR_SCRIPT, [
-        'prepare',
-        this.baseHome,
-        directory,
-      ]),
-    );
+    await this.queues.run(directory, async () => {
+      const warnings = await runAccountHelper(
+        this.launcher,
+        CODEX_ACCOUNT_DIR_SCRIPT,
+        ['prepare', this.baseHome, directory],
+      );
+      for (const warning of warnings) {
+        this.logger.warn(`ChatGPT account ${directory}: ${warning}`);
+      }
+    });
     return this.path(directory);
   }
 
   remove(directory: string): Promise<void> {
-    return this.queues.run(directory, () =>
-      runAccountHelper(this.launcher, CODEX_ACCOUNT_DIR_SCRIPT, [
+    return this.queues.run(directory, async () => {
+      await runAccountHelper(this.launcher, CODEX_ACCOUNT_DIR_SCRIPT, [
         'remove',
         this.baseHome,
         directory,
-      ]),
-    );
+      ]);
+    });
   }
 
   async status(account: AgentAccount): Promise<AccountStatus> {

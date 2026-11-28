@@ -27,13 +27,14 @@ export function accountDirScript(name = ACCOUNT_DIR_SCRIPT): string {
 
 /**
  * Runs a helper script as the session user; it answers with one JSON line
- * `{"ok":true}` or `{"ok":false,"message":...}`.
+ * `{"ok":true}` (optionally with `warnings`) or `{"ok":false,"message":...}`.
+ * Resolves with the warnings.
  */
 export function runAccountHelper(
   launcher: ProcessLauncher,
   script: string,
   args: string[],
-): Promise<void> {
+): Promise<string[]> {
   const command = launcher.command('session', process.execPath, [
     accountDirScript(script),
     ...args,
@@ -49,14 +50,24 @@ export function runAccountHelper(
         maxBuffer: 64 * 1024,
       },
       (error, stdout) => {
-        let result: { ok?: boolean; message?: string } | null = null;
+        let result: {
+          ok?: boolean;
+          message?: string;
+          warnings?: unknown;
+        } | null = null;
         try {
           result = JSON.parse(String(stdout).trim().split('\n').at(-1) ?? '');
         } catch {
           result = null;
         }
         if (result?.ok) {
-          resolve();
+          resolve(
+            Array.isArray(result.warnings)
+              ? result.warnings.filter(
+                  (warning): warning is string => typeof warning === 'string',
+                )
+              : [],
+          );
         } else {
           reject(
             new Error(
@@ -163,6 +174,8 @@ export class ClaudeAccountDirectories {
   }
 
   private helper(args: string[]): Promise<void> {
-    return runAccountHelper(this.launcher, ACCOUNT_DIR_SCRIPT, args);
+    return runAccountHelper(this.launcher, ACCOUNT_DIR_SCRIPT, args).then(
+      () => undefined,
+    );
   }
 }
