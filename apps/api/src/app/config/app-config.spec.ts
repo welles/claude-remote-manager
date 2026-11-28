@@ -95,6 +95,7 @@ describe('loadAppConfig', () => {
       setupScriptTimeoutMs: 15 * 60_000,
       sessionIdleTimeoutMs: 60 * 60_000,
       claudeExecutable: null,
+      codexExecutable: null,
       allowedOrigins: DEV_ORIGINS,
       allowedHosts: [],
       internalApiUrl: 'http://127.0.0.1:3000',
@@ -130,6 +131,7 @@ describe('loadAppConfig', () => {
           SETUP_SCRIPT_TIMEOUT_MINUTES: '5',
           SESSION_IDLE_TIMEOUT_MINUTES: '0',
           CLAUDE_CODE_EXECUTABLE: '/usr/local/bin/claude',
+          CODEX_EXECUTABLE: '/usr/local/bin/codex',
           NODE_ENV: 'production',
           ALLOWED_ORIGINS:
             'https://crm.example.com/, https://other.example:8443',
@@ -169,6 +171,7 @@ describe('loadAppConfig', () => {
       setupScriptTimeoutMs: 5 * 60_000,
       sessionIdleTimeoutMs: 0,
       claudeExecutable: '/usr/local/bin/claude',
+      codexExecutable: '/usr/local/bin/codex',
       allowedOrigins: ['https://crm.example.com', 'https://other.example:8443'],
       allowedHosts: ['crm.example.com', 'crm.internal'],
       internalApiUrl: 'http://127.0.0.1:8080',

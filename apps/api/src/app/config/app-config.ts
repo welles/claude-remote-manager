@@ -265,7 +265,9 @@ export function loadAppConfig(
     sessionIdleTimeoutMs: minutes('SESSION_IDLE_TIMEOUT_MINUTES', 60, 0),
     claudeExecutable: value('CLAUDE_CODE_EXECUTABLE') ?? null,
     codexExecutable:
-      value('CODEX_EXECUTABLE') ?? findExecutable('codex') ?? null,
+      value('CODEX_EXECUTABLE') ??
+      findExecutable('codex', env['PATH'] ?? '') ??
+      null,
     allowedOrigins: [
       ...(env['NODE_ENV'] === 'production' ? [] : DEV_ORIGINS),
       ...list(value('ALLOWED_ORIGINS')).map((origin) => {

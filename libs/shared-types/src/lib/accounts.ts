@@ -32,6 +32,11 @@ export interface AccountLoginDto {
   status: AccountLoginStatus;
   /** The page to open in the browser, once known. */
   url: string | null;
+  /**
+   * For a device login (ChatGPT): the code to enter on that page; `null`
+   * for a login that ends with a code from the page (Claude).
+   */
+  userCode: string | null;
   error: string | null;
 }
 

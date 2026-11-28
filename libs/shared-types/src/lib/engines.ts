@@ -1,5 +1,9 @@
 import type { AccountProvider } from './accounts';
-import type { SessionPermissionMode } from './session';
+import {
+  CLAUDE_CODE_PERMISSION_MODES,
+  CODEX_PERMISSION_MODES,
+  type SessionPermissionMode,
+} from './session';
 
 /**
  * The agent engines a session can run with. Each is an adapter of the
@@ -22,6 +26,25 @@ export const ENGINE_PROVIDERS: Record<AgentEngineId, AccountProvider> = {
 export const ENGINE_LABELS: Record<AgentEngineId, string> = {
   'claude-code': 'Claude Code',
   codex: 'Codex',
+};
+
+/** The permission modes of an engine, in order. */
+export const ENGINE_PERMISSION_MODES: Record<
+  AgentEngineId,
+  readonly SessionPermissionMode[]
+> = {
+  'claude-code': CLAUDE_CODE_PERMISSION_MODES,
+  codex: CODEX_PERMISSION_MODES,
+};
+
+/** The mode a session of an engine starts in when none is chosen. */
+export const ENGINE_DEFAULT_PERMISSION_MODE: Record<
+  AgentEngineId,
+  SessionPermissionMode
+> = {
+  'claude-code': 'default',
+  // Asks before commands that are not known to be safe.
+  codex: 'untrusted',
 };
 
 /** What an engine offers, so that the UI shows what it can, in its terms. */

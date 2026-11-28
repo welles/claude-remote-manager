@@ -1,14 +1,10 @@
-import {
-  ConflictException,
-  Controller,
-  Get,
-  Injectable,
-} from '@nestjs/common';
+import { ConflictException, Controller, Get, Injectable } from '@nestjs/common';
 import {
   ENGINE_LABELS,
   ENGINE_PROVIDERS,
   CLAUDE_CODE_PERMISSION_MODES,
   CODEX_PERMISSION_MODES,
+  type AccountProvider,
   type AgentEngineDto,
   type AgentEngineId,
   type EngineCapabilities,
@@ -76,6 +72,16 @@ export class AgentEngines {
       );
     }
     return engine;
+  }
+
+  /** The engine whose accounts are of a provider; `null`: none here. */
+  forProvider(provider: AccountProvider): AgentEngineId | null {
+    for (const id of this.engines.keys()) {
+      if (ENGINE_PROVIDERS[id] === provider) {
+        return id;
+      }
+    }
+    return null;
   }
 
   runner(id: AgentEngineId): AgentRunner {

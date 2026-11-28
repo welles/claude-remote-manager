@@ -22,12 +22,13 @@ import {
   CLAUDE_WAIT_LIMIT_MINUTES,
   isRetiredClone,
   DEFAULT_ENGINE,
+  ENGINE_DEFAULT_PERMISSION_MODE,
+  ENGINE_PERMISSION_MODES,
   ENGINE_PROVIDERS,
   AGENT_ENGINES,
   MAIN_ACCOUNT_ID,
   type AccountProvider,
   MAX_ATTACHMENTS_PER_MESSAGE,
-  SESSION_PERMISSION_MODES,
   summarizePendingRequests,
   type AttachmentDto,
   type ContextUsage,
@@ -774,7 +775,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** The history reader of a session's engine. */
-  private transcriptsFor(record: Pick<SessionRecord, 'engine'>): TranscriptReader {
+  private transcriptsFor(
+    record: Pick<SessionRecord, 'engine'>,
+  ): TranscriptReader {
     return this.engines?.transcripts(record.engine) ?? this.transcripts;
   }
 
@@ -1040,9 +1043,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (model && !MODEL_PATTERN.test(model)) {
       throw new BadRequestException('model is not a valid model name');
     }
-    const permissionMode =
-      optionalEnum(body, 'permissionMode', SESSION_PERMISSION_MODES) ??
-      'default';
     const environment = this.environments
       ? this.environments.requireForSession(body['environmentId'])
       : null;
@@ -1053,6 +1053,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         `The engine ${engine} is not available on this server`,
       );
     }
+    const permissionMode =
+      optionalEnum(body, 'permissionMode', ENGINE_PERMISSION_MODES[engine]) ??
+      ENGINE_DEFAULT_PERMISSION_MODE[engine];
     const provider = ENGINE_PROVIDERS[engine];
     const requestedAccount = optionalString(body, 'accountId');
     let accountId = this.accounts
@@ -1559,10 +1562,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         throw new BadRequestException('model is not a valid model name');
       }
     }
+    // Only the modes of the session's engine.
     const permissionMode = optionalEnum(
       body,
       'permissionMode',
-      SESSION_PERMISSION_MODES,
+      ENGINE_PERMISSION_MODES[record.engine],
     );
     const changes: {
       model?: string | null;
@@ -3064,9 +3068,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private syncPermissionMode(live: LiveSession, mode: string): void {
     live.reportedMode = mode;
     const record = this.requireRecord(live.id);
-    if (!SESSION_PERMISSION_MODES.includes(mode as SessionPermissionMode)) {
+    if (
+      !ENGINE_PERMISSION_MODES[record.engine].includes(
+        mode as SessionPermissionMode,
+      )
+    ) {
       this.logger.warn(
-        `Claude Code of ${live.id} reports permission mode ${mode}, which this app does not use`,
+        `The engine of ${live.id} reports permission mode ${mode}, which this app does not use`,
       );
       return;
     }

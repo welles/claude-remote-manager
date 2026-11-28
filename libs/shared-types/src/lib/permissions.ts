@@ -1,3 +1,4 @@
+import type { AgentEngineId } from './engines';
 import type { PermissionModeOverride, SessionPermissionMode } from './session';
 
 /**
@@ -277,15 +278,15 @@ export interface ModelOption {
   resolvedModel: string | null;
 }
 
-/** Response of `GET /api/models`. */
+/** Response of `GET /api/models?engine=…` (Claude Code without). */
 export interface ModelListResponse {
   models: ModelOption[];
   /**
-   * `claude-code`: the list Claude Code reported for the logged-in
-   * account; `fallback`: a fixed list because Claude Code could not be asked.
+   * The engine that reported the list for its default account;
+   * `fallback`: a fixed list because the engine could not be asked.
    */
-  source: 'claude-code' | 'fallback';
-  /** When the list was read from Claude Code (ISO 8601). */
+  source: AgentEngineId | 'fallback';
+  /** When the list was read from the engine (ISO 8601). */
   updatedAt: string | null;
 }
 

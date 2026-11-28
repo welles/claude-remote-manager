@@ -174,11 +174,11 @@ export class SessionsModule {
     sessions: SessionsService,
     git: SessionGitService,
     limits: LimitsService,
-    runner: AgentRunner,
     shownFiles: ShownFilesService,
     previews: PreviewsService,
     commits: SessionCommitsService,
     accounts: AccountsService,
+    engines: AgentEngines,
   ) {
     // Files shown by the app's tool belong in the session's log.
     shownFiles.shown$.subscribe(({ sessionId, toolUseId, file }) =>
@@ -213,7 +213,18 @@ export class SessionsModule {
     limits.setPlanUsageSource((accountId) =>
       accounts.withAccount(
         accountId,
-        (account) => runner.probe((probe) => probe.planUsage(), account),
+        (account) => {
+          // The engine of the account's provider reads its limits.
+          const engine = engines.forProvider(
+            accounts.providerOf(accountId) ?? 'claude',
+          );
+          if (!engine) {
+            throw new Error('No engine for this account here');
+          }
+          return engines
+            .runner(engine)
+            .probe((probe) => probe.planUsage(), account);
+        },
         { exact: true },
       ),
     );
