@@ -29,7 +29,7 @@ import {
 } from './conversation';
 import { agentName, engineOf } from '../engines/engines-store';
 import { formatCost, formatTokens, totalTokens } from './format';
-import { dateFormat, formatStamp } from '../ui/dates';
+import { formatExact, formatStamp } from '../ui/dates';
 import { MarkdownPipe } from './markdown.pipe';
 import type { ShownItem } from './preparation';
 import { relativePaths, sessionPath } from './session-directories';
@@ -121,19 +121,7 @@ export class SessionConversation {
   protected readonly totalTokens = totalTokens;
   protected readonly stamp = (at: string) => formatStamp(at);
 
-  /** The exact time, for the tooltip: `Fri, 13 Nov 2026, 16:27:43`. */
-  protected fullTime(at: string): string {
-    return dateFormat({
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hourCycle: 'h23',
-    }).format(new Date(at));
-  }
+  protected readonly fullTime = (at: string) => formatExact(at);
 
   /** The anchor of an assistant text item (Claude's message ID). */
   protected anchorOf(key: string): string | null {
