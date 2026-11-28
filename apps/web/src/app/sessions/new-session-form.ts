@@ -20,7 +20,7 @@ import {
   ATTACHMENT_MEDIA_TYPES,
   PERMISSION_MODE_INFO,
   DANGEROUS_PERMISSION_MODES,
-  SESSION_PERMISSION_MODES,
+  CLAUDE_CODE_PERMISSION_MODES,
   type CreateSessionRequest,
   type EnvironmentDto,
   type RepositoryBranchesResponse,
@@ -56,7 +56,7 @@ import { SessionsApi } from './sessions-api';
 import { EnvironmentsApi } from '../environments/environments-api';
 
 /** Permission modes offered for new sessions, in this order. */
-export const PERMISSION_MODE_OPTIONS = SESSION_PERMISSION_MODES.map((mode) => ({
+export const PERMISSION_MODE_OPTIONS = CLAUDE_CODE_PERMISSION_MODES.map((mode) => ({
   value: mode,
   ...PERMISSION_MODE_INFO[mode],
   dangerous: DANGEROUS_PERMISSION_MODES.includes(mode),

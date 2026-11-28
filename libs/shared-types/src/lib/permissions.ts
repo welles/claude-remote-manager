@@ -233,6 +233,21 @@ export const PERMISSION_MODE_INFO: Record<
     description:
       'Everything runs without asking: commands, file changes, pushes, pull requests, sudo, with all your rights on this machine. Only for work you trust.',
   },
+  untrusted: {
+    label: 'Untrusted',
+    description:
+      'Codex asks before every command that is not known to be safe (reading, searching) and before file changes.',
+  },
+  'on-request': {
+    label: 'On request',
+    description:
+      'Codex decides when to ask: it runs what it considers safe and asks before the rest.',
+  },
+  never: {
+    label: 'Never ask (dangerous)',
+    description:
+      'Codex runs everything without asking: commands, file changes, pushes, pull requests, sudo, with all your rights on this machine. Only for work you trust.',
+  },
 };
 
 /** Why a session runs in another mode than the chosen one, for the UI. */

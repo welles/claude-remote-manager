@@ -7,9 +7,9 @@ import type { AccountLimits } from './limits';
  * everything the accounts share (transcripts, settings, skills, plugins).
  * Only subscription logins, no API keys.
  */
-export type AccountProvider = 'claude';
+export type AccountProvider = 'claude' | 'chatgpt';
 
-export const ACCOUNT_PROVIDERS: readonly AccountProvider[] = ['claude'];
+export const ACCOUNT_PROVIDERS: readonly AccountProvider[] = ['claude', 'chatgpt'];
 
 /** ID of the account of the main Claude directory; it cannot be removed. */
 export const MAIN_ACCOUNT_ID = 'main';
@@ -91,4 +91,5 @@ export interface AccountsChangedMessage {
 /** How the UI names a provider's accounts. */
 export const ACCOUNT_PROVIDER_LABELS: Record<AccountProvider, string> = {
   claude: 'Claude',
+  chatgpt: 'ChatGPT',
 };

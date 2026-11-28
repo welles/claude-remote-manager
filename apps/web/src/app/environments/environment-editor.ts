@@ -17,7 +17,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import {
   DANGEROUS_PERMISSION_MODES,
   PERMISSION_MODE_INFO,
-  SESSION_PERMISSION_MODES,
+  CLAUDE_CODE_PERMISSION_MODES,
   type EnvironmentDto,
   type RepositoryBranchesResponse,
   type RepositoryDto,
@@ -86,7 +86,7 @@ export class EnvironmentEditor implements OnInit {
   protected readonly modelOptions = computed(() =>
     this.modelsStore.models().filter((option) => option.value !== null),
   );
-  protected readonly modeOptions = SESSION_PERMISSION_MODES.map((mode) => ({
+  protected readonly modeOptions = CLAUDE_CODE_PERMISSION_MODES.map((mode) => ({
     value: mode,
     ...PERMISSION_MODE_INFO[mode],
     dangerous: DANGEROUS_PERMISSION_MODES.includes(mode),

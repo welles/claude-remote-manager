@@ -7,7 +7,7 @@ import {
 import {
   ENGINE_LABELS,
   ENGINE_PROVIDERS,
-  SESSION_PERMISSION_MODES,
+  CLAUDE_CODE_PERMISSION_MODES,
   type AgentEngineDto,
   type AgentEngineId,
   type EngineCapabilities,
@@ -25,7 +25,7 @@ export interface AgentEngine {
 
 /** What Claude Code offers. */
 export const CLAUDE_CODE_CAPABILITIES: EngineCapabilities = {
-  permissionModes: [...SESSION_PERMISSION_MODES],
+  permissionModes: [...CLAUDE_CODE_PERMISSION_MODES],
   planMode: true,
   slashCommands: true,
   contextUsage: true,

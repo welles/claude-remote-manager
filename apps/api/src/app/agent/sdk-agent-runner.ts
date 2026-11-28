@@ -27,6 +27,7 @@ import type { AgentEvent } from './agent-events';
 import {
   ClaudeEventTranslator,
   claudeCanUseTool,
+  claudeMode,
   claudeCommand,
   claudeContextUsage,
   claudeModel,
@@ -403,7 +404,7 @@ export function buildQueryOptions(
       ? { allowedTools: options.allowedTools }
       : {}),
     ...(options.model ? { model: options.model } : {}),
-    permissionMode: options.permissionMode,
+    permissionMode: claudeMode(options.permissionMode),
     // Makes `bypassPermissions` available, also for a switch while the
     // process runs (`setPermissionMode`); the mode itself is the session's
     // choice. As `--allow-dangerously-skip-permissions`.
@@ -586,7 +587,7 @@ export class SdkAgentRunner implements AgentRunner {
             },
           ),
         ),
-      setPermissionMode: (mode) => query.setPermissionMode(mode),
+      setPermissionMode: (mode) => query.setPermissionMode(claudeMode(mode)),
       setModel: (model) => query.setModel(model ?? undefined),
       stopTask: (taskId) => query.stopTask(taskId),
       supportedCommands: async () =>

@@ -6,9 +6,9 @@ import type { SessionPermissionMode } from './session';
  * app's engine-neutral core (see the specification, "Codex als
  * gleichwertige Engine"); none is a special case.
  */
-export type AgentEngineId = 'claude-code';
+export type AgentEngineId = 'claude-code' | 'codex';
 
-export const AGENT_ENGINES: readonly AgentEngineId[] = ['claude-code'];
+export const AGENT_ENGINES: readonly AgentEngineId[] = ['claude-code', 'codex'];
 
 /** The engine of sessions that do not choose one (and of older ones). */
 export const DEFAULT_ENGINE: AgentEngineId = 'claude-code';
@@ -16,10 +16,12 @@ export const DEFAULT_ENGINE: AgentEngineId = 'claude-code';
 /** Which accounts an engine runs with. */
 export const ENGINE_PROVIDERS: Record<AgentEngineId, AccountProvider> = {
   'claude-code': 'claude',
+  codex: 'chatgpt',
 };
 
 export const ENGINE_LABELS: Record<AgentEngineId, string> = {
   'claude-code': 'Claude Code',
+  codex: 'Codex',
 };
 
 /** What an engine offers, so that the UI shows what it can, in its terms. */
