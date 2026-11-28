@@ -11,8 +11,22 @@
 // - Every request is appended to $CODEX_HOME/fake-codex-requests.jsonl,
 //   the process ID of every start to $CODEX_HOME/fake-codex-pids.
 //
+// - `fake-mcp-servers` there (JSON object) is the configuration's
+//   `mcp_servers` (`config/read`); a resume that does not disable one
+//   logs it as started to `fake-mcp-started`.
+//
+// Commands are reported wrapped in the shell, as Codex does:
+// `/bin/bash -lc '<script>'`.
+//
 // A turn's scenario follows from the words of its last text input:
-//   run-command  a command that asks for approval first
+//   run-command  a command that asks for approval first; after a decline
+//                the turn waits briefly for input (`turn/steer`)
+//   git-push     like run-command, with `git push origin HEAD`
+//   resolve-itself  asks for a command's approval, then resolves the
+//                request itself (`serverRequest/resolved`) and ends
+//   fast         the turn/start answer and the whole turn in one write
+//   ask-user     asks the user questions (item/tool/requestUserInput)
+//   stubborn     the process ignores SIGTERM and the end of its input
 //   edit-file    a file change that asks for approval first
 //   app-tool:<n> a call of the app's dynamic tool <n> (item/tool/call)
 //   plan         a plan update
@@ -33,6 +47,8 @@ const threads = new Map();
 const serverRequests = new Map();
 const logins = new Map();
 const interrupts = new Map();
+const interrupted = new Set();
+let stubborn = false;
 let nextServerRequest = 1;
 let counter = 0;
 
@@ -121,6 +137,38 @@ function model(name, displayName, extra = {}) {
   };
 }
 
+/** Runs `task` with everything it sends going out in one write. */
+function oneWrite(task) {
+  const lines = [];
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (line) => {
+    lines.push(line);
+    return true;
+  };
+  try {
+    task();
+  } finally {
+    process.stdout.write = write;
+    write(lines.join(''));
+  }
+}
+
+function shellWrapped(script) {
+  return script.includes("'")
+    ? `/bin/bash -lc "${script.replace(/["\\$`]/g, '\\$&')}"`
+    : `/bin/bash -lc '${script}'`;
+}
+
+function readMcpServers() {
+  try {
+    return JSON.parse(
+      fs.readFileSync(path.join(home, 'fake-mcp-servers'), 'utf8'),
+    );
+  } catch {
+    return {};
+  }
+}
+
 function threadView(thread, includeTurns) {
   return {
     id: thread.id,
@@ -192,7 +240,12 @@ function persist(thread) {
   fs.writeFileSync(
     thread.path,
     [
-      JSON.stringify({ type: 'session_meta', id: thread.id, cwd: thread.cwd }),
+      JSON.stringify({
+        type: 'session_meta',
+        id: thread.id,
+        cwd: thread.cwd,
+        tokens: thread.tokens,
+      }),
       ...thread.turns.map((turn) => JSON.stringify({ type: 'turn', turn })),
     ].join('\n') + '\n',
   );
@@ -229,6 +282,7 @@ function loadRollout(file) {
   return {
     id: meta.id,
     cwd: meta.cwd,
+    tokens: meta.tokens ?? 0,
     turns: lines.filter((line) => line.type === 'turn').map((l) => l.turn),
   };
 }
@@ -328,23 +382,26 @@ async function runTurn(thread, turn, input) {
 
   let status = 'completed';
   let error = null;
-  if (/\brun-command\b/.test(prompt)) {
+  if (/\b(run-command|git-push|resolve-itself)\b/.test(prompt)) {
     const itemId = id('cmd');
+    const script = /\bgit-push\b/.test(prompt)
+      ? 'git push origin HEAD'
+      : "echo 'hi'";
     const command = {
       type: 'commandExecution',
       id: itemId,
-      command: 'echo hi',
+      command: shellWrapped(script),
       cwd: thread.cwd,
       processId: null,
       source: 'agent',
       status: 'inProgress',
-      commandActions: [],
+      commandActions: [{ type: 'unknown', command: script }],
       aggregatedOutput: null,
       exitCode: null,
       durationMs: null,
     };
     started(command);
-    const { decision } = await ask('item/commandExecution/requestApproval', {
+    const request = ask('item/commandExecution/requestApproval', {
       kind: 'command',
       threadId,
       turnId,
@@ -353,9 +410,26 @@ async function runTurn(thread, turn, input) {
       approvalId: null,
       environmentId: null,
       reason: 'Wants to say hi',
-      command: 'echo hi',
+      command: command.command,
       cwd: thread.cwd,
+      commandActions: command.commandActions,
     });
+    if (/\bresolve-itself\b/.test(prompt)) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      notify('serverRequest/resolved', {
+        threadId,
+        requestId: nextServerRequest - 1,
+      });
+      completed({ ...command, status: 'declined', durationMs: 1 });
+      await message('resolved by itself');
+      request.catch(() => undefined);
+      return finishTurn(thread, turn, 'completed', null);
+    }
+    const { decision } = await request;
+    if (decision === 'decline') {
+      // The model samples again: input sent meanwhile is part of the turn.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
     const accepted = decision === 'accept' || decision === 'acceptForSession';
     completed({
       ...command,
@@ -369,6 +443,25 @@ async function runTurn(thread, turn, input) {
     } else {
       await message(`decision: ${decision}`);
     }
+  } else if (/\bask-user\b/.test(prompt)) {
+    const answer = await ask('item/tool/requestUserInput', {
+      threadId,
+      turnId,
+      itemId: id('ask'),
+      questions: [
+        {
+          id: 'q1',
+          header: 'Q',
+          question: 'Which?',
+          isOther: false,
+          isSecret: false,
+          options: null,
+        },
+      ],
+      isBlocking: true,
+      autoResolutionMs: null,
+    });
+    await message(`answers: ${JSON.stringify(answer.answers)}`);
   } else if (/\bedit-file\b/.test(prompt)) {
     const itemId = id('patch');
     const change = {
@@ -454,8 +547,17 @@ async function runTurn(thread, turn, input) {
   } else if (/\bcrash\b/.test(prompt)) {
     process.stderr.write('panicked: fake crash\n', () => process.exit(3));
     return;
+  } else if (/\bstubborn\b/.test(prompt)) {
+    stubborn = true;
+    process.on('SIGTERM', () => undefined);
+    setInterval(() => undefined, 1000);
+    await message('Not ending.');
   } else if (/\bslow\b/.test(prompt)) {
     await new Promise((resolve) => {
+      if (interrupted.has(turnId)) {
+        resolve();
+        return;
+      }
       interrupts.set(turnId, resolve);
       setTimeout(resolve, 10_000).unref();
     });
@@ -465,6 +567,12 @@ async function runTurn(thread, turn, input) {
     await message(`Echo: ${text}`);
   }
 
+  finishTurn(thread, turn, status, error);
+}
+
+function finishTurn(thread, turn, status, error) {
+  const threadId = thread.id;
+  const turnId = turn.id;
   thread.tokens += 1000;
   notify('thread/tokenUsage/updated', {
     threadId,
@@ -476,6 +584,27 @@ async function runTurn(thread, turn, input) {
     },
   });
   notify('account/rateLimits/updated', { rateLimits: rateLimits() });
+  // Another bucket (a single model's), and a sparse update of the main one.
+  notify('account/rateLimits/updated', {
+    rateLimits: {
+      ...rateLimits(),
+      limitId: 'codex_other',
+      primary: { usedPercent: 99, windowDurationMins: 300, resetsAt: null },
+      secondary: null,
+    },
+  });
+  notify('account/rateLimits/updated', {
+    rateLimits: {
+      ...rateLimits(),
+      primary: {
+        usedPercent: 30,
+        windowDurationMins: 300,
+        resetsAt: 1764300000,
+      },
+      secondary: null,
+      planType: null,
+    },
+  });
   const view = turnView(turn, status, error);
   thread.turns.push(view);
   persist(thread);
@@ -576,19 +705,36 @@ function handle(message) {
       return answer(requestId, { status: timer ? 'canceled' : 'notFound' });
     }
     case 'model/list':
+      // Two pages.
+      return answer(
+        requestId,
+        params?.cursor === 'page-2'
+          ? {
+              data: [model('gpt-internal', 'Internal', { hidden: true })],
+              nextCursor: null,
+            }
+          : {
+              data: [
+                model('gpt-5.5-codex', 'GPT-5.5 Codex', { isDefault: true }),
+                model('gpt-5.4', 'GPT-5.4'),
+              ],
+              nextCursor: 'page-2',
+            },
+      );
+    case 'config/read':
       return answer(requestId, {
-        data: [
-          model('gpt-5.5-codex', 'GPT-5.5 Codex', { isDefault: true }),
-          model('gpt-5.4', 'GPT-5.4'),
-          model('gpt-internal', 'Internal', { hidden: true }),
-        ],
-        nextCursor: null,
+        config: { mcp_servers: readMcpServers() },
+        origins: {},
+        layers: null,
       });
     case 'account/rateLimits/read':
       return answer(requestId, {
         ordinaryUsageAllowed: true,
         rateLimits: rateLimits(),
-        rateLimitsByLimitId: null,
+        rateLimitsByLimitId: {
+          codex: rateLimits(),
+          codex_other: { ...rateLimits(), limitId: 'codex_other' },
+        },
         rateLimitResetCredits: null,
         accountId: null,
         rateLimitUpsell: null,
@@ -625,11 +771,33 @@ function handle(message) {
         createdAt: Math.floor(Date.now() / 1000),
         path: file,
         turns: stored.turns,
-        tokens: 0,
+        tokens: stored.tokens,
         running: null,
       };
       threads.set(thread.id, thread);
-      return answer(requestId, threadResponse(thread));
+      for (const name of Object.keys(readMcpServers())) {
+        if (params?.config?.[`mcp_servers.${name}.enabled`] !== false) {
+          fs.appendFileSync(path.join(home, 'fake-mcp-started'), `${name}\n`);
+        }
+      }
+      // The answer and the restored usage in one write, as Codex may send.
+      oneWrite(() => {
+        answer(requestId, threadResponse(thread));
+        if (thread.tokens > 0) {
+          // Codex restores the thread's total, with its last turn's ID.
+          const last = thread.turns.at(-1);
+          notify('thread/tokenUsage/updated', {
+            threadId: thread.id,
+            turnId: last ? last.id : 'turn-restored',
+            tokenUsage: {
+              total: usageBreakdown(thread.tokens),
+              last: usageBreakdown(1000),
+              modelContextWindow: 200000,
+            },
+          });
+        }
+      });
+      return;
     }
     case 'thread/read': {
       const thread = threads.get(params?.threadId);
@@ -660,6 +828,22 @@ function handle(message) {
         startedAt: Math.floor(Date.now() / 1000),
       };
       thread.running = turn;
+      if (last && /\bfast\b/.test(last.text)) {
+        // Answer and the whole turn in one write.
+        oneWrite(() => {
+          answer(requestId, { turn: turnView(turn, 'inProgress') });
+          notify('turn/started', {
+            threadId: thread.id,
+            turn: turnView(turn, 'inProgress'),
+          });
+          const view = turnView(turn, 'completed');
+          thread.turns.push(view);
+          persist(thread);
+          thread.running = null;
+          notify('turn/completed', { threadId: thread.id, turn: view });
+        });
+        return;
+      }
       answer(requestId, { turn: turnView(turn, 'inProgress') });
       // After the answer, as Codex does.
       setImmediate(() => {
@@ -669,7 +853,33 @@ function handle(message) {
       });
       return;
     }
+    case 'turn/steer': {
+      const thread = threads.get(params?.threadId);
+      const turn = thread?.running;
+      if (!turn || turn.id !== params?.expectedTurnId) {
+        return fail(requestId, 'no active turn to steer');
+      }
+      if (!params?.input?.length) {
+        return fail(requestId, 'input must not be empty');
+      }
+      answer(requestId, { turnId: turn.id });
+      const item = {
+        type: 'userMessage',
+        id: id('user'),
+        clientId: params.clientUserMessageId ?? null,
+        content: params.input,
+      };
+      turn.items.push(item);
+      notify('item/started', { item, threadId: thread.id, turnId: turn.id });
+      notify('item/completed', { item, threadId: thread.id, turnId: turn.id });
+      return;
+    }
     case 'turn/interrupt': {
+      const thread = threads.get(params?.threadId);
+      if (!thread?.running || thread.running.id !== params?.turnId) {
+        return fail(requestId, 'no such running turn');
+      }
+      interrupted.add(params?.turnId);
       const resolve = interrupts.get(params?.turnId);
       if (resolve) {
         resolve();
@@ -702,4 +912,8 @@ process.stdin.on('data', (chunk) => {
     }
   }
 });
-process.stdin.on('end', () => process.exit(0));
+process.stdin.on('end', () => {
+  if (!stubborn) {
+    process.exit(0);
+  }
+});

@@ -11,6 +11,8 @@ import {
   codexRateLimits,
   codexToolName,
   codexUsageTotals,
+  shellWords,
+  unwrapShellCommand,
 } from './codex-events';
 import type {
   CodexRateLimitSnapshot,
@@ -459,13 +461,16 @@ describe('CodexEventTranslator', () => {
     expect(translator.translate('unknown/method', {})).toEqual([]);
   });
 
-  it('ends a turn with the thread’s cumulative usage', () => {
+  it('ends a turn with the cumulative usage per model', () => {
     const tokenUsage: CodexThreadTokenUsage = {
       total: usage(5000, 2000),
       last: usage(1500),
       modelContextWindow: 200000,
     };
-    expect(translate('thread/tokenUsage/updated', { tokenUsage })).toEqual([]);
+    translate('turn/started', { turn: { id: 'turn-1' } });
+    expect(
+      translate('thread/tokenUsage/updated', { tokenUsage, turnId: 'turn-1' }),
+    ).toEqual([]);
     expect(translator.tokenUsage).toEqual(tokenUsage);
     expect(translate('turn/completed', { turn: turn() })).toEqual([
       {
@@ -489,6 +494,45 @@ describe('CodexEventTranslator', () => {
         queuedTurns: 0,
       },
     ]);
+  });
+
+  it('counts the growth of the thread total per model, not what was restored', () => {
+    translator = new CodexEventTranslator(THREAD, 'gpt-a', {
+      'gpt-a': codexUsageTotals(usage(100)),
+    });
+    const update = (total: number, turnId: string) =>
+      translate('thread/tokenUsage/updated', {
+        turnId,
+        tokenUsage: {
+          total: usage(total),
+          last: usage(total),
+          modelContextWindow: 1000,
+        },
+      });
+    const usageOf = () =>
+      (
+        translate('turn/completed', { turn: turn() })[0] as {
+          usage: Record<string, { outputTokens: number }>;
+        }
+      ).usage;
+    // Restored on resume (an earlier process's turn): counted already.
+    update(5000, 'turn-old');
+    expect(usageOf()).toEqual({});
+    translate('turn/started', { turn: { id: 'turn-1' } });
+    update(6000, 'turn-1');
+    // Reported again (e.g. with a rate limit update): nothing new.
+    update(6000, 'turn-1');
+    // The recorded 20 output tokens plus 200 of this turn.
+    expect(usageOf()).toEqual({
+      'gpt-a': expect.objectContaining({ outputTokens: 220 }),
+    });
+    translator.model = 'gpt-b';
+    translate('turn/started', { turn: { id: 'turn-2' } });
+    update(8000, 'turn-2');
+    expect(usageOf()).toEqual({
+      'gpt-a': expect.objectContaining({ outputTokens: 220 }),
+      'gpt-b': expect.objectContaining({ outputTokens: 400 }),
+    });
   });
 
   it('reports a failed turn with its message, without usage when none came', () => {
@@ -563,6 +607,43 @@ describe('CodexEventTranslator', () => {
     ).toEqual([]);
   });
 
+  it('keeps limits per bucket, merges sparse updates and passes on only the main one', () => {
+    translator.translate('account/rateLimits/updated', {
+      rateLimits: snapshot(),
+    });
+    expect(
+      translator.translate('account/rateLimits/updated', {
+        rateLimits: snapshot({
+          limitId: 'codex_other',
+          primary: { usedPercent: 99, windowDurationMins: 300, resetsAt: null },
+        }),
+      }),
+    ).toEqual([]);
+    const merged = translator.translate('account/rateLimits/updated', {
+      rateLimits: snapshot({
+        primary: { usedPercent: 40, windowDurationMins: 300, resetsAt: null },
+        secondary: null,
+      }),
+    });
+    expect(merged.map((event) => (event as { limit: unknown }).limit)).toEqual([
+      expect.objectContaining({ window: 'five_hour', utilization: 40 }),
+      expect.objectContaining({ window: 'seven_day', utilization: 100 }),
+    ]);
+  });
+
+  it('shows the app’s own input in a turn neither as a message nor as an anchor', () => {
+    expect(
+      translate('item/completed', {
+        item: {
+          type: 'userMessage',
+          id: 'u',
+          clientId: 'crm-app:1',
+          content: [{ type: 'text', text: 'note', text_elements: [] }],
+        },
+      }),
+    ).toEqual([]);
+  });
+
   it('passes rate limit updates on as limit windows', () => {
     expect(
       translator.translate('account/rateLimits/updated', {
@@ -588,6 +669,68 @@ describe('CodexEventTranslator', () => {
         },
       },
     ]);
+  });
+});
+
+describe('unwrapShellCommand', () => {
+  it('unwraps the script of the shells Codex runs commands with', () => {
+    expect(unwrapShellCommand("/bin/bash -lc 'echo hi'")).toBe('echo hi');
+    expect(unwrapShellCommand("bash -c 'git push origin HEAD'")).toBe(
+      'git push origin HEAD',
+    );
+    expect(unwrapShellCommand("/usr/bin/zsh -lc 'ls -la'")).toBe('ls -la');
+    expect(unwrapShellCommand("sh -c 'a && b'")).toBe('a && b');
+    // Codex's double quotes when the script has single quotes (as the
+    // pinned Codex reported this script).
+    expect(
+      unwrapShellCommand(
+        String.raw`/bin/bash -lc "echo \"it's\" && printf '%s\\n' \"a b\" | cat"`,
+      ),
+    ).toBe(String.raw`echo "it's" && printf '%s\n' "a b" | cat`);
+    expect(unwrapShellCommand('/bin/bash -lc "echo \\$HOME"')).toBe(
+      'echo $HOME',
+    );
+    // Concatenated quotes ('\'' style).
+    expect(unwrapShellCommand("bash -lc 'it'\\''s'")).toBe("it's");
+  });
+
+  it('leaves other commands as they are', () => {
+    for (const command of [
+      'echo hi',
+      'git push origin HEAD',
+      "python -c 'print(1)'",
+      "bash -x 'script.sh'",
+      "bash -lc 'a' extra",
+      "bash -lc 'a'; rm -rf ~",
+      "bash -lc 'unterminated",
+    ]) {
+      expect(unwrapShellCommand(command)).toBe(command);
+    }
+  });
+
+  it('falls back to Codex’s single parsed action when the quoting is beyond it', () => {
+    expect(
+      unwrapShellCommand('/bin/bash -lc "echo $HOME"', [
+        { type: 'unknown', command: 'echo $HOME' },
+      ]),
+    ).toBe('echo $HOME');
+    expect(
+      unwrapShellCommand('/bin/bash -lc "echo $HOME"', [
+        { command: 'a' },
+        { command: 'b' },
+      ]),
+    ).toBe('/bin/bash -lc "echo $HOME"');
+  });
+
+  it('splits words as the shell does', () => {
+    expect(shellWords(`a 'b c' "d \\"e\\"" f\\ g`)).toEqual([
+      'a',
+      'b c',
+      'd "e"',
+      'f g',
+    ]);
+    expect(shellWords('a | b')).toBeNull();
+    expect(shellWords('"a $b"')).toBeNull();
   });
 });
 
@@ -748,6 +891,43 @@ describe('Codex helpers', () => {
     );
   });
 
+  it('shows plans, and tools that did not finish not as successful', () => {
+    const running: CodexThreadItem = {
+      type: 'commandExecution',
+      id: 'cmd-1',
+      command: "/bin/bash -lc 'sleep 100'",
+      cwd: '/work',
+      status: 'inProgress',
+      aggregatedOutput: null,
+      exitCode: null,
+    };
+    const plan: CodexThreadItem = { type: 'plan', id: 'p-1', text: '# Plan' };
+    const ended = codexHistory([
+      turn({ status: 'interrupted', items: [plan, running] }),
+    ]);
+    expect(ended[0].events).toEqual([
+      expect.objectContaining({ type: 'assistant.text', text: '# Plan' }),
+    ]);
+    expect(ended[1].events).toEqual([
+      expect.objectContaining({
+        type: 'tool.call',
+        name: 'Bash',
+        input: { command: 'sleep 100', cwd: '/work' },
+      }),
+      expect.objectContaining({
+        type: 'tool.result',
+        toolUseId: 'cmd-1',
+        isError: true,
+        content: 'Did not finish (the turn ended).',
+      }),
+    ]);
+    // Still running: no result yet.
+    expect(
+      codexHistory([turn({ status: 'inProgress', items: [running] })])[0]
+        .events,
+    ).toEqual([expect.objectContaining({ type: 'tool.call' })]);
+  });
+
   it('builds the history of a thread’s turns', () => {
     const items: CodexThreadItem[] = [
       {
@@ -779,6 +959,12 @@ describe('Codex helpers', () => {
           id: 'turn-2',
           items: [
             { type: 'userMessage', id: 'user-2', clientId: null, content: [] },
+            {
+              type: 'userMessage',
+              id: 'user-3',
+              clientId: 'crm-app:x',
+              content: [{ type: 'text', text: 'app', text_elements: [] }],
+            },
           ],
         }),
       ]),

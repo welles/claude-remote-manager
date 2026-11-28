@@ -122,6 +122,115 @@ export function codexChangeDiff(change: CodexFileUpdateChange) {
   });
 }
 
+/** Shells Codex runs a model's command with (`/bin/bash -lc '<script>'`). */
+const WRAPPING_SHELLS = new Set(['bash', 'zsh', 'sh']);
+/** Characters with a meaning to the shell outside quotes. */
+const SHELL_OPERATORS = /[;&|<>()`$*?[\]{}~#!]/;
+
+/**
+ * The words of a command line as a POSIX shell splits them, for the
+ * quoting Codex writes (single quotes, double quotes with backslash
+ * escapes, backslashes); `null` when it uses anything else outside quotes
+ * (operators, globs, expansions) or expansions inside double quotes, or
+ * the quotes do not end.
+ */
+export function shellWords(line: string): string[] | null {
+  const words: string[] = [];
+  let word: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === ' ' || char === '\t' || char === '\n') {
+      if (word !== null) {
+        words.push(word);
+        word = null;
+      }
+    } else if (char === "'") {
+      const end = line.indexOf("'", i + 1);
+      if (end < 0) {
+        return null;
+      }
+      word = (word ?? '') + line.slice(i + 1, end);
+      i = end;
+    } else if (char === '"') {
+      let quoted = '';
+      for (i++; ; i++) {
+        if (i >= line.length) {
+          return null;
+        }
+        const inner = line[i];
+        if (inner === '"') {
+          break;
+        }
+        if (inner === '$' || inner === '`') {
+          // An expansion: the script is not the literal text.
+          return null;
+        }
+        if (inner === '\\' && i + 1 < line.length) {
+          const next = line[i + 1];
+          if (next === '\n') {
+            i++;
+            continue;
+          }
+          if ('$`"\\'.includes(next)) {
+            quoted += next;
+            i++;
+            continue;
+          }
+        }
+        quoted += inner;
+      }
+      word = (word ?? '') + quoted;
+    } else if (char === '\\') {
+      if (i + 1 >= line.length) {
+        return null;
+      }
+      i++;
+      if (line[i] !== '\n') {
+        word = (word ?? '') + line[i];
+      }
+    } else if (SHELL_OPERATORS.test(char)) {
+      return null;
+    } else {
+      word = (word ?? '') + char;
+    }
+  }
+  if (word !== null) {
+    words.push(word);
+  }
+  return words;
+}
+
+/**
+ * The script of a command Codex reports wrapped in the shell it runs it
+ * with (`/bin/bash -lc '<script>'`, also `zsh`/`sh` and `-c`), so tool
+ * calls, approvals and the push analysis see what the model wrote; any
+ * other command as it is. `actions`: Codex's parsed actions of the
+ * command, used when the quoting cannot be read and they name a single
+ * command.
+ */
+export function unwrapShellCommand(
+  command: string,
+  actions?: readonly { type?: string; command?: unknown }[] | null,
+): string {
+  const words = shellWords(command);
+  if (words?.length === 3) {
+    const shell = words[0].slice(words[0].lastIndexOf('/') + 1);
+    return WRAPPING_SHELLS.has(shell) &&
+      (words[1] === '-lc' || words[1] === '-c')
+      ? words[2]
+      : command;
+  }
+  if (
+    words === null &&
+    /^(\S*\/)?(bash|zsh|sh) -l?c /.test(command) &&
+    actions?.length === 1 &&
+    typeof actions[0].command === 'string'
+  ) {
+    return actions[0].command;
+  }
+  return command;
+}
+
 /** The tool call(s) an item starts. */
 function callEvents(item: CodexThreadItem): SessionEventInput[] {
   const call = (toolUseId: string, name: string, input: unknown) =>
@@ -140,7 +249,10 @@ function callEvents(item: CodexThreadItem): SessionEventInput[] {
         { type: 'commandExecution' }
       >;
       return [
-        call(item.id, 'Bash', { command: command.command, cwd: command.cwd }),
+        call(item.id, 'Bash', {
+          command: unwrapShellCommand(command.command, command.commandActions),
+          cwd: command.cwd,
+        }),
       ];
     }
     case 'fileChange': {
@@ -207,6 +319,8 @@ function completionEvents(
       parentToolUseId: null,
     }) as const;
   switch (item.type) {
+    // A proposed plan (Markdown) is shown like a message.
+    case 'plan':
     case 'agentMessage': {
       const text = (item as { text: string }).text;
       return text
@@ -380,6 +494,36 @@ function windowsOf(
   return windows;
 }
 
+/**
+ * The metered bucket of the account's plan limits (`limitId`; others, e.g.
+ * of a single model, are not the plan's windows).
+ */
+export const CODEX_MAIN_LIMIT_ID = 'codex';
+
+/** Whether a snapshot is of the plan's main bucket (older servers: no ID). */
+export function isMainLimit(snapshot: CodexRateLimitSnapshot): boolean {
+  return snapshot.limitId === null || snapshot.limitId === CODEX_MAIN_LIMIT_ID;
+}
+
+/**
+ * Merges a sparse rolling update into the last snapshot of its bucket:
+ * windows and metadata the update leaves out stay as they were.
+ */
+export function mergeRateLimits(
+  previous: CodexRateLimitSnapshot | undefined,
+  update: CodexRateLimitSnapshot,
+): CodexRateLimitSnapshot {
+  if (!previous) {
+    return update;
+  }
+  return {
+    ...previous,
+    ...Object.fromEntries(
+      Object.entries(update).filter(([, value]) => value !== null),
+    ),
+  } as CodexRateLimitSnapshot;
+}
+
 /** The limit windows of a rate limit update. */
 export function codexRateLimits(
   snapshot: CodexRateLimitSnapshot,
@@ -392,10 +536,15 @@ export function codexRateLimits(
   }));
 }
 
-/** The account's plan usage from `account/rateLimits/read`. */
+/**
+ * The account's plan usage from `account/rateLimits/read`: the main
+ * bucket of its per-bucket view, else the single-bucket view.
+ */
 export function codexPlanUsage(
-  snapshot: CodexRateLimitSnapshot,
+  single: CodexRateLimitSnapshot,
+  byLimitId?: Record<string, CodexRateLimitSnapshot | undefined> | null,
 ): AgentPlanUsage {
+  const snapshot = byLimitId?.[CODEX_MAIN_LIMIT_ID] ?? single;
   const windows: AgentPlanWindow[] = windowsOf(snapshot).map(
     ({ name, window }) => ({
       window: name,
@@ -437,7 +586,30 @@ export function codexModel(model: CodexModel): ModelOption {
   };
 }
 
-/** The history entries of a thread's turns. */
+/**
+ * The prefix of the client message IDs of input the app itself sends into
+ * a running turn (`turn/steer`, e.g. what it ran instead of a command):
+ * not the user's, so neither shown nor an anchor.
+ */
+export const CODEX_APP_INPUT_PREFIX = 'crm-app:';
+
+function isAppInput(message: { clientId: string | null }): boolean {
+  return message.clientId?.startsWith(CODEX_APP_INPUT_PREFIX) === true;
+}
+
+/** Whether an item had not finished (`inProgress`). */
+function unfinished(item: CodexThreadItem): boolean {
+  return (item as { status?: unknown }).status === 'inProgress';
+}
+
+/**
+ * The history entries of a thread's turns. Context and notes of the app
+ * went to Codex as additional context, not as input, so a user message is
+ * what the user typed. Tools that had not finished when their turn ended
+ * show as not finished, those of a running turn without a result. Codex
+ * keeps no items of its plan updates (`turn/plan/updated`): the to-do list
+ * is not in the history.
+ */
 export function codexHistory(turns: CodexTurn[]): AgentHistoryEntry[] {
   const entries: AgentHistoryEntry[] = [];
   for (const turn of turns) {
@@ -447,6 +619,9 @@ export function codexHistory(turns: CodexTurn[]): AgentHistoryEntry[] {
           CodexThreadItem,
           { type: 'userMessage' }
         >;
+        if (isAppInput(message)) {
+          continue;
+        }
         const id = message.clientId ?? message.id;
         entries.push({
           uuid: id,
@@ -455,25 +630,103 @@ export function codexHistory(turns: CodexTurn[]): AgentHistoryEntry[] {
         });
         continue;
       }
+      const calls = callEvents(item);
       entries.push({
         uuid: item.id,
         isUserMessage: false,
-        events: [...callEvents(item), ...completionEvents(item, false)],
+        events: !unfinished(item)
+          ? [...calls, ...completionEvents(item, false)]
+          : turn.status === 'inProgress'
+            ? calls
+            : [
+                ...calls,
+                ...calls
+                  .filter((event) => event.type === 'tool.call')
+                  .map(
+                    (event): SessionEventInput => ({
+                      type: 'tool.result',
+                      toolUseId: (event as { toolUseId: string }).toolUseId,
+                      isError: true,
+                      content: 'Did not finish (the turn ended).',
+                      truncated: false,
+                      parentToolUseId: null,
+                    }),
+                  ),
+              ],
       });
     }
   }
   return entries;
 }
 
+const USAGE_FIELDS = [
+  'totalTokens',
+  'inputTokens',
+  'cachedInputTokens',
+  'cacheWriteInputTokens',
+  'outputTokens',
+  'reasoningOutputTokens',
+] as const;
+
+/** `current - previous` per field; `null` when a field went down. */
+function usageDelta(
+  current: CodexTokenUsageBreakdown,
+  previous: CodexTokenUsageBreakdown | null,
+): CodexTokenUsageBreakdown | null {
+  const delta = { ...current };
+  for (const field of USAGE_FIELDS) {
+    delta[field] = current[field] - (previous?.[field] ?? 0);
+    if (delta[field] < 0) {
+      return null;
+    }
+  }
+  return delta;
+}
+
+function addUsage(a: UsageTotals, b: UsageTotals): UsageTotals {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheCreationInputTokens:
+      a.cacheCreationInputTokens + b.cacheCreationInputTokens,
+    cacheReadInputTokens: a.cacheReadInputTokens + b.cacheReadInputTokens,
+    costUsd: a.costUsd + b.costUsd,
+  };
+}
+
+const NO_USAGE: UsageTotals = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheCreationInputTokens: 0,
+  cacheReadInputTokens: 0,
+  costUsd: 0,
+};
+
 /**
  * Turns the notifications of one thread into agent events. Keeps what it
  * needs across notifications: streamed messages, the plan's revisions, the
- * thread's cumulative usage and the model.
+ * thread's usage per model, the plan limits per bucket and the model.
+ *
+ * Usage: Codex reports the thread's cumulative total, for all models
+ * together, and restores it when a thread is resumed (an update with the
+ * total so far right after `thread/resume`, before any turn of this
+ * process). Only the growth of the total during this process's turns
+ * counts, for the model of the turn; the result carries the cumulative
+ * usage per model on top of `usageBaseline` (what the app recorded for
+ * the session so far), as the usage tracker expects of an engine.
  */
 export class CodexEventTranslator {
   private readonly streamed = new Set<string>();
   private planRevision = 0;
   private usage: CodexThreadTokenUsage | null = null;
+  /** The thread's total when it last counted (or was restored). */
+  private countedTotal: CodexTokenUsageBreakdown | null = null;
+  /** Turns of this process: their usage counts. */
+  private readonly turns = new Set<string>();
+  /** Cumulative usage per model counted by this process, on the baseline. */
+  private readonly byModel = new Map<string, UsageTotals>();
+  /** The last snapshot of each limit bucket (updates are sparse). */
+  private readonly limits = new Map<string, CodexRateLimitSnapshot>();
   /** The account's usage limit rejected the running turn. */
   private limited = false;
 
@@ -481,6 +734,7 @@ export class CodexEventTranslator {
     readonly threadId: string,
     /** The model the thread runs with (usage and context are counted for it). */
     public model: string,
+    private readonly usageBaseline: Record<string, UsageTotals> = {},
   ) {}
 
   /** The latest token usage (for the context meter). */
@@ -495,6 +749,13 @@ export class CodexEventTranslator {
       return [];
     }
     switch (method) {
+      case 'turn/started': {
+        const turn = p['turn'] as { id?: unknown } | undefined;
+        if (typeof turn?.id === 'string') {
+          this.turns.add(turn.id);
+        }
+        return [];
+      }
       case 'item/started': {
         const item = p['item'] as CodexThreadItem;
         const events = callEvents(item);
@@ -529,6 +790,9 @@ export class CodexEventTranslator {
             CodexThreadItem,
             { type: 'userMessage' }
           >;
+          if (isAppInput(message)) {
+            return [];
+          }
           // The app shows the user's message itself; it anchors what follows.
           return [this.output([], message.clientId ?? message.id)];
         }
@@ -547,12 +811,24 @@ export class CodexEventTranslator {
         ];
       }
       case 'thread/tokenUsage/updated':
-        this.usage = p['tokenUsage'] as CodexThreadTokenUsage;
-        return [];
-      case 'account/rateLimits/updated':
-        return codexRateLimits(p['rateLimits'] as CodexRateLimitSnapshot).map(
-          (limit) => ({ type: 'rate-limit', limit }),
+        this.countUsage(
+          p['tokenUsage'] as CodexThreadTokenUsage,
+          typeof p['turnId'] === 'string' ? p['turnId'] : null,
         );
+        return [];
+      case 'account/rateLimits/updated': {
+        const update = p['rateLimits'] as CodexRateLimitSnapshot;
+        const key = update.limitId ?? CODEX_MAIN_LIMIT_ID;
+        const merged = mergeRateLimits(this.limits.get(key), update);
+        this.limits.set(key, merged);
+        // Only the plan's own bucket is the account's limit windows.
+        return isMainLimit(update)
+          ? codexRateLimits(merged).map((limit) => ({
+              type: 'rate-limit',
+              limit,
+            }))
+          : [];
+      }
       case 'error': {
         const error = p['error'] as { codexErrorInfo?: unknown } | undefined;
         if (isUsageLimit(error?.codexErrorInfo)) {
@@ -568,11 +844,44 @@ export class CodexEventTranslator {
     }
   }
 
-  /** Cumulative usage of the thread, for the turn's result. */
+  private countUsage(
+    usage: CodexThreadTokenUsage,
+    turnId: string | null,
+  ): void {
+    this.usage = usage;
+    const previous = this.countedTotal;
+    this.countedTotal = usage.total;
+    if (turnId === null || !this.turns.has(turnId)) {
+      // The total restored on resume (or another process's turn): so far.
+      return;
+    }
+    // A total that went down starts over (it was reset).
+    const delta =
+      usageDelta(usage.total, previous) ?? usageDelta(usage.total, null);
+    if (!delta) {
+      return;
+    }
+    const totals = codexUsageTotals(delta);
+    if (
+      totals.inputTokens === 0 &&
+      totals.outputTokens === 0 &&
+      totals.cacheCreationInputTokens === 0 &&
+      totals.cacheReadInputTokens === 0
+    ) {
+      return;
+    }
+    const sofar =
+      this.byModel.get(this.model) ??
+      this.usageBaseline[this.model] ??
+      NO_USAGE;
+    this.byModel.set(this.model, addUsage(sofar, totals));
+  }
+
+  /** Cumulative usage per model, for the turn's result. */
   private modelUsage(): AgentModelUsage {
-    return this.usage
-      ? { [this.model]: codexUsageTotals(this.usage.total) }
-      : {};
+    return Object.fromEntries(
+      [...this.byModel].map(([model, totals]) => [model, { ...totals }]),
+    );
   }
 
   private result(turn: CodexTurn): AgentEvent {

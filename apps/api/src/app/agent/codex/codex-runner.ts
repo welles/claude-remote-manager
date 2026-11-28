@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { readdir, readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionPermissionMode } from '@claude-remote-manager/shared-types';
@@ -15,12 +16,17 @@ import type {
   AgentTool,
   AgentUserMessage,
 } from '../agent-runner';
-import type { AgentEvent, AgentHistoryEntry } from '../agent-events';
+import type {
+  AgentApprovalResult,
+  AgentEvent,
+  AgentHistoryEntry,
+} from '../agent-events';
 import { AsyncQueue } from '../async-queue';
 import { loadZod } from '../sdk-agent-runner';
 import type { TranscriptReader } from '../transcript-reader';
 import { CodexAppServer } from './codex-app-server';
 import {
+  CODEX_APP_INPUT_PREFIX,
   CODEX_APP_TOOL_NAMESPACE,
   CodexEventTranslator,
   codexContextUsage,
@@ -28,6 +34,7 @@ import {
   codexModel,
   codexPlanUsage,
   codexToolName,
+  unwrapShellCommand,
 } from './codex-events';
 import type {
   CodexApprovalPolicy,
@@ -45,31 +52,145 @@ export function codexPolicy(mode: SessionPermissionMode): CodexApprovalPolicy {
   return mode === 'on-request' || mode === 'never' ? mode : 'untrusted';
 }
 
-/** The text and image inputs of a message (context and note first). */
+/**
+ * Configuration every thread gets: Codex reads a repository's `CLAUDE.md`
+ * where it has no `AGENTS.md` (project instructions written for Claude
+ * Code apply to Codex sessions of the repository too).
+ */
+export const CODEX_THREAD_CONFIG = {
+  project_doc_fallback_filenames: ['CLAUDE.md'],
+};
+
+/** The text and image inputs of a message: only what the user wrote. */
 export function codexInput(message: AgentUserMessage): CodexUserInput[] {
-  const text = (value: string): CodexUserInput => ({
-    type: 'text',
-    text: value,
-    text_elements: [],
-  });
   return [
-    ...(message.context ? [text(message.context.text)] : []),
-    ...(message.note ? [text(message.note.text)] : []),
     ...(message.images ?? []).map(
       (image): CodexUserInput => ({
         type: 'image',
         url: `data:${image.mediaType};base64,${image.data}`,
       }),
     ),
-    ...(message.text ? [text(message.text)] : []),
-  ];
+    ...(message.text
+      ? [{ type: 'text', text: message.text, text_elements: [] }]
+      : []),
+  ] as CodexUserInput[];
 }
+
+/** One fragment of a turn's `additionalContext`. */
+export interface CodexContextEntry {
+  kind: 'untrusted' | 'application';
+  value: string;
+  /** Labels untrusted content (`[a-z][a-z0-9_]{0,63}`). */
+  name?: string;
+}
+
+/**
+ * A message's context and note as Codex's additional context of the turn,
+ * not as input: the untrusted context (GitHub content) as `untrusted`
+ * (Codex hands it to the model as a tool output, not as the user's
+ * words), the app's note as `application` (a developer message). Neither
+ * is a user message of the thread, so the history shows only what the
+ * user typed. `undefined`: none.
+ */
+export function codexAdditionalContext(
+  message: AgentUserMessage,
+): Record<string, CodexContextEntry> | undefined {
+  const entries: Record<string, CodexContextEntry> = {};
+  if (message.context) {
+    entries['crm_context'] = {
+      kind: 'untrusted',
+      value: message.context.text,
+      name: 'github',
+    };
+  }
+  if (message.note) {
+    entries['crm_note'] = { kind: 'application', value: message.note.text };
+  }
+  return Object.keys(entries).length > 0 ? entries : undefined;
+}
+
+/** Shell syntax that makes a command more than one simple command. */
+const COMPOUND = /[;&|<>`$()\n\\]/;
+
+/**
+ * Whether a command is allowed by one of the session's Bash rules (as
+ * "Allow for this session" stores them, in Claude Code's syntax):
+ * `Bash(<command>)` exactly, `Bash(<prefix>:*)` for the command and its
+ * arguments, `Bash(<pattern with *>)` as a wildcard. Prefixes and
+ * wildcards only match a single simple command (no operators, expansions
+ * or redirections), so an allowed `git status:*` does not allow
+ * `git status; rm -rf ~`.
+ */
+export function matchesBashRule(
+  command: string,
+  rules: readonly string[],
+): boolean {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return false;
+  }
+  for (const rule of rules) {
+    const match = /^Bash\((.+)\)$/s.exec(rule);
+    if (!match) {
+      continue;
+    }
+    const content = match[1].trim();
+    if (!content || content === '*' || content === ':*') {
+      continue;
+    }
+    if (content === trimmed) {
+      return true;
+    }
+    if (COMPOUND.test(trimmed)) {
+      continue;
+    }
+    if (content.endsWith(':*')) {
+      const prefix = content.slice(0, -2).trim();
+      if (prefix && (trimmed === prefix || trimmed.startsWith(`${prefix} `))) {
+        return true;
+      }
+    } else if (content.includes('*')) {
+      const parts = content
+        .split('*')
+        .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      if (new RegExp(`^${parts.join('.*')}$`, 's').test(trimmed)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Found rollouts by home and thread (a thread keeps its file). */
+const rollouts = new Map<string, string>();
 
 /**
  * The rollout file of a thread under a Codex home's `sessions/` (shared by
  * all accounts): Codex resumes a thread of another account by its path.
+ * A found path is remembered until the file is gone (e.g. compressed).
  */
 export async function findRollout(
+  home: string,
+  threadId: string,
+): Promise<string | null> {
+  const key = `${home}\0${threadId}`;
+  const known = rollouts.get(key);
+  if (known) {
+    try {
+      await access(known);
+      return known;
+    } catch {
+      rollouts.delete(key);
+    }
+  }
+  const found = await scanRollouts(home, threadId);
+  if (found) {
+    rollouts.set(key, found);
+  }
+  return found;
+}
+
+async function scanRollouts(
   home: string,
   threadId: string,
 ): Promise<string | null> {
@@ -102,6 +223,29 @@ export async function findRollout(
   return visit(root, 0);
 }
 
+/**
+ * Configuration that keeps the user's MCP servers from starting, for a
+ * process that only reads a thread: each configured server disabled by
+ * name (Codex merges the overrides into its configuration).
+ */
+async function withoutMcpServers(
+  server: CodexAppServer,
+): Promise<Record<string, boolean>> {
+  try {
+    const answer = await server.request<{
+      config?: { mcp_servers?: Record<string, unknown> | null };
+    }>('config/read', {});
+    return Object.fromEntries(
+      Object.keys(answer.config?.mcp_servers ?? {}).map((name) => [
+        `mcp_servers.${name}.enabled`,
+        false,
+      ]),
+    );
+  } catch {
+    return {};
+  }
+}
+
 /** Where the runner finds Codex. */
 export interface CodexRunnerConfig {
   executable: string;
@@ -122,8 +266,6 @@ export interface CodexRunnerConfig {
  */
 @Injectable()
 export class CodexRunner implements AgentRunner {
-  private readonly logger = new Logger(CodexRunner.name);
-
   constructor(
     private readonly config: CodexRunnerConfig,
     private readonly launcher: ProcessLauncher,
@@ -154,19 +296,26 @@ export class CodexRunner implements AgentRunner {
     try {
       return await task({
         supportedModels: async () => {
-          const answer = await server.request<{ data: CodexModel[] }>(
-            'model/list',
-            {},
-          );
-          return answer.data.filter((model) => !model.hidden).map(codexModel);
+          const models: CodexModel[] = [];
+          let cursor: string | null = null;
+          // Page by page; a cursor seen before ends it (never loops).
+          const seen = new Set<string>();
+          do {
+            const answer: { data: CodexModel[]; nextCursor?: string | null } =
+              await server.request('model/list', cursor ? { cursor } : {});
+            models.push(...answer.data);
+            cursor = answer.nextCursor ?? null;
+            if (cursor !== null && seen.has(cursor)) {
+              break;
+            }
+            if (cursor !== null) {
+              seen.add(cursor);
+            }
+          } while (cursor !== null);
+          return models.filter((model) => !model.hidden).map(codexModel);
         },
         supportedCommands: async () => [],
-        planUsage: async () => {
-          const answer = await server.request<{
-            rateLimits: CodexRateLimitSnapshot;
-          }>('account/rateLimits/read', {});
-          return codexPlanUsage(answer.rateLimits);
-        },
+        planUsage: async () => readPlanUsage(server),
       });
     } finally {
       server.close();
@@ -179,8 +328,15 @@ export class CodexRunner implements AgentRunner {
     );
   }
 
-  /** Reads a thread's history (any account's, through the shared rollouts). */
-  async history(threadId: string, cwd: string): Promise<AgentHistoryEntry[]> {
+  /**
+   * Reads a thread's history (any account's, through the shared
+   * rollouts). Codex knows a thread of another home only once it resumed
+   * it by its path; the process runs in the temporary directory and the
+   * thread keeps its own working directory (which may be gone: the
+   * session's first directory, removed since), without the user's MCP
+   * servers and without the turns in the resume's answer.
+   */
+  async history(threadId: string): Promise<AgentHistoryEntry[]> {
     const path = await findRollout(this.config.baseHome, threadId);
     if (!path) {
       return [];
@@ -189,10 +345,15 @@ export class CodexRunner implements AgentRunner {
       executable: this.config.executable,
       launcher: this.launcher,
       home: this.config.baseHome,
-      cwd,
+      cwd: tmpdir(),
     });
     try {
-      await server.request('thread/resume', { threadId, path, cwd });
+      await server.request('thread/resume', {
+        threadId,
+        path,
+        excludeTurns: true,
+        config: await withoutMcpServers(server),
+      });
       const answer = await server.request<{
         thread: { turns?: CodexTurn[] };
       }>('thread/read', { threadId, includeTurns: true });
@@ -203,6 +364,15 @@ export class CodexRunner implements AgentRunner {
   }
 }
 
+/** The plan limits, the main bucket where Codex reports buckets. */
+async function readPlanUsage(server: CodexAppServer) {
+  const answer = await server.request<{
+    rateLimits: CodexRateLimitSnapshot;
+    rateLimitsByLimitId?: Record<string, CodexRateLimitSnapshot> | null;
+  }>('account/rateLimits/read', {});
+  return codexPlanUsage(answer.rateLimits, answer.rateLimitsByLimitId);
+}
+
 /** Codex's history reader (see `TranscriptReader`). */
 export class CodexTranscriptReader implements TranscriptReader {
   constructor(
@@ -210,8 +380,8 @@ export class CodexTranscriptReader implements TranscriptReader {
     private readonly baseHome: string,
   ) {}
 
-  read(threadId: string, cwd: string): Promise<AgentHistoryEntry[]> {
-    return this.runner.history(threadId, cwd);
+  read(threadId: string): Promise<AgentHistoryEntry[]> {
+    return this.runner.history(threadId);
   }
 
   async exists(threadId: string): Promise<boolean> {
@@ -223,21 +393,42 @@ export class CodexTranscriptReader implements TranscriptReader {
     if (!path) {
       return null;
     }
-    const { stat } = await import('node:fs/promises');
     const info = await stat(path);
     return `${info.size}@${info.mtimeMs}`;
   }
 }
 
+/** Input of the app's own sent into a running turn (see `steer`). */
+const APP_INPUT_TEXT =
+  '[Message from the session manager, not from the user: see its note.]';
+
 /** One running Codex process with its thread. */
 class CodexProcess implements AgentRun {
+  private readonly logger = new Logger('CodexProcess');
   private readonly queue = new AsyncQueue<AgentEvent[]>();
   private readonly pending: AgentUserMessage[] = [];
+  /** The changes of running `fileChange` items (for their approval). */
   private readonly fileChanges = new Map<string, CodexFileUpdateChange[]>();
+  /** Open server requests by JSON-RPC ID: aborted once Codex resolves one. */
+  private readonly openRequests = new Map<number | string, AbortController>();
+  /** Bash rules allowed for this session (stored ones and new ones). */
+  private readonly bashRules: string[];
+  /**
+   * What the app tells Codex with the next turn, when it could not tell
+   * the turn it belonged to (it had ended).
+   */
+  private readonly appNotes: string[] = [];
+  /** Notifications that came before the thread was known. */
+  private readonly early: [string, unknown][] = [];
   private server!: CodexAppServer;
   private translator!: CodexEventTranslator;
   private threadId = '';
+  /** The running turn's ID, `starting` until Codex named it. */
   private turnId: string | null = null;
+  /** Counts turn/start requests: only the latest one's answer counts. */
+  private turnStarts = 0;
+  /** An interrupt asked for before the turn had its ID. */
+  private interruptWanted = false;
   private model: string | null;
   private policy: CodexApprovalPolicy;
   private closed = false;
@@ -249,6 +440,9 @@ class CodexProcess implements AgentRun {
   ) {
     this.model = options.model;
     this.policy = codexPolicy(options.permissionMode);
+    this.bashRules = (options.allowedTools ?? []).filter((rule) =>
+      rule.startsWith('Bash('),
+    );
   }
 
   static async start(
@@ -289,7 +483,7 @@ class CodexProcess implements AgentRun {
       env: this.options.env,
       cwd: this.options.cwd,
       onNotification: (method, params) => this.notification(method, params),
-      onRequest: (method, params) => this.serverRequest(method, params),
+      onRequest: (method, params, id) => this.serverRequest(method, params, id),
       onExit: (error) => {
         if (error && !this.closed) {
           this.queue.fail(error);
@@ -309,11 +503,15 @@ class CodexProcess implements AgentRun {
       // Full access, as Claude Code has; asking is the approval policy's.
       sandbox: 'danger-full-access',
       approvalPolicy: this.policy,
+      config: CODEX_THREAD_CONFIG,
       ...(this.model ? { model: this.model } : {}),
       ...(developerInstructions ? { developerInstructions } : {}),
     };
     let started: CodexThreadStartResponse;
     if (this.options.resume) {
+      // The thread keeps the tools it started with: Codex takes dynamic
+      // tools only at thread/start (the app gives every thread all of its
+      // tools, see `AgentEngine.fixedTools`).
       const path = await findRollout(home, this.options.resume);
       started = await this.server.request<CodexThreadStartResponse>(
         'thread/resume',
@@ -333,6 +531,7 @@ class CodexProcess implements AgentRun {
     this.translator = new CodexEventTranslator(
       this.threadId,
       started.model ?? started.thread.model ?? 'codex',
+      this.options.usageBaseline ?? {},
     );
     this.emit([
       {
@@ -342,6 +541,9 @@ class CodexProcess implements AgentRun {
         terminalCommands: [],
       },
     ]);
+    for (const [method, params] of this.early.splice(0)) {
+      this.notification(method, params);
+    }
   }
 
   send(message: AgentUserMessage): void {
@@ -354,36 +556,42 @@ class CodexProcess implements AgentRun {
   }
 
   private startTurn(message: AgentUserMessage): void {
+    const start = ++this.turnStarts;
     this.turnId = 'starting';
+    this.interruptWanted = false;
+    const context = {
+      ...(codexAdditionalContext(message) ?? {}),
+      ...this.takeAppNotes(),
+    };
     this.server
       .request<{ turn: { id: string } }>('turn/start', {
         threadId: this.threadId,
         clientUserMessageId: message.id,
         input: codexInput(message),
+        ...(Object.keys(context).length > 0
+          ? { additionalContext: context }
+          : {}),
         approvalPolicy: this.policy,
         ...(this.model ? { model: this.model } : {}),
       })
       .then((answer) => {
-        if (this.turnId === 'starting') {
-          this.turnId = answer.turn.id;
+        // Only this request's turn, if no notification named it already
+        // (or ended it, and a newer turn is starting).
+        if (start === this.turnStarts && this.turnId === 'starting') {
+          this.turnKnown(answer.turn.id);
         }
       })
       .catch((error: unknown) => {
+        if (start !== this.turnStarts) {
+          return;
+        }
         this.turnId = null;
+        this.interruptWanted = false;
+        // One error: the result's text is shown as the turn's error.
         this.emit([
-          {
-            type: 'output',
-            events: [
-              {
-                type: 'error',
-                message: `Codex did not start the turn: ${error instanceof Error ? error.message : String(error)}`,
-              },
-            ],
-            anchor: null,
-            images: [],
-            contextChanged: false,
-          },
-          this.failedResult(),
+          this.failedResult(
+            `Codex did not start the turn: ${error instanceof Error ? error.message : String(error)}`,
+          ),
         ]);
         // Messages queued behind it are not left waiting.
         const next = this.pending.shift();
@@ -393,12 +601,21 @@ class CodexProcess implements AgentRun {
       });
   }
 
-  private failedResult(): AgentEvent {
+  /** The running turn has its ID: an interrupt asked for meanwhile is sent. */
+  private turnKnown(turnId: string): void {
+    this.turnId = turnId;
+    if (this.interruptWanted) {
+      this.interruptWanted = false;
+      void this.sendInterrupt(turnId);
+    }
+  }
+
+  private failedResult(text: string): AgentEvent {
     return {
       type: 'result',
       subtype: 'success',
       isError: true,
-      text: 'The turn could not start.',
+      text,
       errors: [],
       durationMs: 0,
       numTurns: 1,
@@ -410,30 +627,46 @@ class CodexProcess implements AgentRun {
 
   private notification(method: string, params: unknown): void {
     if (!this.translator) {
+      // Before the thread is known (e.g. the usage Codex restores right
+      // after `thread/resume`, in the same chunk as its answer): kept.
+      this.early.push([method, params]);
       return;
     }
-    const threadId = (params as { threadId?: unknown } | null)?.threadId;
+    const p = (params ?? {}) as Record<string, unknown>;
+    if (method === 'serverRequest/resolved') {
+      // Codex settled a request itself (e.g. the turn ended): the app
+      // stops waiting for the user.
+      const id = p['requestId'];
+      if (typeof id === 'number' || typeof id === 'string') {
+        this.openRequests.get(id)?.abort();
+      }
+      return;
+    }
+    const threadId = p['threadId'];
     if (typeof threadId === 'string' && threadId !== this.threadId) {
       // Another thread's (a subagent's) turns are not this thread's: they
       // must not end the running turn or start a queued message.
       return;
     }
-    if (method === 'item/started') {
-      const item = (params as { item?: CodexThreadItem }).item;
-      if (item?.type === 'fileChange') {
-        // Kept for the approval of the change.
-        this.fileChanges.set(
-          item.id,
-          (item as { changes: CodexFileUpdateChange[] }).changes,
-        );
-      }
+    const item = p['item'] as CodexThreadItem | undefined;
+    if (method === 'item/started' && item?.type === 'fileChange') {
+      // Kept for the approval of the change.
+      this.fileChanges.set(
+        item.id,
+        (item as { changes: CodexFileUpdateChange[] }).changes,
+      );
+    }
+    if (method === 'item/completed' && item) {
+      this.fileChanges.delete(item.id);
     }
     if (method === 'turn/started') {
-      this.turnId = (params as { turn: { id: string } }).turn.id;
+      this.turnKnown((p['turn'] as { id: string }).id);
     }
     const events = this.translator.translate(method, params);
     if (method === 'turn/completed') {
       this.turnId = null;
+      this.interruptWanted = false;
+      this.fileChanges.clear();
       const next = this.pending.shift();
       for (const event of events) {
         if (event.type === 'result') {
@@ -456,9 +689,26 @@ class CodexProcess implements AgentRun {
   private async serverRequest(
     method: string,
     params: unknown,
+    id: number | string,
   ): Promise<unknown> {
-    const p = (params ?? {}) as Record<string, unknown>;
-    const signal = new AbortController().signal;
+    const controller = new AbortController();
+    this.openRequests.set(id, controller);
+    try {
+      return await this.answerRequest(
+        method,
+        (params ?? {}) as Record<string, unknown>,
+        controller.signal,
+      );
+    } finally {
+      this.openRequests.delete(id);
+    }
+  }
+
+  private async answerRequest(
+    method: string,
+    p: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<unknown> {
     const base = {
       title: null,
       displayName: null,
@@ -470,7 +720,16 @@ class CodexProcess implements AgentRun {
     };
     switch (method) {
       case 'item/commandExecution/requestApproval': {
-        const command = typeof p['command'] === 'string' ? p['command'] : '';
+        const raw = typeof p['command'] === 'string' ? p['command'] : '';
+        const actions = Array.isArray(p['commandActions'])
+          ? (p['commandActions'] as { command?: unknown }[])
+          : null;
+        // What the model wrote, not the shell Codex wraps it in.
+        const command = unwrapShellCommand(raw, actions);
+        if (command && matchesBashRule(command, this.bashRules)) {
+          // Allowed for the session earlier (also by an earlier process).
+          return { decision: 'accept' };
+        }
         const result = await this.options.approve({
           ...base,
           toolName: 'Bash',
@@ -494,10 +753,16 @@ class CodexProcess implements AgentRun {
           return { decision: result.interrupt ? 'cancel' : 'decline' };
         }
         const updated = result.updatedInput?.['command'];
-        if (typeof updated === 'string' && updated !== command) {
-          // The app ran something itself instead (autofix): not Codex.
+        if (
+          result.ranByApp ||
+          (typeof updated === 'string' && updated !== command)
+        ) {
+          // The app ran something itself instead (Autofix): Codex does not
+          // run it and learns what came of it.
+          this.tellOutcome(command, result.ranByApp ?? null);
           return { decision: 'decline' };
         }
+        this.rememberRules(result);
         return {
           decision:
             (result.updatedPermissions?.length ?? 0) > 0
@@ -531,15 +796,113 @@ class CodexProcess implements AgentRun {
         return { decision: 'accept' };
       }
       case 'item/tool/call':
-        return this.appTool(p);
+        return this.appTool(p, signal);
+      // Requests the app cannot put to the user: answered so that the turn
+      // goes on without them, never left waiting.
+      case 'item/tool/requestUserInput':
+        this.logger.warn(
+          `Codex asked the user questions (${method}); answered with none`,
+        );
+        return { answers: {} };
+      case 'mcpServer/elicitation/request':
+        this.logger.warn(`An MCP server asked for input (${method}); declined`);
+        return { action: 'decline', content: null, _meta: null };
+      case 'item/permissions/requestApproval':
+        // Full access already: nothing more to grant.
+        this.logger.warn(
+          `Codex asked for further permissions (${method}); none granted`,
+        );
+        return { permissions: {}, scope: 'turn' };
+      case 'applyPatchApproval':
+      case 'execCommandApproval':
+        // Requests of Codex's older API, not used with threads.
+        this.logger.warn(`Codex sent ${method}; denied`);
+        return {
+          decision: { denied: { rejection: 'Not supported by this app.' } },
+        };
       default:
-        // Nothing else is asked with full access; refused if it is.
+        this.logger.warn(
+          `Codex sent ${method}, which this app does not handle`,
+        );
         throw new Error(`${method} is not supported by this app`);
     }
   }
 
+  /** Bash rules the user just allowed for the session count from now on. */
+  private rememberRules(result: AgentApprovalResult): void {
+    if (result.behavior !== 'allow') {
+      return;
+    }
+    for (const update of result.updatedPermissions ?? []) {
+      if (update.type === 'addRules' && update.behavior === 'allow') {
+        for (const rule of update.rules) {
+          if (rule.toolName === 'Bash' && rule.ruleContent) {
+            this.bashRules.push(`Bash(${rule.ruleContent})`);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Tells the running turn what came of a command the app ran itself
+   * instead of Codex (declined to Codex, which has no reason to give with
+   * a decline): sent into the turn with `turn/steer` as a note of the app
+   * (additional context) once the decline is answered; when the turn has
+   * ended by then, with the next turn instead.
+   */
+  private tellOutcome(
+    command: string,
+    outcome: { ok: boolean; output: string } | null,
+  ): void {
+    const note = [
+      `The session manager ran \`${command}\` itself instead of you (it runs git add, commit and push during Autofix), so it was declined to you; do not run it again.`,
+      outcome
+        ? `It ${outcome.ok ? 'succeeded' : 'failed'}. Output:\n${outcome.output}`
+        : 'Its outcome is not known.',
+    ].join('\n');
+    setImmediate(() => {
+      void this.steer(note);
+    });
+  }
+
+  private async steer(note: string): Promise<void> {
+    const turnId = this.turnId;
+    if (!turnId || turnId === 'starting' || !this.server.running) {
+      this.appNotes.push(note);
+      return;
+    }
+    try {
+      await this.server.request('turn/steer', {
+        threadId: this.threadId,
+        expectedTurnId: turnId,
+        clientUserMessageId: `${CODEX_APP_INPUT_PREFIX}${randomUUID()}`,
+        input: [{ type: 'text', text: APP_INPUT_TEXT, text_elements: [] }],
+        additionalContext: {
+          crm_app_note: { kind: 'application', value: note },
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Could not tell Codex's turn what the app ran: ${String(error)}`,
+      );
+      this.appNotes.push(note);
+    }
+  }
+
+  /** Notes the app could not send into their turn, for the next one. */
+  private takeAppNotes(): Record<string, CodexContextEntry> {
+    const notes = this.appNotes.splice(0);
+    return notes.length > 0
+      ? { crm_app_note: { kind: 'application', value: notes.join('\n\n') } }
+      : {};
+  }
+
   /** A call of one of the app's own tools (Codex's dynamic tools). */
-  private async appTool(p: Record<string, unknown>): Promise<unknown> {
+  private async appTool(
+    p: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<unknown> {
     const name = String(p['tool'] ?? '');
     const tool = this.options.tools?.find((entry) => entry.name === name);
     const fail = (text: string) => ({
@@ -547,7 +910,13 @@ class CodexProcess implements AgentRun {
       success: false,
     });
     if (!tool) {
-      return fail(`Unknown tool ${name}`);
+      return fail(
+        `Unknown tool ${name}: this session manager does not offer it (any more).`,
+      );
+    }
+    if (tool.unavailable) {
+      // Registered for the thread, but not for this session now.
+      return fail(tool.unavailable);
     }
     const input =
       typeof p['arguments'] === 'object' && p['arguments'] !== null
@@ -586,7 +955,7 @@ class CodexProcess implements AgentRun {
         mcpServer: { name: CODEX_APP_TOOL_NAMESPACE, source: 'sdk' },
         suggestions: [],
         suppressAlwaysAllow: false,
-        signal: new AbortController().signal,
+        signal,
       });
       if (result.behavior === 'deny') {
         return fail(result.message);
@@ -600,24 +969,33 @@ class CodexProcess implements AgentRun {
         success: output.isError !== true,
       };
     } catch (error) {
-      this.logger().warn(`App tool ${name} failed: ${String(error)}`);
+      this.logger.warn(`App tool ${name} failed: ${String(error)}`);
       return fail(error instanceof Error ? error.message : String(error));
     }
   }
 
-  private logger(): Logger {
-    return new Logger('CodexProcess');
-  }
-
   async interrupt(): Promise<void> {
     const turnId = this.turnId;
-    if (!turnId || turnId === 'starting') {
+    if (!turnId) {
       return;
     }
-    await this.server.request('turn/interrupt', {
-      threadId: this.threadId,
-      turnId,
-    });
+    if (turnId === 'starting') {
+      // Sent once Codex names the turn.
+      this.interruptWanted = true;
+      return;
+    }
+    await this.sendInterrupt(turnId);
+  }
+
+  private async sendInterrupt(turnId: string): Promise<void> {
+    try {
+      await this.server.request('turn/interrupt', {
+        threadId: this.threadId,
+        turnId,
+      });
+    } catch (error) {
+      this.logger.warn(`Codex did not interrupt the turn: ${String(error)}`);
+    }
   }
 
   async contextUsage() {
@@ -632,10 +1010,7 @@ class CodexProcess implements AgentRun {
   }
 
   async planUsage() {
-    const answer = await this.server.request<{
-      rateLimits: CodexRateLimitSnapshot;
-    }>('account/rateLimits/read', {});
-    return codexPlanUsage(answer.rateLimits);
+    return readPlanUsage(this.server);
   }
 
   async setPermissionMode(mode: SessionPermissionMode): Promise<void> {
@@ -664,6 +1039,9 @@ class CodexProcess implements AgentRun {
 
   close(): void {
     this.closed = true;
+    for (const controller of this.openRequests.values()) {
+      controller.abort();
+    }
     this.server?.close();
     this.queue.close();
   }

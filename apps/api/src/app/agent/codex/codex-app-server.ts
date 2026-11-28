@@ -4,6 +4,8 @@ import type { ProcessLauncher } from '../../common/process-isolation';
 /** How long a request may take before it fails (turns run longer). */
 export const CODEX_REQUEST_TIMEOUT_MS = 60_000;
 const STDERR_LINES = 8;
+/** How long Codex may take to end after SIGTERM before it is killed. */
+export const CODEX_KILL_TIMEOUT_MS = 5_000;
 
 /** An error answer of the app server. */
 export class CodexRpcError extends Error {
@@ -27,8 +29,15 @@ export interface CodexAppServerOptions {
   cwd: string;
   /** Notifications of the server (no answer). */
   onNotification?: (method: string, params: unknown) => void;
-  /** Requests of the server (approvals, tool calls); the answer goes back. */
-  onRequest?: (method: string, params: unknown) => Promise<unknown>;
+  /**
+   * Requests of the server (approvals, tool calls); the answer goes back.
+   * `id`: the request's JSON-RPC ID (`serverRequest/resolved` names it).
+   */
+  onRequest?: (
+    method: string,
+    params: unknown,
+    id: number | string,
+  ) => Promise<unknown>;
   /** The process ended (`null`: on purpose). */
   onExit?: (error: Error | null) => void;
 }
@@ -144,11 +153,23 @@ export class CodexAppServer {
     });
   }
 
-  /** Ends the process. */
+  /** Ends the process (killed when it does not end in time). */
   close(): void {
+    if (this.closing) {
+      return;
+    }
     this.closing = true;
     this.child.stdin?.end();
     this.child.kill('SIGTERM');
+    if (!this.ended) {
+      const timer = setTimeout(() => {
+        if (!this.ended) {
+          this.child.kill('SIGKILL');
+        }
+      }, CODEX_KILL_TIMEOUT_MS);
+      timer.unref?.();
+      this.child.once('close', () => clearTimeout(timer));
+    }
   }
 
   get running(): boolean {
@@ -230,7 +251,7 @@ export class CodexAppServer {
   ): Promise<void> {
     try {
       const result = this.options.onRequest
-        ? await this.options.onRequest(method, params)
+        ? await this.options.onRequest(method, params, id)
         : null;
       this.write({ jsonrpc: '2.0', id, result });
     } catch (error) {

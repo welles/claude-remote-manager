@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -23,9 +24,11 @@ import type {
 import {
   CodexRunner,
   CodexTranscriptReader,
+  codexAdditionalContext,
   codexInput,
   codexPolicy,
   findRollout,
+  matchesBashRule,
 } from './codex-runner';
 import {
   fakeCodexPids,
@@ -213,6 +216,8 @@ describe('CodexRunner', () => {
     expect(fakeCodexRequests(account).map((r) => r.method)).toEqual([
       'initialize',
       'initialized',
+      // Both pages.
+      'model/list',
       'model/list',
       'account/rateLimits/read',
     ]);
@@ -255,18 +260,24 @@ describe('CodexRunner', () => {
         },
       }),
     );
-    expect(turn).toContainEqual(
-      expect.objectContaining({
-        type: 'rate-limit',
-        limit: expect.objectContaining({ window: 'five_hour' }),
-      }),
-    );
+    // Only the plan's main bucket, merged with sparse updates.
+    expect(
+      turn
+        .filter((event) => event.type === 'rate-limit')
+        .map((event) => (event as { limit: unknown }).limit),
+    ).toEqual([
+      expect.objectContaining({ window: 'five_hour', utilization: 25 }),
+      expect.objectContaining({ window: 'seven_day', utilization: 60 }),
+      expect.objectContaining({ window: 'five_hour', utilization: 30 }),
+      expect.objectContaining({ window: 'seven_day', utilization: 60 }),
+    ]);
 
     expect(requests('thread/start')).toEqual([
       {
         cwd,
         sandbox: 'danger-full-access',
         approvalPolicy: 'untrusted',
+        config: { project_doc_fallback_filenames: ['CLAUDE.md'] },
         developerInstructions: 'Be brief.',
         dynamicTools: [],
       },
@@ -312,18 +323,26 @@ describe('CodexRunner', () => {
     expect(call).toEqual(
       expect.objectContaining({
         toolName: 'Bash',
-        input: { command: 'echo hi', cwd },
+        // The script, not the shell Codex wraps it in.
+        input: { command: "echo 'hi'", cwd },
         toolUseId: expect.stringMatching(/^cmd-/),
         description: 'Wants to say hi',
         mcpServer: null,
         suggestions: [
           {
             type: 'addRules',
-            rules: [{ toolName: 'Bash', ruleContent: 'echo hi' }],
+            rules: [{ toolName: 'Bash', ruleContent: "echo 'hi'" }],
             behavior: 'allow',
             destination: 'session',
           },
         ],
+      }),
+    );
+    expect(logOf(turn.events)).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.call',
+        name: 'Bash',
+        input: { command: "echo 'hi'", cwd },
       }),
     );
     expect(texts(turn.events)).toEqual(['decision: accept']);
@@ -337,24 +356,25 @@ describe('CodexRunner', () => {
     );
 
     const answers: [AgentApprovalResult, string][] = [
+      [{ behavior: 'deny', message: 'no' }, 'decision: decline'],
+      [
+        { behavior: 'allow', updatedInput: { command: 'echo other' } },
+        'decision: decline',
+      ],
+      // Allowed for the session: the next one is not asked any more.
       [
         {
           behavior: 'allow',
           updatedPermissions: [
             {
               type: 'addRules',
-              rules: [{ toolName: 'Bash', ruleContent: 'echo hi' }],
+              rules: [{ toolName: 'Bash', ruleContent: "echo 'hi'" }],
               behavior: 'allow',
               destination: 'session',
             },
           ],
         },
         'decision: acceptForSession',
-      ],
-      [{ behavior: 'deny', message: 'no' }, 'decision: decline'],
-      [
-        { behavior: 'allow', updatedInput: { command: 'echo other' } },
-        'decision: decline',
       ],
     ];
     for (const [answer, text] of answers) {
@@ -364,13 +384,19 @@ describe('CodexRunner', () => {
       expect(texts(turn.events)).toEqual([text]);
     }
 
+    approve.mockClear();
+    run.send(message('run-command'));
+    turn = await events.result();
+    expect(approve).not.toHaveBeenCalled();
+    expect(texts(turn.events)).toEqual(['decision: accept']);
+
     // Denied with interrupt: Codex cancels the turn.
     approve.mockResolvedValueOnce({
       behavior: 'deny',
       message: 'stop',
       interrupt: true,
     });
-    run.send(message('run-command'));
+    run.send(message('git-push'));
     turn = await events.result();
     expect(texts(turn.events)).toEqual([]);
     expect(turn.result.isError).toBe(false);
@@ -483,7 +509,9 @@ describe('CodexRunner', () => {
 
       run.send(message('app-tool:missing'));
       turn = await events.result();
-      expect(texts(turn.events)).toEqual(['tool said: Unknown tool missing']);
+      expect(texts(turn.events)).toEqual([
+        'tool said: Unknown tool missing: this session manager does not offer it (any more).',
+      ]);
       expect(handler).toHaveBeenCalledTimes(1);
     });
 
@@ -590,16 +618,12 @@ describe('CodexRunner', () => {
   it('reports a turn Codex refuses to start, and goes on', async () => {
     const { run, events } = await start(message('fail-start'));
     const { result, events: turn } = await events.result();
-    expect(logOf(turn)).toEqual([
-      {
-        type: 'error',
-        message: 'Codex did not start the turn: turn refused',
-      },
-    ]);
+    // One error: the result's text.
+    expect(logOf(turn)).toEqual([]);
     expect(result).toEqual(
       expect.objectContaining({
         isError: true,
-        text: 'The turn could not start.',
+        text: 'Codex did not start the turn: turn refused',
       }),
     );
     run.send(message('again'));
@@ -632,8 +656,11 @@ describe('CodexRunner', () => {
         approvalPolicy: 'never',
       }),
     ]);
-    // Usage counts for the new model from then on.
-    expect(Object.keys(result.usage)).toEqual(['gpt-5.5-codex']);
+    // Each turn's usage counts for its model, cumulative per model.
+    expect(result.usage).toEqual({
+      'gpt-5.4': expect.objectContaining({ outputTokens: 200 }),
+      'gpt-5.5-codex': expect.objectContaining({ outputTokens: 200 }),
+    });
     // `null`: Codex's default, sent as no model.
     await run.setModel(null);
     run.send(message('three'));
@@ -675,7 +702,21 @@ describe('CodexRunner', () => {
     expect(requests('thread/start', account)).toEqual([]);
     second.run.close();
 
-    const history = await runner.history(threadId, cwd);
+    // The history is read without the session's directory or MCP servers.
+    writeFileSync(
+      join(home, 'fake-mcp-servers'),
+      JSON.stringify({ docs: { command: 'docs-mcp' } }),
+    );
+    rmSync(cwd, { recursive: true });
+    const history = await runner.history(threadId);
+    const reads = requests('thread/resume', home);
+    expect(reads.at(-1)).toEqual({
+      threadId,
+      path: expect.stringContaining(threadId),
+      excludeTurns: true,
+      config: { 'mcp_servers.docs.enabled': false },
+    });
+    expect(existsSync(join(home, 'fake-mcp-started'))).toBe(false);
     const users = history.filter((entry) => entry.isUserMessage);
     expect(users.map((entry) => entry.events)).toEqual([
       [{ type: 'user.message', id: expect.any(String), text: 'remember this' }],
@@ -689,7 +730,7 @@ describe('CodexRunner', () => {
       ),
     ).toEqual(['Echo: remember this', 'Echo: and this']);
     expect(
-      await runner.history('00000000-0000-0000-0000-000000000000', cwd),
+      await runner.history('00000000-0000-0000-0000-000000000000'),
     ).toEqual([]);
 
     const reader = new CodexTranscriptReader(runner, home);
@@ -697,7 +738,263 @@ describe('CodexRunner', () => {
     expect(await reader.exists('unknown')).toBe(false);
     expect(await reader.stamp(threadId)).toMatch(/^\d+@[\d.]+$/);
     expect(await reader.stamp('unknown')).toBeNull();
-    expect((await reader.read(threadId, cwd)).length).toBe(history.length);
+    expect((await reader.read(threadId)).length).toBe(history.length);
+  });
+
+  it('reports the script of a wrapped command, also for the push analysis', async () => {
+    const { events } = await start(message('git-push'));
+    const turn = await events.result();
+    expect(approve.mock.calls[0][0].input).toEqual({
+      command: 'git push origin HEAD',
+      cwd,
+    });
+    expect(logOf(turn.events)).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.call',
+        name: 'Bash',
+        input: { command: 'git push origin HEAD', cwd },
+      }),
+    );
+  });
+
+  it('runs commands allowed for the session without asking, also after a restart', async () => {
+    const { run, events } = await start(message('run-command'), {
+      allowedTools: ["Bash(echo 'hi')"],
+    });
+    let turn = await events.result();
+    expect(approve).not.toHaveBeenCalled();
+    expect(texts(turn.events)).toEqual(['decision: accept']);
+    run.close();
+
+    // A rule the user allows now counts for the rest of the process.
+    const second = await start(message('git-push'));
+    approve.mockResolvedValueOnce({
+      behavior: 'allow',
+      updatedPermissions: [
+        {
+          type: 'addRules',
+          rules: [{ toolName: 'Bash', ruleContent: 'git push origin HEAD' }],
+          behavior: 'allow',
+          destination: 'session',
+        },
+      ],
+    });
+    turn = await second.events.result();
+    expect(texts(turn.events)).toEqual(['decision: acceptForSession']);
+    second.run.send(message('git-push'));
+    turn = await second.events.result();
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(texts(turn.events)).toEqual(['decision: accept']);
+  });
+
+  it('declines a command the app ran itself and tells the turn the outcome', async () => {
+    approve.mockResolvedValueOnce({
+      behavior: 'allow',
+      updatedInput: { command: "printf '%s' 'x' | base64 -d" },
+      ranByApp: { ok: true, output: 'pushed to origin' },
+    });
+    const { events } = await start(message('git-push'));
+    const turn = await events.result();
+    expect(texts(turn.events)).toEqual(['decision: decline']);
+    const [steer] = requests('turn/steer');
+    const threadId = (events.all[0] as { engineSessionId: string })
+      .engineSessionId;
+    expect(steer).toEqual({
+      threadId,
+      expectedTurnId: expect.stringMatching(/^turn-/),
+      clientUserMessageId: expect.stringMatching(/^crm-app:/),
+      input: [expect.objectContaining({ type: 'text' })],
+      additionalContext: {
+        crm_app_note: {
+          kind: 'application',
+          value: expect.stringContaining(
+            'It succeeded. Output:\npushed to origin',
+          ),
+        },
+      },
+    });
+    // The app's input is neither shown nor an anchor.
+    expect(turn.events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'output',
+        anchor: expect.stringMatching(/^crm-app:/),
+      }),
+    );
+    const history = await runner.history(threadId);
+    expect(
+      history.filter((entry) => entry.isUserMessage).map((e) => e.events),
+    ).toEqual([
+      [{ type: 'user.message', id: `client-${counter}`, text: 'git-push' }],
+    ]);
+  });
+
+  it('sends context and note as additional context, and the history shows only the user’s text', async () => {
+    const { events } = await start({
+      id: 'with-context',
+      text: 'look at #12',
+      context: { id: 'ctx', text: 'Issue #12: broken' },
+      note: { id: 'note', text: 'The user added a repository.' },
+    });
+    await events.result();
+    expect(requests('turn/start')[0]).toEqual(
+      expect.objectContaining({
+        input: [{ type: 'text', text: 'look at #12', text_elements: [] }],
+        additionalContext: {
+          crm_context: {
+            kind: 'untrusted',
+            value: 'Issue #12: broken',
+            name: 'github',
+          },
+          crm_note: {
+            kind: 'application',
+            value: 'The user added a repository.',
+          },
+        },
+      }),
+    );
+    const threadId = (events.all[0] as { engineSessionId: string })
+      .engineSessionId;
+    const history = await runner.history(threadId);
+    expect(history.find((entry) => entry.isUserMessage)?.events).toEqual([
+      { type: 'user.message', id: 'with-context', text: 'look at #12' },
+    ]);
+  });
+
+  it('keeps the thread’s tools when resumed with a changed tool list', async () => {
+    const handler = jest.fn(async () => ({ text: 'ran' }));
+    const tool = (name: string, unavailable?: string): AgentTool => ({
+      name,
+      description: name,
+      inputSchema: (z) => ({ value: z.number() }),
+      handler,
+      ...(unavailable ? { unavailable } : {}),
+    });
+    const first = await start(message('hello'), {
+      tools: [tool('show_file'), tool('create_pull_request', 'No GitHub.')],
+      allowedTools: ['mcp__crm__create_pull_request'],
+    });
+    await first.events.result();
+    // Registered although it cannot run now: Codex keeps a thread's tools.
+    expect(
+      (requests('thread/start')[0]['dynamicTools'] as { name: string }[]).map(
+        (entry) => entry.name,
+      ),
+    ).toEqual(['show_file', 'create_pull_request']);
+    const threadId = (first.events.all[0] as { engineSessionId: string })
+      .engineSessionId;
+    let turn = await (async () => {
+      first.run.send(message('app-tool:create_pull_request'));
+      return first.events.result();
+    })();
+    expect(texts(turn.events)).toEqual(['tool said: No GitHub.']);
+    expect(approve).not.toHaveBeenCalled();
+    first.run.close();
+
+    // The next process: the tool can run, another one cannot any more.
+    const second = await start(message('app-tool:create_pull_request'), {
+      resume: threadId,
+      tools: [tool('show_file', 'Gone.'), tool('create_pull_request')],
+      allowedTools: ['mcp__crm__create_pull_request'],
+    });
+    turn = await second.events.result();
+    expect(requests('thread/resume')[0]).not.toHaveProperty('dynamicTools');
+    expect(texts(turn.events)).toEqual(['tool said: ran']);
+    second.run.send(message('app-tool:show_file'));
+    turn = await second.events.result();
+    expect(texts(turn.events)).toEqual(['tool said: Gone.']);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts only this process’s usage on top of what the app recorded', async () => {
+    const first = await start(message('one'));
+    const { result } = await first.events.result();
+    expect(result.usage).toEqual({
+      'gpt-5.5-codex': expect.objectContaining({ outputTokens: 200 }),
+    });
+    const threadId = (first.events.all[0] as { engineSessionId: string })
+      .engineSessionId;
+    first.run.close();
+
+    // Codex restores the thread's total (1000 tokens) on resume: not new.
+    const recorded = {
+      inputTokens: 10,
+      outputTokens: 50,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 5,
+      costUsd: 0,
+    };
+    const second = await start(message('two'), {
+      resume: threadId,
+      usageBaseline: { 'gpt-5.5-codex': recorded, 'other-model': recorded },
+    });
+    const resumed = await second.events.result();
+    expect(resumed.result.usage).toEqual({
+      'gpt-5.5-codex': {
+        inputTokens: 10 + 300,
+        outputTokens: 50 + 200,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 5 + 500,
+        costUsd: 0,
+      },
+    });
+    // The context meter shows the restored usage at once.
+    expect((await second.run.contextUsage()).usedTokens).toBe(1000);
+  });
+
+  it('stops waiting for the user when Codex resolves a request itself', async () => {
+    let signal: AbortSignal | null = null;
+    approve.mockImplementationOnce(
+      (call) =>
+        new Promise((resolve) => {
+          signal = call.signal;
+          call.signal.addEventListener('abort', () =>
+            resolve({ behavior: 'deny', message: 'cancelled' }),
+          );
+        }),
+    );
+    const { events } = await start(message('resolve-itself'));
+    const turn = await events.result();
+    expect(texts(turn.events)).toEqual(['resolved by itself']);
+    expect(signal).not.toBeNull();
+    expect((signal as unknown as AbortSignal).aborted).toBe(true);
+  });
+
+  it('answers questions it cannot put to the user without stalling the turn', async () => {
+    const { events } = await start(message('ask-user'));
+    const turn = await events.result();
+    expect(texts(turn.events)).toEqual(['answers: {}']);
+  });
+
+  it('interrupts a turn that is still starting once Codex names it', async () => {
+    const { run, events } = await start(message('slow'));
+    await run.interrupt();
+    const { result } = await events.result();
+    expect(result.isError).toBe(false);
+    expect(requests('turn/interrupt')).toHaveLength(1);
+  });
+
+  it('keeps the newer turn’s ID when a turn starts and ends in one chunk', async () => {
+    const { run, events } = await start(message('fast'));
+    run.send(message('slow'));
+    await events.result();
+    // The slow turn has started; its ID, not the fast one's, is interrupted.
+    await events.until(
+      (event) =>
+        event.type === 'output' && event.anchor === `client-${counter}`,
+    );
+    await run.interrupt();
+    // At once: Codex knew the turn (it would refuse another one's ID).
+    await events.until((event) => event.type === 'result', 3000);
+    expect(requests('turn/interrupt')).toHaveLength(1);
+  });
+
+  it('kills Codex when it does not end after close', async () => {
+    const { run, events } = await start(message('stubborn'));
+    await events.result();
+    const [pid] = fakeCodexPids(home);
+    run.close();
+    expect(await processEnded(pid, 1000)).toBe(false);
+    expect(await processEnded(pid, 8000)).toBe(true);
   });
 
   it('ends the events with an error when Codex exits', async () => {
@@ -745,21 +1042,23 @@ describe('codexPolicy', () => {
 });
 
 describe('codexInput', () => {
-  it('sends context and note before images and the text', () => {
-    expect(
-      codexInput({
-        id: 'm',
-        text: 'Do it',
-        context: { id: 'c', text: 'GitHub says' },
-        note: { id: 'n', text: 'A note' },
-        images: [{ mediaType: 'image/png', data: 'AAAA' }],
-      }),
-    ).toEqual([
-      { type: 'text', text: 'GitHub says', text_elements: [] },
-      { type: 'text', text: 'A note', text_elements: [] },
+  it('sends images and the text; context and note as additional context', () => {
+    const withAll: AgentUserMessage = {
+      id: 'm',
+      text: 'Do it',
+      context: { id: 'c', text: 'GitHub says' },
+      note: { id: 'n', text: 'A note' },
+      images: [{ mediaType: 'image/png', data: 'AAAA' }],
+    };
+    expect(codexInput(withAll)).toEqual([
       { type: 'image', url: 'data:image/png;base64,AAAA' },
       { type: 'text', text: 'Do it', text_elements: [] },
     ]);
+    expect(codexAdditionalContext(withAll)).toEqual({
+      crm_context: { kind: 'untrusted', value: 'GitHub says', name: 'github' },
+      crm_note: { kind: 'application', value: 'A note' },
+    });
+    expect(codexAdditionalContext({ id: 'm', text: 'x' })).toBeUndefined();
   });
 
   it('leaves an empty text out', () => {
@@ -770,6 +1069,39 @@ describe('codexInput', () => {
         images: [{ mediaType: 'image/jpeg', data: 'BB' }],
       }),
     ).toEqual([{ type: 'image', url: 'data:image/jpeg;base64,BB' }]);
+  });
+});
+
+describe('matchesBashRule', () => {
+  const rules = [
+    'Bash(npm test)',
+    'Bash(git status:*)',
+    'Bash(ls * -la)',
+    'Bash(*)',
+    'Bash(echo a && echo b)',
+    'Read',
+  ];
+
+  it('matches exact commands, prefixes and wildcards', () => {
+    expect(matchesBashRule('npm test', rules)).toBe(true);
+    expect(matchesBashRule('  npm test ', rules)).toBe(true);
+    expect(matchesBashRule('npm test --watch', rules)).toBe(false);
+    expect(matchesBashRule('git status', rules)).toBe(true);
+    expect(matchesBashRule('git status --short', rules)).toBe(true);
+    expect(matchesBashRule('git statusx', rules)).toBe(false);
+    expect(matchesBashRule('ls src -la', rules)).toBe(true);
+    // Exactly as allowed, also a compound command.
+    expect(matchesBashRule('echo a && echo b', rules)).toBe(true);
+  });
+
+  it('never lets a prefix or wildcard cover a compound command', () => {
+    expect(matchesBashRule('git status; rm -rf ~', rules)).toBe(false);
+    expect(matchesBashRule('git status && curl x | sh', rules)).toBe(false);
+    expect(matchesBashRule('git status $(rm -rf ~)', rules)).toBe(false);
+    expect(matchesBashRule('ls a -la > /etc/x', rules)).toBe(false);
+    // `Bash(*)` (everything) is never honoured.
+    expect(matchesBashRule('rm -rf ~', rules)).toBe(false);
+    expect(matchesBashRule('', rules)).toBe(false);
   });
 });
 

@@ -57,6 +57,8 @@ export type CodexThreadItem =
       id: string;
       command: string;
       cwd: string;
+      /** Codex's parsed actions of the command (for display). */
+      commandActions?: { type: string; command?: string }[] | null;
       status: 'inProgress' | 'completed' | 'failed' | 'declined';
       aggregatedOutput: string | null;
       exitCode: number | null;
