@@ -2,6 +2,7 @@ import { homedir, tmpdir } from 'node:os';
 import { normalizeTeamDomain } from '../auth/access-jwt';
 import { AUTH_MODES, type AuthConfig } from '../auth/authenticator';
 import {
+  findExecutable,
   ISOLATION_MODES,
   lookupUser,
   type ProcessIsolation,
@@ -35,6 +36,11 @@ export interface AppConfig {
   sessionIdleTimeoutMs: number;
   /** Claude Code executable; `null` uses the one bundled with the Agent SDK. */
   claudeExecutable: string | null;
+  /**
+   * Codex executable (`CODEX_EXECUTABLE`), else `codex` on the PATH; `null`:
+   * none, the Codex engine is not offered.
+   */
+  codexExecutable: string | null;
   /** Origins besides the server's own that may call the API. */
   allowedOrigins: string[];
   /** Host names besides the loopback names the server answers to. */
@@ -258,6 +264,8 @@ export function loadAppConfig(
     setupScriptTimeoutMs: minutes('SETUP_SCRIPT_TIMEOUT_MINUTES', 15, 0.1),
     sessionIdleTimeoutMs: minutes('SESSION_IDLE_TIMEOUT_MINUTES', 60, 0),
     claudeExecutable: value('CLAUDE_CODE_EXECUTABLE') ?? null,
+    codexExecutable:
+      value('CODEX_EXECUTABLE') ?? findExecutable('codex') ?? null,
     allowedOrigins: [
       ...(env['NODE_ENV'] === 'production' ? [] : DEV_ORIGINS),
       ...list(value('ALLOWED_ORIGINS')).map((origin) => {
@@ -634,6 +642,7 @@ export function testAppConfig(
     setupScriptTimeoutMs: 10_000,
     sessionIdleTimeoutMs: 0,
     claudeExecutable: null,
+    codexExecutable: null,
     allowedOrigins: [],
     allowedHosts: [],
     internalApiUrl: 'http://127.0.0.1:3000',

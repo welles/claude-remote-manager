@@ -8,6 +8,7 @@ import {
   ENGINE_LABELS,
   ENGINE_PROVIDERS,
   CLAUDE_CODE_PERMISSION_MODES,
+  CODEX_PERMISSION_MODES,
   type AgentEngineDto,
   type AgentEngineId,
   type EngineCapabilities,
@@ -22,6 +23,15 @@ export interface AgentEngine {
   transcripts: TranscriptReader;
   capabilities: EngineCapabilities;
 }
+
+/** What Codex offers (its own approval policies, no plan mode). */
+export const CODEX_CAPABILITIES: EngineCapabilities = {
+  permissionModes: [...CODEX_PERMISSION_MODES],
+  planMode: false,
+  slashCommands: false,
+  contextUsage: true,
+  addDirectories: true,
+};
 
 /** What Claude Code offers. */
 export const CLAUDE_CODE_CAPABILITIES: EngineCapabilities = {

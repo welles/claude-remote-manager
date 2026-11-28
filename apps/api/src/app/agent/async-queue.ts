@@ -6,6 +6,7 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
   private readonly items: T[] = [];
   private readonly waiting: ((result: IteratorResult<T>) => void)[] = [];
   private closed = false;
+  private failure: Error | null = null;
 
   push(item: T): void {
     if (this.closed) {
@@ -26,6 +27,21 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
     }
   }
 
+  /**
+   * Ends the queue with an error: consumers get the queued items, then the
+   * error.
+   */
+  fail(error: Error): void {
+    if (this.closed) {
+      return;
+    }
+    this.failure = error;
+    this.closed = true;
+    for (const resolve of this.waiting.splice(0)) {
+      resolve({ value: undefined, done: true });
+    }
+  }
+
   get isClosed(): boolean {
     return this.closed;
   }
@@ -38,7 +54,9 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
           return Promise.resolve({ value: item, done: false });
         }
         if (this.closed) {
-          return Promise.resolve({ value: undefined, done: true });
+          return this.failure
+            ? Promise.reject(this.failure)
+            : Promise.resolve({ value: undefined, done: true });
         }
         return new Promise((resolve) => this.waiting.push(resolve));
       },

@@ -80,7 +80,7 @@ export function loadAgentSdk(): Promise<SdkModule> {
 }
 
 /** Zod as ES module, the same instance the Agent SDK imports. */
-function loadZod(): Promise<typeof Zod> {
+export function loadZod(): Promise<typeof Zod> {
   zodModule ??= nativeImport<typeof Zod>('zod');
   return zodModule;
 }

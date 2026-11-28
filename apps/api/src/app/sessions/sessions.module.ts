@@ -18,7 +18,21 @@ import { SessionGitHubTokensService } from './session-github-tokens.service';
 import { SessionTokens } from './session-tokens';
 import { SessionGitService } from './session-git.service';
 import { AgentRunner } from '../agent/agent-runner';
-import { AgentEngines, EnginesController } from '../agent/agent-engines';
+import {
+  AgentEngines,
+  CODEX_CAPABILITIES,
+  EnginesController,
+} from '../agent/agent-engines';
+import {
+  CodexRunner,
+  CodexTranscriptReader,
+} from '../agent/codex/codex-runner';
+import { codexBaseHome } from '../agent/codex/codex-home';
+import { APP_CONFIG, type AppConfig } from '../config/app-config';
+import {
+  PROCESS_LAUNCHER,
+  type ProcessLauncher,
+} from '../common/process-isolation';
 import { SdkAgentRunner } from '../agent/sdk-agent-runner';
 import {
   SdkTranscriptReader,
@@ -114,7 +128,32 @@ const logger = new Logger('SessionsModule');
     FileMentionsService,
     RunningDirectories,
     { provide: AgentRunner, useClass: SdkAgentRunner },
-    AgentEngines,
+    {
+      provide: AgentEngines,
+      inject: [APP_CONFIG, PROCESS_LAUNCHER, AgentRunner, TranscriptReader],
+      useFactory: (
+        config: AppConfig,
+        launcher: ProcessLauncher,
+        claudeCode: AgentRunner,
+        claudeTranscripts: TranscriptReader,
+      ) => {
+        const engines = new AgentEngines(claudeCode, claudeTranscripts);
+        if (config.codexExecutable) {
+          // Offered where the server has Codex.
+          const baseHome = codexBaseHome(launcher);
+          const codex = new CodexRunner(
+            { executable: config.codexExecutable, baseHome },
+            launcher,
+          );
+          engines.register('codex', {
+            runner: codex,
+            transcripts: new CodexTranscriptReader(codex, baseHome),
+            capabilities: CODEX_CAPABILITIES,
+          });
+        }
+        return engines;
+      },
+    },
     { provide: TranscriptReader, useClass: SdkTranscriptReader },
   ],
   exports: [
