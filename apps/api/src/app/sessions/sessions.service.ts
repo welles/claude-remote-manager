@@ -14,6 +14,8 @@ import { Subject } from 'rxjs';
 import type {
   AgentApprover,
   AgentEvent,
+  AgentHistoryEntry,
+  AgentImage,
   AgentTurnResult,
 } from '../agent/agent-events';
 import {
@@ -133,11 +135,6 @@ import {
   NoSessionAgentSupport,
   SessionAgentSupport,
 } from './session-agent-support';
-import {
-  SdkEventMapper,
-  transcriptEntries,
-  type SeenImage,
-} from './sdk-event-mapper';
 import {
   SessionEventRepository,
   STORED_EVENT_TYPES,
@@ -342,7 +339,6 @@ interface LiveSession {
   starting: Promise<void> | null;
   /** Stops a running preparation (the session was ended). */
   preparation: AbortController | null;
-  mapper: SdkEventMapper;
   tracker: UsageTracker;
   log: SessionLog;
   historyLoaded: Promise<void> | null;
@@ -2075,7 +2071,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       run: null,
       starting: null,
       preparation: null,
-      mapper: new SdkEventMapper(),
       tracker: new UsageTracker(),
       log: new SessionLog(),
       stream: new StreamMasker(),
@@ -2143,16 +2138,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     record: SessionRecord,
   ): Promise<boolean> {
     {
-      let entries: ReturnType<typeof transcriptEntries> = [];
+      let entries: AgentHistoryEntry[] = [];
       let failed = false;
       if (record.sdkSessionId) {
         try {
-          entries = transcriptEntries(
-            await this.transcripts.read(
-              record.sdkSessionId,
-              transcriptDirectory(record) ?? workingDirectory(record),
-              record.workingDirectory !== null,
-            ),
+          entries = await this.transcripts.read(
+            record.sdkSessionId,
+            transcriptDirectory(record) ?? workingDirectory(record),
+            record.workingDirectory !== null,
           );
         } catch (error) {
           failed = true;
@@ -2339,7 +2332,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     firstMessage: { id: string; text: string },
   ): Promise<void> {
     this.clearIdleTimer(live);
-    live.mapper = new SdkEventMapper();
     live.tracker = new UsageTracker(this.usage.totalsByModel(record.id));
     live.interruptRequested = null;
     live.sendNow = null;
@@ -2827,7 +2819,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * (through the shown files, whose events come back via
    * {@link recordEvent}).
    */
-  private showImages(live: LiveSession, images: SeenImage[]): void {
+  private showImages(live: LiveSession, images: AgentImage[]): void {
     const store = this.shownFiles;
     if (!store) {
       return;

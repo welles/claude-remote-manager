@@ -6,7 +6,7 @@ import type {
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
 import type { StoredEvent } from './session-event.repository';
-import type { TranscriptEntry } from './sdk-event-mapper';
+import type { AgentHistoryEntry as TranscriptEntry } from '../agent/agent-events';
 
 /** What a subscriber gets: whole log or the part after its position. */
 export interface LogSnapshot {

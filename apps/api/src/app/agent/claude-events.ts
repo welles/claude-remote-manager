@@ -20,7 +20,7 @@ import type {
 import {
   SdkEventMapper,
   transcriptEntries,
-} from '../sessions/sdk-event-mapper';
+} from './sdk-event-mapper';
 import type {
   AgentApprover,
   AgentContextUsage,

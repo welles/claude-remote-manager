@@ -21,12 +21,14 @@ import type {
   AgentCommand,
   AgentContextUsage,
   AgentEvent,
+  AgentHistoryEntry,
   AgentModel,
   AgentPlanUsage,
 } from '../../agent/agent-events';
 import {
   ClaudeEventTranslator,
   claudeCanUseTool,
+  claudeHistory,
   claudeCommand,
   claudeContextUsage,
   claudeModel,
@@ -291,12 +293,15 @@ export class FakeTranscriptReader implements TranscriptReader {
   /** Makes `read` fail, like an unreadable transcript. */
   failing = false;
 
-  async read(sdkSessionId: string, cwd: string): Promise<SessionMessage[]> {
+  async read(
+    sdkSessionId: string,
+    cwd: string,
+  ): Promise<AgentHistoryEntry[]> {
     this.reads.push({ sdkSessionId, cwd });
     if (this.failing) {
       throw new Error('transcript unreadable');
     }
-    return this.transcripts.get(sdkSessionId) ?? [];
+    return claudeHistory(this.transcripts.get(sdkSessionId) ?? []);
   }
 }
 

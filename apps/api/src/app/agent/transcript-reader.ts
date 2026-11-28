@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentHistoryEntry } from './agent-events';
+import { claudeHistory } from './claude-events';
 import { loadAgentSdk } from './sdk-agent-runner';
 
 /** Reads the conversation of a Claude Code session from its transcript. */
@@ -15,7 +16,7 @@ export abstract class TranscriptReader {
     sdkSessionId: string,
     cwd: string,
     anywhere?: boolean,
-  ): Promise<SessionMessage[]>;
+  ): Promise<AgentHistoryEntry[]>;
 
   /** Whether Claude Code has a transcript for this session ID. */
   abstract exists(
@@ -41,7 +42,7 @@ export class SdkTranscriptReader implements TranscriptReader {
     sdkSessionId: string,
     cwd: string,
     anywhere = false,
-  ): Promise<SessionMessage[]> {
+  ): Promise<AgentHistoryEntry[]> {
     const sdk = await loadAgentSdk();
     const messages = await sdk.getSessionMessages(sdkSessionId, { dir: cwd });
     if (
@@ -49,9 +50,9 @@ export class SdkTranscriptReader implements TranscriptReader {
       !anywhere ||
       (await this.info(sdkSessionId, cwd))
     ) {
-      return messages;
+      return claudeHistory(messages);
     }
-    return sdk.getSessionMessages(sdkSessionId);
+    return claudeHistory(await sdk.getSessionMessages(sdkSessionId));
   }
 
   async exists(
