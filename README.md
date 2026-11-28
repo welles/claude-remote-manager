@@ -2409,7 +2409,32 @@ with the engine the settings choose, Claude Code or Codex, whatever the session'
   **Difference to Claude Code:** Codex's read-only sandbox forbids writes and the network but
   can read anything the session user can (other clones, the accounts' Codex logins), not only
   the session's directories; its instructions tell it to stay in the listed repositories, which
-  is not enforced.
+  is not enforced. The thread also runs without the features `apps`, `plugins`,
+  `multi_agent` and `goals` (`REVIEW_FEATURES`), and `config/read` gets the working
+  directory so project MCP servers are disabled too.
+- **How the Codex reviewer stays read-only** (`CodexRunner.review`, `review-commands.ts`):
+  - **Command rules:** Codex's `prefix_rule(…, decision="allow")` would let commands run past
+    the sandbox and the approval policy. Before a review (`AgentRunner.reviewBlocked`, checked
+    when the review is chosen and again when it starts), any `*.rules` file with more than
+    comments in the account's Codex home's `rules/` (followed into the base home), the base
+    home's, or the working directory's `.codex/rules/` makes the review run with Claude Code
+    instead; `review.started` has `fallbackFrom` and `fallbackReason`, the card says why. No
+    temporary `CODEX_HOME` (the login rotates its tokens).
+  - **With Codex's sandbox** (bubblewrap; it needs unprivileged user namespaces): `read-only`
+    and `never`, every request refused. Whether it starts is probed once per runner with
+    `codex sandbox -- true` as the session user (`CodexRunnerConfig.sandboxWorks` overrides it).
+  - **Without it** (a container without user namespaces: in `read-only` every command would
+    fail and the review would be blind): `danger-full-access` with `untrusted`, and the app
+    answers every request: it accepts only one simple command that only reads
+    (`isReadOnlyCommand`: `cat`, `head`, `tail`, `ls`, `grep`, `wc`, … without operators,
+    redirections, expansions or globs; `rg` and `find` without the options that run programs
+    or write; `sed -n <N>p`; `git diff`/`log`/`show`/`status`/`blame`/`ls-files`/`grep`/`rev-parse`
+    without `--output`, `--ext-diff`, `-O`) and declines everything else (other commands,
+    input to commands, file changes, permissions, questions, MCP). Codex 0.171 asks before
+    `cat` and `git diff` too in this mode (checked with a mock model), so declining everything
+    would leave the reviewer blind. Remaining risk: an allowed `git` command honours the
+    clone's git configuration (`core.fsmonitor`, textconv drivers), which only someone writing
+    as the session user can set. Give the container user namespaces to use the sandbox.
 - **Settings:** `GET`/`PUT /api/settings/review` (`app_settings` key `review`): the engine
   (default `claude-code`; only engines the server has can be chosen), a model per engine
   (`models`: Claude Code's default `claude-fable-5-2`, Codex's `null` = Codex's own default;
