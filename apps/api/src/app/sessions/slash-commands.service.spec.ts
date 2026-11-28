@@ -11,6 +11,8 @@ const command = (name: string, extra: object = {}) => ({
   name,
   description: name,
   argumentHint: '',
+  aliases: [] as string[],
+  builtin: false,
   ...extra,
 });
 

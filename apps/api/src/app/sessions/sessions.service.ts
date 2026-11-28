@@ -12,14 +12,20 @@ import {
 } from '@nestjs/common';
 import { Subject } from 'rxjs';
 import type {
-  CanUseTool,
-  PermissionMode,
-  SDKMessage,
-} from '@anthropic-ai/claude-agent-sdk';
+  AgentApprover,
+  AgentEvent,
+  AgentHistoryEntry,
+  AgentImage,
+  AgentTurnResult,
+} from '../agent/agent-events';
 import {
   CLAUDE_WAIT_LIMIT_MINUTES,
   isRetiredClone,
+  DEFAULT_ENGINE,
+  ENGINE_PROVIDERS,
+  AGENT_ENGINES,
   MAIN_ACCOUNT_ID,
+  type AccountProvider,
   MAX_ATTACHMENTS_PER_MESSAGE,
   SESSION_PERMISSION_MODES,
   summarizePendingRequests,
@@ -121,6 +127,7 @@ import {
 import { TranscriptReader } from '../agent/transcript-reader';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { LimitsService } from '../limits/limits.service';
+import { AgentEngines } from '../agent/agent-engines';
 import { AccountsService } from '../accounts/accounts.service';
 import {
   SessionWorkspaceService,
@@ -133,11 +140,6 @@ import {
   NoSessionAgentSupport,
   SessionAgentSupport,
 } from './session-agent-support';
-import {
-  SdkEventMapper,
-  transcriptEntries,
-  type SeenImage,
-} from './sdk-event-mapper';
 import {
   SessionEventRepository,
   STORED_EVENT_TYPES,
@@ -342,7 +344,6 @@ interface LiveSession {
   starting: Promise<void> | null;
   /** Stops a running preparation (the session was ended). */
   preparation: AbortController | null;
-  mapper: SdkEventMapper;
   tracker: UsageTracker;
   log: SessionLog;
   historyLoaded: Promise<void> | null;
@@ -473,7 +474,7 @@ interface LiveSession {
    * The mode the current process last reported (`init`/`status`), or that
    * it accepted; `null` without process.
    */
-  reportedMode: PermissionMode | null;
+  reportedMode: string | null;
   /** Mode switches of the app in flight (`setPermissionMode`). */
   modeRequests: number;
   /** The permission mode override last published (JSON). */
@@ -742,11 +743,44 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // Without it every session uses the main account.
     @Optional()
     private readonly accounts?: AccountsService,
+    // Without it every session runs with `runner` (Claude Code).
+    @Optional()
+    private readonly engines?: AgentEngines,
   ) {}
 
-  /** The account a session effectively uses (`null`: the default). */
-  private accountOf(accountId: string | null): string {
-    return this.accounts?.effectiveId(accountId) ?? MAIN_ACCOUNT_ID;
+  /**
+   * The account a session effectively uses (its own, else the default);
+   * `''` when its engine's provider has no account (starting says so).
+   */
+  private accountOf(
+    record: Pick<SessionRecord, 'accountId' | 'engine'> | null | undefined,
+  ): string {
+    if (!this.accounts) {
+      return MAIN_ACCOUNT_ID;
+    }
+    return (
+      this.accounts.effectiveId(
+        record?.accountId ?? null,
+        this.providerOf(record),
+      ) ?? ''
+    );
+  }
+
+  /** Which accounts a session's engine runs with. */
+  private providerOf(
+    record: Pick<SessionRecord, 'engine'> | null | undefined,
+  ): AccountProvider {
+    return ENGINE_PROVIDERS[record?.engine ?? DEFAULT_ENGINE];
+  }
+
+  /** The history reader of a session's engine. */
+  private transcriptsFor(record: Pick<SessionRecord, 'engine'>): TranscriptReader {
+    return this.engines?.transcripts(record.engine) ?? this.transcripts;
+  }
+
+  /** The runner of a session's engine. */
+  private runnerFor(record: Pick<SessionRecord, 'engine'>): AgentRunner {
+    return this.engines?.runner(record.engine) ?? this.runner;
   }
 
   private environmentOf(record: SessionRecord): SessionEnvironmentDto | null {
@@ -798,15 +832,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // they follow the default) restart with it once free.
       for (const live of this.live.values()) {
         const record = this.sessions.get(live.id);
-        if (
-          record &&
-          live.run &&
-          !live.closing &&
-          !live.restartPending &&
-          this.accountOf(record.accountId) !== live.accountId
-        ) {
+        if (!record || !live.run || live.closing) {
+          continue;
+        }
+        const differs = this.accountOf(record) !== live.accountId;
+        if (differs && !live.restartPending) {
           this.restartWhenFree(live.id);
           live.accountRestart = live.restartPending;
+        } else if (!differs && live.accountRestart) {
+          // Back to the process's account before it restarted.
+          live.restartPending = false;
+          live.accountRestart = false;
         }
       }
     });
@@ -1010,9 +1046,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const environment = this.environments
       ? this.environments.requireForSession(body['environmentId'])
       : null;
+    const engine =
+      optionalEnum(body, 'engine', AGENT_ENGINES) ?? DEFAULT_ENGINE;
+    if (this.engines && !this.engines.has(engine)) {
+      throw new BadRequestException(
+        `The engine ${engine} is not available on this server`,
+      );
+    }
+    const provider = ENGINE_PROVIDERS[engine];
     const requestedAccount = optionalString(body, 'accountId');
     let accountId = this.accounts
-      ? this.accounts.forNewSession(requestedAccount)
+      ? this.accounts.forNewSession(requestedAccount, provider)
       : null;
 
     this.attachmentStore(attachmentIds).check(attachmentIds);
@@ -1025,7 +1069,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (requestedAccount !== undefined) {
         throw new ConflictException('The account was removed meanwhile');
       }
-      accountId = this.accounts.forNewSession(undefined);
+      accountId = this.accounts.forNewSession(undefined, provider);
     }
     let record: SessionRecord;
     try {
@@ -1043,6 +1087,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         environmentId: environment?.id ?? null,
         environmentSetupStatus: environment?.setupScript ? 'pending' : 'none',
         accountId,
+        engine,
       });
     } catch (error) {
       if (
@@ -1532,9 +1577,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const requestedAccount = optionalString(body, 'accountId');
     if (
       requestedAccount !== undefined &&
-      !this.accounts?.exists(requestedAccount)
+      this.accounts?.providerOf(requestedAccount) !== this.providerOf(record)
     ) {
-      throw new BadRequestException('accountId is not a known account');
+      throw new BadRequestException(
+        "accountId is not a known account of the session's engine",
+      );
     }
     // Applied after the other changes went through.
     const switchAccount = () => {
@@ -1616,7 +1663,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
     const from = live.accountId;
-    if (this.accountOf(this.requireRecord(live.id).accountId) !== from) {
+    if (this.accountOf(this.requireRecord(live.id)) !== from) {
       // The user chose another account during the turn: that one goes on
       // (see followAccount).
       return null;
@@ -1643,7 +1690,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     let kind: 'available' | 'earliest' = 'available';
     let until: Date | null = null;
     if (!to) {
-      const earliest = accounts.earliestReset(windows, now);
+      const earliest = accounts.earliestReset(
+        windows,
+        now,
+        this.providerOf(this.requireRecord(live.id)),
+      );
       // An unknown reset of its own account counts as the next look at it.
       const own =
         this.limits.account(from).exhaustedUntil(windows, now) ??
@@ -1679,7 +1730,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const before = this.requireRecord(sessionId);
     let updated = this.sessions.update(sessionId, { accountId });
     const live = this.live.get(sessionId);
-    if (live && live.accountId !== this.accountOf(accountId)) {
+    if (live && live.accountId !== this.accountOf(updated)) {
       // Only for the account (also after earlier switches): undone when
       // the session switches back to the process's account.
       const accountOnly = !live.restartPending || live.accountRestart;
@@ -1711,7 +1762,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (!record || !wait || record.status !== 'waiting' || this.shuttingDown) {
       return null;
     }
-    const accountId = this.accountOf(record.accountId);
+    const accountId = this.accountOf(record);
     if (!force && wait.accountId === undefined) {
       // A wait from before accounts: it was for this account; nothing else
       // changes (its window stays).
@@ -2075,7 +2126,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       run: null,
       starting: null,
       preparation: null,
-      mapper: new SdkEventMapper(),
       tracker: new UsageTracker(),
       log: new SessionLog(),
       stream: new StreamMasker(),
@@ -2113,7 +2163,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       rejectedWindow: null,
       // Kept while the session had no live state (see releaseIfUnused).
       limitRetries: this.limitRetryMemory.get(id) ?? 0,
-      accountId: this.accountOf(this.sessions.get(id)?.accountId ?? null),
+      accountId: this.accountOf(this.sessions.get(id)),
       launching: false,
       accountRestart: false,
     };
@@ -2143,16 +2193,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     record: SessionRecord,
   ): Promise<boolean> {
     {
-      let entries: ReturnType<typeof transcriptEntries> = [];
+      let entries: AgentHistoryEntry[] = [];
       let failed = false;
       if (record.sdkSessionId) {
         try {
-          entries = transcriptEntries(
-            await this.transcripts.read(
-              record.sdkSessionId,
-              transcriptDirectory(record) ?? workingDirectory(record),
-              record.workingDirectory !== null,
-            ),
+          entries = await this.transcriptsFor(record).read(
+            record.sdkSessionId,
+            transcriptDirectory(record) ?? workingDirectory(record),
+            record.workingDirectory !== null,
           );
         } catch (error) {
           failed = true;
@@ -2339,7 +2387,6 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     firstMessage: { id: string; text: string },
   ): Promise<void> {
     this.clearIdleTimer(live);
-    live.mapper = new SdkEventMapper();
     live.tracker = new UsageTracker(this.usage.totalsByModel(record.id));
     live.interruptRequested = null;
     live.sendNow = null;
@@ -2356,8 +2403,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.mask = undefined;
     // In use from now on: by the account it will pick (see `pickId`).
     live.accountId =
-      this.accounts?.pickId(this.requireRecord(live.id).accountId) ??
-      MAIN_ACCOUNT_ID;
+      this.accounts?.pickId(
+        this.requireRecord(live.id).accountId,
+        this.providerOf(this.requireRecord(live.id)),
+      ) ?? MAIN_ACCOUNT_ID;
     live.launching = true;
     try {
       const extras = await this.support.prepare(record);
@@ -2378,16 +2427,18 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // prepared counts.
       // Counted as in use from here (see `launching`), before its directory
       // is prepared.
+      const current = this.requireRecord(live.id);
       live.accountId =
-        this.accounts?.pickId(this.requireRecord(live.id).accountId) ??
+        this.accounts?.pickId(current.accountId, this.providerOf(current)) ??
         MAIN_ACCOUNT_ID;
       const account = this.accounts
         ? await this.accounts.agentAccount(
             this.requireRecord(live.id).accountId,
+            this.providerOf(current),
           )
         : null;
       live.accountId = account?.id ?? MAIN_ACCOUNT_ID;
-      const run = await this.runner.start(
+      const run = await this.runnerFor(current).start(
         {
           ...(account
             ? { account: { configDir: account.configDir, main: account.main } }
@@ -2404,7 +2455,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           model: record.model,
           permissionMode: record.permissionMode,
           ...(await this.resumeTarget(record)),
-          canUseTool: this.canUseTool(live),
+          approve: this.approveCall(live),
           gate: (call) => this.mergeGate(live, call),
           allowedTools: [
             ...allowed.rules,
@@ -2440,9 +2491,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.runningDirectories.set(live.id, workingDirectory(record));
       this.countContext(live, first);
       live.consuming = this.consume(live, run);
-      if (
-        this.accountOf(this.requireRecord(live.id).accountId) !== live.accountId
-      ) {
+      if (this.accountOf(this.requireRecord(live.id)) !== live.accountId) {
         // Switched while the process started: restarted once it is free.
         this.restartWhenFree(live.id);
       }
@@ -2468,7 +2517,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     let exists = false;
     try {
-      exists = await this.transcripts.exists(
+      exists = await this.transcriptsFor(record).exists(
         record.id,
         transcriptDirectory(record) ?? workingDirectory(record),
         record.workingDirectory !== null,
@@ -2484,12 +2533,16 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private async consume(live: LiveSession, run: AgentRun): Promise<void> {
     let failure: unknown = null;
     try {
-      for await (const message of run.messages) {
+      for await (const batch of run.events) {
         if (live.run !== run) {
           break;
         }
+        // One message of the engine, handled as a whole: an error skips
+        // the rest of it, as before.
         try {
-          this.handleMessage(live, message);
+          for (const event of batch) {
+            this.handleEvent(live, event);
+          }
         } catch (error) {
           this.logger.error(`Handling a message of ${live.id} failed`, error);
         }
@@ -2618,106 +2671,78 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
   }
 
-  private handleMessage(live: LiveSession, message: SDKMessage): void {
-    if (message.type === 'system' && message.subtype === 'init') {
-      const record = this.requireRecord(live.id);
-      if (record.sdkSessionId !== message.session_id) {
-        this.updates.next(
-          this.toDto(
-            this.sessions.update(live.id, { sdkSessionId: message.session_id }),
-          ),
-        );
-      }
-      if (message.permissionMode) {
-        this.syncPermissionMode(live, message.permissionMode);
-      }
-      this.loadSlashCommands(live, message.terminal_slash_commands ?? []);
-      return;
-    }
-    if (message.type === 'system' && message.subtype === 'commands_changed') {
-      this.slashCommands?.remember(live.id, message.commands);
-      return;
-    }
-    if (
-      message.type === 'system' &&
-      message.subtype === 'background_tasks_changed'
-    ) {
-      this.backgroundTasksChanged(
-        live,
-        message.tasks
-          .filter((task) => !task.ambient)
-          .map((task) => task.task_id),
-      );
-      return;
-    }
-    if (
-      (message.type === 'assistant' || message.type === 'stream_event') &&
-      message.parent_tool_use_id === null &&
-      !(message.type === 'assistant' && message.agent_id)
-    ) {
-      this.turnStartedByClaude(live);
-    }
-    if (
-      message.type === 'system' &&
-      message.subtype === 'status' &&
-      message.permissionMode
-    ) {
-      // Claude Code changed the mode itself (e.g. entering plan mode).
-      this.syncPermissionMode(live, message.permissionMode);
-    }
-    if (message.type === 'rate_limit_event') {
-      this.limits
-        .account(live.accountId)
-        .updateFromRateLimitEvent(message.rate_limit_info);
-      if (message.rate_limit_info.status === 'rejected') {
-        live.rejectedWindow =
-          message.rate_limit_info.rateLimitType ?? live.rejectedWindow;
-      }
-      return;
-    }
-    if (
-      message.type === 'assistant' &&
-      message.error === 'rate_limit' &&
-      message.parent_tool_use_id === null &&
-      !message.agent_id &&
-      this.requireRecord(live.id).status === 'running'
-    ) {
-      // The usage limit rejected the turn's request: Claude Code ends the
-      // turn with this (synthetic) message.
-      live.limitHit = true;
-    }
-    if (message.type === 'result') {
-      this.handleResult(live, message);
-      return;
-    }
-    if (message.type === 'prompt_suggestion') {
-      const open =
-        live.suggestionOpen && this.requireRecord(live.id).status === 'waiting';
-      live.suggestionOpen = false;
-      if (!open) {
+  private handleEvent(live: LiveSession, event: AgentEvent): void {
+    switch (event.type) {
+      case 'started': {
+        const record = this.requireRecord(live.id);
+        if (record.sdkSessionId !== event.engineSessionId) {
+          this.updates.next(
+            this.toDto(
+              this.sessions.update(live.id, {
+                sdkSessionId: event.engineSessionId,
+              }),
+            ),
+          );
+        }
+        if (event.permissionMode) {
+          this.syncPermissionMode(live, event.permissionMode);
+        }
+        this.loadSlashCommands(live, event.terminalCommands);
         return;
       }
-    }
-    const events = live.mapper.map(message);
-    if (
-      (message.type === 'assistant' || message.type === 'user') &&
-      message.uuid &&
-      // Messages of subagents and other agents are not in the session's
-      // transcript: an anchor there would place the events at the end of
-      // the turn, after later ones (see buildHistory).
-      message.parent_tool_use_id === null &&
-      !('agent_id' in message && message.agent_id)
-    ) {
-      // Stored events that follow belong after this transcript entry.
-      live.anchor = { ...live.anchor, uuid: message.uuid };
-    }
-    for (const event of events) {
-      this.append(live, event);
-    }
-    this.showImages(live, live.mapper.takeImages());
-    if (message.type === 'assistant' && live.run) {
-      // Live context usage during long turns (no API request involved).
-      void this.refreshContext(live, live.run);
+      case 'commands':
+        this.slashCommands?.remember(live.id, event.commands);
+        return;
+      case 'background':
+        this.backgroundTasksChanged(live, event.taskIds);
+        return;
+      case 'activity':
+        this.turnStartedByClaude(live);
+        return;
+      case 'mode':
+        // The agent changed the mode itself (e.g. entering plan mode).
+        this.syncPermissionMode(live, event.mode);
+        return;
+      case 'rate-limit':
+        this.limits.account(live.accountId).updateFromRateLimit(event.limit);
+        if (event.limit.status === 'rejected') {
+          live.rejectedWindow = event.limit.window ?? live.rejectedWindow;
+        }
+        return;
+      case 'limit-hit':
+        if (this.requireRecord(live.id).status === 'running') {
+          live.limitHit = true;
+        }
+        return;
+      case 'result':
+        this.handleResult(live, event);
+        return;
+      case 'suggestion': {
+        const open =
+          live.suggestionOpen &&
+          this.requireRecord(live.id).status === 'waiting';
+        live.suggestionOpen = false;
+        if (open) {
+          for (const output of event.events) {
+            this.append(live, output);
+          }
+        }
+        return;
+      }
+      case 'output':
+        if (event.anchor) {
+          // Stored events that follow belong after this transcript entry.
+          live.anchor = { ...live.anchor, uuid: event.anchor };
+        }
+        for (const output of event.events) {
+          this.append(live, output);
+        }
+        this.showImages(live, event.images);
+        if (event.contextChanged && live.run) {
+          // Live context usage during long turns (no API request involved).
+          void this.refreshContext(live, live.run);
+        }
+        return;
     }
   }
 
@@ -2726,14 +2751,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.contextResults += zeroTurnMessages(message);
   }
 
-  private handleResult(
-    live: LiveSession,
-    result: Extract<SDKMessage, { type: 'result' }>,
-  ): void {
+  private handleResult(live: LiveSession, result: AgentTurnResult): void {
     if (
       live.contextResults > 0 &&
       result.subtype === 'success' &&
-      result.num_turns === 0
+      result.numTurns === 0
     ) {
       // The answer to a context message (`shouldQuery: false`): no turn
       // ended, the message after it starts the turn.
@@ -2741,10 +2763,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const record = this.requireRecord(live.id);
-    const byModel = live.tracker.consume(result.modelUsage);
+    const byModel = live.tracker.consume(result.usage);
     this.usage.record(
       live.id,
-      result.session_id ?? record.sdkSessionId,
+      result.engineSessionId ?? record.sdkSessionId,
       byModel,
       undefined,
       null,
@@ -2755,25 +2777,25 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.interruptRequested = null;
     const sendNow = live.sendNow;
     live.sendNow = null;
-    const errors = result.subtype === 'success' ? [] : result.errors;
+    const errors = result.errors;
     this.append(live, {
       type: 'turn.result',
       subtype: result.subtype,
-      isError: result.is_error,
+      isError: result.isError,
       interrupted,
-      durationMs: result.duration_ms,
-      numTurns: result.num_turns,
+      durationMs: result.durationMs,
+      numTurns: result.numTurns,
       usage: sumUsage(Object.values(byModel)),
       errors,
     });
     if (!interrupted) {
-      if (result.subtype === 'success' && result.is_error) {
+      if (result.subtype === 'success' && result.isError) {
         // API errors usually arrive as assistant text already; do not
         // repeat the same text.
-        if (live.log.lastAssistantText !== result.result) {
+        if (live.log.lastAssistantText !== result.text) {
           this.append(live, {
             type: 'error',
-            message: result.result || 'The request failed.',
+            message: result.text || 'The request failed.',
           });
         }
       } else if (result.subtype !== 'success') {
@@ -2788,13 +2810,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const rejectedWindow = live.rejectedWindow;
     live.limitHit = false;
     live.rejectedWindow = null;
-    if (limited && (result.queued_turn_count ?? 0) === 0) {
+    if (limited && result.queuedTurns === 0) {
       // Queued messages stay held until the limit has reset.
       this.stopForLimit(live, rejectedWindow);
       return;
     }
     const clean =
-      !interrupted && result.subtype === 'success' && !result.is_error;
+      !interrupted && result.subtype === 'success' && !result.isError;
     if (clean) {
       live.limitRetries = 0;
       this.limitChains.delete(live.id);
@@ -2814,13 +2836,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       live.autofixTurn?.delivered &&
       !live.reopen &&
-      (result.queued_turn_count ?? 0) === 0
+      result.queuedTurns === 0
     ) {
       // The Autofix run is over. With a reopen pending, it goes on with the
       // new process (reopenAfterTurn).
       live.autofixTurn = null;
     }
-    if (live.reopen && (result.queued_turn_count ?? 0) === 0) {
+    if (live.reopen && result.queuedTurns === 0) {
       // An added repository needs a new process: it continues there, with
       // the first queued message (one sent right away is at the front;
       // with all sent right away, the others wait for that turn's end).
@@ -2834,8 +2856,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // it. Sent right away: only those, the others wait for this turn's end.
     const flushed =
       run && !stillWaiting ? this.flushQueue(live, run, sendNow) : 0;
-    const queued = flushed > 0 || (result.queued_turn_count ?? 0) > 0;
-    if (queued || interrupted || result.is_error) {
+    const queued = flushed > 0 || result.queuedTurns > 0;
+    if (queued || interrupted || result.isError) {
       // What Claude said comes after this turn does not: another turn
       // follows, or the turn did not end as Claude planned.
       this.clearClaudeWait(live);
@@ -2858,7 +2880,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * (through the shown files, whose events come back via
    * {@link recordEvent}).
    */
-  private showImages(live: LiveSession, images: SeenImage[]): void {
+  private showImages(live: LiveSession, images: AgentImage[]): void {
     const store = this.shownFiles;
     if (!store) {
       return;
@@ -3039,7 +3061,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * change of the chosen mode: Claude Code could not use that mode (plan,
    * model, settings); the override shows it.
    */
-  private syncPermissionMode(live: LiveSession, mode: PermissionMode): void {
+  private syncPermissionMode(live: LiveSession, mode: string): void {
     live.reportedMode = mode;
     const record = this.requireRecord(live.id);
     if (!SESSION_PERMISSION_MODES.includes(mode as SessionPermissionMode)) {
@@ -3201,7 +3223,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       live.context = {
         model: usage.model,
-        usedTokens: usage.totalTokens,
+        usedTokens: usage.usedTokens,
         maxTokens: usage.maxTokens,
         percentage: usage.percentage,
         updatedAt: new Date().toISOString(),
@@ -3304,13 +3326,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private canUseTool(live: LiveSession): CanUseTool {
-    return async (toolName, input, options) => {
+  private approveCall(live: LiveSession): AgentApprover {
+    return async (call) => {
+      const { toolName, input } = call;
       if (
         APP_TOOLS_WITHOUT_APPROVAL.has(toolName) &&
-        (!options.mcpServer ||
-          (options.mcpServer.name === APP_MCP_SERVER &&
-            options.mcpServer.source === 'sdk'))
+        (!call.mcpServer ||
+          (call.mcpServer.name === APP_MCP_SERVER &&
+            call.mcpServer.source === 'sdk'))
       ) {
         // Showing a file reads only inside the session's directories;
         // previews forward only the session user's ports: never asks.
@@ -3318,9 +3341,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       if (
         live.autofixTurn?.delivered &&
-        autofixAppTool(toolName, options.mcpServer ?? null) &&
+        autofixAppTool(toolName, call.mcpServer) &&
         (input['resolve'] !== true ||
-          (await this.mayResolveUnasked(live, input, options.toolUseID)))
+          (await this.mayResolveUnasked(live, input, call.toolUseId)))
       ) {
         // During an Autofix run: replies touch only the session's own pull
         // requests (the tool refuses others); resolving only after the
@@ -3332,7 +3355,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         toolName === 'Bash' && typeof input['command'] === 'string'
           ? input['command']
           : null;
-      const mcpServer = options.mcpServer ?? null;
+      const mcpServer = call.mcpServer;
       const gitPushes = command
         ? await this.workspaces.analyzeGitPushes(live.id, command)
         : [];
@@ -3353,7 +3376,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         if (outcome) {
           this.append(live, {
             type: 'tool.by_app',
-            toolUseId: options.toolUseID,
+            toolUseId: call.toolUseId,
             outcome: outcome.ok ? 'succeeded' : 'failed',
             summary: outcome.summary,
           });
@@ -3420,17 +3443,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             ? this.pullRequestAutomationCall(live.id, input)
             : null,
         diff: await this.proposedChange(live.id, toolName, input),
-        toolUseId: options.toolUseID,
-        title: options.title ?? null,
-        description: options.description ?? null,
-        displayName: options.displayName ?? null,
-        decisionReason: options.decisionReason ?? null,
-        blockedPath: options.blockedPath ?? null,
-        agentId: options.agentID ?? null,
+        toolUseId: call.toolUseId,
+        title: call.title,
+        description: call.description,
+        displayName: call.displayName,
+        decisionReason: call.decisionReason,
+        blockedPath: call.blockedPath,
+        agentId: call.agentId,
         mcpServer,
-        suggestions: options.suggestions ?? [],
-        suppressAlwaysAllow: options.suppressAlwaysAllowRule === true,
-        signal: options.signal,
+        suggestions: call.suggestions,
+        suppressAlwaysAllow: call.suppressAlwaysAllow,
+        signal: call.signal,
         onRequest: (event) => {
           this.append(live, event);
           this.publishStatus(live);
@@ -3451,7 +3474,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       const approvedInput = result.updatedInput ?? input;
       if (addition) {
         // Exactly what the user saw, used once by the tool.
-        live.additionGrants.set(options.toolUseID, addition);
+        live.additionGrants.set(call.toolUseId, addition);
       }
       if (
         resolution.mode &&
@@ -4909,7 +4932,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * restarted now if it is free.
    */
   private keptOnOtherAccount(live: LiveSession): boolean {
-    const accountId = this.accountOf(this.requireRecord(live.id).accountId);
+    const accountId = this.accountOf(this.requireRecord(live.id));
     if (!live.run || live.closing || live.accountId === accountId) {
       return false;
     }
@@ -4978,7 +5001,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const until = this.limits
       .account(live.accountId)
       .exhaustedUntil(window ? [window] : [], now);
-    const switchedTo = this.accountOf(record.accountId);
+    const switchedTo = this.accountOf(record);
     // The user switched the session during the turn: like an automatic
     // switch, its account is looked at (and continued with) at once.
     const userSwitched = !switched && switchedTo !== live.accountId;
@@ -5139,9 +5162,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.scheduleLimitCheck(sessionId);
       return;
     }
-    const accountId = this.accountOf(
-      this.sessions.get(sessionId)?.accountId ?? null,
-    );
+    const accountId = this.accountOf(this.sessions.get(sessionId));
     if (
       this.accounts &&
       !this.accounts.isSwitchable(accountId) &&
@@ -5163,10 +5184,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // Continued, cancelled or ended meanwhile.
       return;
     }
-    if (
-      this.accountOf(this.sessions.get(sessionId)?.accountId ?? null) !==
-      accountId
-    ) {
+    if (this.accountOf(this.sessions.get(sessionId)) !== accountId) {
       // Switched to another account meanwhile: its limits decide.
       this.scheduleLimitCheck(sessionId);
       return;
@@ -5283,7 +5301,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (!next) {
       // Every account is exhausted: wait for the one that resets first,
       // also the one the session came from.
-      const earliest = accounts.earliestReset(wait.window ? [wait.window] : []);
+      const earliest = accounts.earliestReset(
+        wait.window ? [wait.window] : [],
+        Date.now(),
+        this.providerOf(this.sessions.get(sessionId)),
+      );
       if (!earliest || earliest.id === accountId || earliest.at >= until) {
         return false;
       }
@@ -5386,7 +5408,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     const switchedAccount =
       wait.limitedAccountId !== undefined &&
-      wait.limitedAccountId !== this.accountOf(record.accountId);
+      wait.limitedAccountId !== this.accountOf(record);
     const send = (autofixRun: boolean) =>
       this.sendMessage(live.id, {
         text: switchedAccount
@@ -6155,6 +6177,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       model: record.model,
       permissionMode: record.permissionMode,
       accountId: record.accountId,
+      engine: record.engine,
       permissionModeOverride: this.permissionModeOverride(record),
       ...this.effectiveStatus(record),
       pendingRequests: this.pendingSummary(record),

@@ -30,10 +30,7 @@ const usage = {
     outputTokens: 200,
     cacheCreationInputTokens: 0,
     cacheReadInputTokens: 0,
-    costUSD: 0.5,
-    webSearchRequests: 0,
-    contextWindow: 200_000,
-    maxOutputTokens: 32_000,
+    costUsd: 0.5,
   },
 };
 

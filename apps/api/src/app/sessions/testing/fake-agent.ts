@@ -1,4 +1,5 @@
 import type {
+  CanUseTool,
   ModelInfo,
   SDKControlGetContextUsageResponse,
   SDKControlGetUsageResponse,
@@ -16,10 +17,31 @@ import type {
   AgentUserMessage,
 } from '../../agent/agent-runner';
 import { AsyncQueue } from '../../agent/async-queue';
+import type {
+  AgentCommand,
+  AgentContextUsage,
+  AgentEvent,
+  AgentHistoryEntry,
+  AgentModel,
+  AgentPlanUsage,
+} from '../../agent/agent-events';
+import {
+  ClaudeEventTranslator,
+  claudeCanUseTool,
+  claudeHistory,
+  claudeCommand,
+  claudeContextUsage,
+  claudeModel,
+  claudePlanUsage,
+} from '../../agent/claude-events';
+import { translateMessages } from '../../agent/sdk-agent-runner';
 import type { TranscriptReader } from '../../agent/transcript-reader';
 import type { SessionPermissionMode } from '@claude-remote-manager/shared-types';
 
-/** A Claude Code process whose messages the test pushes. */
+/**
+ * A Claude Code process whose messages the test pushes; they reach the
+ * session through the Claude Code adapter's translation, as in production.
+ */
 export class FakeRun implements AgentRun {
   readonly output = new AsyncQueue<SDKMessage>();
   readonly sent: AgentUserMessage[] = [];
@@ -32,10 +54,14 @@ export class FakeRun implements AgentRun {
     percentage: 0.6,
   };
 
-  constructor(
-    readonly options: AgentStartOptions,
-    firstMessage: AgentUserMessage,
-  ) {
+  /**
+   * What the process was started with; `canUseTool` is the approver as
+   * Claude Code calls it (through the adapter), for tests to ask with.
+   */
+  readonly options: AgentStartOptions & { canUseTool: CanUseTool };
+
+  constructor(options: AgentStartOptions, firstMessage: AgentUserMessage) {
+    this.options = { ...options, canUseTool: claudeCanUseTool(options.approve) };
     this.sent.push(firstMessage);
   }
 
@@ -56,6 +82,13 @@ export class FakeRun implements AgentRun {
   }
 
   private failure: Error | null = null;
+
+  private readonly translator = new ClaudeEventTranslator();
+
+  /** The pushed messages as agent events. */
+  get events(): AsyncIterable<AgentEvent[]> {
+    return translateMessages(this.messages, this.translator);
+  }
 
   /** The pushed messages; iteration throws after `crash`. */
   get messages(): AsyncIterable<SDKMessage> {
@@ -83,11 +116,13 @@ export class FakeRun implements AgentRun {
     this.interrupted++;
   }
 
-  async contextUsage(): Promise<SDKControlGetContextUsageResponse> {
-    return this.context as SDKControlGetContextUsageResponse;
+  async contextUsage(): Promise<AgentContextUsage> {
+    return claudeContextUsage(
+      this.context as SDKControlGetContextUsageResponse,
+    );
   }
 
-  async planUsage(): Promise<SDKControlGetUsageResponse> {
+  async planUsage(): Promise<AgentPlanUsage> {
     throw new Error('not available in tests');
   }
 
@@ -112,8 +147,8 @@ export class FakeRun implements AgentRun {
   /** What `supportedCommands` answers. */
   commands: SlashCommand[] = [];
 
-  async supportedCommands(): Promise<SlashCommand[]> {
-    return this.commands;
+  async supportedCommands(): Promise<AgentCommand[]> {
+    return this.commands.map(claudeCommand);
   }
 
   /** Tasks the app stopped. */
@@ -177,9 +212,10 @@ export class FakeAgentRunner implements AgentRunner {
   async probe<T>(task: (probe: AgentProbe) => Promise<T>): Promise<T> {
     this.probes++;
     return task({
-      supportedModels: async () => this.probeModels(),
-      planUsage: async () => this.probeUsage(),
-      supportedCommands: async () => this.probeCommands(),
+      supportedModels: async (): Promise<AgentModel[]> =>
+        this.probeModels().map(claudeModel),
+      planUsage: async () => claudePlanUsage(this.probeUsage()),
+      supportedCommands: async () => this.probeCommands().map(claudeCommand),
     });
   }
 
@@ -257,12 +293,15 @@ export class FakeTranscriptReader implements TranscriptReader {
   /** Makes `read` fail, like an unreadable transcript. */
   failing = false;
 
-  async read(sdkSessionId: string, cwd: string): Promise<SessionMessage[]> {
+  async read(
+    sdkSessionId: string,
+    cwd: string,
+  ): Promise<AgentHistoryEntry[]> {
     this.reads.push({ sdkSessionId, cwd });
     if (this.failing) {
       throw new Error('transcript unreadable');
     }
-    return this.transcripts.get(sdkSessionId) ?? [];
+    return claudeHistory(this.transcripts.get(sdkSessionId) ?? []);
   }
 }
 

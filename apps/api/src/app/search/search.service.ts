@@ -5,6 +5,7 @@ import {
   Logger,
   type OnModuleDestroy,
   type OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import type {
@@ -14,6 +15,7 @@ import type {
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
 import { TranscriptReader } from '../agent/transcript-reader';
+import { AgentEngines } from '../agent/agent-engines';
 import { DATABASE, type AppDatabase } from '../db/database';
 import { searchDocuments, searchSessions } from '../db/schema';
 import {
@@ -97,6 +99,7 @@ export class SearchService implements OnModuleInit, OnModuleDestroy {
     private readonly sessions: SessionsService,
     private readonly records: SessionRepository,
     private readonly transcripts: TranscriptReader,
+    @Optional() private readonly engines?: AgentEngines,
   ) {}
 
   onModuleInit(): void {
@@ -328,7 +331,11 @@ export class SearchService implements OnModuleInit, OnModuleDestroy {
     const cwd = transcriptDirectory(record);
     const id = record.sdkSessionId ?? record.id;
     const stamp = cwd
-      ? await this.transcripts.stamp(id, cwd, record.workingDirectory !== null)
+      ? await (this.engines?.transcripts(record.engine) ?? this.transcripts).stamp(
+          id,
+          cwd,
+          record.workingDirectory !== null,
+        )
       : null;
     return stamp ?? 'missing';
   }

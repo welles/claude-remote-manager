@@ -10,6 +10,7 @@ import type {
   SessionDto,
   SessionEvent,
 } from '@claude-remote-manager/shared-types';
+import { claudePlanUsage } from '../agent/claude-events';
 import { type AppConfig, testAppConfig } from '../config/app-config';
 import { openDatabase, type AppDatabase } from '../db/database';
 import { GitService } from '../git/git.service';
@@ -2748,22 +2749,21 @@ describe('SessionsService', () => {
 
     /** The plan usage the probe reads: the 5-hour window at `percent`. */
     const usage = (percent: number, resetsAtMs: number) => {
-      limits.setPlanUsageSource(
-        async () =>
-          ({
-            subscription_type: 'max',
-            rate_limits_available: true,
-            rate_limits: {
-              five_hour: {
-                utilization: percent,
-                resets_at: new Date(resetsAtMs).toISOString(),
-              },
-              seven_day: null,
-              seven_day_opus: null,
-              seven_day_sonnet: null,
-              seven_day_oauth_apps: null,
+      limits.setPlanUsageSource(async () =>
+        claudePlanUsage({
+          subscription_type: 'max',
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: {
+              utilization: percent,
+              resets_at: new Date(resetsAtMs).toISOString(),
             },
-          }) as never,
+            seven_day: null,
+            seven_day_opus: null,
+            seven_day_sonnet: null,
+            seven_day_oauth_apps: null,
+          },
+        } as never),
       );
     };
 

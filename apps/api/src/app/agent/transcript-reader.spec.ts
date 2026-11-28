@@ -11,7 +11,14 @@ jest.mock('./sdk-agent-runner', () => ({
 
 describe('SdkTranscriptReader', () => {
   const reader = new SdkTranscriptReader();
-  const message = { type: 'user', uuid: 'u1' };
+  const message = {
+    type: 'user',
+    uuid: 'u1',
+    parent_tool_use_id: null,
+    message: { role: 'user', content: 'Hi' },
+  };
+  // The history entry the Claude adapter makes of it.
+  const entry = expect.objectContaining({ uuid: 'u1', isUserMessage: true });
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -41,7 +48,7 @@ describe('SdkTranscriptReader', () => {
   });
 
   it('searches all project folders after a switch of the working directory', async () => {
-    await expect(reader.read('s', '/first', true)).resolves.toEqual([message]);
+    await expect(reader.read('s', '/first', true)).resolves.toEqual([entry]);
     await expect(reader.exists('s', '/first', true)).resolves.toBe(true);
     await expect(reader.stamp('s', '/first', true)).resolves.toBe('10@5');
   });
@@ -49,7 +56,7 @@ describe('SdkTranscriptReader', () => {
   it('stays in the first directory’s folder when the transcript is there', async () => {
     sdk.getSessionMessages.mockResolvedValue([message]);
     sdk.getSessionInfo.mockResolvedValue({ fileSize: 1, lastModified: 2 });
-    await expect(reader.read('s', '/first', true)).resolves.toEqual([message]);
+    await expect(reader.read('s', '/first', true)).resolves.toEqual([entry]);
     expect(sdk.getSessionMessages).toHaveBeenCalledTimes(1);
     await expect(reader.stamp('s', '/first', true)).resolves.toBe('1@2');
     expect(sdk.getSessionInfo).toHaveBeenCalledTimes(1);

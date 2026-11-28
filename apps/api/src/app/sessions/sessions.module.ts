@@ -18,6 +18,7 @@ import { SessionGitHubTokensService } from './session-github-tokens.service';
 import { SessionTokens } from './session-tokens';
 import { SessionGitService } from './session-git.service';
 import { AgentRunner } from '../agent/agent-runner';
+import { AgentEngines, EnginesController } from '../agent/agent-engines';
 import { SdkAgentRunner } from '../agent/sdk-agent-runner';
 import {
   SdkTranscriptReader,
@@ -80,6 +81,7 @@ const logger = new Logger('SessionsModule');
     SessionBrowseController,
     ModelsController,
     SlashCommandsController,
+    EnginesController,
   ],
   providers: [
     SessionRepository,
@@ -112,10 +114,12 @@ const logger = new Logger('SessionsModule');
     FileMentionsService,
     RunningDirectories,
     { provide: AgentRunner, useClass: SdkAgentRunner },
+    AgentEngines,
     { provide: TranscriptReader, useClass: SdkTranscriptReader },
   ],
   exports: [
     SessionsService,
+    AgentEngines,
     SessionDiffService,
     UsageRepository,
     AgentRunner,

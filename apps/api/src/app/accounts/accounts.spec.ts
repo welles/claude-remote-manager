@@ -13,6 +13,10 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
+import { eq } from 'drizzle-orm';
+import { DATABASE, type AppDatabase } from '../db/database';
+import { accounts } from '../db/schema';
+import { claudeRateLimit } from '../agent/claude-events';
 import { SessionRepository } from '../sessions/session.repository';
 import {
   LIMIT_SWITCH_CONTINUE_TEXT,
@@ -97,10 +101,12 @@ describe('accounts', () => {
     app.app
       .get(LimitsService)
       .account('main')
-      .updateFromRateLimitEvent({
-        status: 'rejected',
-        rateLimitType: 'five_hour',
-      });
+      .updateFromRateLimit(
+        claudeRateLimit({
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+        }),
+      );
     // The main account cannot be removed, only logged out.
     expect((await call('DELETE', '/api/accounts/main')).status).toBe(409);
     expect((await call('POST', '/api/accounts/main/logout')).status).toBe(201);
@@ -216,11 +222,13 @@ describe('accounts', () => {
     app.app
       .get(LimitsService)
       .account('main')
-      .updateFromRateLimitEvent({
-        status: 'rejected',
-        rateLimitType: 'five_hour',
-        resetsAt: Date.now() / 1000 + 3600,
-      });
+      .updateFromRateLimit(
+        claudeRateLimit({
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: Date.now() / 1000 + 3600,
+        }),
+      );
     const avoiding = (
       await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
     ).json<SessionDto>();
@@ -652,11 +660,13 @@ describe('accounts', () => {
       app.app
         .get(LimitsService)
         .account(work.id)
-        .updateFromRateLimitEvent({
-          status: 'rejected',
-          rateLimitType: 'five_hour',
-          resetsAt: Math.floor(soon / 1000),
-        });
+        .updateFromRateLimit(
+          claudeRateLimit({
+            status: 'rejected',
+            rateLimitType: 'five_hour',
+            resetsAt: Math.floor(soon / 1000),
+          }),
+        );
       const session = (
         await call('POST', '/api/sessions', {
           prompt: 'Hi',
@@ -710,11 +720,13 @@ describe('accounts', () => {
       app.app
         .get(LimitsService)
         .account(work.id)
-        .updateFromRateLimitEvent({
-          status: 'rejected',
-          rateLimitType: 'seven_day_opus',
-          resetsAt: Math.floor(later / 1000),
-        });
+        .updateFromRateLimit(
+          claudeRateLimit({
+            status: 'rejected',
+            rateLimitType: 'seven_day_opus',
+            resetsAt: Math.floor(later / 1000),
+          }),
+        );
       const session = await startOn('main');
       hitLimit(Date.now() + 86_400_000, 'seven_day_opus');
       await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
@@ -806,11 +818,13 @@ describe('accounts', () => {
       app.app
         .get(LimitsService)
         .account(work.id)
-        .updateFromRateLimitEvent({
-          status: 'rejected',
-          rateLimitType: 'seven_day',
-          resetsAt: Math.floor((Date.now() + 3 * 86_400_000) / 1000),
-        });
+        .updateFromRateLimit(
+          claudeRateLimit({
+            status: 'rejected',
+            rateLimitType: 'seven_day',
+            resetsAt: Math.floor((Date.now() + 3 * 86_400_000) / 1000),
+          }),
+        );
       const session = await startOn('main');
       hitLimit(Date.now(), null);
       await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
@@ -874,5 +888,53 @@ describe('accounts', () => {
       await waitFor(async () => (await get()).waitingFor === 'limit');
       expect((await get()).accountId).toBe('main');
     });
+  });
+
+  it('chooses accounts per provider', async () => {
+    app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+    await call('POST', '/api/accounts/main/refresh');
+    const work = await addAccount('Work', 'work@example.test');
+    const db = app.app.get<AppDatabase>(DATABASE);
+    // An account of another provider (only Claude exists so far).
+    db.insert(accounts)
+      .values({
+        id: 'other-1',
+        provider: 'chatgpt' as never,
+        name: 'Other',
+        position: 5,
+        directory: null,
+        isDefault: true,
+        loggedIn: true,
+      })
+      .run();
+    const service = app.app.get(AccountsService);
+    // Each provider has its own default.
+    expect(service.effectiveId(null, 'claude')).toBe('main');
+    expect(service.effectiveId(null, 'chatgpt' as never)).toBe('other-1');
+    // An account of another provider does not count for a session.
+    expect(service.effectiveId('other-1', 'claude')).toBe('main');
+    expect(() => service.forNewSession('other-1', 'claude')).toThrow(/engine/);
+    // Making a Claude account the default leaves the other provider's.
+    await call('PATCH', `/api/accounts/${work.id}`, { isDefault: true });
+    expect(service.effectiveId(null, 'claude')).toBe(work.id);
+    expect(service.effectiveId(null, 'chatgpt' as never)).toBe('other-1');
+    // The automatic switch stays within the provider.
+    expect(service.nextAvailable(work.id)).toBe('main');
+    // A provider without accounts: nothing to pick, starting says so.
+    db.delete(accounts).where(eq(accounts.id, 'other-1')).run();
+    expect(service.effectiveId(null, 'chatgpt' as never)).toBeNull();
+    expect(() => service.forNewSession(undefined, 'chatgpt' as never)).toThrow(
+      /Settings/,
+    );
+  });
+
+  it('reads the models again for another default account', async () => {
+    const work = await addAccount('Work', 'work@example.test');
+    await call('GET', '/api/models');
+    await call('GET', '/api/models');
+    const probes = app.runner.probes;
+    await call('PATCH', `/api/accounts/${work.id}`, { isDefault: true });
+    await call('GET', '/api/models');
+    expect(app.runner.probes).toBe(probes + 1);
   });
 });

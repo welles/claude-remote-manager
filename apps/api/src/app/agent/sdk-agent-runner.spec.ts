@@ -76,7 +76,7 @@ describe('gateHooks', () => {
 });
 
 describe('buildQueryOptions', () => {
-  const canUseTool: AgentStartOptions['canUseTool'] = async () => ({
+  const approve: AgentStartOptions['approve'] = async () => ({
     behavior: 'deny',
     message: 'no',
   });
@@ -87,7 +87,7 @@ describe('buildQueryOptions', () => {
     permissionMode: 'default',
     resume: null,
     sessionId: 'new-id',
-    canUseTool,
+    approve,
   };
   const stderr = () => undefined;
 
@@ -105,7 +105,7 @@ describe('buildQueryOptions', () => {
       cwd: '/work',
       additionalDirectories: ['/extra'],
       permissionMode: 'default',
-      canUseTool,
+      canUseTool: expect.any(Function),
       sessionId: 'new-id',
       strictMcpConfig: false,
       allowDangerouslySkipPermissions: true,
@@ -223,7 +223,7 @@ describe('Claude Code as the session user', () => {
         permissionMode: 'default',
         resume: null,
         sessionId: null,
-        canUseTool: async () => ({ behavior: 'deny', message: 'no' }),
+        approve: async () => ({ behavior: 'deny', message: 'no' }),
         env: { CRM_SESSION_TOKEN: 't' },
       },
       { claudeExecutable: null },

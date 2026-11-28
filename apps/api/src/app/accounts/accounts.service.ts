@@ -9,10 +9,13 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { Subject } from 'rxjs';
 import {
+  ACCOUNT_PROVIDER_LABELS,
+  ACCOUNT_PROVIDERS,
   MAIN_ACCOUNT_ID,
+  type AccountProvider,
   MAX_ACCOUNT_NAME_LENGTH,
   type AccountDto,
   type AccountLoginDto,
@@ -148,6 +151,11 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     return !this.removing.has(id) && this.exists(id);
   }
 
+  /** The provider of an account; `null` if it is not there. */
+  providerOf(id: string): AccountProvider | null {
+    return this.row(id)?.provider ?? null;
+  }
+
   /** Whether an account exists. */
   exists(id: string): boolean {
     return this.row(id) !== undefined;
@@ -159,7 +167,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
    */
   async create(request: CreateAccountRequest): Promise<AccountDto> {
     const body = requireObject(request);
-    optionalEnum(body, 'provider', ['claude'] as const);
+    const provider =
+      optionalEnum(body, 'provider', ACCOUNT_PROVIDERS) ?? 'claude';
     const name = this.validName(body);
     const id = randomUUID();
     await this.directories.prepare(id);
@@ -167,7 +176,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       this.rows().reduce((max, row) => Math.max(max, row.position), -1) + 1;
     this.db
       .insert(accounts)
-      .values({ id, provider: 'claude', name, position, directory: id })
+      .values({ id, provider, name, position, directory: id })
       .run();
     this.startLogin(id);
     this.publish();
@@ -176,7 +185,7 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   update(id: string, request: UpdateAccountRequest): AccountDto {
     const body = requireObject(request);
-    this.requireUsable(id);
+    const row = this.requireUsable(id);
     // Both checked before anything is written.
     const name = 'name' in body ? this.validName(body) : undefined;
     if ('isDefault' in body && body['isDefault'] !== true) {
@@ -187,7 +196,11 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     }
     if ('isDefault' in body) {
       this.db.transaction((tx) => {
-        tx.update(accounts).set({ isDefault: false }).run();
+        // One default per provider.
+        tx.update(accounts)
+          .set({ isDefault: false })
+          .where(eq(accounts.provider, row.provider))
+          .run();
         tx.update(accounts)
           .set({ isDefault: true })
           .where(eq(accounts.id, id))
@@ -282,16 +295,23 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
         .where(eq(sessions.accountId, id))
         .run();
       tx.delete(accounts).where(eq(accounts.id, id)).run();
-      // Whatever is marked now (not the row read before the awaits).
+      // Whatever is marked now (not the row read before the awaits), per
+      // provider.
       const hasDefault = tx
         .select()
         .from(accounts)
-        .where(eq(accounts.isDefault, true))
+        .where(
+          and(
+            eq(accounts.isDefault, true),
+            eq(accounts.provider, row.provider),
+          ),
+        )
         .get();
       if (!hasDefault) {
         const first = tx
           .select()
           .from(accounts)
+          .where(eq(accounts.provider, row.provider))
           .orderBy(asc(accounts.position))
           .get();
         if (first) {
@@ -466,8 +486,9 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
    */
   async agentAccount(
     accountId: string | null,
+    provider: AccountProvider = 'claude',
   ): Promise<AgentAccount & { id: string }> {
-    const row = this.pick(accountId);
+    const row = this.pick(accountId, provider);
     if (row.directory !== null) {
       await this.directories.prepare(row.directory);
     }
@@ -482,11 +503,16 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   async withAccount<T>(
     accountId: string | null,
     task: (account: AgentAccount & { id: string }) => Promise<T>,
-    { exact = false }: { exact?: boolean } = {},
+    {
+      exact = false,
+      provider = 'claude',
+    }: { exact?: boolean; provider?: AccountProvider } = {},
   ): Promise<T> {
     // Chosen and counted at once, before the directory is prepared, so a
     // removal cannot slip in between.
-    const row = exact ? this.pickExact(accountId ?? '') : this.pick(accountId);
+    const row = exact
+      ? this.pickExact(accountId ?? '')
+      : this.pick(accountId, provider);
     this.leases.set(row.id, (this.leases.get(row.id) ?? 0) + 1);
     try {
       if (row.directory !== null) {
@@ -507,17 +533,26 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
    * The ID of the account a process started now uses (see
    * {@link agentAccount}), without preparing anything.
    */
-  pickId(accountId: string | null): string {
-    return this.pick(accountId).id;
+  pickId(
+    accountId: string | null,
+    provider: AccountProvider = 'claude',
+  ): string {
+    return this.pick(accountId, provider).id;
   }
 
-  /** The account itself, else (unknown or being removed) the default. */
-  private pick(accountId: string | null): AccountRow {
-    return (
-      (accountId && !this.removing.has(accountId)
+  /**
+   * The account itself, else (unknown, of another provider or being
+   * removed) the provider's default.
+   */
+  private pick(
+    accountId: string | null,
+    provider: AccountProvider,
+  ): AccountRow {
+    const own =
+      accountId && !this.removing.has(accountId)
         ? this.row(accountId)
-        : undefined) ?? this.defaultRow()
-    );
+        : undefined;
+    return own && own.provider === provider ? own : this.defaultRow(provider);
   }
 
   private pickExact(accountId: string): AccountRow {
@@ -532,9 +567,20 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** The account a session effectively uses (`null`: the default). */
-  effectiveId(accountId: string | null): string {
+  effectiveId(
+    accountId: string | null,
+    provider: AccountProvider = 'claude',
+  ): string | null {
     // As processes pick it: one being removed counts as the default.
-    return this.pick(accountId).id;
+    try {
+      return this.pick(accountId, provider).id;
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        // The provider has no account (left): starting says so.
+        return null;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -542,17 +588,25 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
    * unless its limit is exhausted, then the first one in order whose limit
    * is not; when all are, the default.
    */
-  forNewSession(requested: string | undefined, now = Date.now()): string {
+  forNewSession(
+    requested: string | undefined,
+    provider: AccountProvider = 'claude',
+    now = Date.now(),
+  ): string {
     if (requested !== undefined) {
-      if (!this.exists(requested)) {
-        throw new BadRequestException('accountId is not a known account');
+      if (this.row(requested)?.provider !== provider) {
+        throw new BadRequestException(
+          "accountId is not a known account of the session's engine",
+        );
       }
       return requested;
     }
-    const preferred = this.defaultRow();
+    const preferred = this.defaultRow(provider);
     const candidates = [
       preferred,
-      ...this.rows().filter((row) => row.id !== preferred.id),
+      ...this.rows().filter(
+        (row) => row.id !== preferred.id && row.provider === provider,
+      ),
     ].filter((row) => row.loggedIn !== false);
     return (
       candidates.find(
@@ -576,7 +630,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       now = Date.now(),
     }: { windows?: string[]; exclude?: string[]; now?: number } = {},
   ): string | null {
-    const rows = this.switchable();
+    const provider = this.row(current)?.provider ?? 'claude';
+    const rows = this.switchable(provider);
     const index = rows.findIndex((row) => row.id === current);
     const ordered =
       index < 0 ? rows : [...rows.slice(index + 1), ...rows.slice(0, index)];
@@ -597,9 +652,10 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   earliestReset(
     windows: string[] = [],
     now = Date.now(),
+    provider: AccountProvider = 'claude',
   ): { id: string; at: Date } | null {
     let best: { id: string; at: Date } | null = null;
-    for (const row of this.switchable()) {
+    for (const row of this.switchable(provider)) {
       const at = this.limits.account(row.id).exhaustedUntil(windows, now);
       if (at && (!best || at < best.at)) {
         best = { id: row.id, at };
@@ -610,13 +666,17 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   /** Whether a session can (still) use the account: see switchable. */
   isSwitchable(id: string): boolean {
-    return this.switchable().some((row) => row.id === id);
+    const provider = this.row(id)?.provider;
+    return !!provider && this.switchable(provider).some((row) => row.id === id);
   }
 
   /** Accounts a session can switch to: logged in (or unknown), not removed. */
-  private switchable(): AccountRow[] {
+  private switchable(provider: AccountProvider): AccountRow[] {
     return this.rows().filter(
-      (row) => row.loggedIn !== false && !this.removing.has(row.id),
+      (row) =>
+        row.provider === provider &&
+        row.loggedIn !== false &&
+        !this.removing.has(row.id),
     );
   }
 
@@ -664,16 +724,23 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     return row;
   }
 
-  /** The default account; the main one if none is marked. */
-  private defaultRow(): AccountRow {
+  /**
+   * The provider's default account; for Claude the main one if none is
+   * marked. 409 when the provider has no account.
+   */
+  private defaultRow(provider: AccountProvider): AccountRow {
     // Not one being removed (the main account never is).
-    const rows = this.rows().filter((row) => !this.removing.has(row.id));
+    const rows = this.rows().filter(
+      (row) => row.provider === provider && !this.removing.has(row.id),
+    );
     const found =
       rows.find((row) => row.isDefault) ??
       rows.find((row) => row.id === MAIN_ACCOUNT_ID) ??
       rows[0];
     if (!found) {
-      throw new Error('There is no account');
+      throw new ConflictException(
+        `There is no ${ACCOUNT_PROVIDER_LABELS[provider]} account: add one under Settings → Accounts`,
+      );
     }
     return found;
   }
@@ -705,4 +772,28 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     }
     this.changes.next(this.list());
   }
+}
+
+/**
+ * What a cache of a provider's default account (its models, its commands)
+ * depends on: the account and its login. Changes when another account
+ * becomes the default or the default's login changes.
+ */
+export function defaultAccountKey(
+  accounts: AccountDto[],
+  provider: AccountProvider = 'claude',
+): string {
+  const own = accounts.filter((account) => account.provider === provider);
+  const chosen =
+    own.find((account) => account.isDefault) ??
+    own.find((account) => account.main) ??
+    own[0];
+  return chosen
+    ? [
+        chosen.id,
+        chosen.loggedIn,
+        chosen.email,
+        chosen.subscriptionType,
+      ].join('|')
+    : '';
 }

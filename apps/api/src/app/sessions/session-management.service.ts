@@ -27,6 +27,7 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { AttachmentStore } from '../attachments/attachment.store';
 import { TranscriptReader } from '../agent/transcript-reader';
+import { AgentEngines } from '../agent/agent-engines';
 import { requireObject } from '../common/validation';
 import { APP_CONFIG, type AppConfig } from '../config/app-config';
 import { DATABASE, type AppDatabase } from '../db/database';
@@ -140,6 +141,7 @@ export class SessionManagementService {
     @Optional() private readonly attachmentStore?: AttachmentStore,
     @Optional() private readonly shownFileStore?: ShownFilesService,
     @Optional() private readonly previews?: PreviewsService,
+    @Optional() private readonly engines?: AgentEngines,
   ) {}
 
   // --- Cleanup -------------------------------------------------------------
@@ -260,7 +262,7 @@ export class SessionManagementService {
       const cwd = transcriptDirectory(record);
       transcript =
         !!cwd &&
-        (await this.transcripts.exists(
+        (await (this.engines?.transcripts(record.engine) ?? this.transcripts).exists(
           record.sdkSessionId ?? record.id,
           cwd,
           record.workingDirectory !== null,

@@ -12,6 +12,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import type {
+  AgentEngineId,
   PullRequestCreator,
   PullRequestChecksDto,
   PullRequestState,
@@ -182,6 +183,8 @@ export interface SessionRecord {
   reviewedDiff: string | null;
   /** Account the session works with; `null`: the default account. */
   accountId: string | null;
+  /** The agent engine the session runs with. */
+  engine: AgentEngineId;
 }
 
 export type NewSessionDirectory = Pick<
@@ -208,6 +211,7 @@ export interface NewSession {
   environmentId?: string | null;
   environmentSetupStatus?: SetupStatus;
   accountId?: string | null;
+  engine?: AgentEngineId;
 }
 
 export type SessionPatch = Partial<

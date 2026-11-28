@@ -1,11 +1,13 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type {
   SlashCommandOption,
   SlashCommandsResponse,
 } from '@claude-remote-manager/shared-types';
 import { AgentRunner, type AgentProbe } from '../agent/agent-runner';
-import { AccountsService } from '../accounts/accounts.service';
+import {
+  AccountsService,
+  defaultAccountKey,
+} from '../accounts/accounts.service';
 
 /** How long the user's commands (asked through a probe) are used. */
 export const USER_COMMANDS_CACHE_MS = 10 * 60_000;
@@ -40,17 +42,6 @@ export function uniqueCommands(
   return [...byName.values()];
 }
 
-/** A command of Claude Code's list as offered in the UI. */
-export function slashCommandOption(command: SlashCommand): SlashCommandOption {
-  return {
-    name: command.name,
-    description: command.description ?? '',
-    argumentHint: command.argumentHint ?? '',
-    aliases: command.aliases ?? [],
-    builtin: command.builtin === true,
-  };
-}
-
 /**
  * The slash commands and skills for `/` autocomplete. A session's list is
  * what its Claude Code reported last (`supportedCommands` after `init`,
@@ -65,8 +56,16 @@ export class SlashCommandsService {
   private readonly logger = new Logger(SlashCommandsService.name);
   private readonly sessions = new Map<string, SlashCommandOption[]>();
   private readonly terminal = new Set(TERMINAL_COMMANDS);
-  private user: { commands: SlashCommandOption[]; until: number } | null = null;
-  private loading: Promise<SlashCommandOption[]> | null = null;
+  /** By the default account it was read for (see `defaultAccountKey`). */
+  private user: {
+    key: string;
+    commands: SlashCommandOption[];
+    until: number;
+  } | null = null;
+  private loading: {
+    key: string;
+    list: Promise<SlashCommandOption[]>;
+  } | null = null;
 
   /** Clock; replaced in tests. */
   now: () => number = Date.now;
@@ -89,11 +88,8 @@ export class SlashCommandsService {
   }
 
   /** What a session's Claude Code reported (a full list). */
-  remember(sessionId: string, commands: readonly SlashCommand[]): void {
-    this.sessions.set(
-      sessionId,
-      uniqueCommands(commands.map(slashCommandOption)),
-    );
+  remember(sessionId: string, commands: readonly SlashCommandOption[]): void {
+    this.sessions.set(sessionId, uniqueCommands([...commands]));
   }
 
   /** Commands Claude Code names as bound to a terminal (`init`). */
@@ -112,17 +108,24 @@ export class SlashCommandsService {
   }
 
   private userCommands(): Promise<SlashCommandOption[]> {
-    if (this.user && this.user.until > this.now()) {
+    // Another default account (or login) has a list of its own.
+    const key = this.accounts ? defaultAccountKey(this.accounts.list()) : '';
+    if (this.user && this.user.key === key && this.user.until > this.now()) {
       return Promise.resolve(this.user.commands);
     }
-    this.loading ??= this.load().finally(() => {
-      this.loading = null;
-    });
-    return this.loading;
+    if (this.loading?.key !== key) {
+      const list = this.load(key).finally(() => {
+        if (this.loading?.list === list) {
+          this.loading = null;
+        }
+      });
+      this.loading = { key, list };
+    }
+    return this.loading.list;
   }
 
   /** The commands of the default account's Claude Code. */
-  private probeCommands(): Promise<SlashCommand[]> {
+  private probeCommands(): Promise<SlashCommandOption[]> {
     const task = (probe: AgentProbe) =>
       withTimeout(probe.supportedCommands(), PROBE_TIMEOUT_MS);
     return this.accounts
@@ -132,17 +135,23 @@ export class SlashCommandsService {
       : this.runner.probe(task);
   }
 
-  private async load(): Promise<SlashCommandOption[]> {
+  private async load(key: string): Promise<SlashCommandOption[]> {
     try {
-      const commands = uniqueCommands(
-        (await this.probeCommands()).map(slashCommandOption),
-      );
-      this.user = { commands, until: this.now() + USER_COMMANDS_CACHE_MS };
+      const commands = uniqueCommands(await this.probeCommands());
+      this.user = {
+        key,
+        commands,
+        until: this.now() + USER_COMMANDS_CACHE_MS,
+      };
       return commands;
     } catch (error) {
       this.logger.warn(`Listing the slash commands failed: ${String(error)}`);
-      const commands = this.user?.commands ?? [];
-      this.user = { commands, until: this.now() + USER_COMMANDS_RETRY_MS };
+      const commands = this.user?.key === key ? this.user.commands : [];
+      this.user = {
+        key,
+        commands,
+        until: this.now() + USER_COMMANDS_RETRY_MS,
+      };
       return commands;
     }
   }

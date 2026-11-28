@@ -23,6 +23,41 @@ import type {
   AgentUserMessage,
 } from './agent-runner';
 import { AsyncQueue } from './async-queue';
+import type { AgentEvent } from './agent-events';
+import {
+  ClaudeEventTranslator,
+  claudeCanUseTool,
+  claudeCommand,
+  claudeContextUsage,
+  claudeModel,
+  claudeModelUsage,
+  claudePlanUsage,
+} from './claude-events';
+
+
+/**
+ * The agent events of a Claude Code process's messages, one batch per
+ * message (handled as a whole). A message that cannot be translated is
+ * reported to `onError` and skipped; the process goes on.
+ */
+export async function* translateMessages(
+  messages: AsyncIterable<Sdk.SDKMessage>,
+  translator: ClaudeEventTranslator,
+  onError: (error: unknown, message: Sdk.SDKMessage) => void = () => undefined,
+): AsyncIterable<AgentEvent[]> {
+  for await (const message of messages) {
+    let events: AgentEvent[];
+    try {
+      events = translator.translate(message);
+    } catch (error) {
+      onError(error, message);
+      continue;
+    }
+    if (events.length > 0) {
+      yield events;
+    }
+  }
+}
 
 type SdkModule = typeof Sdk;
 
@@ -373,7 +408,7 @@ export function buildQueryOptions(
     // process runs (`setPermissionMode`); the mode itself is the session's
     // choice. As `--allow-dangerously-skip-permissions`.
     allowDangerouslySkipPermissions: true,
-    canUseTool: options.canUseTool,
+    canUseTool: claudeCanUseTool(options.approve),
     ...(options.gate ? { hooks: gateHooks(options.gate) } : {}),
     ...(options.resume
       ? { resume: options.resume }
@@ -517,8 +552,14 @@ export class SdkAgentRunner implements AgentRunner {
       options.settings['permissions'] !== null
         ? (options.settings['permissions'] as Record<string, unknown>)
         : {};
+    const translator = new ClaudeEventTranslator();
     return {
-      messages: query,
+      events: translateMessages(query, translator, (error, message) =>
+        this.logger.error(
+          `Could not handle a ${message.type} message of Claude Code`,
+          error,
+        ),
+      ),
       send: push,
       addDirectories: async (directories) => {
         const next = new Set([...added, ...directories]);
@@ -535,15 +576,21 @@ export class SdkAgentRunner implements AgentRunner {
       interrupt: async () => {
         await query.interrupt();
       },
-      contextUsage: () => query.getContextUsage({ detail: 'summary' }),
-      planUsage: () =>
-        query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
-          skipBehaviors: true,
-        }),
+      contextUsage: async () =>
+        claudeContextUsage(await query.getContextUsage({ detail: 'summary' })),
+      planUsage: async () =>
+        claudePlanUsage(
+          await query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(
+            {
+              skipBehaviors: true,
+            },
+          ),
+        ),
       setPermissionMode: (mode) => query.setPermissionMode(mode),
       setModel: (model) => query.setModel(model ?? undefined),
       stopTask: (taskId) => query.stopTask(taskId),
-      supportedCommands: () => query.supportedCommands(),
+      supportedCommands: async () =>
+        (await query.supportedCommands()).map(claudeCommand),
       close: () => {
         input.close();
         query.close();
@@ -592,7 +639,7 @@ export class SdkAgentRunner implements AgentRunner {
             : output === undefined
               ? 'The reviewer gave no structured answer'
               : null,
-          modelUsage: message.modelUsage,
+          modelUsage: claudeModelUsage(message.modelUsage),
           durationMs: message.duration_ms,
         };
       }
@@ -641,12 +688,16 @@ export class SdkAgentRunner implements AgentRunner {
     });
     try {
       return await task({
-        supportedModels: () => query.supportedModels(),
-        supportedCommands: () => query.supportedCommands(),
-        planUsage: () =>
-          query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
-            skipBehaviors: true,
-          }),
+        supportedModels: async () =>
+          (await query.supportedModels()).map(claudeModel),
+        supportedCommands: async () =>
+          (await query.supportedCommands()).map(claudeCommand),
+        planUsage: async () =>
+          claudePlanUsage(
+            await query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(
+              { skipBehaviors: true },
+            ),
+          ),
       });
     } finally {
       input.close();

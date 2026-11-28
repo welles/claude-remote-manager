@@ -9,6 +9,7 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import type {
   AccountProvider,
+  AgentEngineId,
   PreviewStopper,
   PullRequestChecksDto,
   PullRequestCreator,
@@ -245,6 +246,11 @@ export const sessions = sqliteTable('sessions', {
   accountId: text('account_id').references(() => accounts.id, {
     onDelete: 'set null',
   }),
+  /** The agent engine the session runs with (fixed for its lifetime). */
+  engine: text('engine')
+    .$type<AgentEngineId>()
+    .notNull()
+    .default('claude-code'),
 });
 
 /**

@@ -6,7 +6,7 @@ import type {
   SessionEventInput,
 } from '@claude-remote-manager/shared-types';
 import type { StoredEvent } from './session-event.repository';
-import type { TranscriptEntry } from './sdk-event-mapper';
+import type { AgentHistoryEntry } from '../agent/agent-events';
 
 /** What a subscriber gets: whole log or the part after its position. */
 export interface LogSnapshot {
@@ -135,7 +135,7 @@ export interface HistoryItem {
  * placed (with a transcript).
  */
 export function buildHistory(
-  entries: TranscriptEntry[],
+  entries: AgentHistoryEntry[],
   stored: StoredEvent[],
 ): HistoryItem[] {
   // Only the newest prompt suggestion can still apply; an older one placed

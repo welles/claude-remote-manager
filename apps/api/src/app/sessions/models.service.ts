@@ -1,11 +1,13 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import type { ModelInfo } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ModelListResponse,
   ModelOption,
 } from '@claude-remote-manager/shared-types';
 import { AgentRunner, type AgentProbe } from '../agent/agent-runner';
-import { AccountsService } from '../accounts/accounts.service';
+import {
+  AccountsService,
+  defaultAccountKey,
+} from '../accounts/accounts.service';
 
 /** How long the list Claude Code reported is used. */
 export const MODELS_CACHE_MS = 60 * 60_000;
@@ -40,17 +42,6 @@ export const FALLBACK_MODELS: ModelOption[] = [
   },
 ];
 
-/** A model of Claude Code's list as offered in the UI. */
-export function modelOption(info: ModelInfo): ModelOption {
-  return {
-    // Claude Code's "default" row stands for not choosing a model.
-    value: info.value === 'default' ? null : info.value,
-    label: info.displayName || info.value,
-    description: info.description ?? '',
-    resolvedModel: info.resolvedModel ?? null,
-  };
-}
-
 /**
  * The models a session can use, as Claude Code reports them for the
  * logged-in account (asked through a short-lived process without prompt,
@@ -59,8 +50,14 @@ export function modelOption(info: ModelInfo): ModelOption {
 @Injectable()
 export class ModelsService {
   private readonly logger = new Logger(ModelsService.name);
-  private cached: { response: ModelListResponse; until: number } | null = null;
-  private loading: Promise<ModelListResponse> | null = null;
+  /** By the default account it was read for (see `defaultAccountKey`). */
+  private cached: {
+    key: string;
+    response: ModelListResponse;
+    until: number;
+  } | null = null;
+  private loading: { key: string; list: Promise<ModelListResponse> } | null =
+    null;
 
   /** Clock; replaced in tests. */
   now: () => number = Date.now;
@@ -72,16 +69,27 @@ export class ModelsService {
   ) {}
 
   list(): Promise<ModelListResponse> {
-    if (this.cached && this.cached.until > this.now()) {
+    // Another default account (or login) has a list of its own.
+    const key = this.accounts ? defaultAccountKey(this.accounts.list()) : '';
+    if (
+      this.cached &&
+      this.cached.key === key &&
+      this.cached.until > this.now()
+    ) {
       return Promise.resolve(this.cached.response);
     }
-    this.loading ??= this.load().finally(() => {
-      this.loading = null;
-    });
-    return this.loading;
+    if (this.loading?.key !== key) {
+      const list = this.load(key).finally(() => {
+        if (this.loading?.list === list) {
+          this.loading = null;
+        }
+      });
+      this.loading = { key, list };
+    }
+    return this.loading.list;
   }
 
-  private async load(): Promise<ModelListResponse> {
+  private async load(key: string): Promise<ModelListResponse> {
     try {
       const task = (probe: AgentProbe) => probe.supportedModels();
       // The default account's models.
@@ -94,11 +102,11 @@ export class ModelsService {
         throw new Error('Claude Code reported no models');
       }
       const response: ModelListResponse = {
-        models: models.map(modelOption),
+        models,
         source: 'claude-code',
         updatedAt: new Date(this.now()).toISOString(),
       };
-      this.cached = { response, until: this.now() + MODELS_CACHE_MS };
+      this.cached = { key, response, until: this.now() + MODELS_CACHE_MS };
       return response;
     } catch (error) {
       this.logger.warn(`Could not read the models: ${String(error)}`);
@@ -107,7 +115,7 @@ export class ModelsService {
         source: 'fallback',
         updatedAt: null,
       };
-      this.cached = { response, until: this.now() + MODELS_RETRY_MS };
+      this.cached = { key, response, until: this.now() + MODELS_RETRY_MS };
       return response;
     }
   }
