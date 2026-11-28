@@ -2413,34 +2413,34 @@ with the engine the settings choose, Claude Code or Codex, whatever the session'
   `multi_agent`, `goals`, `browser_use`, `computer_use` and `image_generation`
   (`REVIEW_FEATURES`; web search and image viewing stay), and `config/read` gets the working
   directory so project MCP servers are disabled too.
-- **How the Codex reviewer stays read-only** (`CodexRunner.review`, `review-commands.ts`):
-  - **Command rules:** Codex's `prefix_rule(…, decision="allow")` would let commands run past
-    the sandbox and the approval policy. Before a review (`AgentRunner.reviewBlocked`, checked
-    when the review is chosen and again when it starts), any `*.rules` file with more than
-    comments in the account's Codex home's `rules/` (followed into the base home), the base
-    home's, or the working directory's `.codex/rules/` makes the review run with Claude Code
-    instead; `review.started` has `fallbackFrom` and `fallbackReason`, the card says why. No
-    temporary `CODEX_HOME` (the login rotates its tokens).
-  - **With Codex's sandbox** (bubblewrap; it needs unprivileged user namespaces): `read-only`
-    and `never`, every request refused. Whether it starts is probed once per runner with
-    `codex sandbox -- true` as the session user (`CodexRunnerConfig.sandboxWorks` overrides it).
-  - **Without it** (a container without user namespaces: in `read-only` every command would
-    fail and the review would be blind): `danger-full-access` with `untrusted`, and the app
-    answers every request: it accepts only one simple command that only reads
-    (`isReadOnlyCommand`: `cat`, `head`, `tail`, `ls`, `grep`, `wc`, … without operators,
-    redirections, expansions or globs; `rg` and `find` without the options that run programs
-    or write; `sed -n <N>p`; `git diff`/`log`/`show`/`status`/`blame`/`ls-files`/`grep`/`rev-parse`
-    without `--output`, `--ext-diff`, `-O`) and declines everything else (other commands,
-    input to commands, file changes, permissions, questions, MCP). Codex 0.171 asks before
-    `cat` and `git diff` too in this mode (checked with a mock model), so declining everything
-    would leave the reviewer blind. Git commands are declined as well where the git
-    configuration seen in the command's directory makes a read run a program: `git config
---get-regexp` (as the session user, once per directory and review) finds `core.fsmonitor`,
-    `diff.external`, a diff driver's `textconv` or `command`, or a `filter.*` driver (also a
-    global `git lfs` setup; then the reviewer reads files without git). Codex does not let the
-    app rewrite a command, so `-c core.fsmonitor=false` and the like are not an option. The
-    reviewer's instructions describe both modes. Give the container user namespaces to use the
-    sandbox.
+- **How the Codex reviewer stays read-only** (`CodexRunner.review`, `reviewBlocked`,
+  `review-commands.ts`): only in Codex's own sandbox. The review runs with Claude Code instead
+  (`fallbackFrom: 'codex'` and `fallbackReason` in `review.started`, the card says why) when:
+  - **the sandbox cannot start:** Codex's sandbox (bubblewrap) needs unprivileged user
+    namespaces, which a container may not have. `codex sandbox -- true`, run as the session
+    user, tells; a success is kept, a failure (also a timeout) is probed again after 10 minutes
+    (`CodexRunnerConfig.sandboxWorks` overrides the probe). Reason: "Codex's sandbox cannot
+    start on this server (it needs unprivileged user namespaces)". A mode without the sandbox
+    that let only reading commands through was tried and dropped: the shell, git and Codex's
+    own configuration offer too many ways to run code from the repository.
+  - **Codex has command rules:** `prefix_rule(…, decision="allow")` would let commands run past
+    the sandbox and the approval policy, so any `*.rules` file with more than comments in the
+    account's Codex home's `rules/` (followed into the base home), the base home's,
+    `/etc/codex/rules/` or the working directory's `.codex/rules/` counts. No temporary
+    `CODEX_HOME` (the login rotates its tokens).
+
+  Both are checked when the review is chosen and again as it starts (`AgentReviewRefused`);
+  a review refused as it starts switches to Claude Code, and `review.finished` carries the
+  engine it ran with. In the sandbox the thread is `read-only` with `never`, every request
+  declined; the repository's own `.codex/config.toml` does not load (the working directory is
+  marked `trust_level = "untrusted"` in the thread's configuration), commands get only the
+  core environment (`shell_environment_policy`: `inherit = "core"`, nothing `set`), and web
+  search answers from the cache (`web_search = "cached"`). Using Codex for reviews in the
+  container needs user namespaces there; that is a matter of the deployment (e.g. a seccomp
+  profile that allows `clone`/`unshare` with `CLONE_NEWUSER`, and on the host
+  `kernel.unprivileged_userns_clone=1` resp. no AppArmor restriction of unprivileged user
+  namespaces).
+
 - **Settings:** `GET`/`PUT /api/settings/review` (`app_settings` key `review`): the engine
   (default `claude-code`; only engines the server has can be chosen), a model per engine
   (`models`: Claude Code's default `claude-fable-5-2`, Codex's `null` = Codex's own default;
