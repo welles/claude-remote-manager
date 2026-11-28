@@ -1177,8 +1177,10 @@ in `codex-protocol.ts` are written against it) and runs its native binary for th
   app cannot read shows Codex's raw command too and is never allowed by a rule. Approval
   requests go to the user (`approvalsReviewer: 'user'`). The user's MCP tools ask through
   `item/tool/requestUserInput` (question ID `mcp_tool_call_approval…`) or an elicitation
-  (`_meta.codex_approval_kind: mcp_tool_call`): an approval card for `mcp__<server>__<tool>`
-  with its arguments; Codex is answered "allow once" or "cancel". Other questions of the model
+  (`_meta.codex_approval_kind: mcp_tool_call`, the path Codex takes for user MCP servers; the
+  running call is matched by server, `_meta.tool_name`, `_meta.tool_params` and thread, else
+  the card is built from `_meta`): an approval card for `mcp__<server>__<tool>` with its
+  arguments; Codex is answered "allow once" or "cancel". Other questions of the model
   use the question card. In `never` the app's tools run without asking unless the gate asks,
   as in `bypassPermissions`. A request Codex resolves itself (`serverRequest/resolved`), or
   one left open when Codex ends, closes its card. Switching the model back to the default
@@ -1197,9 +1199,13 @@ in `codex-protocol.ts` are written against it) and runs its native binary for th
   directory, without passing a working directory (the session's may be gone), without the
   turns in the answer, with the user's MCP servers disabled (`config/read`, then
   `mcp_servers.<name>.enabled = false`) and without hooks (`features.hooks = false`). Deleting
-  a session removes its rollouts (`codex-account-dir.cjs remove-thread`, as the session user:
-  only regular files with the thread's name in `sessions/` and `archived_sessions/`, no
-  symlinks followed). Tools that had not finished show as not finished; the
+  a session deletes its thread with `thread/delete` in every account home and the base home
+  (rollout and Codex's databases), then removes any rollout left
+  (`codex-account-dir.cjs remove-thread`, as the session user: only regular files with the
+  thread's name in `sessions/` and `archived_sessions/`, no symlinks followed). Rollouts are
+  looked up in `archived_sessions/` too. A session's next Codex process (e.g. after a switch of
+  the account) starts only once the previous one has ended (`AgentRun.close` resolves on exit,
+  SIGKILL after 5 s), so a thread is never written from two homes at once. Tools that had not finished show as not finished; the
   to-do list is not kept by Codex as an item.
 - **Accounts:** ChatGPT accounts (subscription login only) have no main account: each has its
   own Codex home `<CODEX_HOME>/crm-accounts/<id>` (base: `CODEX_HOME`, else `~/.codex` of the
