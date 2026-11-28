@@ -1168,14 +1168,26 @@ in `codex-protocol.ts` are written against it) and runs its native binary for th
   `usageLimitExceeded` ends the turn as a usage limit, so the automatic switch to the next
   ChatGPT account works as for Claude. Approvals (`item/commandExecution/requestApproval`,
   `item/fileChange/requestApproval`) are approval cards; "allow for this session" is Codex's
-  `acceptForSession`, and a command matching a `Bash(...)` rule allowed for the session (also
-  by an earlier process) runs without asking (prefixes and wildcards only for a single simple
-  command). A request Codex resolves itself (`serverRequest/resolved`) closes its card. When the
+  `acceptForSession` and an exact rule the app keeps (`Bash(<command>)`, `Edit(<path>)` per
+  changed file, the tool's name for the app's and the user's MCP tools), so later processes do
+  not ask again either. Rules from "allow for this session" are always compared exactly (a
+  command may contain `*`); only configured rules may be prefixes or wildcards, and those only
+  for a single simple command. Input for a running command (`writeStdin`) and commands run on
+  the user's behalf always ask, without "allow for this session"; a command whose quoting the
+  app cannot read shows Codex's raw command too and is never allowed by a rule. Approval
+  requests go to the user (`approvalsReviewer: 'user'`). The user's MCP tools ask through
+  `item/tool/requestUserInput` (question ID `mcp_tool_call_approval…`) or an elicitation
+  (`_meta.codex_approval_kind: mcp_tool_call`): an approval card for `mcp__<server>__<tool>`
+  with its arguments; Codex is answered "allow once" or "cancel". Other questions of the model
+  use the question card. In `never` the app's tools run without asking unless the gate asks,
+  as in `bypassPermissions`. A request Codex resolves itself (`serverRequest/resolved`), or
+  one left open when Codex ends, closes its card. Switching the model back to the default
+  sends Codex's default model with each turn (Codex keeps the last turn's model). When the
   app runs a git command itself (Autofix), Codex gets `decline` (it has no reason field) and the
   outcome as a note of the app sent into the running turn (`turn/steer`, with a client ID
   `crm-app:…` the history leaves out; with the next turn when the turn had ended). Requests the
-  app cannot put to the user (questions, MCP elicitations, extra permissions) are answered so
-  the turn goes on. Usage: Codex reports the thread's total for all models and restores it on
+  app cannot put to the user (other MCP elicitations, extra permissions) are answered so the
+  turn goes on. Usage: Codex reports the thread's total for all models and restores it on
   resume, so only its growth in this process's turns counts, for the turn's model, on top of
   the usage the app recorded for the session (`AgentStartOptions.usageBaseline`). Limits:
   windows of the plan's main bucket (`limitId` `codex`), sparse updates merged.
@@ -1183,8 +1195,11 @@ in `codex-protocol.ts` are written against it) and runs its native binary for th
   by all accounts), so a session continues after a switch of its account. Codex knows another
   home's thread only once resumed by its path, so the reader resumes it first, in the temporary
   directory, without passing a working directory (the session's may be gone), without the
-  turns in the answer and with the user's MCP servers disabled (`config/read`, then
-  `mcp_servers.<name>.enabled = false`). Tools that had not finished show as not finished; the
+  turns in the answer, with the user's MCP servers disabled (`config/read`, then
+  `mcp_servers.<name>.enabled = false`) and without hooks (`features.hooks = false`). Deleting
+  a session removes its rollouts (`codex-account-dir.cjs remove-thread`, as the session user:
+  only regular files with the thread's name in `sessions/` and `archived_sessions/`, no
+  symlinks followed). Tools that had not finished show as not finished; the
   to-do list is not kept by Codex as an item.
 - **Accounts:** ChatGPT accounts (subscription login only) have no main account: each has its
   own Codex home `<CODEX_HOME>/crm-accounts/<id>` (base: `CODEX_HOME`, else `~/.codex` of the
@@ -1195,7 +1210,8 @@ in `codex-protocol.ts` are written against it) and runs its native binary for th
   `archived_sessions/`, `prompts/`, `skills/`, `rules/`. The helper `assets/codex-account-dir.cjs`
   creates and removes them as the session user, like Claude's; an entry that should be a link
   but is a file of the account's own (Codex may replace a link when it rewrites the file) is
-  kept and reported as a warning in the API log. The login is ChatGPT's device
+  kept and reported as a warning in the API log. Without Codex on the server, removing a
+  ChatGPT account removes only its entry (its home stays, logged). The login is ChatGPT's device
   login through the app server (`account/login/start` with `chatgptDeviceCode`): the UI shows
   the page to open and the code to enter there (`AccountLoginDto.userCode`) and waits for
   `account/login/completed`; status and logout are `account/read` and `account/logout`.
