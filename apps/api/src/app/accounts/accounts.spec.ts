@@ -781,6 +781,51 @@ describe('accounts', () => {
       expect((await get(session.id)).accountId).toBe('main');
     });
 
+    it('does not switch while background tasks keep the process', async () => {
+      await mainLoggedIn();
+      await addAccount('Work', 'work@example.test');
+      app.runner.probeUsage = () => usage(10, null);
+      const session = await startOn('main');
+      app.runner.last.emit({
+        type: 'system',
+        subtype: 'background_tasks_changed',
+        tasks: [{ task_id: 't1', task_type: 'local_bash', description: 'x' }],
+      });
+      hitLimit(Date.now() + 3_600_000);
+      await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
+      await settle();
+      expect((await get(session.id)).accountId).toBe('main');
+      expect(app.runner.runs).toHaveLength(1);
+    });
+
+    it('backs off after continuations on every account failed', async () => {
+      await mainLoggedIn();
+      await addAccount('Work', 'work@example.test');
+      app.runner.probeUsage = () => usage(10, null);
+      const sessions = app.app.get(SessionsService);
+      sessions.limitUnknownRecheckMs = 50;
+      sessions.limitRetryRecheckMs = 600_000;
+      const session = await startOn('main');
+      const sent = () =>
+        app.runner.runs.reduce((count, run) => count + run.sent.length, 0);
+      // Limits without their window: the app cannot see them coming.
+      const fail = async (before: number) => {
+        await waitFor(() => sent() > before);
+        hitLimit(Date.now(), null);
+      };
+      hitLimit(Date.now(), null); // main: switch to Work
+      await fail(1); // Work: both tried, wait 50 ms, retry on Work
+      await fail(2); // Work again: switch to main (no retry reset)
+      await fail(3); // main: both tried, a retry failed before
+      await waitFor(async () => {
+        const dto = await get(session.id);
+        return (
+          dto.waitingFor === 'limit' &&
+          Date.parse(dto.limitResumesAt ?? '') > Date.now() + 60_000
+        );
+      });
+    });
+
     it('stays with the only account', async () => {
       const session = (
         await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })

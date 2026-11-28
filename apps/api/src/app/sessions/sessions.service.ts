@@ -658,6 +658,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * switchAccountForLimit). In memory: a restart starts afresh.
    */
   private readonly limitChains = new Map<string, string[]>();
+  /** `LiveSession.limitRetries` of sessions without live state. */
+  private readonly limitRetryMemory = new Map<string, number>();
   private shuttingDown = false;
   /** See {@link LIMIT_RESUME_MARGIN_MS}; tests shorten it. */
   limitResumeMarginMs = LIMIT_RESUME_MARGIN_MS;
@@ -1599,6 +1601,15 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // (see followAccount).
       return null;
     }
+    if (
+      live.backgroundTasks.size > 0 ||
+      live.backgroundGrace !== null ||
+      this.keptForPreviews(live.id)
+    ) {
+      // The process stays for previews or background tasks and could not
+      // restart with another account: wait for this one's reset instead.
+      return null;
+    }
     const now = Date.now();
     const windows = window ? [window] : [];
     // Each account at most once until a turn gets through, so that limits
@@ -1992,6 +2003,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       this.live.delete(sessionId);
     }
+    this.limitRetryMemory.delete(sessionId);
     this.limitChains.delete(sessionId);
     this.deletions.next(sessionId);
   }
@@ -2078,7 +2090,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       publishedOverride: 'null',
       limitHit: false,
       rejectedWindow: null,
-      limitRetries: 0,
+      // Kept while the session had no live state (see releaseIfUnused).
+      limitRetries: this.limitRetryMemory.get(id) ?? 0,
       accountId: this.accountOf(this.sessions.get(id)?.accountId ?? null),
       launching: false,
       accountRestart: false,
@@ -2549,6 +2562,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       !this.shuttingDown &&
       this.live.get(live.id) === live
     ) {
+      // The back-off after failed continuations outlives the process.
+      if (live.limitRetries > 0) {
+        this.limitRetryMemory.set(live.id, live.limitRetries);
+      } else {
+        this.limitRetryMemory.delete(live.id);
+      }
       this.live.delete(live.id);
     }
   }
@@ -5296,7 +5315,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     // A continuation on an account switched to is no retry of the last.
-    live.limitRetries = auto && !wait.switched ? retries + 1 : 0;
+    live.limitRetries = !auto ? 0 : wait.switched ? retries : retries + 1;
     if (live.queue.length === 0) {
       // A message the user is sending right now goes first (as it is, no
       // longer held); the continuation only without one.
