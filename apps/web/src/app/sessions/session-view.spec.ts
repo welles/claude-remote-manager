@@ -1491,6 +1491,8 @@ describe('SessionView', () => {
       expect(text('strip-settings')).toContain('Untrusted');
       expect(text('session-engine')).toContain('Codex');
       expect(text('mode-hint')).toContain('Codex asks');
+      // Codex takes a new mode with its next turn.
+      expect(text('mode-next-turn')).toContain('from the next turn');
       const view = harness.routeDebugElement?.componentInstance as View;
       expect(view.modes()).toEqual(['untrusted', 'on-request', 'never']);
       expect(view.modelOptions().map((option) => option.label)).toEqual([

@@ -386,7 +386,12 @@
         <mat-hint
           [class.text-tertiary]="dangerousModes.includes(s.permissionMode)"
           data-testid="mode-hint"
-          >{{ modeInfo[s.permissionMode].description }}</mat-hint
+          >{{ modeInfo[s.permissionMode].description }}@if (s.engine ===
+          'codex') {
+          <span data-testid="mode-next-turn">
+            A change applies from the next turn.</span
+          >
+          }</mat-hint
         >
         }
       </mat-form-field>
