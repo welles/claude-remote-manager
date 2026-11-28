@@ -430,8 +430,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   they are unknown or older than 5 minutes (the web app asks every 5 minutes), and a later
   answer drops windows it no longer lists. Changes go to all clients as `account.limits` (with
   the `accountId`). The session list's app bar shows the default account's 5-hour window as a
-  meter (outlined in the error colour from 75 %, filled when
-  exhausted; amber is kept for sessions that need the user); tapping it opens a dialog with
+  meter, for each provider whose engine the server has and that has accounts (Claude and
+  ChatGPT side by side, named only when there are several; outlined in the error colour from
+  75 %, filled when exhausted; amber is kept for sessions that need the user); tapping it opens a dialog with
   every window of every account, per-model weekly ones included, with percent, reset time and
   when they were last updated. The session details show the list of the session's account.
 - Integrations: each Claude Code process gets the tools `show_file` (always),
@@ -791,7 +792,13 @@ session. It has:
 - **Instructions**, appended to the system prompt together with the names (not values) of the
   variables and files; a **setup script** that runs once after the repositories' scripts, in the
   working directory, with the same variables and files (retried with them); and **presets** for the
-  form (repositories, model, permission mode).
+  form: repositories, and per engine the server has a model and a permission mode in that
+  engine's terms (`presets`; Claude Code's in the columns `model` and `permission_mode`, Codex's
+  in `codex_model` and `codex_permission_mode`), plus an optional engine to preselect
+  (`presetEngine`). The form preselects the environment's engine (if the server has it and the
+  user did not pick one) and applies the presets of the engine chosen, also when the user
+  switches engines. With one engine the editor shows only its presets, as before; the others are
+  kept.
 
 Everything except the presets is read again at each process start, so a rotated key applies with
 the next process. An environment cannot be deleted while any session uses it, archived ones included: their
@@ -947,7 +954,8 @@ plain text: words become `LIKE` patterns with `%`, `_` and `\` escaped against t
 trigram index, never FTS query syntax, so no input causes a syntax error (words of one or two
 characters work too, without the index). At most 8 words, 200 characters; at most 50 sessions,
 3 matches shown per session. Results show the session (title, repositories, archived) and
-snippets with the words marked; a conversation match opens the session at that message
+snippets with the words marked, each labelled with where it matched (an answer with the
+session's agent, "Claude" or "Codex", from the hit's `engine`); a conversation match opens the session at that message
 (`?at=<message ID>&q=`, scrolled into view and outlined; if the message is not found, the first
 one containing the first word).
 
@@ -1223,6 +1231,8 @@ in `codex-protocol.ts` are written against it) and runs its native binary for th
   the page to open and the code to enter there (`AccountLoginDto.userCode`) and waits for
   `account/login/completed`; status and logout are `account/read` and `account/logout`.
 - **Not offered by Codex:** plan mode and slash commands (the UI leaves them out).
+- **Environments:** an environment has Codex presets of its own (model, approval policy) and
+  can preselect Codex (see [Environments](#environments)).
 - **Reviews:** `CodexRunner.review` runs the independent reviewer with Codex (see
   [Independent review](#independent-review)).
 

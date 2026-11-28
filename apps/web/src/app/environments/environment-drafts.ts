@@ -7,6 +7,8 @@ import {
   MAX_ENVIRONMENT_SETUP_SCRIPT_LENGTH,
   MAX_ENVIRONMENT_VALUE_LENGTH,
   environmentVariableNameProblem,
+  AGENT_ENGINES,
+  type AgentEngineId,
   type EnvironmentDto,
   type SaveEnvironmentRequest,
   type SessionPermissionMode,
@@ -44,15 +46,21 @@ export interface RepositoryDraft {
   baseBranch: string;
 }
 
+/** An engine's presets; `''`: no preset. */
+export interface EnginePresetsDraft {
+  model: string;
+  permissionMode: SessionPermissionMode | '';
+}
+
 export interface EnvironmentDraft {
   name: string;
   isDefault: boolean;
   instructions: string;
   setupScript: string;
-  /** `''`: no preset. */
-  model: string;
-  /** `''`: no preset. */
-  permissionMode: SessionPermissionMode | '';
+  /** Engine the new-session form preselects; `''`: none. */
+  presetEngine: AgentEngineId | '';
+  /** Per engine (also one this server does not have: kept as it is). */
+  presets: Record<AgentEngineId, EnginePresetsDraft>;
   repositories: RepositoryDraft[];
   variables: EntryDraft[];
   files: EntryDraft[];
@@ -76,14 +84,28 @@ export function newRepository(): RepositoryDraft {
   return { key: nextKey++, repositoryId: '', baseBranch: '' };
 }
 
+function presetsDraft(
+  presets?: EnvironmentDto['presets'],
+): Record<AgentEngineId, EnginePresetsDraft> {
+  return Object.fromEntries(
+    AGENT_ENGINES.map((engine) => [
+      engine,
+      {
+        model: presets?.[engine]?.model ?? '',
+        permissionMode: presets?.[engine]?.permissionMode ?? '',
+      },
+    ]),
+  ) as Record<AgentEngineId, EnginePresetsDraft>;
+}
+
 export function emptyDraft(): EnvironmentDraft {
   return {
     name: '',
     isDefault: false,
     instructions: '',
     setupScript: '',
-    model: '',
-    permissionMode: '',
+    presetEngine: '',
+    presets: presetsDraft(),
     repositories: [],
     variables: [],
     files: [],
@@ -97,8 +119,8 @@ export function draftOf(environment: EnvironmentDto): EnvironmentDraft {
     isDefault: environment.isDefault,
     instructions: environment.instructions ?? '',
     setupScript: environment.setupScript ?? '',
-    model: environment.model ?? '',
-    permissionMode: environment.permissionMode ?? '',
+    presetEngine: environment.presetEngine ?? '',
+    presets: presetsDraft(environment.presets),
     repositories: environment.repositories.map((repository) => ({
       key: nextKey++,
       repositoryId: repository.repositoryId,
@@ -214,8 +236,16 @@ export function saveRequest(draft: EnvironmentDraft): SaveEnvironmentRequest {
     isDefault: draft.isDefault,
     instructions: text(draft.instructions),
     setupScript: text(draft.setupScript),
-    model: draft.model || null,
-    permissionMode: draft.permissionMode || null,
+    presetEngine: draft.presetEngine || null,
+    presets: Object.fromEntries(
+      AGENT_ENGINES.map((engine) => [
+        engine,
+        {
+          model: draft.presets[engine].model || null,
+          permissionMode: draft.presets[engine].permissionMode || null,
+        },
+      ]),
+    ),
     repositories: draft.repositories
       .filter((repository) => repository.repositoryId)
       .map((repository) => ({

@@ -54,14 +54,21 @@ Instructions for Claude sessions working on this repository. What the app is and
   commit; the owner deploys with the next switch. Breaking changes to the image's environment
   variables, volumes or users need a matching nixos-config PR merged together.
 
-## State (2026-11-19)
+## State (2026-11-28)
 
 - Specification steps 1–11 are done and deployed; since then: `auto` and `bypassPermissions`
   modes, sessions without sandbox, `/` autocomplete for slash commands, the file browser;
   since 2026-11-20 Autofix runs in the chosen mode (no lock), automerge needs no approval, and
   Claude merges with the app tool `merge_pull_request`.
+- Since 2026-11-27: several Claude and ChatGPT accounts (login in the UI, chosen per session),
+  automatic switch to another account at the usage limit that continues the turn; an
+  engine-neutral core with Codex (bundled, pinned `@openai/codex`, ChatGPT accounts) as an
+  equal engine next to Claude Code; independent reviews with Claude Code or Codex (Codex only
+  in its read-only sandbox, which needs user namespaces in the container, else Claude Code).
 - Deferred by the owner: **Rewind** (undo a turn with its file changes).
 - Open: previews of dev servers are built but off on the devbox (no preview domain yet; a
   wildcard two labels below the app's domain needs Cloudflare's Advanced Certificate, or a
   separate domain); `/` autocomplete in the new-session form; whether a failed setup script of
-  an added repository should notify.
+  an added repository should notify; a real test with ChatGPT accounts; user namespaces for
+  the Codex reviewer in the Docker stack; Codex threads started before an app update do not
+  get app tools added later.

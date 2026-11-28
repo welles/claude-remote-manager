@@ -225,6 +225,8 @@ export class NewSessionForm implements OnInit {
    * environment's presets no longer apply over it.
    */
   protected touched = false;
+  /** The user picked the engine: an environment no longer changes it. */
+  private enginePicked = false;
   protected readonly mode = signal<SessionMode>('repository');
   protected readonly choices = signal<RepositoryChoice[]>([emptyChoice()]);
   protected readonly creating = signal(false);
@@ -269,6 +271,28 @@ export class NewSessionForm implements OnInit {
   );
 
   constructor() {
+    // An environment chosen before the engines were known: its engine once
+    // they are, unless the user changed the form meanwhile.
+    effect(() => {
+      if (!this.enginesStore.ready()) {
+        return;
+      }
+      untracked(() => {
+        if (this.touched) {
+          return;
+        }
+        const environment = this.environments().find(
+          (entry) => entry.id === this.environmentId(),
+        );
+        if (environment && environment.presetEngine !== this.engine()) {
+          const before = this.engine();
+          this.applyPresetEngine(environment);
+          if (this.engine() !== before) {
+            this.applyAgentPresets();
+          }
+        }
+      });
+    });
     effect(() => {
       const prefill = this.prefill();
       if (prefill) {
@@ -327,21 +351,44 @@ export class NewSessionForm implements OnInit {
 
   /**
    * The user picked an engine: the account, model and permission mode
-   * follow it (its default account, model and mode); an environment's
-   * presets of model and mode are Claude Code's and apply only to it.
+   * follow it (its default account, model and mode, or the environment's
+   * presets for it).
    */
   protected pickEngine(engine: AgentEngineId): void {
     if (engine === this.engine()) {
       return;
     }
     this.touched = true;
+    this.enginePicked = true;
+    this.setEngine(engine);
+    this.applyAgentPresets();
+  }
+
+  /** Switches the engine; account, model and mode start at its defaults. */
+  private setEngine(engine: AgentEngineId): void {
     this.engine.set(engine);
     this.modelsStore.load(engine);
     this.accountId = '';
     this.model = '';
     this.permissionMode = initialPermissionMode(engine);
-    if (engine === 'claude-code') {
-      this.applyAgentPresets();
+  }
+
+  /**
+   * Preselects the environment's engine if this server has it, else the
+   * default one (so that an engine an earlier environment chose does not
+   * stick); not over an engine the user picked.
+   */
+  private applyPresetEngine(environment: EnvironmentDto): void {
+    if (this.enginePicked) {
+      return;
+    }
+    const preset = environment.presetEngine;
+    const engine =
+      preset && this.enginesStore.engines().some((entry) => entry.id === preset)
+        ? preset
+        : DEFAULT_ENGINE;
+    if (engine !== this.engine()) {
+      this.setEngine(engine);
     }
   }
 
@@ -374,7 +421,8 @@ export class NewSessionForm implements OnInit {
 
   /**
    * Chooses the session's environment and fills in its presets
-   * (repositories, model, permission mode); all stay editable.
+   * (repositories, engine, and the model and permission mode for the
+   * engine); all stay editable.
    */
   protected chooseEnvironment(id: string): void {
     this.environmentId.set(id);
@@ -382,6 +430,7 @@ export class NewSessionForm implements OnInit {
     if (!environment) {
       return;
     }
+    this.applyPresetEngine(environment);
     this.applyAgentPresets();
     const known = new Set(
       this.repositories().map((repository) => repository.id),
@@ -404,19 +453,26 @@ export class NewSessionForm implements OnInit {
     }
   }
 
-  /** The chosen environment's model and mode, for Claude Code only. */
+  /** The chosen environment's model and mode for the session's engine. */
   private applyAgentPresets(): void {
     const environment = this.environments().find(
       (entry) => entry.id === this.environmentId(),
     );
-    if (!environment || this.engine() !== 'claude-code') {
+    // Older servers send no presets.
+    const presets = environment?.presets?.[this.engine()];
+    if (!presets) {
       return;
     }
-    if (environment.model) {
-      this.model = environment.model;
+    if (presets.model) {
+      this.model = presets.model;
     }
-    if (environment.permissionMode) {
-      this.permissionMode = environment.permissionMode;
+    if (
+      presets.permissionMode &&
+      this.enginesStore
+        .capabilities(this.engine())
+        .permissionModes.includes(presets.permissionMode)
+    ) {
+      this.permissionMode = presets.permissionMode;
     }
   }
 

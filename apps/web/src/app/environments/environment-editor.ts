@@ -2,6 +2,7 @@ import { TextFieldModule } from '@angular/cdk/text-field';
 import {
   Component,
   computed,
+  effect,
   inject,
   input,
   output,
@@ -17,7 +18,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import {
   DANGEROUS_PERMISSION_MODES,
   PERMISSION_MODE_INFO,
-  CLAUDE_CODE_PERMISSION_MODES,
+  type AgentEngineId,
   type EnvironmentDto,
   type RepositoryBranchesResponse,
   type RepositoryDto,
@@ -37,6 +38,7 @@ import {
   newEntry,
   newRepository,
   saveRequest,
+  type EnginePresetsDraft,
   type EntryDraft,
   type EnvironmentDraft,
 } from './environment-drafts';
@@ -44,8 +46,9 @@ import { EnvironmentsApi } from './environments-api';
 
 /**
  * Form of an environment: name, default, presets of the new-session form
- * (repositories, model, permission mode), instructions, setup script,
- * variables and files. Secrets saved before are never shown: they can be
+ * (repositories; model and permission mode per engine of the server, and
+ * the engine to preselect when it has several), instructions, setup
+ * script, variables and files. Secrets saved before are never shown: they can be
  * kept, replaced or removed.
  */
 @Component({
@@ -84,15 +87,39 @@ export class EnvironmentEditor implements OnInit {
   protected readonly branches = signal(
     new Map<string, RepositoryBranchesResponse>(),
   );
-  /** Models with a value (Claude Code's default is "no preset"). */
-  protected readonly modelOptions = computed(() =>
-    this.modelsStore.models().filter((option) => option.value !== null),
-  );
-  protected readonly modeOptions = CLAUDE_CODE_PERMISSION_MODES.map((mode) => ({
-    value: mode,
-    ...PERMISSION_MODE_INFO[mode],
-    dangerous: DANGEROUS_PERMISSION_MODES.includes(mode),
-  }));
+  constructor() {
+    // The models of every engine the server has, once it is known.
+    effect(() => {
+      for (const engine of this.enginesStore.engines()) {
+        this.modelsStore.load(engine.id);
+      }
+    });
+  }
+
+  /**
+   * An engine's models with a value (the engine's default is "no preset"),
+   * plus the stored one if it is no longer listed.
+   */
+  protected modelOptions(engine: AgentEngineId) {
+    const options = this.modelsStore
+      .models(engine)
+      .filter((option) => option.value !== null);
+    const stored = this.draft().presets[engine].model;
+    return stored && !options.some((option) => option.value === stored)
+      ? [...options, { value: stored, label: stored }]
+      : options;
+  }
+
+  /** An engine's permission modes. */
+  protected modeOptions(engine: AgentEngineId) {
+    return this.enginesStore
+      .capabilities(engine)
+      .permissionModes.map((mode) => ({
+        value: mode,
+        ...PERMISSION_MODE_INFO[mode],
+        dangerous: DANGEROUS_PERMISSION_MODES.includes(mode),
+      }));
+  }
   protected readonly keepsStored = keepsStored;
   protected readonly chosenIds = computed(
     () => new Set(this.draft().repositories.map((entry) => entry.repositoryId)),
@@ -106,7 +133,6 @@ export class EnvironmentEditor implements OnInit {
         this.loadBranches(repository.repositoryId);
       }
     }
-    this.modelsStore.load();
     this.enginesStore.load();
     this.repositoriesApi.list().subscribe({
       next: ({ repositories }) => this.repositories.set(repositories),
@@ -120,6 +146,16 @@ export class EnvironmentEditor implements OnInit {
 
   protected change(patch: Partial<EnvironmentDraft>): void {
     this.draft.update((draft) => ({ ...draft, ...patch }));
+  }
+
+  protected changePreset(
+    engine: AgentEngineId,
+    patch: Partial<EnginePresetsDraft>,
+  ): void {
+    const presets = this.draft().presets;
+    this.change({
+      presets: { ...presets, [engine]: { ...presets[engine], ...patch } },
+    });
   }
 
   protected addVariable(): void {

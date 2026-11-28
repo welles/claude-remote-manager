@@ -6,12 +6,15 @@ import {
   newEntry,
   saveRequest,
 } from './environment-drafts';
+import { enginePresets } from './testing/environments';
 
 const saved: EnvironmentDto = {
   id: 'e1',
   name: 'Staging',
   instructions: 'Use the staging API',
   setupScript: null,
+  presetEngine: null,
+  presets: enginePresets({ model: 'haiku' }),
   model: 'haiku',
   permissionMode: null,
   repositories: [{ repositoryId: 'r1', baseBranch: 'dev' }],
@@ -44,8 +47,11 @@ describe('environment drafts', () => {
       isDefault: true,
       instructions: 'Use the staging API',
       setupScript: null,
-      model: 'haiku',
-      permissionMode: null,
+      presetEngine: null,
+      presets: {
+        'claude-code': { model: 'haiku', permissionMode: null },
+        codex: { model: null, permissionMode: null },
+      },
       repositories: [{ repositoryId: 'r1', baseBranch: 'dev' }],
       variables: [
         { id: 'v1', name: 'API_KEY', secret: true },

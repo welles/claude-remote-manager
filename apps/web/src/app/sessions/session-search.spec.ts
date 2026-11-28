@@ -5,7 +5,11 @@ import {
 } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { SessionSearch } from './session-search';
+import type {
+  SearchHit,
+  SearchMatch,
+} from '@claude-remote-manager/shared-types';
+import { SessionSearch, matchLabel } from './session-search';
 
 describe('SessionSearch', () => {
   it('highlights matches inside a word without adding spaces', async () => {
@@ -64,5 +68,30 @@ describe('SessionSearch', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('labels answers with the session’s agent', () => {
+    const answer: SearchMatch = {
+      kind: 'assistant',
+      snippet: 'Done.',
+      highlights: [],
+      anchor: 'm1',
+    };
+    const hit = (engine?: SearchHit['engine']): SearchHit => ({
+      sessionId: 's1',
+      title: null,
+      status: 'waiting',
+      archivedAt: null,
+      updatedAt: '2026-11-13T10:00:00Z',
+      engine,
+      repositories: [],
+      matches: [answer],
+      matchCount: 1,
+    });
+    expect(matchLabel(answer, hit('codex'))).toBe('Codex');
+    expect(matchLabel(answer, hit('claude-code'))).toBe('Claude');
+    // Older servers send no engine: Claude Code.
+    expect(matchLabel(answer, hit())).toBe('Claude');
+    expect(matchLabel({ ...answer, kind: 'user' }, hit('codex'))).toBe('You');
   });
 });

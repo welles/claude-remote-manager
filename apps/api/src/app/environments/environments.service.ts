@@ -16,10 +16,16 @@ import {
   MAX_ENVIRONMENT_NAME_LENGTH,
   MAX_ENVIRONMENT_SETUP_SCRIPT_LENGTH,
   MAX_ENVIRONMENT_VALUE_LENGTH,
-  CLAUDE_CODE_PERMISSION_MODES,
+  AGENT_ENGINES,
+  ENGINE_LABELS,
+  ENGINE_PERMISSION_MODES,
+  type AgentEngineId,
+  type EnginePresets,
   type EnvironmentDto,
+  type EnvironmentPresets,
   type SaveEnvironmentRequest,
   type SessionEnvironmentDto,
+  type SessionPermissionMode,
   type SessionRepositoryRequest,
 } from '@claude-remote-manager/shared-types';
 import { DATABASE, type AppDatabase } from '../db/database';
@@ -63,6 +69,66 @@ export interface LaunchEnvironment {
   files: MaterializedFile[];
   instructions: string | null;
   setupScript: string | null;
+}
+
+/**
+ * The presets of a request per engine, each in its engine's terms (a
+ * permission mode of the engine's own; Claude Code's also from the older
+ * fields `model` and `permissionMode` when `presets` names none).
+ */
+export function parsePresets(
+  body: Record<string, unknown>,
+): EnvironmentPresets {
+  const raw = body['presets'];
+  const given =
+    raw === undefined || raw === null ? {} : requireObject(raw, 'presets');
+  const unknown = Object.keys(given).find(
+    (key) => !AGENT_ENGINES.includes(key as AgentEngineId),
+  );
+  if (unknown !== undefined) {
+    throw new BadRequestException(`presets.${unknown} is not an engine`);
+  }
+  const parse = (
+    engine: AgentEngineId,
+    object: Record<string, unknown>,
+    prefix: string,
+  ): EnginePresets => {
+    const model = optionalString(object, 'model')?.trim() || null;
+    if (model && !MODEL_PATTERN.test(model)) {
+      throw new BadRequestException(`${prefix}model is not a valid model name`);
+    }
+    const value = object['permissionMode'];
+    if (
+      value !== undefined &&
+      value !== null &&
+      !ENGINE_PERMISSION_MODES[engine].includes(value as SessionPermissionMode)
+    ) {
+      throw new BadRequestException(
+        `${prefix}permissionMode must be one of ${ENGINE_PERMISSION_MODES[engine].join(', ')} (${ENGINE_LABELS[engine]})`,
+      );
+    }
+    return {
+      model,
+      permissionMode: (value as SessionPermissionMode | null) ?? null,
+    };
+  };
+  const presets = {} as EnvironmentPresets;
+  for (const engine of AGENT_ENGINES) {
+    const entry = given[engine];
+    if (entry === undefined || entry === null) {
+      presets[engine] =
+        engine === 'claude-code'
+          ? parse(engine, body, '')
+          : { model: null, permissionMode: null };
+    } else {
+      presets[engine] = parse(
+        engine,
+        requireObject(entry, `presets.${engine}`),
+        `presets.${engine}.`,
+      );
+    }
+  }
+  return presets;
 }
 
 /** An entry as parsed from a request, before it is stored. */
@@ -270,14 +336,20 @@ export class EnvironmentsService {
       'setupScript',
       MAX_ENVIRONMENT_SETUP_SCRIPT_LENGTH,
     );
-    const model = optionalString(body, 'model')?.trim() || null;
-    if (model && !MODEL_PATTERN.test(model)) {
-      throw new BadRequestException('model is not a valid model name');
+    const presets = parsePresets(body);
+    let presetEngine =
+      optionalEnum(body, 'presetEngine', AGENT_ENGINES) ?? null;
+    if (body['presets'] === undefined && existing) {
+      // A client from before the presets per engine (e.g. a tab open since
+      // an update) knows only Claude Code's: the others stay as they are.
+      presets.codex = {
+        model: existing.codexModel,
+        permissionMode: existing.codexPermissionMode,
+      };
+      if (body['presetEngine'] === undefined) {
+        presetEngine = existing.presetEngine;
+      }
     }
-    const permissionMode =
-      // Presets are Claude Code's terms (they apply to Claude Code sessions).
-      optionalEnum(body, 'permissionMode', CLAUDE_CODE_PERMISSION_MODES) ??
-      null;
     const isDefault = body['isDefault'];
     if (isDefault !== undefined && typeof isDefault !== 'boolean') {
       throw new BadRequestException('isDefault must be a boolean');
@@ -344,8 +416,11 @@ export class EnvironmentsService {
         name,
         instructions,
         setupScript,
-        model,
-        permissionMode,
+        model: presets['claude-code'].model,
+        permissionMode: presets['claude-code'].permissionMode,
+        codexModel: presets.codex.model,
+        codexPermissionMode: presets.codex.permissionMode,
+        presetEngine,
         repositories: presetRepositories,
         isDefault: isDefault ?? existing?.isDefault ?? false,
         updatedAt: now,
@@ -593,8 +668,19 @@ export class EnvironmentsService {
       name: row.name,
       instructions: row.instructions,
       setupScript: row.setupScript,
+      presetEngine: row.presetEngine,
       model: row.model,
       permissionMode: row.permissionMode,
+      presets: {
+        'claude-code': {
+          model: row.model,
+          permissionMode: row.permissionMode,
+        },
+        codex: {
+          model: row.codexModel,
+          permissionMode: row.codexPermissionMode,
+        },
+      },
       repositories: row.repositories,
       isDefault: row.isDefault,
       variables: entries

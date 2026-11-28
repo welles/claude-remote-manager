@@ -6,8 +6,12 @@ import {
 } from '@angular/common/http/testing';
 import { TestBed, type ComponentFixture } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
-import type { EnvironmentDto } from '@claude-remote-manager/shared-types';
+import type {
+  AgentEngineId,
+  EnvironmentDto,
+} from '@claude-remote-manager/shared-types';
 import { EnvironmentsPage } from './environments-page';
+import { enginePresets } from './testing/environments';
 
 const environment = (
   overrides: Partial<EnvironmentDto> = {},
@@ -16,6 +20,8 @@ const environment = (
   name: 'Staging',
   instructions: null,
   setupScript: null,
+  presetEngine: null,
+  presets: enginePresets(),
   model: null,
   permissionMode: null,
   repositories: [],
@@ -59,12 +65,12 @@ describe('EnvironmentsPage', () => {
   };
 
   /** Requests of the editor: models and repositories. */
-  const flushEditor = () => {
+  const flushEditor = (...engines: AgentEngineId[]) => {
     for (const request of http.match('/api/models')) {
       request.flush({ models: [], source: 'fallback', updatedAt: null });
     }
     for (const request of http.match('/api/engines')) {
-      request.flush(engineList());
+      request.flush(engineList(...engines));
     }
     http
       .expectOne('/api/repositories')
@@ -200,6 +206,85 @@ describe('EnvironmentsPage', () => {
     http
       .expectOne('/api/environments')
       .flush({ environments: [environment()] });
+  });
+
+  const presetted = () =>
+    environment({
+      presetEngine: 'codex',
+      presets: enginePresets(
+        { model: 'haiku' },
+        { model: 'gpt-5', permissionMode: 'on-request' },
+      ),
+    });
+
+  it('edits presets per engine when the server has several', async () => {
+    const { fixture, element } = await render([presetted()]);
+    click(element, 'environment-open');
+    await settle(fixture);
+    flushEditor('claude-code', 'codex');
+    await settle(fixture);
+    http
+      .expectOne('/api/models?engine=codex')
+      .flush({ models: [], source: 'fallback', updatedAt: null });
+    await settle(fixture);
+    const testIds = (prefix: string) =>
+      [...element.querySelectorAll(`[data-testid^="${prefix}"]`)].map((node) =>
+        node.getAttribute('data-testid'),
+      );
+    expect(testIds('environment-engine')).toEqual(['environment-engine']);
+    expect(testIds('environment-presets-')).toEqual([
+      'environment-presets-claude-code',
+      'environment-presets-codex',
+    ]);
+    expect(testIds('environment-mode-')).toEqual([
+      'environment-mode-claude-code',
+      'environment-mode-codex',
+    ]);
+    click(element, 'environment-save');
+    const request = http.expectOne({
+      method: 'PUT',
+      url: '/api/environments/e1',
+    });
+    expect(request.request.body).toMatchObject({
+      presetEngine: 'codex',
+      presets: {
+        'claude-code': { model: 'haiku', permissionMode: null },
+        codex: { model: 'gpt-5', permissionMode: 'on-request' },
+      },
+    });
+    request.flush(presetted());
+    http.expectOne('/api/environments').flush({ environments: [presetted()] });
+  });
+
+  it('shows only Claude Code presets with one engine and keeps the others', async () => {
+    const { fixture, element } = await render([presetted()]);
+    click(element, 'environment-open');
+    await settle(fixture);
+    flushEditor();
+    await settle(fixture);
+    expect(
+      element.querySelector('[data-testid="environment-engine"]'),
+    ).toBeNull();
+    expect(
+      element.querySelector('[data-testid^="environment-presets-"]'),
+    ).toBeNull();
+    expect(
+      element.querySelector('[data-testid="environment-model-claude-code"]'),
+    ).not.toBeNull();
+    expect(
+      element.querySelector('[data-testid="environment-model-codex"]'),
+    ).toBeNull();
+    click(element, 'environment-save');
+    const request = http.expectOne({
+      method: 'PUT',
+      url: '/api/environments/e1',
+    });
+    expect(request.request.body).toMatchObject({
+      presetEngine: 'codex',
+      presets: { codex: { model: 'gpt-5', permissionMode: 'on-request' } },
+    });
+    request.flush(presetted());
+    http.expectOne('/api/environments').flush({ environments: [presetted()] });
   });
 
   it('opens the environment named in the address', async () => {
