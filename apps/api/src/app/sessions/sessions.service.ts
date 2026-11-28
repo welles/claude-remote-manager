@@ -652,6 +652,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     string,
     ReturnType<typeof setTimeout>
   >();
+  /**
+   * Accounts whose limit ended a turn of a session since one of its turns
+   * last got through: the automatic switch does not go back to them (see
+   * switchAccountForLimit). In memory: a restart starts afresh.
+   */
+  private readonly limitChains = new Map<string, string[]>();
   private shuttingDown = false;
   /** See {@link LIMIT_RESUME_MARGIN_MS}; tests shorten it. */
   limitResumeMarginMs = LIMIT_RESUME_MARGIN_MS;
@@ -1321,6 +1327,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live && index >= 0 && this.requireRecord(sessionId).limitWait) {
       // Held for the reset of the usage limit: the user tries now.
       this.requireUsable(this.requireRecord(sessionId));
+      this.requireAccountProcess(live);
       const ended = await this.endLimitWait(live);
       live.limitRetries = 0;
       if (ended && this.requireRecord(sessionId).status === 'waiting') {
@@ -1571,35 +1578,50 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private switchAccountForLimit(
     live: LiveSession,
     window: string | null,
-  ): { kind: 'available' | 'earliest'; text: string } | null {
+  ): {
+    kind: 'available' | 'earliest';
+    text: string;
+    /** With `earliest`: when its limits reset. */
+    until: Date | null;
+  } | null {
     const accounts = this.accounts;
     if (!accounts) {
       return null;
     }
     const from = live.accountId;
+    if (this.accountOf(this.requireRecord(live.id).accountId) !== from) {
+      // The user chose another account during the turn: that one goes on
+      // (see followAccount).
+      return null;
+    }
     const now = Date.now();
-    let to = accounts.nextAvailable(from, now);
+    const windows = window ? [window] : [];
+    // Each account at most once until a turn gets through, so that limits
+    // the app could not see beforehand cannot make it go round in circles.
+    const chain = this.extendLimitChain(live.id, from);
+    let to = accounts.nextAvailable(from, {
+      windows,
+      exclude: chain,
+      now,
+    });
     let kind: 'available' | 'earliest' = 'available';
+    let until: Date | null = null;
     if (!to) {
-      const earliest = accounts.earliestReset(now);
-      const own = this.limits
-        .account(from)
-        .exhaustedUntil(window ? [window] : [], now);
+      const earliest = accounts.earliestReset(windows, now);
+      const own = this.limits.account(from).exhaustedUntil(windows, now);
       if (!earliest || earliest.id === from || (own && own <= earliest.at)) {
         return null;
       }
       to = earliest.id;
       kind = 'earliest';
-    }
-    if (to === this.accountOf(this.requireRecord(live.id).accountId)) {
-      // The user chose it already (a switch during the turn).
-      return null;
+      until = earliest.at;
     }
     this.sessions.update(live.id, { accountId: to });
     const fromName = accounts.get(from).name;
     const toName = accounts.get(to).name;
     return {
       kind,
+      until,
       text:
         kind === 'available'
           ? limitSwitchNotice(fromName, toName)
@@ -2704,6 +2726,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       !interrupted && result.subtype === 'success' && !result.is_error;
     if (clean) {
       live.limitRetries = 0;
+      this.limitChains.delete(live.id);
       if (record.limitWait) {
         // A turn Claude Code started by itself got through: the limit has
         // reset already.
@@ -4802,7 +4825,32 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
     }
     this.requireUsable(record);
-    await this.continueAfterLimit(this.liveSession(sessionId), false);
+    const live = this.liveSession(sessionId);
+    this.requireAccountProcess(live);
+    await this.continueAfterLimit(live, false);
+  }
+
+  /**
+   * Whether the session's process still runs with another account than the
+   * session's (kept for previews or background tasks after a switch):
+   * restarted now if it is free.
+   */
+  private keptOnOtherAccount(live: LiveSession): boolean {
+    const accountId = this.accountOf(this.requireRecord(live.id).accountId);
+    if (!live.run || live.closing || live.accountId === accountId) {
+      return false;
+    }
+    this.restartWhenFree(live.id);
+    return !!live.run && !live.closing;
+  }
+
+  /** 409 while {@link keptOnOtherAccount}: nothing goes to the old account. */
+  private requireAccountProcess(live: LiveSession): void {
+    if (this.keptOnOtherAccount(live)) {
+      throw new ConflictException(
+        'The session switched accounts, but its process still runs with the previous one for previews or background tasks; it continues once they end',
+      );
+    }
   }
 
   /**
@@ -4860,28 +4908,44 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const wait: LimitWait =
       switched?.kind === 'available'
         ? {
-            // Another account has room: looked at (and continued) at once.
+            // Another account has room: looked at (and continued) at once,
+            // with the window that stopped this one.
             since: new Date(now).toISOString(),
-            window: null,
+            window: window ?? previous?.window ?? null,
             resumeAt: new Date(now).toISOString(),
             resetKnown: false,
             autofixPullRequests,
             accountId: switchedTo,
             limitedAccountId: previous?.limitedAccountId ?? live.accountId,
+            quiet: true,
           }
-        : {
-            since: new Date(now).toISOString(),
-            window: window ?? previous?.window ?? null,
-            resumeAt: new Date(
-              until
-                ? until.getTime() + this.limitResumeMarginMs
-                : now + this.limitRecheckMs(live),
-            ).toISOString(),
-            resetKnown: until !== null,
-            autofixPullRequests,
-            accountId: live.accountId,
-            limitedAccountId: previous?.limitedAccountId ?? live.accountId,
-          };
+        : switched?.kind === 'earliest' && switched.until
+          ? {
+              // Every account is exhausted: waiting for the one that resets
+              // first.
+              since: new Date(now).toISOString(),
+              window: window ?? previous?.window ?? null,
+              resumeAt: new Date(
+                switched.until.getTime() + this.limitResumeMarginMs,
+              ).toISOString(),
+              resetKnown: true,
+              autofixPullRequests,
+              accountId: switchedTo,
+              limitedAccountId: previous?.limitedAccountId ?? live.accountId,
+            }
+          : {
+              since: new Date(now).toISOString(),
+              window: window ?? previous?.window ?? null,
+              resumeAt: new Date(
+                until
+                  ? until.getTime() + this.limitResumeMarginMs
+                  : now + this.limitRecheckMs(live),
+              ).toISOString(),
+              resetKnown: until !== null,
+              autofixPullRequests,
+              accountId: live.accountId,
+              limitedAccountId: previous?.limitedAccountId ?? live.accountId,
+            };
     this.sessions.update(live.id, { limitWait: wait });
     this.holdReopen(live);
     if (switched?.kind !== 'available') {
@@ -4899,6 +4963,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.publishStatus(live);
     }
     live.suggestionOpen = false;
+    // Switched: the idle process closes now, so that the session goes on
+    // with the new account.
+    this.keptOnOtherAccount(live);
     this.scheduleLimitCheck(live.id);
     // Switched to another account during the turn: that one decides.
     this.followAccount(live.id);
@@ -5015,10 +5082,22 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const until = read
       ? limits.exhaustedUntil(current.window ? [current.window] : [], now)
       : null;
-    if (until || (!read && !current.resetKnown)) {
+    if (
+      until &&
+      current.quiet &&
+      this.moveOnFromExhausted(sessionId, accountId)
+    ) {
+      // The account it switched to is exhausted too: on to the next one.
+      return;
+    }
+    // A switch to an account whose limits cannot be read goes ahead: the
+    // turn's result tells.
+    if (until || (!read && !current.resetKnown && !current.quiet)) {
+      this.tellLimitWait(sessionId, current);
       const updated = this.sessions.update(sessionId, {
         limitWait: {
           ...current,
+          quiet: false,
           accountId,
           resumeAt: new Date(
             until
@@ -5033,28 +5112,91 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const live = this.live.get(sessionId);
-    if (live?.run && !live.closing && live.accountId !== accountId) {
-      // Its process still runs with the old account: restarted now if it
-      // is free, else (kept for previews or background tasks; it restarts
-      // with the new one once free) the session waits instead of sending
-      // the continuation to the exhausted account.
-      this.restartWhenFree(sessionId);
-    }
-    if (live?.run && !live.closing && live.accountId !== accountId) {
+    // Its process still runs with the old account: restarted now if it is
+    // free, else (kept for previews or background tasks; it restarts with
+    // the new one once free) the session waits instead of sending the
+    // continuation to the exhausted account.
+    if (live && this.keptOnOtherAccount(live)) {
+      this.tellLimitWait(sessionId, current);
       const updated = this.sessions.update(sessionId, {
         limitWait: {
           ...current,
+          quiet: false,
           accountId,
           resumeAt: new Date(now + this.limitUnknownRecheckMs).toISOString(),
           resetKnown: false,
         },
       });
-      this.restartWhenFree(sessionId);
       this.updates.next(this.toDto(updated));
       this.scheduleLimitCheck(sessionId);
       return;
     }
     await this.continueAfterLimit(this.liveSession(sessionId), true);
+  }
+
+  /** Adds an account to a session's limit chain; returns the chain. */
+  private extendLimitChain(sessionId: string, accountId: string): string[] {
+    const chain = [
+      ...new Set([...(this.limitChains.get(sessionId) ?? []), accountId]),
+    ];
+    this.limitChains.set(sessionId, chain);
+    return chain;
+  }
+
+  /**
+   * A wait that was to end at once turned out longer: the session's log
+   * says so now (its notification follows from the published wait).
+   */
+  private tellLimitWait(sessionId: string, wait: LimitWait): void {
+    if (wait.quiet) {
+      this.append(this.liveSession(sessionId), {
+        type: 'notice',
+        level: 'warning',
+        text: LIMIT_NOTICE,
+      });
+    }
+  }
+
+  /**
+   * The account a session was switched to automatically is exhausted as
+   * well: switches on to the next one with room (not one tried since a turn
+   * last got through) and looks at it at once. Returns whether it did.
+   */
+  private moveOnFromExhausted(sessionId: string, accountId: string): boolean {
+    const accounts = this.accounts;
+    const live = this.live.get(sessionId);
+    const wait = this.sessions.get(sessionId)?.limitWait;
+    if (!accounts || !live || !wait) {
+      return false;
+    }
+    const chain = this.extendLimitChain(sessionId, accountId);
+    const next = accounts.nextAvailable(accountId, {
+      windows: wait.window ? [wait.window] : [],
+      exclude: chain,
+    });
+    if (!next) {
+      return false;
+    }
+    this.sessions.update(sessionId, {
+      accountId: next,
+      limitWait: {
+        ...wait,
+        accountId: next,
+        resumeAt: new Date().toISOString(),
+        resetKnown: false,
+      },
+    });
+    this.append(live, {
+      type: 'notice',
+      level: 'info',
+      text: limitSwitchNotice(
+        accounts.get(accountId).name,
+        accounts.get(next).name,
+      ),
+    });
+    this.updates.next(this.toDto(this.requireRecord(sessionId)));
+    this.scheduleLimitCheck(sessionId);
+    return true;
   }
 
   /**

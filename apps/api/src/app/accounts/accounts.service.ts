@@ -558,10 +558,19 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * The account to switch to when `current`'s limit ended a turn: the next
-   * one in order after it (wrapping around) that is logged in and whose
-   * limits are not known to be exhausted; `null` if there is none.
+   * one in order after it (wrapping around) that is logged in, not in
+   * `exclude` and whose limits (the 5-hour and weekly windows and
+   * `windows`, e.g. the per-model one that was rejected) are not known to
+   * be exhausted; `null` if there is none.
    */
-  nextAvailable(current: string, now = Date.now()): string | null {
+  nextAvailable(
+    current: string,
+    {
+      windows = [],
+      exclude = [],
+      now = Date.now(),
+    }: { windows?: string[]; exclude?: string[]; now?: number } = {},
+  ): string | null {
     const rows = this.switchable();
     const index = rows.findIndex((row) => row.id === current);
     const ordered =
@@ -570,7 +579,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       ordered.find(
         (row) =>
           row.id !== current &&
-          this.limits.account(row.id).exhaustedUntil([], now) === null,
+          !exclude.includes(row.id) &&
+          this.limits.account(row.id).exhaustedUntil(windows, now) === null,
       )?.id ?? null
     );
   }
@@ -579,10 +589,13 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
    * When every account is exhausted: the one whose limits reset first,
    * with that time; `null` when no reset is known.
    */
-  earliestReset(now = Date.now()): { id: string; at: Date } | null {
+  earliestReset(
+    windows: string[] = [],
+    now = Date.now(),
+  ): { id: string; at: Date } | null {
     let best: { id: string; at: Date } | null = null;
     for (const row of this.switchable()) {
-      const at = this.limits.account(row.id).exhaustedUntil([], now);
+      const at = this.limits.account(row.id).exhaustedUntil(windows, now);
       if (at && (!best || at < best.at)) {
         best = { id: row.id, at };
       }

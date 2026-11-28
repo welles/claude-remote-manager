@@ -278,6 +278,11 @@ export interface LimitWait {
    * the continuation says so when the session goes on with another one.
    */
   limitedAccountId?: string;
+  /**
+   * Set while the wait was to end at once (another account had room) and
+   * the user was told nothing yet: told when it turns out longer.
+   */
+  quiet?: boolean;
 }
 
 /**

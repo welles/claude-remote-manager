@@ -528,16 +528,21 @@ describe('accounts', () => {
   });
 
   describe('automatic switch at the limit', () => {
-    const hitLimit = (resetsAtMs: number) =>
+    /** `type` `null`: a limit Claude Code reported without its window. */
+    const hitLimit = (resetsAtMs: number, type: string | null = 'five_hour') =>
       app.runner.last.emit(
-        {
-          type: 'rate_limit_event',
-          rate_limit_info: {
-            status: 'rejected',
-            resetsAt: Math.floor(resetsAtMs / 1000),
-            rateLimitType: 'five_hour',
-          },
-        },
+        ...(type === null
+          ? []
+          : [
+              {
+                type: 'rate_limit_event',
+                rate_limit_info: {
+                  status: 'rejected',
+                  resetsAt: Math.floor(resetsAtMs / 1000),
+                  rateLimitType: type,
+                },
+              },
+            ]),
         {
           type: 'assistant',
           parent_tool_use_id: null,
@@ -640,6 +645,90 @@ describe('accounts', () => {
       expect(resumes).toBeGreaterThan(soon - 1000);
       expect(resumes).toBeLessThan(soon + 5 * 60_000);
       expect(app.runner.runs).toHaveLength(1);
+    });
+
+    const mainLoggedIn = async () => {
+      app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+      await call('POST', '/api/accounts/main/refresh');
+    };
+    const startOn = async (accountId: string) => {
+      const session = (
+        await call('POST', '/api/sessions', {
+          prompt: 'Hi',
+          scratch: true,
+          accountId,
+        })
+      ).json<SessionDto>();
+      await waitFor(() => app.runner.runs.length >= 1);
+      return session;
+    };
+    const get = async (id: string) =>
+      (await call('GET', `/api/sessions/${id}`)).json<SessionDto>();
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
+
+    it('does not switch to an account exhausted on the same per-model window', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      const later = Date.now() + 3 * 86_400_000;
+      app.app
+        .get(LimitsService)
+        .account(work.id)
+        .updateFromRateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'seven_day_opus',
+          resetsAt: Math.floor(later / 1000),
+        });
+      const session = await startOn('main');
+      hitLimit(Date.now() + 86_400_000, 'seven_day_opus');
+      await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
+      await settle();
+      expect((await get(session.id)).accountId).toBe('main');
+      expect(app.runner.runs).toHaveLength(1);
+    });
+
+    it('tries each account once until a turn gets through', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      app.runner.probeUsage = () => usage(10, null);
+      const session = await startOn('main');
+      // Limits without their window: nothing marks an account exhausted.
+      hitLimit(Date.now(), null);
+      await waitFor(() => app.runner.runs.length === 2);
+      expect((await get(session.id)).accountId).toBe(work.id);
+      hitLimit(Date.now(), null);
+      await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
+      await settle();
+      expect(app.runner.runs).toHaveLength(2);
+      expect((await get(session.id)).accountId).toBe(work.id);
+    });
+
+    it('keeps the account the user chose during the turn', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      const other = await addAccount('Other', 'other@example.test');
+      app.runner.probeUsage = () => usage(10, null);
+      const session = await startOn('main');
+      await call('PATCH', `/api/sessions/${session.id}`, {
+        accountId: other.id,
+      });
+      hitLimit(Date.now() + 3_600_000);
+      await waitFor(() => app.runner.runs.length === 2);
+      expect((await get(session.id)).accountId).toBe(other.id);
+      expect(app.runner.last.options.account?.configDir).toBe(
+        join(mainDir, 'crm-accounts', other.id),
+      );
+      expect(work.id).not.toBe(other.id);
+    });
+
+    it('goes ahead with the new account when its limits cannot be read', async () => {
+      await mainLoggedIn();
+      await addAccount('Work', 'work@example.test');
+      app.runner.probeUsage = () => {
+        throw new Error('usage not available');
+      };
+      await startOn('main');
+      hitLimit(Date.now() + 3_600_000);
+      await waitFor(() => app.runner.runs.length === 2);
     });
 
     it('stays with the only account', async () => {

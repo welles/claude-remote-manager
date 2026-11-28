@@ -43,6 +43,11 @@ interface Watched {
   turnOpen: boolean;
   /** Last assistant text of the main conversation (for "turn finished"). */
   lastText: string | null;
+  /**
+   * The usage limit stopped the session but it was to continue at once
+   * (another account has room): reported if the wait turns out longer.
+   */
+  limitPending: boolean;
 }
 
 /**
@@ -190,8 +195,19 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
     const previous = watched.state;
     const state = `${session.status}/${session.waitingFor ?? ''}`;
     if (state === previous) {
+      if (
+        state === 'waiting/limit' &&
+        watched.limitPending &&
+        !this.continuesAtOnce(session)
+      ) {
+        // The other account was exhausted too (or not readable): the
+        // session waits after all.
+        watched.limitPending = false;
+        this.notifyLimit(session);
+      }
       return;
     }
+    watched.limitPending = false;
     watched.state = state;
     const id = session.id;
     if (state === 'finished/') {
@@ -239,7 +255,11 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
       // First seen (e.g. an update of an old session): no transition.
     } else if (state === 'waiting/limit') {
       watched.turnOpen = false;
-      this.notifyLimit(session);
+      if (this.continuesAtOnce(session)) {
+        watched.limitPending = true;
+      } else {
+        this.notifyLimit(session);
+      }
     } else if (state === 'failed/') {
       this.notifications.notify(
         this.base(session, 'failed', notificationKeys.failed(id), {
@@ -295,15 +315,15 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private notifyLimit(session: SessionDto): void {
-    if (
-      session.limitResumesAt &&
+  /** A limit wait that ends right away (another account has room). */
+  private continuesAtOnce(session: SessionDto): boolean {
+    return (
+      !!session.limitResumesAt &&
       Date.parse(session.limitResumesAt) <= this.now() + IMMEDIATE_RESUME_MS
-    ) {
-      // It continues at once (another account has room): nothing to say;
-      // if that fails, the next limit says it.
-      return;
-    }
+    );
+  }
+
+  private notifyLimit(session: SessionDto): void {
     const left = session.limitResumesAt
       ? durationText(Date.parse(session.limitResumesAt) - this.now())
       : null;
@@ -349,6 +369,7 @@ export class SessionNotifier implements OnModuleInit, OnModuleDestroy {
         interrupted: false,
         turnOpen: false,
         lastText: null,
+        limitPending: false,
       };
       this.watched.set(sessionId, watched);
     }

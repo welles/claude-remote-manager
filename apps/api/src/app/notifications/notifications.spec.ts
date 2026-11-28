@@ -543,6 +543,81 @@ describe('notifications', () => {
     ).toEqual([]);
   });
 
+  it('reports the limit when the account switched to turns out exhausted too', async () => {
+    await device();
+    const accounts = app.app.get(AccountsService);
+    app.claudeCli.statuses.set(join(app.dir, 'claude'), {
+      loggedIn: true,
+      email: null,
+      organization: null,
+      subscriptionType: 'max',
+      loginExpiresAt: null,
+    });
+    await accounts.refresh('main');
+    const work = await accounts.create({ name: 'Work' });
+    app.claudeCli.statuses.set(app.claudeCli.logins[0].account.configDir, {
+      loggedIn: true,
+      email: null,
+      organization: null,
+      subscriptionType: 'max',
+      loginExpiresAt: null,
+    });
+    await accounts.refresh(work.id);
+    // Unknown before; exhausted when read.
+    app.runner.probeUsage = () =>
+      ({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: {
+            utilization: 100,
+            resets_at: new Date(Date.now() + 3 * 3600_000).toISOString(),
+          },
+          seven_day: null,
+          seven_day_opus: null,
+          seven_day_sonnet: null,
+          seven_day_oauth_apps: null,
+        },
+      }) as never;
+    const session = await createSession();
+    app.runner.last.emit(
+      {
+        type: 'rate_limit_event',
+        rate_limit_info: {
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600,
+        },
+      },
+      {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        error: 'rate_limit',
+        message: {
+          id: 'm-limit',
+          content: [{ type: 'text', text: "You've hit your 5-hour limit" }],
+        },
+      },
+      resultMessage(1, 0, {
+        is_error: true,
+        result: "You've hit your 5-hour limit",
+      }),
+    );
+    await waitFor(() =>
+      push
+        .payloads('show')
+        .some((payload) =>
+          String((payload as { title?: string }).title).startsWith(
+            'Usage limit',
+          ),
+        ),
+    );
+    expect(push.payloads('show')).toMatchObject([
+      { tag: `turn-${session.id}`, title: 'Usage limit: Fix the login' },
+    ]);
+    expect(app.runner.runs).toHaveLength(1);
+  });
+
   it('notifies a finished turn only once background work is over', async () => {
     await device();
     const session = await createSession();
