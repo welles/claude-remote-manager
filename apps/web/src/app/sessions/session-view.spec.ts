@@ -1330,7 +1330,51 @@ describe('SessionView', () => {
     expect(
       messages[1].querySelector('[data-testid="app-message-label"]')
         ?.textContent,
-    ).toBe('Sent by the app · PR automation');
+    ).toMatch(/^Sent by the app · PR automation · .+, \d\d:\d\d$/);
+  });
+
+  it('shows when messages were sent and turns ended, if known', async () => {
+    const { harness, socket, element } = await open();
+    const now = new Date().toISOString();
+    socket.receive({
+      type: 'session.history',
+      logId: LOG,
+      complete: true,
+      drafts: [],
+      session: sessionDto(),
+      events: [
+        { type: 'user.message', id: 'u0', text: 'Old', seq: 1, at: null },
+        { type: 'user.message', id: 'u1', text: 'New', seq: 2, at: now },
+        {
+          type: 'turn.result',
+          subtype: 'success',
+          isError: false,
+          interrupted: false,
+          durationMs: 1500,
+          numTurns: 1,
+          usage: {
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheCreationInputTokens: 0,
+            cacheReadInputTokens: 0,
+            costUsd: 0,
+          },
+          errors: [],
+          seq: 3,
+          at: now,
+        },
+      ],
+    });
+    await harness.fixture.whenStable();
+    const times = [...element.querySelectorAll('[data-testid="message-time"]')];
+    // Today: the time only; the tooltip has the exact time.
+    expect(times).toHaveLength(1);
+    expect(times[0].textContent?.trim()).toMatch(/^\d\d:\d\d$/);
+    expect(times[0].getAttribute('datetime')).toBe(now);
+    expect(times[0].getAttribute('title')).toMatch(/\d\d:\d\d:\d\d$/);
+    expect(
+      element.querySelector('[data-testid="turn-time"]')?.textContent?.trim(),
+    ).toBe(times[0].textContent?.trim());
   });
 
   it('shows references of messages as chips and what Claude got', async () => {

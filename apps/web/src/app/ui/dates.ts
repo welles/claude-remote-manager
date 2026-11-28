@@ -118,6 +118,28 @@ export function formatClock(
   ).format(date);
 }
 
+/**
+ * When something happened in a conversation: the time today (`16:27`),
+ * else with the date (`12 Nov, 16:27`; `12 Nov 2025, 16:27` in other years).
+ */
+export function formatStamp(
+  value: string | number | Date,
+  now: number = Date.now(),
+  locale?: string,
+): string {
+  const date = toDate(value);
+  const today = new Date(now);
+  if (sameDay(date, today)) {
+    return dateFormat(STYLES.time, locale).format(date);
+  }
+  return dateFormat(
+    date.getFullYear() === today.getFullYear()
+      ? { day: 'numeric', month: 'short', ...STYLES.time }
+      : STYLES.dateTime,
+    locale,
+  ).format(date);
+}
+
 export function formatDate(
   value: string | number | Date,
   style: DateStyle = 'dateTime',

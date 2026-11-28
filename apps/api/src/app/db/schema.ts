@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   index,
   integer,
+  primaryKey,
   real,
   sqliteTable,
   text,
@@ -690,6 +691,24 @@ export const messageContexts = sqliteTable(
     createdAt: createdAt(),
   },
   (table) => [index('message_contexts_session').on(table.sessionId)],
+);
+
+/**
+ * When the user's messages went into the conversation, for the times in
+ * the history: the agents' transcripts come back without them. One row per
+ * message; messages from before this table have none.
+ */
+export const messageTimes = sqliteTable(
+  'message_times',
+  {
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    /** ID of the user message (also the transcript entry's UUID). */
+    messageId: text('message_id').notNull(),
+    sentAt: timestamp('sent_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.sessionId, table.messageId] })],
 );
 
 /**
