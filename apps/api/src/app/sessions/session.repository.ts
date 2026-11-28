@@ -185,6 +185,8 @@ export interface SessionRecord {
   accountId: string | null;
   /** The agent engine the session runs with. */
   engine: AgentEngineId;
+  /** The reviewer's engine; `null`: the app's default. */
+  reviewEngine: AgentEngineId | null;
 }
 
 export type NewSessionDirectory = Pick<
@@ -233,6 +235,7 @@ export type SessionPatch = Partial<
     | 'reviewMode'
     | 'reviewModel'
     | 'reviewEffort'
+    | 'reviewEngine'
     | 'reviewedDiff'
     | 'accountId'
   >

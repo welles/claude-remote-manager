@@ -5,10 +5,21 @@ import type {
   ReviewStartedEvent,
   SessionDto,
 } from '@claude-remote-manager/shared-types';
+import type { AccountProvider } from '@claude-remote-manager/shared-types';
+import type { AccountsService } from '../accounts/accounts.service';
+import { AgentEngines, CODEX_CAPABILITIES } from '../agent/agent-engines';
+import type { AgentAccount } from '../agent/agent-runner';
+import { accounts, usageRecords as usageTable } from '../db/schema';
 import { SessionEventRepository } from '../sessions/session-event.repository';
 import { SessionDiffService } from '../diffs/session-diff.service';
 import { commitFile } from '../git/testing/git-fixtures';
-import { flush, resultMessage, waitFor } from '../sessions/testing/fake-agent';
+import {
+  FakeAgentRunner,
+  FakeTranscriptReader,
+  flush,
+  resultMessage,
+  waitFor,
+} from '../sessions/testing/fake-agent';
 import { UsageRepository } from '../sessions/usage.repository';
 import { WorkspaceHarness } from '../workspaces/testing/workspace-harness';
 import { REVIEW_TOOLS } from '../agent/sdk-agent-runner';
@@ -294,6 +305,224 @@ describe('ReviewsService', () => {
     });
     const started = await reviews.start(session.id);
     expect(started).toMatchObject({ model: 'opus', effort: 'max' });
+  });
+
+  describe('engines', () => {
+    let codex: FakeAgentRunner;
+    let engines: AgentEngines;
+    /** The accounts the reviews asked for, with their provider. */
+    let leases: { accountId: string | null; provider?: AccountProvider }[];
+
+    /** Accounts as the service picks them: own if of the provider. */
+    const fakeAccounts = {
+      withAccount: async <T>(
+        accountId: string | null,
+        task: (account: AgentAccount & { id: string }) => Promise<T>,
+        options: { provider?: AccountProvider } = {},
+      ) => {
+        leases.push({ accountId, provider: options.provider });
+        const provider = options.provider ?? 'claude';
+        const id =
+          accountId?.startsWith(`${provider}-`) === true
+            ? accountId
+            : `${provider}-default`;
+        return task({ id, configDir: `/homes/${id}`, main: false });
+      },
+    } as unknown as AccountsService;
+
+    /** The service again, with these engines (Codex unless `withCodex` is false). */
+    const restart = (withCodex = true) => {
+      reviews.onModuleDestroy();
+      codex = new FakeAgentRunner();
+      engines = new AgentEngines(harness.runner, harness.transcripts);
+      if (withCodex) {
+        engines.register('codex', {
+          runner: codex,
+          transcripts: new FakeTranscriptReader(),
+          capabilities: CODEX_CAPABILITIES,
+        });
+      }
+      leases = [];
+      reviews = new ReviewsService(
+        harness.service,
+        harness.sessions,
+        new SessionDiffService(harness.sessions),
+        usageRecords,
+        harness.runner,
+        harness.hooks,
+        defaults,
+        fakeAccounts,
+        engines,
+      );
+      reviews.onModuleInit();
+    };
+
+    /** A session with changes, working with Claude account `claude-a`. */
+    const changedSession = async () => {
+      const session = await idleSession();
+      harness.db
+        .insert(accounts)
+        .values({
+          id: 'claude-a',
+          provider: 'claude',
+          name: 'A',
+          position: 5,
+          directory: 'claude-a',
+        })
+        .onConflictDoNothing()
+        .run();
+      harness.sessions.update(session.id, { accountId: 'claude-a' });
+      await commitFile(session.cwd, 'work.txt', 'changed');
+      return session;
+    };
+
+    it('runs the reviewer with the engine of the settings, its model and an account of its provider', async () => {
+      restart();
+      const session = await changedSession();
+      expect(reviews.updateDefaults({ engine: 'codex' })).toMatchObject({
+        engine: 'codex',
+        models: { codex: null },
+      });
+      const started = await reviews.start(session.id);
+      expect(started).toMatchObject({
+        engine: 'codex',
+        fallbackFrom: null,
+        model: null,
+        effort: 'high',
+      });
+      expect(harness.runner.reviews).toHaveLength(0);
+      const review = codex.reviews[0];
+      expect(review.options).toMatchObject({
+        cwd: session.cwd,
+        model: null,
+        effort: 'high',
+        // The session's account is Claude's: the provider's default.
+        account: { configDir: '/homes/chatgpt-default', main: false },
+      });
+      expect(review.options.instructions).toContain('sandbox is read-only');
+      expect(leases).toEqual([{ accountId: 'claude-a', provider: 'chatgpt' }]);
+      expect(reviewEvents(session.id, 'review.started')[0]).toMatchObject({
+        engine: 'codex',
+        fallbackFrom: null,
+        model: null,
+      });
+
+      review.finish({
+        output: { summary: 'One problem.', findings: [finding] },
+        modelUsage: {
+          'gpt-5.5-codex': { ...usage['claude-fable-5-2'], costUsd: 0 },
+        },
+        model: 'gpt-5.5-codex',
+        effort: 'high',
+      });
+      await waitFor(() => findingMessages().length === 1);
+      expect(findingMessages()[0].text).toContain(
+        'a separate Codex process (model gpt-5.5-codex, effort high)',
+      );
+      const finished = reviewEvents(session.id, 'review.finished')[0];
+      // The model Codex chose; the effort was the one asked for.
+      expect(finished.model).toBe('gpt-5.5-codex');
+      expect(finished).not.toHaveProperty('effort');
+      // The usage counts for the session, with the reviewer's account.
+      expect(
+        harness.db
+          .select()
+          .from(usageTable)
+          .all()
+          .filter((row) => row.reviewId === started.id),
+      ).toEqual([
+        expect.objectContaining({
+          model: 'gpt-5.5-codex',
+          accountId: 'chatgpt-default',
+        }),
+      ]);
+    });
+
+    it('runs a Claude Code reviewer with the session’s own account', async () => {
+      restart();
+      const session = await changedSession();
+      await reviews.start(session.id);
+      expect(harness.runner.reviews[0].options).toMatchObject({
+        model: 'claude-fable-5-2',
+        account: { configDir: '/homes/claude-a' },
+      });
+      expect(leases).toEqual([{ accountId: 'claude-a', provider: 'claude' }]);
+    });
+
+    it('falls back to Claude Code when the server does not have the chosen engine', async () => {
+      restart();
+      const session = await changedSession();
+      reviews.updateDefaults({ engine: 'codex', model: 'gpt-5.4' });
+      reviews.updateSession(session.id, { model: 'gpt-5.5-codex' });
+      // Codex is gone after a restart.
+      restart(false);
+      expect(reviews.getDefaults().engine).toBe('codex');
+      const started = await reviews.start(session.id);
+      expect(started).toMatchObject({
+        engine: 'claude-code',
+        fallbackFrom: 'codex',
+        // Claude Code's model of the settings, not Codex's.
+        model: 'claude-fable-5-2',
+      });
+      expect(harness.runner.reviews[0].options.model).toBe('claude-fable-5-2');
+      expect(reviewEvents(session.id, 'review.started')[0]).toMatchObject({
+        engine: 'claude-code',
+        fallbackFrom: 'codex',
+      });
+      expect(() =>
+        reviews.updateSession(session.id, { engine: 'codex' }),
+      ).toThrow('not available on this server');
+      expect(() => reviews.updateDefaults({ engine: 'codex' })).toThrow(
+        'not available on this server',
+      );
+    });
+
+    it('keeps a session’s model with its engine and resets it when the engine changes', async () => {
+      restart();
+      const session = await changedSession();
+      const review = () => harness.service.get(session.id).review;
+      // A model chosen with the app's engine keeps that engine.
+      reviews.updateSession(session.id, { model: 'opus' });
+      expect(review()).toMatchObject({ engine: 'claude-code', model: 'opus' });
+      reviews.updateDefaults({ engine: 'codex' });
+      expect(reviews.reviewer(harness.sessions.require(session.id))).toEqual({
+        engine: 'claude-code',
+        fallbackFrom: null,
+        model: 'opus',
+        effort: 'high',
+      });
+      // Another engine resets the model.
+      reviews.updateSession(session.id, { engine: 'codex' });
+      expect(review()).toMatchObject({ engine: 'codex', model: null });
+      reviews.updateSession(session.id, { model: 'gpt-5.4', effort: 'max' });
+      expect(review()).toMatchObject({
+        engine: 'codex',
+        model: 'gpt-5.4',
+        effort: 'max',
+      });
+      // The same engine again keeps it.
+      reviews.updateSession(session.id, { engine: 'codex' });
+      expect(review()?.model).toBe('gpt-5.4');
+      await reviews.start(session.id);
+      expect(codex.reviews[0].options).toMatchObject({
+        model: 'gpt-5.4',
+        effort: 'max',
+      });
+      // Back to the app's engine (Codex now) and its model.
+      reviews.updateSession(session.id, { engine: null });
+      expect(review()).toMatchObject({ engine: null, model: null });
+      expect(reviews.reviewer(harness.sessions.require(session.id))).toEqual({
+        engine: 'codex',
+        fallbackFrom: null,
+        model: null,
+        effort: 'max',
+      });
+      expect(() =>
+        reviews.updateSession(session.id, {
+          engine: 'gemini' as unknown as 'codex',
+        }),
+      ).toThrow('engine must be one of');
+    });
   });
 
   it('refuses a review without changes and a second one while one runs', async () => {

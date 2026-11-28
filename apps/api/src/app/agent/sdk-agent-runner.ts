@@ -35,7 +35,6 @@ import {
   claudePlanUsage,
 } from './claude-events';
 
-
 /**
  * The agent events of a Claude Code process's messages, one batch per
  * message (handled as a whole). A message that cannot be translated is
@@ -480,7 +479,7 @@ export function buildReviewQueryOptions(
     // elsewhere, such as the Claude login), checked with Claude Code.
     tools: REVIEW_TOOLS,
     permissionMode: 'dontAsk',
-    model: options.model,
+    ...(options.model ? { model: options.model } : {}),
     effort: options.effort,
     persistSession: false,
     outputFormat: { type: 'json_schema', schema: options.schema },

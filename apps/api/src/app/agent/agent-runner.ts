@@ -217,20 +217,26 @@ export interface AgentRun {
 }
 
 /**
- * A one-shot, read-only Claude Code process: an independent review of a
- * session's changes. It may only read files (`Read`, `Grep`, `Glob`),
- * starts no MCP server, keeps no transcript and answers in `schema`.
+ * A one-shot, read-only process of an engine: an independent review of a
+ * session's changes. It may only read (Claude Code: `Read`, `Grep`,
+ * `Glob` in the session's directories; Codex: its read-only sandbox),
+ * starts no MCP server and no hooks, keeps no transcript and answers in
+ * `schema`.
  */
 export interface AgentReviewOptions {
-  /** The account; the main one without. */
+  /** The account (of the engine's provider); the main one without. */
   account?: AgentAccount;
   cwd: string;
   additionalDirectories: string[];
-  model: string;
+  /** `null`: the engine's default model. */
+  model: string | null;
   effort: ReviewEffort;
   /** The task, with the diff. */
   prompt: string;
-  /** Appended to Claude Code's system prompt. */
+  /**
+   * The reviewer's instructions (appended to Claude Code's system prompt,
+   * Codex's developer instructions).
+   */
   instructions: string;
   /** JSON schema of the answer. */
   schema: Record<string, unknown>;
@@ -247,6 +253,12 @@ export interface AgentReviewResult {
   /** Cumulative usage per model. */
   modelUsage: AgentModelUsage;
   durationMs: number;
+  /**
+   * The model and effort the engine ran with, when it says (Codex names
+   * its default model; an effort the model does not offer is lowered).
+   */
+  model?: string;
+  effort?: ReviewEffort;
 }
 
 /**
@@ -270,7 +282,7 @@ export abstract class AgentRunner {
 
   /**
    * Runs an independent review to its end (see {@link AgentReviewOptions});
-   * rejects when the process cannot start or is aborted.
+   * rejects when the process cannot start, ends early or is aborted.
    */
   abstract review(options: AgentReviewOptions): Promise<AgentReviewResult>;
 }

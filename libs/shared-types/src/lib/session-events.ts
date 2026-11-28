@@ -6,6 +6,7 @@ import type {
   MessageReferenceRequest,
 } from './github-references';
 import type { AccountsChangedMessage } from './accounts';
+import type { AgentEngineId } from './engines';
 import type { AccountLimits } from './limits';
 import type { PreviewDto, PreviewStopper } from './previews';
 import type { RepositoryAdditionCall } from './repository-additions';
@@ -506,7 +507,15 @@ export interface ReviewStartedEvent extends SessionEventBase {
   type: 'review.started';
   reviewId: string;
   trigger: ReviewTrigger;
-  model: string;
+  /** The reviewer's engine (absent in reviews before Codex: Claude Code). */
+  engine?: AgentEngineId;
+  /**
+   * The engine the settings chose that the server does not have; the
+   * review ran with Claude Code instead.
+   */
+  fallbackFrom?: AgentEngineId | null;
+  /** `null`: the engine's default model. */
+  model: string | null;
   effort: ReviewEffort;
   /** Changed files the reviewer was given, over all repositories. */
   fileCount: number;
@@ -532,6 +541,12 @@ export interface ReviewFinishedEvent extends SessionEventBase {
   usage: UsageTotals | null;
   /** The app's message to Claude with the findings; `null` without. */
   messageId: string | null;
+  /**
+   * The model and effort the reviewer actually ran with, when its engine
+   * said (Codex's default model, an effort its model does not offer).
+   */
+  model?: string | null;
+  effort?: ReviewEffort | null;
 }
 
 export type SessionEvent =

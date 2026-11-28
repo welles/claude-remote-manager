@@ -5,8 +5,9 @@ import { ReviewsController } from './reviews.controller';
 import { ReviewsService } from './reviews.service';
 
 /**
- * Independent reviews: a separate, read-only Claude Code process reviews
- * a session's changes and its findings go to the session's Claude.
+ * Independent reviews: a separate, read-only process of the reviewer's
+ * engine (Claude Code or Codex) reviews a session's changes and its
+ * findings go to the session's agent.
  */
 @Module({
   imports: [SessionsModule],
