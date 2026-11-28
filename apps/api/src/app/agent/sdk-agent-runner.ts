@@ -23,6 +23,25 @@ import type {
   AgentUserMessage,
 } from './agent-runner';
 import { AsyncQueue } from './async-queue';
+import type { AgentEvent } from './agent-events';
+import {
+  ClaudeEventTranslator,
+  claudeCommand,
+  claudeContextUsage,
+  claudeModel,
+  claudeModelUsage,
+  claudePlanUsage,
+} from './claude-events';
+
+/** The agent events of a Claude Code process's messages. */
+export async function* translateMessages(
+  messages: AsyncIterable<Sdk.SDKMessage>,
+  translator: ClaudeEventTranslator,
+): AsyncIterable<AgentEvent> {
+  for await (const message of messages) {
+    yield* translator.translate(message);
+  }
+}
 
 type SdkModule = typeof Sdk;
 
@@ -517,8 +536,9 @@ export class SdkAgentRunner implements AgentRunner {
       options.settings['permissions'] !== null
         ? (options.settings['permissions'] as Record<string, unknown>)
         : {};
+    const translator = new ClaudeEventTranslator();
     return {
-      messages: query,
+      events: translateMessages(query, translator),
       send: push,
       addDirectories: async (directories) => {
         const next = new Set([...added, ...directories]);
@@ -535,15 +555,21 @@ export class SdkAgentRunner implements AgentRunner {
       interrupt: async () => {
         await query.interrupt();
       },
-      contextUsage: () => query.getContextUsage({ detail: 'summary' }),
-      planUsage: () =>
-        query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
-          skipBehaviors: true,
-        }),
+      contextUsage: async () =>
+        claudeContextUsage(await query.getContextUsage({ detail: 'summary' })),
+      planUsage: async () =>
+        claudePlanUsage(
+          await query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(
+            {
+              skipBehaviors: true,
+            },
+          ),
+        ),
       setPermissionMode: (mode) => query.setPermissionMode(mode),
       setModel: (model) => query.setModel(model ?? undefined),
       stopTask: (taskId) => query.stopTask(taskId),
-      supportedCommands: () => query.supportedCommands(),
+      supportedCommands: async () =>
+        (await query.supportedCommands()).map(claudeCommand),
       close: () => {
         input.close();
         query.close();
@@ -592,7 +618,7 @@ export class SdkAgentRunner implements AgentRunner {
             : output === undefined
               ? 'The reviewer gave no structured answer'
               : null,
-          modelUsage: message.modelUsage,
+          modelUsage: claudeModelUsage(message.modelUsage),
           durationMs: message.duration_ms,
         };
       }
@@ -641,12 +667,16 @@ export class SdkAgentRunner implements AgentRunner {
     });
     try {
       return await task({
-        supportedModels: () => query.supportedModels(),
-        supportedCommands: () => query.supportedCommands(),
-        planUsage: () =>
-          query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
-            skipBehaviors: true,
-          }),
+        supportedModels: async () =>
+          (await query.supportedModels()).map(claudeModel),
+        supportedCommands: async () =>
+          (await query.supportedCommands()).map(claudeCommand),
+        planUsage: async () =>
+          claudePlanUsage(
+            await query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(
+              { skipBehaviors: true },
+            ),
+          ),
       });
     } finally {
       input.close();

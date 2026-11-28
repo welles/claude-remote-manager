@@ -1,4 +1,3 @@
-import type { ModelUsage } from '@anthropic-ai/claude-agent-sdk';
 import type { UsageTotals } from '@claude-remote-manager/shared-types';
 import { EMPTY_USAGE } from './usage.repository';
 
@@ -9,16 +8,6 @@ const FIELDS = [
   'cacheReadInputTokens',
   'costUsd',
 ] as const satisfies readonly (keyof UsageTotals)[];
-
-function fromModelUsage(usage: ModelUsage): UsageTotals {
-  return {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cacheCreationInputTokens: usage.cacheCreationInputTokens,
-    cacheReadInputTokens: usage.cacheReadInputTokens,
-    costUsd: usage.costUSD,
-  };
-}
 
 export function sumUsage(usages: Iterable<UsageTotals>): UsageTotals {
   const total = { ...EMPTY_USAGE };
@@ -49,10 +38,12 @@ export class UsageTracker {
   }
 
   /** Usage per model since the previous result; models without usage omitted. */
-  consume(modelUsage: Record<string, ModelUsage>): Record<string, UsageTotals> {
+  consume(
+    modelUsage: Record<string, UsageTotals>,
+  ): Record<string, UsageTotals> {
     const deltas: Record<string, UsageTotals> = {};
     for (const [model, raw] of Object.entries(modelUsage)) {
-      const current = fromModelUsage(raw);
+      const current = { ...raw };
       const previous = this.baseline.get(model) ?? EMPTY_USAGE;
       const restarted = FIELDS.some(
         (field) => current[field] < previous[field],

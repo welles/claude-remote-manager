@@ -1,5 +1,4 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import type { ModelInfo } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ModelListResponse,
   ModelOption,
@@ -41,16 +40,6 @@ export const FALLBACK_MODELS: ModelOption[] = [
 ];
 
 /** A model of Claude Code's list as offered in the UI. */
-export function modelOption(info: ModelInfo): ModelOption {
-  return {
-    // Claude Code's "default" row stands for not choosing a model.
-    value: info.value === 'default' ? null : info.value,
-    label: info.displayName || info.value,
-    description: info.description ?? '',
-    resolvedModel: info.resolvedModel ?? null,
-  };
-}
-
 /**
  * The models a session can use, as Claude Code reports them for the
  * logged-in account (asked through a short-lived process without prompt,
@@ -94,7 +83,7 @@ export class ModelsService {
         throw new Error('Claude Code reported no models');
       }
       const response: ModelListResponse = {
-        models: models.map(modelOption),
+        models,
         source: 'claude-code',
         updatedAt: new Date(this.now()).toISOString(),
       };

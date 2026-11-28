@@ -11,11 +11,8 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { Subject } from 'rxjs';
-import type {
-  CanUseTool,
-  PermissionMode,
-  SDKMessage,
-} from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
+import type { AgentEvent, AgentTurnResult } from '../agent/agent-events';
 import {
   CLAUDE_WAIT_LIMIT_MINUTES,
   isRetiredClone,
@@ -473,7 +470,7 @@ interface LiveSession {
    * The mode the current process last reported (`init`/`status`), or that
    * it accepted; `null` without process.
    */
-  reportedMode: PermissionMode | null;
+  reportedMode: string | null;
   /** Mode switches of the app in flight (`setPermissionMode`). */
   modeRequests: number;
   /** The permission mode override last published (JSON). */
@@ -2484,12 +2481,12 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private async consume(live: LiveSession, run: AgentRun): Promise<void> {
     let failure: unknown = null;
     try {
-      for await (const message of run.messages) {
+      for await (const event of run.events) {
         if (live.run !== run) {
           break;
         }
         try {
-          this.handleMessage(live, message);
+          this.handleEvent(live, event);
         } catch (error) {
           this.logger.error(`Handling a message of ${live.id} failed`, error);
         }
@@ -2618,106 +2615,78 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       );
   }
 
-  private handleMessage(live: LiveSession, message: SDKMessage): void {
-    if (message.type === 'system' && message.subtype === 'init') {
-      const record = this.requireRecord(live.id);
-      if (record.sdkSessionId !== message.session_id) {
-        this.updates.next(
-          this.toDto(
-            this.sessions.update(live.id, { sdkSessionId: message.session_id }),
-          ),
-        );
-      }
-      if (message.permissionMode) {
-        this.syncPermissionMode(live, message.permissionMode);
-      }
-      this.loadSlashCommands(live, message.terminal_slash_commands ?? []);
-      return;
-    }
-    if (message.type === 'system' && message.subtype === 'commands_changed') {
-      this.slashCommands?.remember(live.id, message.commands);
-      return;
-    }
-    if (
-      message.type === 'system' &&
-      message.subtype === 'background_tasks_changed'
-    ) {
-      this.backgroundTasksChanged(
-        live,
-        message.tasks
-          .filter((task) => !task.ambient)
-          .map((task) => task.task_id),
-      );
-      return;
-    }
-    if (
-      (message.type === 'assistant' || message.type === 'stream_event') &&
-      message.parent_tool_use_id === null &&
-      !(message.type === 'assistant' && message.agent_id)
-    ) {
-      this.turnStartedByClaude(live);
-    }
-    if (
-      message.type === 'system' &&
-      message.subtype === 'status' &&
-      message.permissionMode
-    ) {
-      // Claude Code changed the mode itself (e.g. entering plan mode).
-      this.syncPermissionMode(live, message.permissionMode);
-    }
-    if (message.type === 'rate_limit_event') {
-      this.limits
-        .account(live.accountId)
-        .updateFromRateLimitEvent(message.rate_limit_info);
-      if (message.rate_limit_info.status === 'rejected') {
-        live.rejectedWindow =
-          message.rate_limit_info.rateLimitType ?? live.rejectedWindow;
-      }
-      return;
-    }
-    if (
-      message.type === 'assistant' &&
-      message.error === 'rate_limit' &&
-      message.parent_tool_use_id === null &&
-      !message.agent_id &&
-      this.requireRecord(live.id).status === 'running'
-    ) {
-      // The usage limit rejected the turn's request: Claude Code ends the
-      // turn with this (synthetic) message.
-      live.limitHit = true;
-    }
-    if (message.type === 'result') {
-      this.handleResult(live, message);
-      return;
-    }
-    if (message.type === 'prompt_suggestion') {
-      const open =
-        live.suggestionOpen && this.requireRecord(live.id).status === 'waiting';
-      live.suggestionOpen = false;
-      if (!open) {
+  private handleEvent(live: LiveSession, event: AgentEvent): void {
+    switch (event.type) {
+      case 'started': {
+        const record = this.requireRecord(live.id);
+        if (record.sdkSessionId !== event.engineSessionId) {
+          this.updates.next(
+            this.toDto(
+              this.sessions.update(live.id, {
+                sdkSessionId: event.engineSessionId,
+              }),
+            ),
+          );
+        }
+        if (event.permissionMode) {
+          this.syncPermissionMode(live, event.permissionMode);
+        }
+        this.loadSlashCommands(live, event.terminalCommands);
         return;
       }
-    }
-    const events = live.mapper.map(message);
-    if (
-      (message.type === 'assistant' || message.type === 'user') &&
-      message.uuid &&
-      // Messages of subagents and other agents are not in the session's
-      // transcript: an anchor there would place the events at the end of
-      // the turn, after later ones (see buildHistory).
-      message.parent_tool_use_id === null &&
-      !('agent_id' in message && message.agent_id)
-    ) {
-      // Stored events that follow belong after this transcript entry.
-      live.anchor = { ...live.anchor, uuid: message.uuid };
-    }
-    for (const event of events) {
-      this.append(live, event);
-    }
-    this.showImages(live, live.mapper.takeImages());
-    if (message.type === 'assistant' && live.run) {
-      // Live context usage during long turns (no API request involved).
-      void this.refreshContext(live, live.run);
+      case 'commands':
+        this.slashCommands?.remember(live.id, event.commands);
+        return;
+      case 'background':
+        this.backgroundTasksChanged(live, event.taskIds);
+        return;
+      case 'activity':
+        this.turnStartedByClaude(live);
+        return;
+      case 'mode':
+        // The agent changed the mode itself (e.g. entering plan mode).
+        this.syncPermissionMode(live, event.mode);
+        return;
+      case 'rate-limit':
+        this.limits.account(live.accountId).updateFromRateLimit(event.limit);
+        if (event.limit.status === 'rejected') {
+          live.rejectedWindow = event.limit.window ?? live.rejectedWindow;
+        }
+        return;
+      case 'limit-hit':
+        if (this.requireRecord(live.id).status === 'running') {
+          live.limitHit = true;
+        }
+        return;
+      case 'result':
+        this.handleResult(live, event);
+        return;
+      case 'suggestion': {
+        const open =
+          live.suggestionOpen &&
+          this.requireRecord(live.id).status === 'waiting';
+        live.suggestionOpen = false;
+        if (open) {
+          for (const output of event.events) {
+            this.append(live, output);
+          }
+        }
+        return;
+      }
+      case 'output':
+        if (event.anchor) {
+          // Stored events that follow belong after this transcript entry.
+          live.anchor = { ...live.anchor, uuid: event.anchor };
+        }
+        for (const output of event.events) {
+          this.append(live, output);
+        }
+        this.showImages(live, event.images);
+        if (event.contextChanged && live.run) {
+          // Live context usage during long turns (no API request involved).
+          void this.refreshContext(live, live.run);
+        }
+        return;
     }
   }
 
@@ -2726,14 +2695,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.contextResults += zeroTurnMessages(message);
   }
 
-  private handleResult(
-    live: LiveSession,
-    result: Extract<SDKMessage, { type: 'result' }>,
-  ): void {
+  private handleResult(live: LiveSession, result: AgentTurnResult): void {
     if (
       live.contextResults > 0 &&
       result.subtype === 'success' &&
-      result.num_turns === 0
+      result.numTurns === 0
     ) {
       // The answer to a context message (`shouldQuery: false`): no turn
       // ended, the message after it starts the turn.
@@ -2741,10 +2707,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     const record = this.requireRecord(live.id);
-    const byModel = live.tracker.consume(result.modelUsage);
+    const byModel = live.tracker.consume(result.usage);
     this.usage.record(
       live.id,
-      result.session_id ?? record.sdkSessionId,
+      result.engineSessionId ?? record.sdkSessionId,
       byModel,
       undefined,
       null,
@@ -2755,25 +2721,25 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     live.interruptRequested = null;
     const sendNow = live.sendNow;
     live.sendNow = null;
-    const errors = result.subtype === 'success' ? [] : result.errors;
+    const errors = result.errors;
     this.append(live, {
       type: 'turn.result',
       subtype: result.subtype,
-      isError: result.is_error,
+      isError: result.isError,
       interrupted,
-      durationMs: result.duration_ms,
-      numTurns: result.num_turns,
+      durationMs: result.durationMs,
+      numTurns: result.numTurns,
       usage: sumUsage(Object.values(byModel)),
       errors,
     });
     if (!interrupted) {
-      if (result.subtype === 'success' && result.is_error) {
+      if (result.subtype === 'success' && result.isError) {
         // API errors usually arrive as assistant text already; do not
         // repeat the same text.
-        if (live.log.lastAssistantText !== result.result) {
+        if (live.log.lastAssistantText !== result.text) {
           this.append(live, {
             type: 'error',
-            message: result.result || 'The request failed.',
+            message: result.text || 'The request failed.',
           });
         }
       } else if (result.subtype !== 'success') {
@@ -2788,13 +2754,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     const rejectedWindow = live.rejectedWindow;
     live.limitHit = false;
     live.rejectedWindow = null;
-    if (limited && (result.queued_turn_count ?? 0) === 0) {
+    if (limited && result.queuedTurns === 0) {
       // Queued messages stay held until the limit has reset.
       this.stopForLimit(live, rejectedWindow);
       return;
     }
     const clean =
-      !interrupted && result.subtype === 'success' && !result.is_error;
+      !interrupted && result.subtype === 'success' && !result.isError;
     if (clean) {
       live.limitRetries = 0;
       this.limitChains.delete(live.id);
@@ -2814,13 +2780,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       live.autofixTurn?.delivered &&
       !live.reopen &&
-      (result.queued_turn_count ?? 0) === 0
+      result.queuedTurns === 0
     ) {
       // The Autofix run is over. With a reopen pending, it goes on with the
       // new process (reopenAfterTurn).
       live.autofixTurn = null;
     }
-    if (live.reopen && (result.queued_turn_count ?? 0) === 0) {
+    if (live.reopen && result.queuedTurns === 0) {
       // An added repository needs a new process: it continues there, with
       // the first queued message (one sent right away is at the front;
       // with all sent right away, the others wait for that turn's end).
@@ -2834,8 +2800,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     // it. Sent right away: only those, the others wait for this turn's end.
     const flushed =
       run && !stillWaiting ? this.flushQueue(live, run, sendNow) : 0;
-    const queued = flushed > 0 || (result.queued_turn_count ?? 0) > 0;
-    if (queued || interrupted || result.is_error) {
+    const queued = flushed > 0 || result.queuedTurns > 0;
+    if (queued || interrupted || result.isError) {
       // What Claude said comes after this turn does not: another turn
       // follows, or the turn did not end as Claude planned.
       this.clearClaudeWait(live);
@@ -3039,7 +3005,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * change of the chosen mode: Claude Code could not use that mode (plan,
    * model, settings); the override shows it.
    */
-  private syncPermissionMode(live: LiveSession, mode: PermissionMode): void {
+  private syncPermissionMode(live: LiveSession, mode: string): void {
     live.reportedMode = mode;
     const record = this.requireRecord(live.id);
     if (!SESSION_PERMISSION_MODES.includes(mode as SessionPermissionMode)) {
@@ -3201,7 +3167,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       live.context = {
         model: usage.model,
-        usedTokens: usage.totalTokens,
+        usedTokens: usage.usedTokens,
         maxTokens: usage.maxTokens,
         percentage: usage.percentage,
         updatedAt: new Date().toISOString(),

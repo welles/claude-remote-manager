@@ -1,5 +1,6 @@
 import type { SDKControlGetUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import type { AccountLimits } from '@claude-remote-manager/shared-types';
+import { claudePlanUsage, claudeRateLimit } from '../agent/claude-events';
 import {
   AccountLimitTracker,
   LIMITS_STALE_MS,
@@ -7,15 +8,14 @@ import {
   PLAN_USAGE_REFRESH_INTERVAL_MS,
 } from './limits.service';
 
-const planUsage = (
-  rateLimits: SDKControlGetUsageResponse['rate_limits'],
-): SDKControlGetUsageResponse =>
-  ({
+/** Claude Code's plan usage answer, through the Claude adapter. */
+const planUsage = (rateLimits: SDKControlGetUsageResponse['rate_limits']) =>
+  claudePlanUsage({
     session: {} as SDKControlGetUsageResponse['session'],
     subscription_type: 'max',
     rate_limits_available: rateLimits !== null,
     rate_limits: rateLimits,
-  }) as SDKControlGetUsageResponse;
+  } as SDKControlGetUsageResponse);
 
 describe('AccountLimitTracker', () => {
   let service: AccountLimitTracker;
@@ -38,13 +38,13 @@ describe('AccountLimitTracker', () => {
   });
 
   it('applies rate limit events (fraction, epoch seconds)', () => {
-    service.updateFromRateLimitEvent(
-      {
+    service.updateFromRateLimit(
+      claudeRateLimit({
         status: 'allowed_warning',
         rateLimitType: 'five_hour',
         utilization: 0.823,
         resetsAt: 1772380800,
-      },
+      }),
       now,
     );
 
@@ -68,8 +68,8 @@ describe('AccountLimitTracker', () => {
   });
 
   it('applies plan usage including per-model weekly windows', () => {
-    service.updateFromRateLimitEvent(
-      { status: 'allowed', rateLimitType: 'seven_day' },
+    service.updateFromRateLimit(
+      claudeRateLimit({ status: 'allowed', rateLimitType: 'seven_day' }),
       now,
     );
     service.updateFromPlanUsage(
@@ -114,8 +114,8 @@ describe('AccountLimitTracker', () => {
   });
 
   it('keeps known windows when plan limits are unavailable', () => {
-    service.updateFromRateLimitEvent(
-      { status: 'allowed', rateLimitType: 'five_hour' },
+    service.updateFromRateLimit(
+      claudeRateLimit({ status: 'allowed', rateLimitType: 'five_hour' }),
       now,
     );
     service.updateFromPlanUsage(planUsage(null), now);
@@ -183,12 +183,12 @@ describe('AccountLimitTracker', () => {
   it('says until when the exhausted windows reset', () => {
     const at = now.getTime();
     // Rejected in the stream: exhausted until its reset.
-    service.updateFromRateLimitEvent(
-      {
+    service.updateFromRateLimit(
+      claudeRateLimit({
         status: 'rejected',
         rateLimitType: 'five_hour',
         resetsAt: Date.parse('2026-03-01T14:00:00Z') / 1000,
-      },
+      }),
       now,
     );
     expect(service.exhaustedUntil([], at)?.toISOString()).toBe(
@@ -256,10 +256,12 @@ describe('LimitsService', () => {
 
     expect(await limits.account('b').readNow()).toBe(true);
     expect(source).toHaveBeenCalledWith('b');
-    limits.account('main').updateFromRateLimitEvent({
-      status: 'allowed',
-      rateLimitType: 'seven_day',
-    });
+    limits.account('main').updateFromRateLimit(
+      claudeRateLimit({
+        status: 'allowed',
+        rateLimitType: 'seven_day',
+      }),
+    );
 
     expect(limits.list().map((value) => value.accountId)).toEqual([
       'b',

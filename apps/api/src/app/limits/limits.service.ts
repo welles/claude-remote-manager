@@ -1,9 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Subject, type Subscription } from 'rxjs';
-import type {
-  SDKControlGetUsageResponse,
-  SDKRateLimitInfo,
-} from '@anthropic-ai/claude-agent-sdk';
+import type { AgentPlanUsage, AgentRateLimit } from '../agent/agent-events';
 import { MAIN_ACCOUNT_ID } from '@claude-remote-manager/shared-types';
 import type {
   AccountLimits,
@@ -28,34 +25,6 @@ const LABELS: Record<string, string> = {
   overage: 'Extra usage',
 };
 
-/** `rate_limit_event` reports reset times as epoch seconds. */
-function epochSecondsToIso(value: number | undefined): string | null {
-  if (value === undefined || !Number.isFinite(value)) {
-    return null;
-  }
-  return new Date(value * 1000).toISOString();
-}
-
-/**
- * The plan usage request reports times like `2026-11-13T02:10:00.492006+00:00`;
- * normalized to the ISO form used everywhere else.
- */
-function normalizeIso(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-  const time = new Date(value);
-  return Number.isNaN(time.getTime()) ? value : time.toISOString();
-}
-
-/** `rate_limit_event` reports utilization as a fraction (0-1). */
-function fractionToPercent(value: number | undefined): number | null {
-  if (value === undefined || !Number.isFinite(value)) {
-    return null;
-  }
-  return Math.round(value * 1000) / 10;
-}
-
 /**
  * Latest known subscription rate limits of one Claude account (5-hour and
  * weekly windows). Fed from `rate_limit_event` messages of the account's
@@ -67,8 +36,7 @@ export class AccountLimitTracker {
   private subscriptionType: string | null = null;
   private updatedAt: string | null = null;
   private lastPlanUsageRequest = 0;
-  private planUsageSource: (() => Promise<SDKControlGetUsageResponse>) | null =
-    null;
+  private planUsageSource: (() => Promise<AgentPlanUsage>) | null = null;
   private readonly changes = new Subject<AccountLimits>();
   private reading: Promise<boolean> | null = null;
 
@@ -81,7 +49,7 @@ export class AccountLimitTracker {
    * How to read the plan usage without a running session (a short-lived
    * Claude Code process); set by {@link LimitsService}.
    */
-  setPlanUsageSource(source: () => Promise<SDKControlGetUsageResponse>): void {
+  setPlanUsageSource(source: () => Promise<AgentPlanUsage>): void {
     this.planUsageSource = source;
   }
 
@@ -156,62 +124,35 @@ export class AccountLimitTracker {
     };
   }
 
-  /** Applies a `rate_limit_event` from a session's message stream. */
-  updateFromRateLimitEvent(info: SDKRateLimitInfo, now = new Date()): void {
-    const type = info.rateLimitType ?? 'unknown';
+  /** Applies a limit window a session's process reported during a turn. */
+  updateFromRateLimit(limit: AgentRateLimit, now = new Date()): void {
+    const type = limit.window ?? 'unknown';
     this.merge(type, {
       type,
       label: LABELS[type] ?? null,
-      status: info.status,
-      utilization: fractionToPercent(info.utilization),
-      resetsAt: epochSecondsToIso(info.resetsAt),
+      status: limit.status,
+      utilization: limit.utilization,
+      resetsAt: limit.resetsAt,
       source: 'stream',
       updatedAt: now.toISOString(),
     });
     this.publish(now);
   }
 
-  /** Applies Claude Code's plan usage answer (utilization in percent). */
-  updateFromPlanUsage(
-    usage: SDKControlGetUsageResponse,
-    now = new Date(),
-  ): void {
-    this.subscriptionType = usage.subscription_type;
-    const limits = usage.rate_limits;
-    if (usage.rate_limits_available && limits) {
+  /** Applies a plan usage answer (utilization in percent). */
+  updateFromPlanUsage(usage: AgentPlanUsage, now = new Date()): void {
+    this.subscriptionType = usage.subscriptionType;
+    if (usage.windows) {
       const updatedAt = now.toISOString();
       const reported = new Set<string>();
-      const fixed = [
-        'five_hour',
-        'seven_day',
-        'seven_day_opus',
-        'seven_day_sonnet',
-        'seven_day_oauth_apps',
-      ] as const;
-      for (const type of fixed) {
-        const window = limits[type];
-        if (window) {
-          reported.add(type);
-          this.merge(type, {
-            type,
-            label: LABELS[type] ?? null,
-            status: null,
-            utilization: window.utilization,
-            resetsAt: normalizeIso(window.resets_at),
-            source: 'usage',
-            updatedAt,
-          });
-        }
-      }
-      for (const window of limits.model_scoped ?? []) {
-        const type = `model:${window.display_name}`;
-        reported.add(type);
-        this.merge(type, {
-          type,
-          label: `Week (${window.display_name})`,
+      for (const window of usage.windows) {
+        reported.add(window.window);
+        this.merge(window.window, {
+          type: window.window,
+          label: window.label ?? LABELS[window.window] ?? null,
           status: null,
           utilization: window.utilization,
-          resetsAt: normalizeIso(window.resets_at),
+          resetsAt: window.resetsAt,
           source: 'usage',
           updatedAt,
         });
@@ -233,7 +174,7 @@ export class AccountLimitTracker {
    * it is experimental.
    */
   async refreshPlanUsage(
-    request: () => Promise<SDKControlGetUsageResponse>,
+    request: () => Promise<AgentPlanUsage>,
     now = Date.now(),
   ): Promise<void> {
     if (now - this.lastPlanUsageRequest < PLAN_USAGE_REFRESH_INTERVAL_MS) {
@@ -273,7 +214,7 @@ export class LimitsService {
   private readonly trackers = new Map<string, AccountLimitTracker>();
   private readonly subscriptions = new Map<string, Subscription>();
   private planUsageSource:
-    | ((accountId: string) => Promise<SDKControlGetUsageResponse>)
+    | ((accountId: string) => Promise<AgentPlanUsage>)
     | null = null;
   private accountIds: () => string[] = () => [MAIN_ACCOUNT_ID];
   private refreshableIds: () => string[] = () => [MAIN_ACCOUNT_ID];
@@ -306,7 +247,7 @@ export class LimitsService {
    * module.
    */
   setPlanUsageSource(
-    source: (accountId: string) => Promise<SDKControlGetUsageResponse>,
+    source: (accountId: string) => Promise<AgentPlanUsage>,
   ): void {
     this.planUsageSource = source;
     for (const [accountId, tracker] of this.trackers) {

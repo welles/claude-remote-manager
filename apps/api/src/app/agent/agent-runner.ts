@@ -1,12 +1,12 @@
+import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import type {
-  CanUseTool,
-  ModelInfo,
-  ModelUsage,
-  SDKControlGetContextUsageResponse,
-  SDKControlGetUsageResponse,
-  SDKMessage,
-  SlashCommand,
-} from '@anthropic-ai/claude-agent-sdk';
+  AgentCommand,
+  AgentContextUsage,
+  AgentEvent,
+  AgentModel,
+  AgentModelUsage,
+  AgentPlanUsage,
+} from './agent-events';
 import type {
   ReviewEffort,
   SessionPermissionMode,
@@ -158,22 +158,22 @@ export interface AgentUserMessage {
  * running and accepts further user messages until it is closed.
  */
 export interface AgentRun {
-  /** All messages of the process; ends when the process ends. */
-  readonly messages: AsyncIterable<SDKMessage>;
+  /** What the process reports; ends when the process ends. */
+  readonly events: AsyncIterable<AgentEvent>;
   /** Sends a user message; it starts a turn or queues behind the running one. */
   send(message: AgentUserMessage): void;
   /** Stops the running turn. */
   interrupt(): Promise<void>;
   /** Context window usage, computed without extra API requests. */
-  contextUsage(): Promise<SDKControlGetContextUsageResponse>;
-  /** Plan rate limits (experimental SDK API, may change). */
-  planUsage(): Promise<SDKControlGetUsageResponse>;
+  contextUsage(): Promise<AgentContextUsage>;
+  /** The account's plan limits. */
+  planUsage(): Promise<AgentPlanUsage>;
   /** Switches the permission mode of the running process. */
   setPermissionMode(mode: SessionPermissionMode): Promise<void>;
   /** Switches the model for the next requests; `null`: the default. */
   setModel(model: string | null): Promise<void>;
   /** The slash commands and skills of the process (its project's too). */
-  supportedCommands(): Promise<SlashCommand[]>;
+  supportedCommands(): Promise<AgentCommand[]>;
   /** Stops a task of the process (a subagent or background command). */
   stopTask(taskId: string): Promise<void>;
   /**
@@ -217,7 +217,7 @@ export interface AgentReviewResult {
   /** Why it failed; `null` on success. */
   error: string | null;
   /** Cumulative usage per model. */
-  modelUsage: Record<string, ModelUsage>;
+  modelUsage: AgentModelUsage;
   durationMs: number;
 }
 
@@ -250,9 +250,9 @@ export abstract class AgentRunner {
 /** What a probe process can be asked. */
 export interface AgentProbe {
   /** Models Claude Code offers for the logged-in account. */
-  supportedModels(): Promise<ModelInfo[]>;
+  supportedModels(): Promise<AgentModel[]>;
   /** The user's slash commands and skills, and Claude Code's own. */
-  supportedCommands(): Promise<SlashCommand[]>;
+  supportedCommands(): Promise<AgentCommand[]>;
   /** Plan rate limits (experimental SDK API, may change). */
-  planUsage(): Promise<SDKControlGetUsageResponse>;
+  planUsage(): Promise<AgentPlanUsage>;
 }

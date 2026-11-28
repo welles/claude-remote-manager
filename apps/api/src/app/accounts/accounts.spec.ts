@@ -13,6 +13,7 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
+import { claudeRateLimit } from '../agent/claude-events';
 import { SessionRepository } from '../sessions/session.repository';
 import {
   LIMIT_SWITCH_CONTINUE_TEXT,
@@ -97,10 +98,12 @@ describe('accounts', () => {
     app.app
       .get(LimitsService)
       .account('main')
-      .updateFromRateLimitEvent({
-        status: 'rejected',
-        rateLimitType: 'five_hour',
-      });
+      .updateFromRateLimit(
+        claudeRateLimit({
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+        }),
+      );
     // The main account cannot be removed, only logged out.
     expect((await call('DELETE', '/api/accounts/main')).status).toBe(409);
     expect((await call('POST', '/api/accounts/main/logout')).status).toBe(201);
@@ -216,11 +219,13 @@ describe('accounts', () => {
     app.app
       .get(LimitsService)
       .account('main')
-      .updateFromRateLimitEvent({
-        status: 'rejected',
-        rateLimitType: 'five_hour',
-        resetsAt: Date.now() / 1000 + 3600,
-      });
+      .updateFromRateLimit(
+        claudeRateLimit({
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: Date.now() / 1000 + 3600,
+        }),
+      );
     const avoiding = (
       await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
     ).json<SessionDto>();
@@ -652,11 +657,13 @@ describe('accounts', () => {
       app.app
         .get(LimitsService)
         .account(work.id)
-        .updateFromRateLimitEvent({
-          status: 'rejected',
-          rateLimitType: 'five_hour',
-          resetsAt: Math.floor(soon / 1000),
-        });
+        .updateFromRateLimit(
+          claudeRateLimit({
+            status: 'rejected',
+            rateLimitType: 'five_hour',
+            resetsAt: Math.floor(soon / 1000),
+          }),
+        );
       const session = (
         await call('POST', '/api/sessions', {
           prompt: 'Hi',
@@ -710,11 +717,13 @@ describe('accounts', () => {
       app.app
         .get(LimitsService)
         .account(work.id)
-        .updateFromRateLimitEvent({
-          status: 'rejected',
-          rateLimitType: 'seven_day_opus',
-          resetsAt: Math.floor(later / 1000),
-        });
+        .updateFromRateLimit(
+          claudeRateLimit({
+            status: 'rejected',
+            rateLimitType: 'seven_day_opus',
+            resetsAt: Math.floor(later / 1000),
+          }),
+        );
       const session = await startOn('main');
       hitLimit(Date.now() + 86_400_000, 'seven_day_opus');
       await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
@@ -806,11 +815,13 @@ describe('accounts', () => {
       app.app
         .get(LimitsService)
         .account(work.id)
-        .updateFromRateLimitEvent({
-          status: 'rejected',
-          rateLimitType: 'seven_day',
-          resetsAt: Math.floor((Date.now() + 3 * 86_400_000) / 1000),
-        });
+        .updateFromRateLimit(
+          claudeRateLimit({
+            status: 'rejected',
+            rateLimitType: 'seven_day',
+            resetsAt: Math.floor((Date.now() + 3 * 86_400_000) / 1000),
+          }),
+        );
       const session = await startOn('main');
       hitLimit(Date.now(), null);
       await waitFor(async () => (await get(session.id)).waitingFor === 'limit');

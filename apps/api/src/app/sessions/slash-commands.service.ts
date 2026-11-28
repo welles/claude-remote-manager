@@ -1,5 +1,4 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type {
   SlashCommandOption,
   SlashCommandsResponse,
@@ -41,16 +40,6 @@ export function uniqueCommands(
 }
 
 /** A command of Claude Code's list as offered in the UI. */
-export function slashCommandOption(command: SlashCommand): SlashCommandOption {
-  return {
-    name: command.name,
-    description: command.description ?? '',
-    argumentHint: command.argumentHint ?? '',
-    aliases: command.aliases ?? [],
-    builtin: command.builtin === true,
-  };
-}
-
 /**
  * The slash commands and skills for `/` autocomplete. A session's list is
  * what its Claude Code reported last (`supportedCommands` after `init`,
@@ -89,11 +78,8 @@ export class SlashCommandsService {
   }
 
   /** What a session's Claude Code reported (a full list). */
-  remember(sessionId: string, commands: readonly SlashCommand[]): void {
-    this.sessions.set(
-      sessionId,
-      uniqueCommands(commands.map(slashCommandOption)),
-    );
+  remember(sessionId: string, commands: readonly SlashCommandOption[]): void {
+    this.sessions.set(sessionId, uniqueCommands([...commands]));
   }
 
   /** Commands Claude Code names as bound to a terminal (`init`). */
@@ -122,7 +108,7 @@ export class SlashCommandsService {
   }
 
   /** The commands of the default account's Claude Code. */
-  private probeCommands(): Promise<SlashCommand[]> {
+  private probeCommands(): Promise<SlashCommandOption[]> {
     const task = (probe: AgentProbe) =>
       withTimeout(probe.supportedCommands(), PROBE_TIMEOUT_MS);
     return this.accounts
@@ -134,9 +120,7 @@ export class SlashCommandsService {
 
   private async load(): Promise<SlashCommandOption[]> {
     try {
-      const commands = uniqueCommands(
-        (await this.probeCommands()).map(slashCommandOption),
-      );
+      const commands = uniqueCommands(await this.probeCommands());
       this.user = { commands, until: this.now() + USER_COMMANDS_CACHE_MS };
       return commands;
     } catch (error) {

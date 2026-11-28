@@ -1,4 +1,3 @@
-import type { ModelUsage } from '@anthropic-ai/claude-agent-sdk';
 import { sumUsage, UsageTracker } from './usage-tracker';
 
 const modelUsage = (
@@ -7,15 +6,12 @@ const modelUsage = (
   cacheWrite: number,
   cacheRead: number,
   cost: number,
-): ModelUsage => ({
+) => ({
   inputTokens: input,
   outputTokens: output,
   cacheCreationInputTokens: cacheWrite,
   cacheReadInputTokens: cacheRead,
-  costUSD: cost,
-  webSearchRequests: 0,
-  contextWindow: 200_000,
-  maxOutputTokens: 32_000,
+  costUsd: cost,
 });
 
 const totals = (
