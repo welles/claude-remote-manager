@@ -527,6 +527,34 @@ describe('accounts', () => {
     expect(app.runner.runs).toHaveLength(1);
   });
 
+  it('restarts the process of a session that follows the default when the default changes', async () => {
+    app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+    await call('POST', '/api/accounts/main/refresh');
+    const work = await addAccount('Work', 'work@example.test');
+    const session = (
+      await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
+    ).json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    // An old session: it follows the default account.
+    app.app.get(SessionRepository).update(session.id, { accountId: null });
+    app.runner.last.emit(resultMessage(1, 0));
+    await waitFor(
+      async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>()
+          .status === 'waiting',
+    );
+    await call('PATCH', `/api/accounts/${work.id}`, { isDefault: true });
+    await waitFor(() => app.runner.last.closed);
+    await call('POST', `/api/sessions/${session.id}/messages`, {
+      text: 'Go on',
+    });
+    await waitFor(() => app.runner.runs.length === 2);
+    expect(app.runner.last.options.account).toEqual({
+      configDir: join(mainDir, 'crm-accounts', work.id),
+      main: false,
+    });
+  });
+
   describe('automatic switch at the limit', () => {
     /** `type` `null`: a limit Claude Code reported without its window. */
     const hitLimit = (resetsAtMs: number, type: string | null = 'five_hour') =>

@@ -288,6 +288,11 @@ export interface LimitWait {
    * be tried even when its limits cannot be read: the turn tells.
    */
   switched?: boolean;
+  /**
+   * The account is the user's choice (or followed one): the app does not
+   * move on from it by itself.
+   */
+  chosen?: boolean;
 }
 
 /**

@@ -570,6 +570,11 @@ export function limitSwitchNotice(from: string, to: string): string {
   return `The usage limit of the account "${from}" stopped this turn; the session continues with the account "${to}".`;
 }
 
+/** The notice when the account a session waited for was logged out. */
+export function limitLoggedOutNotice(from: string, to: string): string {
+  return `The account "${from}" this session waited for is logged out; the session goes on with the account "${to}".`;
+}
+
 /** The notice when every account is exhausted and another resets first. */
 export function limitEarliestNotice(from: string, to: string): string {
   return `The usage limit of the account "${from}" stopped this turn and every account is at its limit; the session continues with the account "${to}", whose limit resets first.`;
@@ -787,6 +792,21 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         const updated = this.followAccount(record.id);
         if (updated) {
           this.updates.next(this.toDto(updated));
+        }
+      }
+      // Running processes of sessions whose account changed that way (e.g.
+      // they follow the default) restart with it once free.
+      for (const live of this.live.values()) {
+        const record = this.sessions.get(live.id);
+        if (
+          record &&
+          live.run &&
+          !live.closing &&
+          !live.restartPending &&
+          this.accountOf(record.accountId) !== live.accountId
+        ) {
+          this.restartWhenFree(live.id);
+          live.accountRestart = live.restartPending;
         }
       }
     });
@@ -1714,6 +1734,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         resetKnown: false,
         quiet: false,
         switched: true,
+        chosen: true,
       },
     });
     this.scheduleLimitCheck(sessionId);
@@ -4958,8 +4979,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       .account(live.accountId)
       .exhaustedUntil(window ? [window] : [], now);
     const switchedTo = this.accountOf(record.accountId);
+    // The user switched the session during the turn: like an automatic
+    // switch, its account is looked at (and continued with) at once.
+    const userSwitched = !switched && switchedTo !== live.accountId;
     const wait: LimitWait =
-      switched?.kind === 'available'
+      switched?.kind === 'available' || userSwitched
         ? {
             // Another account has room: looked at (and continued) at once,
             // with the window that stopped this one.
@@ -4972,6 +4996,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             limitedAccountId: previous?.limitedAccountId ?? live.accountId,
             quiet: true,
             switched: true,
+            chosen: userSwitched,
           }
         : switched?.kind === 'earliest' && switched.until
           ? {
@@ -5002,7 +5027,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
             };
     this.sessions.update(live.id, { limitWait: wait });
     this.holdReopen(live);
-    if (switched?.kind !== 'available') {
+    if (switched?.kind !== 'available' && !userSwitched) {
       this.append(live, {
         type: 'notice',
         level: 'warning',
@@ -5120,7 +5145,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       this.accounts &&
       !this.accounts.isSwitchable(accountId) &&
-      this.moveOnFromExhausted(sessionId, accountId, new Date(8.64e15))
+      !wait.chosen &&
+      this.moveOnFromExhausted(
+        sessionId,
+        accountId,
+        new Date(8.64e15),
+        'logged-out',
+      )
     ) {
       // Logged out (or removed) meanwhile: another account goes on.
       return;
@@ -5147,6 +5178,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       until &&
       current.quiet &&
+      !current.chosen &&
       this.moveOnFromExhausted(sessionId, accountId, until)
     ) {
       // The account it switched to is exhausted too: on to the next one,
@@ -5161,6 +5193,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         limitWait: {
           ...current,
           quiet: false,
+          // A wait for a known reset: no switch target any more (the chain
+          // and the back-off reset when it ends).
+          switched: until ? false : current.switched,
           accountId,
           resumeAt: new Date(
             until
@@ -5233,6 +5268,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     sessionId: string,
     accountId: string,
     until: Date,
+    reason: 'exhausted' | 'logged-out' = 'exhausted',
   ): boolean {
     const accounts = this.accounts;
     const wait = this.sessions.get(sessionId)?.limitWait;
@@ -5268,7 +5304,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.append(this.liveSession(sessionId), {
         type: 'notice',
         level: 'info',
-        text: limitEarliestNotice(
+        text: (reason === 'logged-out'
+          ? limitLoggedOutNotice
+          : limitEarliestNotice)(
           accounts.get(accountId).name,
           accounts.get(earliest.id).name,
         ),
@@ -5290,7 +5328,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.append(this.liveSession(sessionId), {
       type: 'notice',
       level: 'info',
-      text: limitSwitchNotice(
+      text: (reason === 'logged-out'
+        ? limitLoggedOutNotice
+        : limitSwitchNotice)(
         accounts.get(accountId).name,
         accounts.get(next).name,
       ),
