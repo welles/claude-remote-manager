@@ -7,6 +7,7 @@ import {
   readlinkSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -116,6 +117,25 @@ describe('ClaudeAccountDirectories', () => {
     expect(readFileSync(join(account(), 'skills', 'SKILL.md'), 'utf8')).toBe(
       'skill',
     );
+  });
+
+  it('takes over a stale lock of a killed holder', async () => {
+    writeFileSync(
+      join(main, '.claude.json'),
+      JSON.stringify({ mcpServers: { docs: {} } }),
+    );
+    await directories.prepare(ID);
+    writeFileSync(
+      join(main, '.claude.json'),
+      JSON.stringify({ mcpServers: { docs: {}, more: {} } }),
+    );
+    const lock = join(account(), '.claude.json.lock');
+    mkdirSync(lock);
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    await directories.prepare(ID);
+    expect(state()).toEqual({ mcpServers: { docs: {}, more: {} } });
+    expect(existsSync(lock)).toBe(false);
   });
 
   it('rejects names that are no account IDs', async () => {

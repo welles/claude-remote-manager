@@ -341,6 +341,10 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
         // counts against it (an unreadable one is checked again later).
         const loggedIn = !read || this.row(id)?.loggedIn === true;
         state.status = loggedIn ? 'done' : 'failed';
+        if (loggedIn) {
+          // Perhaps another subscription now: its limits are read afresh.
+          this.limits.forget(id);
+        }
         state.error = loggedIn ? null : 'Claude Code is not logged in';
       } else {
         state.status = 'failed';
@@ -397,6 +401,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       throw new ConflictException(`Logout failed: ${errorMessage(error)}`);
     }
+    // The limits belonged to the login that is gone.
+    this.limits.forget(id);
     await this.refresh(id);
     return this.get(id);
   }
@@ -527,9 +533,8 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
 
   /** The account a session effectively uses (`null`: the default). */
   effectiveId(accountId: string | null): string {
-    return (
-      (accountId ? this.row(accountId)?.id : undefined) ?? this.defaultRow().id
-    );
+    // As processes pick it: one being removed counts as the default.
+    return this.pick(accountId).id;
   }
 
   /**
@@ -553,6 +558,65 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
       candidates.find(
         (row) => this.limits.account(row.id).exhaustedUntil([], now) === null,
       )?.id ?? preferred.id
+    );
+  }
+
+  /**
+   * The account to switch to when `current`'s limit ended a turn: the next
+   * one in order after it (wrapping around) that is logged in, not in
+   * `exclude` and whose limits (the 5-hour and weekly windows and
+   * `windows`, e.g. the per-model one that was rejected) are not known to
+   * be exhausted; `null` if there is none.
+   */
+  nextAvailable(
+    current: string,
+    {
+      windows = [],
+      exclude = [],
+      now = Date.now(),
+    }: { windows?: string[]; exclude?: string[]; now?: number } = {},
+  ): string | null {
+    const rows = this.switchable();
+    const index = rows.findIndex((row) => row.id === current);
+    const ordered =
+      index < 0 ? rows : [...rows.slice(index + 1), ...rows.slice(0, index)];
+    return (
+      ordered.find(
+        (row) =>
+          row.id !== current &&
+          !exclude.includes(row.id) &&
+          this.limits.account(row.id).exhaustedUntil(windows, now) === null,
+      )?.id ?? null
+    );
+  }
+
+  /**
+   * When every account is exhausted: the one whose limits reset first,
+   * with that time; `null` when no reset is known.
+   */
+  earliestReset(
+    windows: string[] = [],
+    now = Date.now(),
+  ): { id: string; at: Date } | null {
+    let best: { id: string; at: Date } | null = null;
+    for (const row of this.switchable()) {
+      const at = this.limits.account(row.id).exhaustedUntil(windows, now);
+      if (at && (!best || at < best.at)) {
+        best = { id: row.id, at };
+      }
+    }
+    return best;
+  }
+
+  /** Whether a session can (still) use the account: see switchable. */
+  isSwitchable(id: string): boolean {
+    return this.switchable().some((row) => row.id === id);
+  }
+
+  /** Accounts a session can switch to: logged in (or unknown), not removed. */
+  private switchable(): AccountRow[] {
+    return this.rows().filter(
+      (row) => row.loggedIn !== false && !this.removing.has(row.id),
     );
   }
 

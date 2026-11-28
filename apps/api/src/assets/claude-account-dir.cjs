@@ -38,6 +38,8 @@ const SHARED_DIRECTORIES = [
   'shell-snapshots',
   'file-history',
 ];
+/** proper-lockfile's default: a lock not refreshed for this long is stale. */
+const STALE_LOCK_MS = 10_000;
 const ID = /^[0-9a-f-]{36}$/;
 
 const done = (header) => process.stdout.write(`${JSON.stringify(header)}\n`);
@@ -138,19 +140,58 @@ function copyMcpServers(mainStateFile, dir) {
   // taken atomically for the whole read-modify-write. Held by Claude Code:
   // the next start copies them.
   const lock = `${file}.lock`;
-  try {
-    fs.mkdirSync(lock);
-  } catch (error) {
-    if (error.code === 'EEXIST') {
-      return;
-    }
-    throw error;
+  if (!takeLock(lock)) {
+    return;
   }
   try {
     writeServers(file, main);
   } finally {
     fs.rmSync(lock, { recursive: true, force: true });
   }
+}
+
+/**
+ * Takes the lock directory; one older than proper-lockfile's stale time
+ * (a holder that was killed) is taken over. Returns whether it got it.
+ */
+function takeLock(lock) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.mkdirSync(lock);
+      return true;
+    } catch (error) {
+      if (error.code !== 'EEXIST') {
+        throw error;
+      }
+    }
+    let stats;
+    try {
+      stats = fs.statSync(lock);
+    } catch {
+      continue;
+    }
+    if (Date.now() - stats.mtimeMs < STALE_LOCK_MS) {
+      return false;
+    }
+    // Renamed first (atomic): of two helpers only one takes it over.
+    const stale = `${lock}.stale-${crypto.randomBytes(6).toString('hex')}`;
+    try {
+      fs.renameSync(lock, stale);
+    } catch {
+      continue;
+    }
+    if (Date.now() - fs.statSync(stale).mtimeMs < STALE_LOCK_MS) {
+      // Another helper took it over in between: give its lock back.
+      try {
+        fs.renameSync(stale, lock);
+      } catch {
+        fs.rmSync(stale, { recursive: true, force: true });
+      }
+      return false;
+    }
+    fs.rmSync(stale, { recursive: true, force: true });
+  }
+  return false;
 }
 
 function writeServers(file, main) {

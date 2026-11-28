@@ -273,6 +273,26 @@ export interface LimitWait {
    * accounts): when the session's account changes, the new one decides.
    */
   accountId?: string;
+  /**
+   * The account whose limit stopped the session (absent in older waits):
+   * the continuation says so when the session goes on with another one.
+   */
+  limitedAccountId?: string;
+  /**
+   * Set while the wait was to end at once (another account had room) and
+   * the user was told nothing yet: told when it turns out longer.
+   */
+  quiet?: boolean;
+  /**
+   * The account was switched to (automatically or by the user) and is to
+   * be tried even when its limits cannot be read: the turn tells.
+   */
+  switched?: boolean;
+  /**
+   * The account is the user's choice (or followed one): the app does not
+   * move on from it by itself.
+   */
+  chosen?: boolean;
 }
 
 /**

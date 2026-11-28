@@ -14,6 +14,11 @@ import type {
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
 import { SessionRepository } from '../sessions/session.repository';
+import {
+  LIMIT_SWITCH_CONTINUE_TEXT,
+  limitSwitchNotice,
+  SessionsService,
+} from '../sessions/sessions.service';
 import { AccountsService, LOGIN_STALE_MS } from './accounts.service';
 import { resultMessage, waitFor } from '../sessions/testing/fake-agent';
 import { rawRequest, startTestApp, type TestApp } from '../testing/test-app';
@@ -89,10 +94,19 @@ describe('accounts', () => {
       subscriptionType: 'max',
       limits: { accountId: 'main', windows: [] },
     });
+    app.app
+      .get(LimitsService)
+      .account('main')
+      .updateFromRateLimitEvent({
+        status: 'rejected',
+        rateLimitType: 'five_hour',
+      });
     // The main account cannot be removed, only logged out.
     expect((await call('DELETE', '/api/accounts/main')).status).toBe(409);
     expect((await call('POST', '/api/accounts/main/logout')).status).toBe(201);
     expect(app.claudeCli.logouts).toEqual([mainDir]);
+    // The limits went with the login.
+    expect(app.app.get(LimitsService).get('main').windows).toEqual([]);
     expect((await list())[0].loggedIn).toBe(false);
   });
 
@@ -520,5 +534,345 @@ describe('accounts', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(app.runner.last.closed).toBe(false);
     expect(app.runner.runs).toHaveLength(1);
+  });
+
+  it('restarts the process of a session that follows the default when the default changes', async () => {
+    app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+    await call('POST', '/api/accounts/main/refresh');
+    const work = await addAccount('Work', 'work@example.test');
+    const session = (
+      await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
+    ).json<SessionDto>();
+    await waitFor(() => app.runner.runs.length === 1);
+    // An old session: it follows the default account.
+    app.app.get(SessionRepository).update(session.id, { accountId: null });
+    app.runner.last.emit(resultMessage(1, 0));
+    await waitFor(
+      async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>()
+          .status === 'waiting',
+    );
+    await call('PATCH', `/api/accounts/${work.id}`, { isDefault: true });
+    await waitFor(() => app.runner.last.closed);
+    await call('POST', `/api/sessions/${session.id}/messages`, {
+      text: 'Go on',
+    });
+    await waitFor(() => app.runner.runs.length === 2);
+    expect(app.runner.last.options.account).toEqual({
+      configDir: join(mainDir, 'crm-accounts', work.id),
+      main: false,
+    });
+  });
+
+  describe('automatic switch at the limit', () => {
+    /** `type` `null`: a limit Claude Code reported without its window. */
+    const hitLimit = (resetsAtMs: number, type: string | null = 'five_hour') =>
+      app.runner.last.emit(
+        ...(type === null
+          ? []
+          : [
+              {
+                type: 'rate_limit_event',
+                rate_limit_info: {
+                  status: 'rejected',
+                  resetsAt: Math.floor(resetsAtMs / 1000),
+                  rateLimitType: type,
+                },
+              },
+            ]),
+        {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          error: 'rate_limit',
+          message: {
+            id: 'limit',
+            content: [{ type: 'text', text: "You've hit your 5-hour limit" }],
+          },
+        },
+        resultMessage(1, 0, {
+          is_error: true,
+          result: "You've hit your 5-hour limit",
+        }),
+      );
+    const usage = (percent: number, resetsAt: string | null) =>
+      ({
+        subscription_type: 'max',
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: percent, resets_at: resetsAt },
+          seven_day: null,
+          seven_day_opus: null,
+          seven_day_sonnet: null,
+          seven_day_oauth_apps: null,
+        },
+      }) as never;
+    const events = async (sessionId: string) => {
+      const sessions = app.app.get(SessionsService);
+      return (await sessions.subscribe(sessionId)).events;
+    };
+
+    it('continues the turn with the next account that has room', async () => {
+      app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+      await call('POST', '/api/accounts/main/refresh');
+      const work = await addAccount('Work', 'work@example.test');
+      const session = (
+        await call('POST', '/api/sessions', {
+          prompt: 'Hi',
+          scratch: true,
+          accountId: 'main',
+        })
+      ).json<SessionDto>();
+      await waitFor(() => app.runner.runs.length === 1);
+      app.runner.probeUsage = () => usage(10, null);
+      hitLimit(Date.now() + 5 * 3_600_000);
+
+      await waitFor(() => app.runner.runs.length === 2);
+      expect(app.runner.last.options.account).toEqual({
+        configDir: join(mainDir, 'crm-accounts', work.id),
+        main: false,
+      });
+      expect(app.runner.last.sent[0].text).toBe(LIMIT_SWITCH_CONTINUE_TEXT);
+      const after = (
+        await call('GET', `/api/sessions/${session.id}`)
+      ).json<SessionDto>();
+      expect(after.accountId).toBe(work.id);
+      expect(await events(session.id)).toContainEqual(
+        expect.objectContaining({
+          type: 'notice',
+          text: limitSwitchNotice('Claude', 'Work'),
+        }),
+      );
+    });
+
+    it('waits for the account that resets first when every account is exhausted', async () => {
+      app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+      await call('POST', '/api/accounts/main/refresh');
+      const work = await addAccount('Work', 'work@example.test');
+      const soon = Date.now() + 3_600_000;
+      app.app
+        .get(LimitsService)
+        .account(work.id)
+        .updateFromRateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: Math.floor(soon / 1000),
+        });
+      const session = (
+        await call('POST', '/api/sessions', {
+          prompt: 'Hi',
+          scratch: true,
+          accountId: 'main',
+        })
+      ).json<SessionDto>();
+      await waitFor(() => app.runner.runs.length === 1);
+      app.runner.probeUsage = () => usage(100, new Date(soon).toISOString());
+      hitLimit(Date.now() + 5 * 3_600_000);
+
+      const get = async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>();
+      await waitFor(async () => {
+        const dto = await get();
+        return (
+          dto.accountId === work.id &&
+          dto.waitingFor === 'limit' &&
+          dto.limitResetKnown === true
+        );
+      });
+      const resumes = Date.parse((await get()).limitResumesAt ?? '');
+      expect(resumes).toBeGreaterThan(soon - 1000);
+      expect(resumes).toBeLessThan(soon + 5 * 60_000);
+      expect(app.runner.runs).toHaveLength(1);
+    });
+
+    const mainLoggedIn = async () => {
+      app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+      await call('POST', '/api/accounts/main/refresh');
+    };
+    const startOn = async (accountId: string) => {
+      const session = (
+        await call('POST', '/api/sessions', {
+          prompt: 'Hi',
+          scratch: true,
+          accountId,
+        })
+      ).json<SessionDto>();
+      await waitFor(() => app.runner.runs.length >= 1);
+      return session;
+    };
+    const get = async (id: string) =>
+      (await call('GET', `/api/sessions/${id}`)).json<SessionDto>();
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
+
+    it('does not switch to an account exhausted on the same per-model window', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      const later = Date.now() + 3 * 86_400_000;
+      app.app
+        .get(LimitsService)
+        .account(work.id)
+        .updateFromRateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'seven_day_opus',
+          resetsAt: Math.floor(later / 1000),
+        });
+      const session = await startOn('main');
+      hitLimit(Date.now() + 86_400_000, 'seven_day_opus');
+      await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
+      await settle();
+      expect((await get(session.id)).accountId).toBe('main');
+      expect(app.runner.runs).toHaveLength(1);
+    });
+
+    it('tries each account once until a turn gets through', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      app.runner.probeUsage = () => usage(10, null);
+      const session = await startOn('main');
+      // Limits without their window: nothing marks an account exhausted.
+      hitLimit(Date.now(), null);
+      await waitFor(() => app.runner.runs.length === 2);
+      expect((await get(session.id)).accountId).toBe(work.id);
+      hitLimit(Date.now(), null);
+      await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
+      await settle();
+      expect(app.runner.runs).toHaveLength(2);
+      expect((await get(session.id)).accountId).toBe(work.id);
+    });
+
+    it('keeps the account the user chose during the turn', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      const other = await addAccount('Other', 'other@example.test');
+      app.runner.probeUsage = () => usage(10, null);
+      const session = await startOn('main');
+      await call('PATCH', `/api/sessions/${session.id}`, {
+        accountId: other.id,
+      });
+      hitLimit(Date.now() + 3_600_000);
+      await waitFor(() => app.runner.runs.length === 2);
+      expect((await get(session.id)).accountId).toBe(other.id);
+      expect(app.runner.last.options.account?.configDir).toBe(
+        join(mainDir, 'crm-accounts', other.id),
+      );
+      expect(work.id).not.toBe(other.id);
+    });
+
+    it('goes ahead with the new account when its limits cannot be read', async () => {
+      await mainLoggedIn();
+      await addAccount('Work', 'work@example.test');
+      app.runner.probeUsage = () => {
+        throw new Error('usage not available');
+      };
+      await startOn('main');
+      hitLimit(Date.now() + 3_600_000);
+      await waitFor(() => app.runner.runs.length === 2);
+    });
+
+    it('goes back to the original account when it resets before the one switched to', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      const soon = Date.now() + 30 * 60_000;
+      // Work's limits are unknown until read: then its week is used up.
+      app.runner.probeUsage = () =>
+        ({
+          subscription_type: 'max',
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: { utilization: 10, resets_at: null },
+            seven_day: {
+              utilization: 100,
+              resets_at: new Date(Date.now() + 4 * 86_400_000).toISOString(),
+            },
+            seven_day_opus: null,
+            seven_day_sonnet: null,
+            seven_day_oauth_apps: null,
+          },
+        }) as never;
+      const session = await startOn('main');
+      hitLimit(soon);
+      await waitFor(async () => {
+        const dto = await get(session.id);
+        return dto.accountId === 'main' && dto.limitResetKnown === true;
+      });
+      const resumes = Date.parse((await get(session.id)).limitResumesAt ?? '');
+      expect(resumes).toBeLessThan(soon + 5 * 60_000);
+      expect(app.runner.runs).toHaveLength(1);
+      expect(work.id).toBeTruthy();
+    });
+
+    it('does not park the session on an account exhausted for days when its own reset is unknown', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      app.app
+        .get(LimitsService)
+        .account(work.id)
+        .updateFromRateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'seven_day',
+          resetsAt: Math.floor((Date.now() + 3 * 86_400_000) / 1000),
+        });
+      const session = await startOn('main');
+      hitLimit(Date.now(), null);
+      await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
+      await settle();
+      expect((await get(session.id)).accountId).toBe('main');
+    });
+
+    it('does not switch while background tasks keep the process', async () => {
+      await mainLoggedIn();
+      await addAccount('Work', 'work@example.test');
+      app.runner.probeUsage = () => usage(10, null);
+      const session = await startOn('main');
+      app.runner.last.emit({
+        type: 'system',
+        subtype: 'background_tasks_changed',
+        tasks: [{ task_id: 't1', task_type: 'local_bash', description: 'x' }],
+      });
+      hitLimit(Date.now() + 3_600_000);
+      await waitFor(async () => (await get(session.id)).waitingFor === 'limit');
+      await settle();
+      expect((await get(session.id)).accountId).toBe('main');
+      expect(app.runner.runs).toHaveLength(1);
+    });
+
+    it('backs off after continuations on every account failed', async () => {
+      await mainLoggedIn();
+      await addAccount('Work', 'work@example.test');
+      app.runner.probeUsage = () => usage(10, null);
+      const sessions = app.app.get(SessionsService);
+      sessions.limitUnknownRecheckMs = 50;
+      sessions.limitRetryRecheckMs = 600_000;
+      const session = await startOn('main');
+      const sent = () =>
+        app.runner.runs.reduce((count, run) => count + run.sent.length, 0);
+      // Limits without their window: the app cannot see them coming.
+      const fail = async (before: number) => {
+        await waitFor(() => sent() > before);
+        hitLimit(Date.now(), null);
+      };
+      hitLimit(Date.now(), null); // main: switch to Work
+      await fail(1); // Work: both tried, wait 50 ms, retry on Work
+      await fail(2); // Work again: switch to main (no retry reset)
+      await fail(3); // main: both tried, a retry failed before
+      await waitFor(async () => {
+        const dto = await get(session.id);
+        return (
+          dto.waitingFor === 'limit' &&
+          Date.parse(dto.limitResumesAt ?? '') > Date.now() + 60_000
+        );
+      });
+    });
+
+    it('stays with the only account', async () => {
+      const session = (
+        await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
+      ).json<SessionDto>();
+      await waitFor(() => app.runner.runs.length === 1);
+      hitLimit(Date.now() + 3_600_000);
+      const get = async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>();
+      await waitFor(async () => (await get()).waitingFor === 'limit');
+      expect((await get()).accountId).toBe('main');
+    });
   });
 });
