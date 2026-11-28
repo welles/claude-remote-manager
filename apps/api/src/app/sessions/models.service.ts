@@ -4,7 +4,10 @@ import type {
   ModelOption,
 } from '@claude-remote-manager/shared-types';
 import { AgentRunner, type AgentProbe } from '../agent/agent-runner';
-import { AccountsService } from '../accounts/accounts.service';
+import {
+  AccountsService,
+  defaultAccountKey,
+} from '../accounts/accounts.service';
 
 /** How long the list Claude Code reported is used. */
 export const MODELS_CACHE_MS = 60 * 60_000;
@@ -39,7 +42,6 @@ export const FALLBACK_MODELS: ModelOption[] = [
   },
 ];
 
-/** A model of Claude Code's list as offered in the UI. */
 /**
  * The models a session can use, as Claude Code reports them for the
  * logged-in account (asked through a short-lived process without prompt,
@@ -58,7 +60,17 @@ export class ModelsService {
     private readonly runner: AgentRunner,
     // The models of the default account; without it the main one.
     @Optional() private readonly accounts?: AccountsService,
-  ) {}
+  ) {
+    // Another default account (or login): its own list.
+    let key: string | null = null;
+    accounts?.changes$.subscribe((list) => {
+      const next = defaultAccountKey(list);
+      if (key !== null && next !== key) {
+        this.cached = null;
+      }
+      key = next;
+    });
+  }
 
   list(): Promise<ModelListResponse> {
     if (this.cached && this.cached.until > this.now()) {

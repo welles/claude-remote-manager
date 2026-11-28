@@ -1,7 +1,7 @@
 import type { SessionEventInput } from '@claude-remote-manager/shared-types';
 import type { StoredEvent } from './session-event.repository';
 import { buildHistory, SessionLog } from './session-log';
-import type { AgentHistoryEntry as TranscriptEntry } from '../agent/agent-events';
+import type { AgentHistoryEntry } from '../agent/agent-events';
 
 const delta = (text: string, blockIndex = 0): SessionEventInput => ({
   type: 'assistant.delta',
@@ -87,12 +87,12 @@ describe('SessionLog', () => {
 });
 
 describe('buildHistory', () => {
-  const user = (uuid: string, text: string): TranscriptEntry => ({
+  const user = (uuid: string, text: string): AgentHistoryEntry => ({
     uuid,
     isUserMessage: true,
     events: [{ type: 'user.message', id: uuid, text }],
   });
-  const assistant = (uuid: string, text: string): TranscriptEntry => ({
+  const assistant = (uuid: string, text: string): AgentHistoryEntry => ({
     uuid,
     isUserMessage: false,
     events: [

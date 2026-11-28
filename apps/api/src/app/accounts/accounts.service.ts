@@ -9,7 +9,7 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from '@nestjs/common';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { Subject } from 'rxjs';
 import {
   ACCOUNT_PROVIDER_LABELS,
@@ -151,9 +151,9 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     return !this.removing.has(id) && this.exists(id);
   }
 
-  /** The provider of an account; `null` if it is not (or no longer) there. */
+  /** The provider of an account; `null` if it is not there. */
   providerOf(id: string): AccountProvider | null {
-    return this.removing.has(id) ? null : (this.row(id)?.provider ?? null);
+    return this.row(id)?.provider ?? null;
   }
 
   /** Whether an account exists. */
@@ -295,16 +295,23 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
         .where(eq(sessions.accountId, id))
         .run();
       tx.delete(accounts).where(eq(accounts.id, id)).run();
-      // Whatever is marked now (not the row read before the awaits).
+      // Whatever is marked now (not the row read before the awaits), per
+      // provider.
       const hasDefault = tx
         .select()
         .from(accounts)
-        .where(eq(accounts.isDefault, true))
+        .where(
+          and(
+            eq(accounts.isDefault, true),
+            eq(accounts.provider, row.provider),
+          ),
+        )
         .get();
       if (!hasDefault) {
         const first = tx
           .select()
           .from(accounts)
+          .where(eq(accounts.provider, row.provider))
           .orderBy(asc(accounts.position))
           .get();
         if (first) {
@@ -563,9 +570,17 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
   effectiveId(
     accountId: string | null,
     provider: AccountProvider = 'claude',
-  ): string {
+  ): string | null {
     // As processes pick it: one being removed counts as the default.
-    return this.pick(accountId, provider).id;
+    try {
+      return this.pick(accountId, provider).id;
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        // The provider has no account (left): starting says so.
+        return null;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -757,4 +772,28 @@ export class AccountsService implements OnModuleInit, OnModuleDestroy {
     }
     this.changes.next(this.list());
   }
+}
+
+/**
+ * What a cache of a provider's default account (its models, its commands)
+ * depends on: the account and its login. Changes when another account
+ * becomes the default or the default's login changes.
+ */
+export function defaultAccountKey(
+  accounts: AccountDto[],
+  provider: AccountProvider = 'claude',
+): string {
+  const own = accounts.filter((account) => account.provider === provider);
+  const chosen =
+    own.find((account) => account.isDefault) ??
+    own.find((account) => account.main) ??
+    own[0];
+  return chosen
+    ? [
+        chosen.id,
+        chosen.loggedIn,
+        chosen.email,
+        chosen.subscriptionType,
+      ].join('|')
+    : '';
 }

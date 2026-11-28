@@ -1116,7 +1116,10 @@ Claude Code is the first adapter (`claude-events.ts`, `sdk-agent-runner.ts`, `sd
 transcripts into this model; only these files use the SDK. Accounts belong to a provider; a
 session uses accounts of its engine's provider (its own default account per provider, the
 automatic switch only among them). The tests drive the session core through the same adapter
-(the fake runner translates the SDK-shaped messages tests push).
+(the fake runner translates the SDK-shaped messages tests push). Still Claude Code only until the next engine
+  arrives (and then per engine): the model list, the slash commands before a process, the plan
+  usage probe and the independent review. A message an adapter cannot translate is logged and
+  skipped; the events of one engine message are handled as a whole.
 
 ## Previews of dev servers
 

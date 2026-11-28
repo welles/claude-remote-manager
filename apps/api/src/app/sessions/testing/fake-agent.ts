@@ -86,7 +86,7 @@ export class FakeRun implements AgentRun {
   private readonly translator = new ClaudeEventTranslator();
 
   /** The pushed messages as agent events. */
-  get events(): AsyncIterable<AgentEvent> {
+  get events(): AsyncIterable<AgentEvent[]> {
     return translateMessages(this.messages, this.translator);
   }
 

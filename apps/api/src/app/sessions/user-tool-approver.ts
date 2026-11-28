@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type {
-  AgentApprovalResult as PermissionResult,
-  AgentPermissionUpdate as PermissionUpdate,
+  AgentApprovalResult,
+  AgentPermissionUpdate,
 } from '../agent/agent-events';
 import type { PermissionResolutionCause } from '@claude-remote-manager/shared-types';
 import {
@@ -22,7 +22,7 @@ interface PendingRequest {
   sessionId: string;
   event: PermissionRequestInput;
   input: Record<string, unknown>;
-  updates: PermissionUpdate[];
+  updates: AgentPermissionUpdate[];
   onResolve: (event: PermissionResolvedInput) => void;
   settle: (decision: ToolApprovalDecision) => void;
 }
@@ -135,7 +135,7 @@ export class UserToolApprover extends ToolApprover {
   private finish(
     requestId: string,
     entry: PendingRequest,
-    result: PermissionResult,
+    result: AgentApprovalResult,
     resolution: PermissionResolvedInput,
   ): void {
     this.pending.delete(requestId);

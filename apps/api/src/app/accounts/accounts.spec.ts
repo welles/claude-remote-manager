@@ -13,6 +13,9 @@ import type {
   SessionDto,
 } from '@claude-remote-manager/shared-types';
 import { LimitsService } from '../limits/limits.service';
+import { eq } from 'drizzle-orm';
+import { DATABASE, type AppDatabase } from '../db/database';
+import { accounts } from '../db/schema';
 import { claudeRateLimit } from '../agent/claude-events';
 import { SessionRepository } from '../sessions/session.repository';
 import {
@@ -885,5 +888,43 @@ describe('accounts', () => {
       await waitFor(async () => (await get()).waitingFor === 'limit');
       expect((await get()).accountId).toBe('main');
     });
+  });
+
+  it('chooses accounts per provider', async () => {
+    app.claudeCli.statuses.set(mainDir, loggedIn('main@example.test'));
+    await call('POST', '/api/accounts/main/refresh');
+    const work = await addAccount('Work', 'work@example.test');
+    const db = app.app.get<AppDatabase>(DATABASE);
+    // An account of another provider (only Claude exists so far).
+    db.insert(accounts)
+      .values({
+        id: 'other-1',
+        provider: 'chatgpt' as never,
+        name: 'Other',
+        position: 5,
+        directory: null,
+        isDefault: true,
+        loggedIn: true,
+      })
+      .run();
+    const service = app.app.get(AccountsService);
+    // Each provider has its own default.
+    expect(service.effectiveId(null, 'claude')).toBe('main');
+    expect(service.effectiveId(null, 'chatgpt' as never)).toBe('other-1');
+    // An account of another provider does not count for a session.
+    expect(service.effectiveId('other-1', 'claude')).toBe('main');
+    expect(() => service.forNewSession('other-1', 'claude')).toThrow(/engine/);
+    // Making a Claude account the default leaves the other provider's.
+    await call('PATCH', `/api/accounts/${work.id}`, { isDefault: true });
+    expect(service.effectiveId(null, 'claude')).toBe(work.id);
+    expect(service.effectiveId(null, 'chatgpt' as never)).toBe('other-1');
+    // The automatic switch stays within the provider.
+    expect(service.nextAvailable(work.id)).toBe('main');
+    // A provider without accounts: nothing to pick, starting says so.
+    db.delete(accounts).where(eq(accounts.id, 'other-1')).run();
+    expect(service.effectiveId(null, 'chatgpt' as never)).toBeNull();
+    expect(() => service.forNewSession(undefined, 'chatgpt' as never)).toThrow(
+      /Settings/,
+    );
   });
 });

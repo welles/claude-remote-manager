@@ -34,13 +34,28 @@ import {
   claudePlanUsage,
 } from './claude-events';
 
-/** The agent events of a Claude Code process's messages. */
+
+/**
+ * The agent events of a Claude Code process's messages, one batch per
+ * message (handled as a whole). A message that cannot be translated is
+ * reported to `onError` and skipped; the process goes on.
+ */
 export async function* translateMessages(
   messages: AsyncIterable<Sdk.SDKMessage>,
   translator: ClaudeEventTranslator,
-): AsyncIterable<AgentEvent> {
+  onError: (error: unknown, message: Sdk.SDKMessage) => void = () => undefined,
+): AsyncIterable<AgentEvent[]> {
   for await (const message of messages) {
-    yield* translator.translate(message);
+    let events: AgentEvent[];
+    try {
+      events = translator.translate(message);
+    } catch (error) {
+      onError(error, message);
+      continue;
+    }
+    if (events.length > 0) {
+      yield events;
+    }
   }
 }
 
@@ -539,7 +554,12 @@ export class SdkAgentRunner implements AgentRunner {
         : {};
     const translator = new ClaudeEventTranslator();
     return {
-      events: translateMessages(query, translator),
+      events: translateMessages(query, translator, (error, message) =>
+        this.logger.error(
+          `Could not handle a ${message.type} message of Claude Code`,
+          error,
+        ),
+      ),
       send: push,
       addDirectories: async (directories) => {
         const next = new Set([...added, ...directories]);

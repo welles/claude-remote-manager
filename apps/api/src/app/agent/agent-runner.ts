@@ -158,8 +158,9 @@ export interface AgentUserMessage {
  * running and accepts further user messages until it is closed.
  */
 export interface AgentRun {
-  /** What the process reports; ends when the process ends. */
-  readonly events: AsyncIterable<AgentEvent>;
+  /** What the process reports, in batches handled as a whole (one per
+   * message of the engine); ends when the process ends. */
+  readonly events: AsyncIterable<AgentEvent[]>;
   /** Sends a user message; it starts a turn or queues behind the running one. */
   send(message: AgentUserMessage): void;
   /** Stops the running turn. */

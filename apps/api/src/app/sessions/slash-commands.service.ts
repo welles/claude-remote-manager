@@ -4,7 +4,10 @@ import type {
   SlashCommandsResponse,
 } from '@claude-remote-manager/shared-types';
 import { AgentRunner, type AgentProbe } from '../agent/agent-runner';
-import { AccountsService } from '../accounts/accounts.service';
+import {
+  AccountsService,
+  defaultAccountKey,
+} from '../accounts/accounts.service';
 
 /** How long the user's commands (asked through a probe) are used. */
 export const USER_COMMANDS_CACHE_MS = 10 * 60_000;
@@ -39,7 +42,6 @@ export function uniqueCommands(
   return [...byName.values()];
 }
 
-/** A command of Claude Code's list as offered in the UI. */
 /**
  * The slash commands and skills for `/` autocomplete. A session's list is
  * what its Claude Code reported last (`supportedCommands` after `init`,
@@ -64,7 +66,17 @@ export class SlashCommandsService {
     private readonly runner: AgentRunner,
     // The commands of the default account; without it the main one.
     @Optional() private readonly accounts?: AccountsService,
-  ) {}
+  ) {
+    // Another default account (or login): its own list.
+    let key: string | null = null;
+    accounts?.changes$.subscribe((list) => {
+      const next = defaultAccountKey(list);
+      if (key !== null && next !== key) {
+        this.user = null;
+      }
+      key = next;
+    });
+  }
 
   async forSession(sessionId: string): Promise<SlashCommandsResponse> {
     const reported = this.sessions.get(sessionId);

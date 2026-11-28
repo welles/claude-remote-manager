@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import type { AgentPermissionUpdate as PermissionUpdate } from '../agent/agent-events';
+import type { AgentPermissionUpdate } from '../agent/agent-events';
 import type { ToolApprovalRequest } from '../agent/tool-approval';
 import { CREATE_PULL_REQUEST_TOOL_NAME } from './app-tools';
 import {
@@ -43,7 +43,7 @@ const request = (
 
 const allowRules = (
   ...rules: { toolName: string; ruleContent?: string }[]
-): PermissionUpdate => ({
+): AgentPermissionUpdate => ({
   type: 'addRules',
   behavior: 'allow',
   destination: 'localSettings',
@@ -111,7 +111,7 @@ describe('sessionAllowOffer', () => {
     const offer = (
       toolName: string,
       input: Record<string, unknown>,
-      suggestions: PermissionUpdate[],
+      suggestions: AgentPermissionUpdate[],
       extra: Partial<ToolApprovalRequest> = {},
     ) => sessionAllowOffer(request(toolName, input, { suggestions, ...extra }));
     const pushRules = allowRules(

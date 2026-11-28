@@ -1,4 +1,9 @@
-import { Controller, Get, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Controller,
+  Get,
+  Injectable,
+} from '@nestjs/common';
 import {
   ENGINE_LABELS,
   ENGINE_PROVIDERS,
@@ -9,6 +14,14 @@ import {
   type EngineListResponse,
 } from '@claude-remote-manager/shared-types';
 import { AgentRunner } from './agent-runner';
+import { TranscriptReader } from './transcript-reader';
+
+/** One engine: how its processes start and its history is read. */
+export interface AgentEngine {
+  runner: AgentRunner;
+  transcripts: TranscriptReader;
+  capabilities: EngineCapabilities;
+}
 
 /** What Claude Code offers. */
 export const CLAUDE_CODE_CAPABILITIES: EngineCapabilities = {
@@ -26,34 +39,41 @@ export const CLAUDE_CODE_CAPABILITIES: EngineCapabilities = {
  */
 @Injectable()
 export class AgentEngines {
-  private readonly engines = new Map<
-    AgentEngineId,
-    { runner: AgentRunner; capabilities: EngineCapabilities }
-  >();
+  private readonly engines = new Map<AgentEngineId, AgentEngine>();
 
-  constructor(claudeCode: AgentRunner) {
-    this.register('claude-code', claudeCode, CLAUDE_CODE_CAPABILITIES);
+  constructor(claudeCode: AgentRunner, claudeTranscripts: TranscriptReader) {
+    this.register('claude-code', {
+      runner: claudeCode,
+      transcripts: claudeTranscripts,
+      capabilities: CLAUDE_CODE_CAPABILITIES,
+    });
   }
 
-  register(
-    id: AgentEngineId,
-    runner: AgentRunner,
-    capabilities: EngineCapabilities,
-  ): void {
-    this.engines.set(id, { runner, capabilities });
+  register(id: AgentEngineId, engine: AgentEngine): void {
+    this.engines.set(id, engine);
   }
 
   has(id: string): id is AgentEngineId {
     return this.engines.has(id as AgentEngineId);
   }
 
-  /** The runner of an engine; throws for one this server does not have. */
-  runner(id: AgentEngineId): AgentRunner {
+  /** An engine; 409 for one this server does not have. */
+  get(id: AgentEngineId): AgentEngine {
     const engine = this.engines.get(id);
     if (!engine) {
-      throw new Error(`The engine ${id} is not available on this server`);
+      throw new ConflictException(
+        `The engine ${ENGINE_LABELS[id] ?? id} is not available on this server`,
+      );
     }
-    return engine.runner;
+    return engine;
+  }
+
+  runner(id: AgentEngineId): AgentRunner {
+    return this.get(id).runner;
+  }
+
+  transcripts(id: AgentEngineId): TranscriptReader {
+    return this.get(id).transcripts;
   }
 
   list(): AgentEngineDto[] {

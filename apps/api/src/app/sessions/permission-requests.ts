@@ -1,8 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import type {
-  AgentApprovalResult as PermissionResult,
-  AgentPermissionRule as PermissionRuleValue,
-  AgentPermissionUpdate as PermissionUpdate,
+  AgentApprovalResult,
+  AgentPermissionRule,
+  AgentPermissionUpdate,
 } from '../agent/agent-events';
 import type {
   PermissionRequestKind,
@@ -87,7 +87,7 @@ export function planText(input: Record<string, unknown>): string | null {
 }
 
 /** A permission rule as Claude Code writes it, e.g. `Bash(npm test:*)`. */
-export function ruleString(rule: PermissionRuleValue): string {
+export function ruleString(rule: AgentPermissionRule): string {
   return rule.ruleContent === undefined
     ? rule.toolName
     : `${rule.toolName}(${rule.ruleContent})`;
@@ -97,7 +97,7 @@ export function ruleString(rule: PermissionRuleValue): string {
  * Whether a session-wide allow rule is acceptable. Never for Claude's
  * questions and plans, or for all Bash commands at once.
  */
-function acceptableRule(rule: PermissionRuleValue): boolean {
+function acceptableRule(rule: AgentPermissionRule): boolean {
   const tool = rule.toolName;
   if (
     tool === ASK_USER_QUESTION_TOOL ||
@@ -127,7 +127,7 @@ export function sessionAllowOffer(
     ToolApprovalRequest,
     'toolName' | 'suggestions' | 'suppressAlwaysAllow'
   >,
-): { offer: SessionAllowOffer; updates: PermissionUpdate[] } | null {
+): { offer: SessionAllowOffer; updates: AgentPermissionUpdate[] } | null {
   if (
     request.suppressAlwaysAllow ||
     requestKind(request.toolName) !== 'tool' ||
@@ -135,7 +135,7 @@ export function sessionAllowOffer(
   ) {
     return null;
   }
-  const updates: PermissionUpdate[] = [];
+  const updates: AgentPermissionUpdate[] = [];
   const offer: SessionAllowOffer = { rules: [], directories: [], mode: null };
   for (const suggestion of request.suggestions) {
     if (suggestion.type === 'addRules' && suggestion.behavior === 'allow') {
@@ -207,7 +207,7 @@ function resolution(
 export function cancellation(
   event: PermissionRequestInput,
   cause: Exclude<PermissionResolutionCause, 'user'>,
-): { result: PermissionResult; resolution: PermissionResolvedInput } {
+): { result: AgentApprovalResult; resolution: PermissionResolvedInput } {
   const why: Record<typeof cause, string> = {
     interrupted: 'the user stopped the turn',
     ended: 'the user ended the session',
@@ -264,9 +264,9 @@ function requireAnswers(
 export function resolveResponse(
   event: PermissionRequestInput,
   input: Record<string, unknown>,
-  updates: PermissionUpdate[],
+  updates: AgentPermissionUpdate[],
   raw: unknown,
-): { result: PermissionResult; resolution: PermissionResolvedInput } {
+): { result: AgentApprovalResult; resolution: PermissionResolvedInput } {
   const body = requireObject(raw);
   const decision = optionalEnum(body, 'decision', ['allow', 'deny'] as const);
   if (!decision) {

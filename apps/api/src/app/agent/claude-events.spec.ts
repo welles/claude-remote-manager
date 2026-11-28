@@ -7,6 +7,7 @@ import {
   claudeRateLimit,
 } from './claude-events';
 import type { AgentApprovalCall } from './agent-events';
+import { translateMessages } from './sdk-agent-runner';
 
 const message = (value: Record<string, unknown>) =>
   ({ uuid: 'u', session_id: 'sdk-1', ...value }) as unknown as SDKMessage;
@@ -249,5 +250,122 @@ describe('Claude Code conversions', () => {
     await expect(
       canUseTool('Edit', {}, { signal, toolUseID: 't2', requestId: 'r2' }),
     ).resolves.toEqual({ behavior: 'deny', message: 'no', interrupt: true });
+  });
+});
+
+describe('ClaudeEventTranslator, further messages', () => {
+  it('reports mode changes, unnamed windows and failed turns', () => {
+    const translator = new ClaudeEventTranslator();
+    expect(
+      translator
+        .translate(
+          message({
+            type: 'system',
+            subtype: 'status',
+            permissionMode: 'plan',
+          }),
+        )
+        .filter((event) => event.type === 'mode'),
+    ).toEqual([{ type: 'mode', mode: 'plan' }]);
+    expect(
+      translator.translate(
+        message({
+          type: 'rate_limit_event',
+          rate_limit_info: { status: 'rejected' },
+        }),
+      ),
+    ).toEqual([
+      {
+        type: 'rate-limit',
+        limit: {
+          window: null,
+          status: 'rejected',
+          utilization: null,
+          resetsAt: null,
+        },
+      },
+    ]);
+    expect(
+      translator.translate(
+        message({
+          type: 'result',
+          subtype: 'error_max_turns',
+          is_error: true,
+          errors: ['Too many turns'],
+          duration_ms: 5,
+          num_turns: 9,
+          modelUsage: {},
+        }),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        type: 'result',
+        subtype: 'error_max_turns',
+        isError: true,
+        text: null,
+        errors: ['Too many turns'],
+        queuedTurns: 0,
+      }),
+    ]);
+  });
+
+  it('drops suggestions it cannot apply and keeps a plan approval mode', async () => {
+    const canUseTool = claudeCanUseTool(async (call) => ({
+      behavior: 'allow',
+      updatedPermissions: [
+        ...call.suggestions,
+        { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+      ],
+    }));
+    const result = await canUseTool(
+      'ExitPlanMode',
+      {},
+      {
+        signal: new AbortController().signal,
+        toolUseID: 't',
+        requestId: 'r',
+        suggestions: [
+          {
+            type: 'removeRules',
+            rules: [{ toolName: 'Bash' }],
+            behavior: 'allow',
+            destination: 'session',
+          },
+        ],
+      },
+    );
+    expect(result).toEqual({
+      behavior: 'allow',
+      updatedPermissions: [
+        { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+      ],
+    });
+  });
+});
+
+describe('translateMessages', () => {
+  it('skips a message it cannot translate and goes on', async () => {
+    async function* messages() {
+      // Without its commands: translating it fails.
+      yield message({ type: 'system', subtype: 'commands_changed' });
+      yield message({
+        type: 'system',
+        subtype: 'status',
+        permissionMode: 'plan',
+      });
+    }
+    const errors: unknown[] = [];
+    const batches = [];
+    for await (const batch of translateMessages(
+      messages(),
+      new ClaudeEventTranslator(),
+      (error) => errors.push(error),
+    )) {
+      batches.push(batch);
+    }
+    expect(errors).toHaveLength(1);
+    expect(batches).toEqual([
+      expect.arrayContaining([{ type: 'mode', mode: 'plan' }]),
+    ]);
   });
 });

@@ -748,16 +748,21 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     private readonly engines?: AgentEngines,
   ) {}
 
-  /** The account a session effectively uses (`null`: the default). */
-  /** The account a session effectively uses (its own, else the default). */
+  /**
+   * The account a session effectively uses (its own, else the default);
+   * `''` when its engine's provider has no account (starting says so).
+   */
   private accountOf(
     record: Pick<SessionRecord, 'accountId' | 'engine'> | null | undefined,
   ): string {
+    if (!this.accounts) {
+      return MAIN_ACCOUNT_ID;
+    }
     return (
-      this.accounts?.effectiveId(
+      this.accounts.effectiveId(
         record?.accountId ?? null,
         this.providerOf(record),
-      ) ?? MAIN_ACCOUNT_ID
+      ) ?? ''
     );
   }
 
@@ -766,6 +771,11 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     record: Pick<SessionRecord, 'engine'> | null | undefined,
   ): AccountProvider {
     return ENGINE_PROVIDERS[record?.engine ?? DEFAULT_ENGINE];
+  }
+
+  /** The history reader of a session's engine. */
+  private transcriptsFor(record: Pick<SessionRecord, 'engine'>): TranscriptReader {
+    return this.engines?.transcripts(record.engine) ?? this.transcripts;
   }
 
   /** The runner of a session's engine. */
@@ -822,15 +832,17 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       // they follow the default) restart with it once free.
       for (const live of this.live.values()) {
         const record = this.sessions.get(live.id);
-        if (
-          record &&
-          live.run &&
-          !live.closing &&
-          !live.restartPending &&
-          this.accountOf(record) !== live.accountId
-        ) {
+        if (!record || !live.run || live.closing) {
+          continue;
+        }
+        const differs = this.accountOf(record) !== live.accountId;
+        if (differs && !live.restartPending) {
           this.restartWhenFree(live.id);
           live.accountRestart = live.restartPending;
+        } else if (!differs && live.accountRestart) {
+          // Back to the process's account before it restarted.
+          live.restartPending = false;
+          live.accountRestart = false;
         }
       }
     });
@@ -2185,7 +2197,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       let failed = false;
       if (record.sdkSessionId) {
         try {
-          entries = await this.transcripts.read(
+          entries = await this.transcriptsFor(record).read(
             record.sdkSessionId,
             transcriptDirectory(record) ?? workingDirectory(record),
             record.workingDirectory !== null,
@@ -2505,7 +2517,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     let exists = false;
     try {
-      exists = await this.transcripts.exists(
+      exists = await this.transcriptsFor(record).exists(
         record.id,
         transcriptDirectory(record) ?? workingDirectory(record),
         record.workingDirectory !== null,
@@ -2521,12 +2533,16 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   private async consume(live: LiveSession, run: AgentRun): Promise<void> {
     let failure: unknown = null;
     try {
-      for await (const event of run.events) {
+      for await (const batch of run.events) {
         if (live.run !== run) {
           break;
         }
+        // One message of the engine, handled as a whole: an error skips
+        // the rest of it, as before.
         try {
-          this.handleEvent(live, event);
+          for (const event of batch) {
+            this.handleEvent(live, event);
+          }
         } catch (error) {
           this.logger.error(`Handling a message of ${live.id} failed`, error);
         }
