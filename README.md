@@ -430,8 +430,9 @@ browser ──REST /api/sessions──▶ SessionsController ─┐
   they are unknown or older than 5 minutes (the web app asks every 5 minutes), and a later
   answer drops windows it no longer lists. Changes go to all clients as `account.limits` (with
   the `accountId`). The session list's app bar shows the default account's 5-hour window as a
-  meter (outlined in the error colour from 75 %, filled when
-  exhausted; amber is kept for sessions that need the user); tapping it opens a dialog with
+  meter, for each provider whose engine the server has and that has accounts (Claude and
+  ChatGPT side by side, named only when there are several; outlined in the error colour from
+  75 %, filled when exhausted; amber is kept for sessions that need the user); tapping it opens a dialog with
   every window of every account, per-model weekly ones included, with percent, reset time and
   when they were last updated. The session details show the list of the session's account.
 - Integrations: each Claude Code process gets the tools `show_file` (always),
@@ -947,7 +948,8 @@ plain text: words become `LIKE` patterns with `%`, `_` and `\` escaped against t
 trigram index, never FTS query syntax, so no input causes a syntax error (words of one or two
 characters work too, without the index). At most 8 words, 200 characters; at most 50 sessions,
 3 matches shown per session. Results show the session (title, repositories, archived) and
-snippets with the words marked; a conversation match opens the session at that message
+snippets with the words marked, each labelled with where it matched (an answer with the
+session's agent, "Claude" or "Codex", from the hit's `engine`); a conversation match opens the session at that message
 (`?at=<message ID>&q=`, scrolled into view and outlined; if the message is not found, the first
 one containing the first word).
 
