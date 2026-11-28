@@ -36,7 +36,11 @@ import {
 } from '../../accounts/claude-account-directories';
 import { CODEX_ACCOUNT_DIR_SCRIPT } from '../../accounts/codex-accounts';
 import { CodexAppServer } from './codex-app-server';
-import { codexRulesReason, isReadOnlyCommand } from './review-commands';
+import {
+  codexRulesReason,
+  isGitCommand,
+  isReadOnlyCommand,
+} from './review-commands';
 import {
   CODEX_APP_INPUT_PREFIX,
   CODEX_APP_TOOL_NAMESPACE,
@@ -553,7 +557,8 @@ export function codexReviewEffort(
 /**
  * Codex features a review's thread goes without: hooks (the reviewed
  * changes may have written them), apps and plugins (connectors with tools
- * of their own), subagents and goals.
+ * of their own), subagents, goals, the browser, computer use and image
+ * generation.
  */
 export const REVIEW_FEATURES = {
   'features.hooks': false,
@@ -561,7 +566,47 @@ export const REVIEW_FEATURES = {
   'features.plugins': false,
   'features.multi_agent': false,
   'features.goals': false,
+  'features.browser_use': false,
+  'features.computer_use': false,
+  'features.image_generation': false,
 };
+
+/** Git configuration that makes a reading git command run a program. */
+export const GIT_RUNS_PROGRAMS =
+  '^(core\\.fsmonitor|diff\\.external|diff\\..+\\.(textconv|command)|filter\\..+)$';
+
+/**
+ * Whether the git configuration seen in `cwd` (as the session user)
+ * sets none of {@link GIT_RUNS_PROGRAMS}: `git config --get-regexp` finds
+ * nothing (exit 1); anything else (a match, an error) counts as not.
+ */
+export function gitRunsNothing(
+  launcher: ProcessLauncher,
+  cwd: string,
+): Promise<boolean> {
+  const command = launcher.command('session', 'git', [
+    'config',
+    '--get-regexp',
+    GIT_RUNS_PROGRAMS,
+  ]);
+  return new Promise<boolean>((resolve) => {
+    const child = spawn(command.command, command.args, {
+      cwd,
+      env: launcher.environment('session', {}),
+      stdio: 'ignore',
+    });
+    const timer = setTimeout(() => child.kill('SIGKILL'), 10_000);
+    timer.unref?.();
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code === 1);
+    });
+  });
+}
 
 /** One review (see `CodexRunner.review`). */
 class CodexReview {
@@ -770,14 +815,21 @@ class CodexReview {
    * commands, file changes, permissions, questions, MCP) is refused. With
    * the sandbox nothing should ask (`never`): refused too.
    */
-  private serverRequest(method: string, params: unknown): unknown {
+  private async serverRequest(
+    method: string,
+    params: unknown,
+  ): Promise<unknown> {
     const p = (params ?? {}) as Record<string, unknown>;
     if (method === 'item/commandExecution/requestApproval') {
       const command = typeof p['command'] === 'string' ? p['command'] : '';
       if (
         this.unsandboxed &&
         p['kind'] !== 'writeStdin' &&
-        isReadOnlyCommand(command)
+        isReadOnlyCommand(command) &&
+        (!isGitCommand(command) ||
+          (await this.gitConfigSafe(
+            typeof p['cwd'] === 'string' ? p['cwd'] : this.options.cwd,
+          )))
       ) {
         return { decision: 'accept' };
       }
@@ -797,6 +849,24 @@ class CodexReview {
       default:
         throw new Error(`${method} is not supported during a review`);
     }
+  }
+
+  /** Per directory: its git configuration runs no programs on a read. */
+  private readonly gitChecks = new Map<string, Promise<boolean>>();
+
+  /**
+   * Whether git commands that only read run nothing else in `cwd`: no
+   * `core.fsmonitor`, `diff.external`, diff drivers' `textconv` or
+   * `command`, or `filter.*` drivers in its configuration (read as the
+   * session user once per directory and review; unknown counts as not).
+   */
+  private gitConfigSafe(cwd: string): Promise<boolean> {
+    let check = this.gitChecks.get(cwd);
+    if (!check) {
+      check = gitRunsNothing(this.launcher, cwd);
+      this.gitChecks.set(cwd, check);
+    }
+    return check;
   }
 
   private async interrupt(): Promise<void> {

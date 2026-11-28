@@ -9,6 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Logger } from '@nestjs/common';
@@ -1368,6 +1369,25 @@ describe('CodexRunner', () => {
   });
 
   describe('reviews', () => {
+    // Only the repository's own git configuration counts in these tests.
+    const gitEnv = {
+      GIT_CONFIG_GLOBAL: process.env['GIT_CONFIG_GLOBAL'],
+      GIT_CONFIG_NOSYSTEM: process.env['GIT_CONFIG_NOSYSTEM'],
+    };
+    beforeAll(() => {
+      process.env['GIT_CONFIG_GLOBAL'] = '/dev/null';
+      process.env['GIT_CONFIG_NOSYSTEM'] = '1';
+    });
+    afterAll(() => {
+      for (const [key, value] of Object.entries(gitEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    });
+
     const schema = { type: 'object', properties: {} };
     const review = (overrides: Partial<AgentReviewOptions> = {}) =>
       runner.review({
@@ -1423,6 +1443,9 @@ describe('CodexRunner', () => {
           config: expect.objectContaining({
             'mcp_servers.docs.enabled': false,
             'features.hooks': false,
+            'features.browser_use': false,
+            'features.computer_use': false,
+            'features.image_generation': false,
             'features.apps': false,
             'features.plugins': false,
             'features.multi_agent': false,
@@ -1492,6 +1515,14 @@ describe('CodexRunner', () => {
         'cat work.txt > copy: decline',
         'rg --pre sh x: decline',
         'file change: decline',
+      ]);
+      // A clone whose git configuration runs programs: no git commands.
+      execFileSync('git', ['init', '-q', cwd]);
+      execFileSync('git', ['-C', cwd, 'config', 'core.fsmonitor', 'true']);
+      const again = await review({ prompt: 'review-commands' });
+      expect(decisions(again).slice(0, 2)).toEqual([
+        'cat work.txt: accept',
+        'git diff: decline',
       ]);
     });
 

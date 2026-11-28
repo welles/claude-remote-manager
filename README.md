@@ -2410,7 +2410,8 @@ with the engine the settings choose, Claude Code or Codex, whatever the session'
   can read anything the session user can (other clones, the accounts' Codex logins), not only
   the session's directories; its instructions tell it to stay in the listed repositories, which
   is not enforced. The thread also runs without the features `apps`, `plugins`,
-  `multi_agent` and `goals` (`REVIEW_FEATURES`), and `config/read` gets the working
+  `multi_agent`, `goals`, `browser_use`, `computer_use` and `image_generation`
+  (`REVIEW_FEATURES`; web search and image viewing stay), and `config/read` gets the working
   directory so project MCP servers are disabled too.
 - **How the Codex reviewer stays read-only** (`CodexRunner.review`, `review-commands.ts`):
   - **Command rules:** Codex's `prefix_rule(…, decision="allow")` would let commands run past
@@ -2432,9 +2433,14 @@ with the engine the settings choose, Claude Code or Codex, whatever the session'
     without `--output`, `--ext-diff`, `-O`) and declines everything else (other commands,
     input to commands, file changes, permissions, questions, MCP). Codex 0.171 asks before
     `cat` and `git diff` too in this mode (checked with a mock model), so declining everything
-    would leave the reviewer blind. Remaining risk: an allowed `git` command honours the
-    clone's git configuration (`core.fsmonitor`, textconv drivers), which only someone writing
-    as the session user can set. Give the container user namespaces to use the sandbox.
+    would leave the reviewer blind. Git commands are declined as well where the git
+    configuration seen in the command's directory makes a read run a program: `git config
+--get-regexp` (as the session user, once per directory and review) finds `core.fsmonitor`,
+    `diff.external`, a diff driver's `textconv` or `command`, or a `filter.*` driver (also a
+    global `git lfs` setup; then the reviewer reads files without git). Codex does not let the
+    app rewrite a command, so `-c core.fsmonitor=false` and the like are not an option. The
+    reviewer's instructions describe both modes. Give the container user namespaces to use the
+    sandbox.
 - **Settings:** `GET`/`PUT /api/settings/review` (`app_settings` key `review`): the engine
   (default `claude-code`; only engines the server has can be chosen), a model per engine
   (`models`: Claude Code's default `claude-fable-5-2`, Codex's `null` = Codex's own default;

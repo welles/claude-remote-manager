@@ -120,6 +120,12 @@ export function isReadOnlyCommand(command: string): boolean {
   }
 }
 
+/** Whether a command (as Codex reports it) runs git. */
+export function isGitCommand(command: string): boolean {
+  const { script } = shellScript(command);
+  return shellWords(script.trim())?.[0] === 'git';
+}
+
 /** A rules file says something (lines other than comments and blanks). */
 function hasRules(text: string): boolean {
   return text

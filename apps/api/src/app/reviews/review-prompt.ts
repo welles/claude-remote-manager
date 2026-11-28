@@ -75,7 +75,7 @@ const READING: Record<AgentEngineId, string> = {
   'claude-code':
     'You can only read: Read, Grep and Glob in the repositories listed. You cannot run commands, change files or reach the network, and you must not try.',
   codex:
-    'You can only read: your sandbox is read-only. Use read-only commands (such as rg, cat, sed -n, ls, git diff, git log, git show) in the repositories listed. You cannot change files or reach the network, and you must not try; do not build, test or install anything. Stay within the repositories listed.',
+    'You can only read: your sandbox is read-only, or, where it is not available, every command that is not a plain read (one simple command such as cat, rg, sed -n, ls, git diff, without pipes, redirections or substitutions) is declined. Use read-only commands (such as rg, cat, sed -n, ls, git diff, git log, git show) in the repositories listed. You cannot change files or reach the network, and you must not try; do not build, test or install anything. Stay within the repositories listed.',
 };
 
 /** The reviewer's instructions for an engine (see {@link reviewerInstructions}). */
