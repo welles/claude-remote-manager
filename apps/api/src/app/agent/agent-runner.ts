@@ -205,8 +205,13 @@ export interface AgentRun {
    * with its next request. Rejects when this Claude Code cannot do it.
    */
   addDirectories(directories: string[]): Promise<void>;
-  /** Ends the input and terminates the process. */
-  close(): void;
+  /**
+   * Ends the input and terminates the process. An engine whose processes
+   * must not overlap (Codex: one thread, written from one home at a time)
+   * returns a promise that resolves once the process has ended; the
+   * session's next process starts after it.
+   */
+  close(): void | Promise<void>;
   /** The last lines Claude Code wrote to stderr, for error messages. */
   stderrTail(): string[];
 }

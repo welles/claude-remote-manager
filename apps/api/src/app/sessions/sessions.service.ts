@@ -508,6 +508,11 @@ interface LiveSession {
 
 /** How long shutdown waits for Claude Code processes to exit. */
 export const SHUTDOWN_GRACE_MS = 5000;
+/**
+ * How long a new process of a session waits for the end of the one closed
+ * before it (Codex ends within its kill timeout).
+ */
+export const PROCESS_EXIT_WAIT_MS = 10_000;
 
 /** Notice stored when a server stop interrupts a running turn. */
 export const RESTART_NOTICE =
@@ -694,6 +699,13 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
   eventAppended:
     | ((sessionId: string, event: SessionEventInput) => void)
     | null = null;
+
+  /**
+   * The end of each session's last closed process, for engines whose
+   * processes must not overlap (Codex: a thread written from one home at a
+   * time): the session's next process starts after it.
+   */
+  private readonly exits = new Map<string, Promise<void>>();
 
   /** Events of all sessions, as they are added to the session logs. */
   readonly events$ = this.events.asObservable();
@@ -963,7 +975,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         this.sessions.update(live.id, { status: 'waiting' });
       }
       live.closing = 'shutdown';
-      live.run.close();
+      this.closeRun(live, live.run);
       if (live.consuming) {
         exits.push(live.consuming);
       }
@@ -1841,7 +1853,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (live?.run) {
       live.closing = 'end';
       this.approver.cancelSession(sessionId, 'ended');
-      live.run.close();
+      this.closeRun(live, live.run);
     }
     if (this.requireRecord(sessionId).pendingMessage) {
       // Waiting after a failed setup script: the message is dropped.
@@ -2075,7 +2087,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       if (run) {
         this.approver.cancelSession(sessionId, 'ended');
         this.support.released(sessionId);
-        run.close();
+        this.closeRun(live, run);
       }
       this.live.delete(sessionId);
     }
@@ -2445,6 +2457,9 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
           )
         : null;
       live.accountId = account?.id ?? MAIN_ACCOUNT_ID;
+      // Never two processes of the session at once (e.g. a switch of the
+      // account: the old home's Codex still writing the thread).
+      await this.previousExit(live);
       const run = await this.runnerFor(current).start(
         {
           ...(account
@@ -3924,7 +3939,46 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     }
     this.clearIdleTimer(live);
     live.closing = 'idle';
-    run.close();
+    this.closeRun(live, run);
+  }
+
+  /** Closes a process; the next one of the session waits for its end. */
+  private closeRun(live: LiveSession, run: AgentRun): void {
+    const ended = run.close();
+    if (ended) {
+      const previous = this.exits.get(live.id);
+      const entry = Promise.all([previous, ended]).then(
+        () => undefined,
+        () => undefined,
+      );
+      this.exits.set(live.id, entry);
+      // Forgotten once over (nothing to wait for any more).
+      void entry.then(() => {
+        if (this.exits.get(live.id) === entry) {
+          this.exits.delete(live.id);
+        }
+      });
+    }
+  }
+
+  /** Waits (bounded) until the session's last closed process has ended. */
+  private async previousExit(live: LiveSession): Promise<void> {
+    const exiting = this.exits.get(live.id);
+    if (!exiting) {
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      exiting,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, PROCESS_EXIT_WAIT_MS);
+        timer.unref?.();
+      }),
+    ]);
+    clearTimeout(timer);
+    if (this.exits.get(live.id) === exiting) {
+      this.exits.delete(live.id);
+    }
   }
 
   /**
@@ -5885,7 +5939,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       ) {
         this.logger.log(`Closing idle session ${live.id}`);
         live.closing = 'idle';
-        live.run.close();
+        this.closeRun(live, live.run);
       }
     }, this.config.sessionIdleTimeoutMs);
     live.idleTimer.unref?.();

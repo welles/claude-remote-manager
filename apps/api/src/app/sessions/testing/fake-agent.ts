@@ -61,7 +61,10 @@ export class FakeRun implements AgentRun {
   readonly options: AgentStartOptions & { canUseTool: CanUseTool };
 
   constructor(options: AgentStartOptions, firstMessage: AgentUserMessage) {
-    this.options = { ...options, canUseTool: claudeCanUseTool(options.approve) };
+    this.options = {
+      ...options,
+      canUseTool: claudeCanUseTool(options.approve),
+    };
     this.sent.push(firstMessage);
   }
 
@@ -178,9 +181,16 @@ export class FakeRun implements AgentRun {
     }
   }
 
-  close(): void {
+  /**
+   * When set, `close` returns it: the process ends once it resolves (an
+   * engine whose processes must not overlap).
+   */
+  exit: Promise<void> | null = null;
+
+  close(): void | Promise<void> {
     this.closed = true;
     this.output.close();
+    return this.exit ?? undefined;
   }
 
   stderr: string[] = [];
@@ -293,10 +303,7 @@ export class FakeTranscriptReader implements TranscriptReader {
   /** Makes `read` fail, like an unreadable transcript. */
   failing = false;
 
-  async read(
-    sdkSessionId: string,
-    cwd: string,
-  ): Promise<AgentHistoryEntry[]> {
+  async read(sdkSessionId: string, cwd: string): Promise<AgentHistoryEntry[]> {
     this.reads.push({ sdkSessionId, cwd });
     if (this.failing) {
       throw new Error('transcript unreadable');

@@ -238,6 +238,39 @@ describe('Codex sessions', () => {
     ).not.toContain('chatgpt-b');
   });
 
+  it('starts the next process only after the closed one has ended', async () => {
+    const session = (await create({ engine: 'codex' })).json<SessionDto>();
+    await waitFor(() => codex.runs.length === 1);
+    codex.last.emit(resultMessage(1, 0));
+    await waitFor(
+      async () =>
+        (await call('GET', `/api/sessions/${session.id}`)).json<SessionDto>()
+          .status === 'waiting',
+    );
+    let exited: () => void = () => undefined;
+    codex.last.exit = new Promise((resolve) => (exited = resolve));
+    // Another account: the process is closed and the next one resumes the
+    // thread in the other home, never while the old one still writes it.
+    expect(
+      (
+        await call('PATCH', `/api/sessions/${session.id}`, {
+          accountId: 'chatgpt-b',
+        })
+      ).status,
+    ).toBe(200);
+    await waitFor(() => codex.runs[0].closed);
+    await call('POST', `/api/sessions/${session.id}/messages`, {
+      text: 'Next',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(codex.runs).toHaveLength(1);
+    exited();
+    await waitFor(() => codex.runs.length === 2);
+    expect(codex.last.options.account?.configDir).toBe(
+      join(homes, 'chatgpt-b'),
+    );
+  });
+
   it('switches to the next ChatGPT account at the usage limit', async () => {
     const session = (await create({ engine: 'codex' })).json<SessionDto>();
     await waitFor(() => codex.runs.length === 1);

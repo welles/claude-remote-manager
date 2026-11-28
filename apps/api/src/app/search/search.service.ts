@@ -185,7 +185,10 @@ export class SearchService implements OnModuleInit, OnModuleDestroy {
           continue;
         }
         this.replace(record.id, history.events);
-        this.saveSource(record.id, source);
+        // Stamped after reading: reading may write to the transcript itself
+        // (Codex's history reader resumes the thread), which must not count
+        // as a change the next time.
+        this.saveSource(record.id, await this.source(record));
         indexed++;
       } catch (error) {
         this.logger.warn(`Indexing ${record.id} failed: ${String(error)}`);
@@ -331,11 +334,9 @@ export class SearchService implements OnModuleInit, OnModuleDestroy {
     const cwd = transcriptDirectory(record);
     const id = record.sdkSessionId ?? record.id;
     const stamp = cwd
-      ? await (this.engines?.transcripts(record.engine) ?? this.transcripts).stamp(
-          id,
-          cwd,
-          record.workingDirectory !== null,
-        )
+      ? await (
+          this.engines?.transcripts(record.engine) ?? this.transcripts
+        ).stamp(id, cwd, record.workingDirectory !== null)
       : null;
     return stamp ?? 'missing';
   }
