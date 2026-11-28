@@ -638,6 +638,15 @@ export function applyEvent(
         messageId: event.messageId,
         model: event.model !== undefined ? event.model : existing.model,
         effort: event.effort ?? existing.effort,
+        engine: event.engine ?? existing.engine,
+        fallbackFrom:
+          event.fallbackFrom !== undefined
+            ? event.fallbackFrom
+            : existing.fallbackFrom,
+        fallbackReason:
+          event.fallbackReason !== undefined
+            ? event.fallbackReason
+            : existing.fallbackReason,
       });
     }
     case 'notice':

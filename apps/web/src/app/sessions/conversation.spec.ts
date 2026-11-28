@@ -987,7 +987,51 @@ describe('independent reviews in the conversation', () => {
         findings: [finding],
         durationMs: 5000,
         messageId: 'm1',
+        // Older reviews: Claude Code.
+        engine: 'claude-code',
+        fallbackFrom: null,
       }),
     ]);
+  });
+
+  it('takes the engine a review switched to as it started', () => {
+    let items = buildConversation([
+      event({
+        type: 'review.started',
+        reviewId: 'r1',
+        trigger: 'manual',
+        engine: 'codex',
+        fallbackFrom: null,
+        model: null,
+        effort: 'high',
+        fileCount: 1,
+        repositories: ['alice/app'],
+      }),
+    ]);
+    items = applyEvent(
+      items,
+      event({
+        type: 'review.finished',
+        reviewId: 'r1',
+        outcome: 'finished',
+        summary: null,
+        findings: [],
+        error: null,
+        durationMs: 1000,
+        usage: null,
+        messageId: null,
+        engine: 'claude-code',
+        fallbackFrom: 'codex',
+        fallbackReason: 'Codex has command rules (x)',
+        model: 'claude-fable-5-2',
+      }),
+    );
+    expect(items[0]).toMatchObject({
+      engine: 'claude-code',
+      fallbackFrom: 'codex',
+      fallbackReason: 'Codex has command rules (x)',
+      model: 'claude-fable-5-2',
+      effort: 'high',
+    });
   });
 });
