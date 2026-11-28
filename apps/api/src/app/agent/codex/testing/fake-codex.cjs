@@ -46,6 +46,13 @@
 //   crash        the process exits (code 3) in the middle of the turn
 //   review-json  a commentary message, then the final answer: review JSON
 //                (one finding naming the turn's effort and model)
+//   review-commands  asks for commands (reading and writing ones) and a
+//                file change, then answers review JSON whose finding's
+//                detail lists the decisions
+//
+// `codex sandbox -- <command>` exits 0, or 1 like bubblewrap without user
+// namespaces when $CODEX_HOME/fake-sandbox-fails exists (appended to
+// $CODEX_HOME/fake-sandbox-probes either way).
 // anything else: an agent message "Echo: <text>", streamed in two deltas.
 //
 // An `ephemeral` thread (thread/start) writes no rollout.
@@ -56,6 +63,19 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const home = process.env.CODEX_HOME || path.join(process.cwd(), '.codex');
+
+if (process.argv[2] === 'sandbox') {
+  fs.mkdirSync(home, { recursive: true });
+  fs.appendFileSync(path.join(home, 'fake-sandbox-probes'), 'probe\n');
+  if (fs.existsSync(path.join(home, 'fake-sandbox-fails'))) {
+    process.stderr.write(
+      'bwrap: No permissions to create a new namespace\n',
+      () => process.exit(1),
+    );
+  } else {
+    process.exit(0);
+  }
+}
 const threads = new Map();
 const serverRequests = new Map();
 const logins = new Map();
@@ -673,6 +693,54 @@ async function runTurn(thread, turn, input) {
             line: 1,
             title: `Found with ${turn.effort ?? 'no effort'} on ${turn.model ?? thread.model}`,
             detail: `Schema: ${turn.outputSchema ? 'given' : 'none'}`,
+          },
+        ],
+      }),
+    );
+  } else if (/\breview-commands\b/.test(prompt)) {
+    const decisions = [];
+    for (const script of [
+      'cat work.txt',
+      'git diff',
+      'touch pwned',
+      'cat work.txt > copy',
+      'rg --pre sh x',
+    ]) {
+      const { decision } = await ask('item/commandExecution/requestApproval', {
+        kind: 'command',
+        threadId,
+        turnId,
+        itemId: id('cmd'),
+        startedAtMs: Date.now(),
+        approvalId: null,
+        environmentId: null,
+        reason: null,
+        command: shellWrapped(script),
+        cwd: thread.cwd,
+        commandActions: [{ type: 'unknown', command: script }],
+      });
+      decisions.push(`${script}: ${decision}`);
+    }
+    const change = await ask('item/fileChange/requestApproval', {
+      threadId,
+      turnId,
+      itemId: id('change'),
+      startedAtMs: Date.now(),
+      reason: null,
+      grantRoot: null,
+    });
+    decisions.push(`file change: ${change.decision}`);
+    await message(
+      JSON.stringify({
+        summary: 'Commands.',
+        findings: [
+          {
+            severity: 'low',
+            repository: null,
+            file: null,
+            line: null,
+            title: 'Decisions',
+            detail: decisions.join('\n'),
           },
         ],
       }),

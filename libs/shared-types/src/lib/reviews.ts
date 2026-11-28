@@ -173,6 +173,12 @@ export interface RunningReviewDto {
    * that the review runs with Claude Code instead; `null` otherwise.
    */
   fallbackFrom: AgentEngineId | null;
+  /**
+   * Why the chosen engine was not used though the server has it (e.g.
+   * Codex has command rules); `null`: it is not on the server, or no
+   * fallback.
+   */
+  fallbackReason: string | null;
   /** The model (`null`: the engine's default) and effort it runs with. */
   model: string | null;
   effort: ReviewEffort;

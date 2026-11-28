@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -35,6 +36,7 @@ import {
 } from '../../accounts/claude-account-directories';
 import { CODEX_ACCOUNT_DIR_SCRIPT } from '../../accounts/codex-accounts';
 import { CodexAppServer } from './codex-app-server';
+import { codexRulesReason, isReadOnlyCommand } from './review-commands';
 import {
   CODEX_APP_INPUT_PREFIX,
   CODEX_APP_TOOL_NAMESPACE,
@@ -252,11 +254,13 @@ async function scanRollouts(
  */
 async function withoutMcpServers(
   server: CodexAppServer,
+  cwd?: string,
 ): Promise<Record<string, boolean>> {
   try {
+    // With the working directory, the project's own servers too.
     const answer = await server.request<{
       config?: { mcp_servers?: Record<string, unknown> | null };
-    }>('config/read', {});
+    }>('config/read', cwd ? { cwd } : {});
     return Object.fromEntries(
       Object.keys(answer.config?.mcp_servers ?? {}).map((name) => [
         `mcp_servers.${name}.enabled`,
@@ -301,7 +305,15 @@ export interface CodexRunnerConfig {
    * them first in its developer instructions (`CODEX_INSTRUCTIONS_FILE`).
    */
   instructionsFile?: string | null;
+  /**
+   * Whether Codex's sandbox can start here (tests); else probed once with
+   * `codex sandbox -- true` (see `CodexRunner.sandboxWorks`).
+   */
+  sandboxWorks?: () => Promise<boolean>;
 }
+
+/** How long the sandbox probe may take. */
+export const SANDBOX_PROBE_TIMEOUT_MS = 15_000;
 
 /**
  * Starts Codex processes (`codex app-server`) for sessions, one thread per
@@ -355,12 +367,92 @@ export class CodexRunner implements AgentRunner {
    * An independent review: a short-lived app server as the session user
    * with the account's home, in the session's first directory, and one
    * ephemeral thread (no rollout) in Codex's read-only sandbox that never
-   * asks, without the app's tools, the user's MCP servers and hooks; one
+   * asks (where the sandbox cannot start: full access, asking before every
+   * command, only commands that read allowed), without the app's tools,
+   * the user's MCP servers, hooks, apps, plugins, subagents and goals; one
    * turn with the review prompt whose final message is constrained to the
-   * schema (`outputSchema`).
+   * schema (`outputSchema`). Refused where Codex has command rules (see
+   * `reviewBlocked`).
    */
   review(options: AgentReviewOptions): Promise<AgentReviewResult> {
-    return new CodexReview(this.config, this.launcher, options).run();
+    return new CodexReview(
+      this.config,
+      this.launcher,
+      options,
+      () => this.sandboxWorks(),
+      () => this.reviewBlocked(options),
+    ).run();
+  }
+
+  /**
+   * Why a review must not run with Codex here, `null` when it may: Codex
+   * command rules (`*.rules` in the account's and the base home's
+   * `rules/`, the working directory's `.codex/rules/`) could let commands
+   * run past the read-only setup.
+   */
+  reviewBlocked(options: {
+    account?: AgentAccount;
+    cwd: string;
+  }): Promise<string | null> {
+    return codexRulesReason(
+      [
+        options.account?.configDir ?? this.config.baseHome,
+        this.config.baseHome,
+      ],
+      options.cwd,
+    );
+  }
+
+  private sandbox: Promise<boolean> | null = null;
+
+  /**
+   * Whether Codex's own sandbox (bubblewrap on Linux) starts on this
+   * machine as the session user: it needs user namespaces, which a
+   * container may not allow. Probed once per runner.
+   */
+  sandboxWorks(): Promise<boolean> {
+    this.sandbox ??= (
+      this.config.sandboxWorks ?? (() => this.probeSandbox())
+    )().catch(() => false);
+    return this.sandbox;
+  }
+
+  private probeSandbox(): Promise<boolean> {
+    const command = this.launcher.command('session', this.config.executable, [
+      'sandbox',
+      '--',
+      'true',
+    ]);
+    return new Promise<boolean>((resolve) => {
+      const child = spawn(command.command, command.args, {
+        cwd: tmpdir(),
+        env: this.launcher.environment('session', {
+          CODEX_HOME: this.config.baseHome,
+        }),
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr = (stderr + chunk.toString('utf8')).slice(-2000);
+      });
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+      }, SANDBOX_PROBE_TIMEOUT_MS);
+      timer.unref?.();
+      child.on('error', () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (code !== 0) {
+          new Logger('CodexRunner').warn(
+            `Codex's sandbox cannot start here; reviews run without it, refusing every command that is not known to only read: ${stderr.trim()}`,
+          );
+        }
+        resolve(code === 0);
+      });
+    });
   }
 
   /**
@@ -458,6 +550,19 @@ export function codexReviewEffort(
   );
 }
 
+/**
+ * Codex features a review's thread goes without: hooks (the reviewed
+ * changes may have written them), apps and plugins (connectors with tools
+ * of their own), subagents and goals.
+ */
+export const REVIEW_FEATURES = {
+  'features.hooks': false,
+  'features.apps': false,
+  'features.plugins': false,
+  'features.multi_agent': false,
+  'features.goals': false,
+};
+
 /** One review (see `CodexRunner.review`). */
 class CodexReview {
   private readonly logger = new Logger('CodexReview');
@@ -474,10 +579,19 @@ class CodexReview {
     reject: (error: Error) => void;
   } | null = null;
 
+  /**
+   * Codex's sandbox cannot start: the thread has full access and asks
+   * before every command not known to be safe; the app answers (see
+   * `serverRequest`).
+   */
+  private unsandboxed = false;
+
   constructor(
     private readonly config: CodexRunnerConfig,
     private readonly launcher: ProcessLauncher,
     private readonly options: AgentReviewOptions,
+    private readonly sandboxWorks: () => Promise<boolean>,
+    private readonly blocked: () => Promise<string | null>,
   ) {}
 
   async run(): Promise<AgentReviewResult> {
@@ -486,6 +600,12 @@ class CodexReview {
     if (signal.aborted) {
       throw new Error('The review was cancelled');
     }
+    // Checked before the review was chosen too; again right before it.
+    const reason = await this.blocked();
+    if (reason) {
+      throw new Error(reason);
+    }
+    this.unsandboxed = !(await this.sandboxWorks());
     const ended = new Promise<AgentTurnResult>((resolve, reject) => {
       this.settle = { resolve, reject };
     });
@@ -502,7 +622,7 @@ class CodexReview {
         home: this.options.account?.configDir ?? this.config.baseHome,
         cwd: this.options.cwd,
         onNotification: (method, params) => this.notification(method, params),
-        onRequest: async (method) => this.serverRequest(method),
+        onRequest: async (method, params) => this.serverRequest(method, params),
         onExit: (error) =>
           this.settle?.reject(error ?? new Error('Codex ended')),
       });
@@ -520,18 +640,14 @@ class CodexReview {
         'thread/start',
         {
           cwd: this.options.cwd,
-          // Reads anywhere the session user may, writes nowhere, no
-          // network; never asks (nobody would answer).
-          sandbox: 'read-only',
-          approvalPolicy: 'never',
+          ...this.access(),
           approvalsReviewer: 'user',
           // No rollout, nothing in the history.
           ephemeral: true,
           config: {
             ...CODEX_THREAD_CONFIG,
-            ...(await withoutMcpServers(server)),
-            // The reviewed changes may have written the hooks.
-            'features.hooks': false,
+            ...(await withoutMcpServers(server, this.options.cwd)),
+            ...REVIEW_FEATURES,
           },
           ...(this.options.model ? { model: this.options.model } : {}),
           developerInstructions,
@@ -560,7 +676,7 @@ class CodexReview {
           input: [
             { type: 'text', text: this.options.prompt, text_elements: [] },
           ],
-          approvalPolicy: 'never',
+          approvalPolicy: this.access().approvalPolicy,
           approvalsReviewer: 'user',
           ...(this.options.model ? { model: this.options.model } : {}),
           effort,
@@ -637,11 +753,39 @@ class CodexReview {
     }
   }
 
-  /** Requests of a read-only thread that never asks: refused. */
-  private serverRequest(method: string): unknown {
+  /**
+   * The thread's access: Codex's read-only sandbox (writes nothing, no
+   * network) that never asks; where the sandbox cannot start, full access
+   * that asks before every command (`untrusted`), answered by the app.
+   */
+  private access() {
+    return this.unsandboxed
+      ? { sandbox: 'danger-full-access', approvalPolicy: 'untrusted' as const }
+      : { sandbox: 'read-only', approvalPolicy: 'never' as const };
+  }
+
+  /**
+   * Requests of the review's thread. Without the sandbox, a command that
+   * only reads (`isReadOnlyCommand`) runs once; everything else (other
+   * commands, file changes, permissions, questions, MCP) is refused. With
+   * the sandbox nothing should ask (`never`): refused too.
+   */
+  private serverRequest(method: string, params: unknown): unknown {
+    const p = (params ?? {}) as Record<string, unknown>;
+    if (method === 'item/commandExecution/requestApproval') {
+      const command = typeof p['command'] === 'string' ? p['command'] : '';
+      if (
+        this.unsandboxed &&
+        p['kind'] !== 'writeStdin' &&
+        isReadOnlyCommand(command)
+      ) {
+        return { decision: 'accept' };
+      }
+      this.logger.log(`Review command refused: ${command.slice(0, 200)}`);
+      return { decision: 'decline' };
+    }
     this.logger.warn(`Codex sent ${method} during a review; refused`);
     switch (method) {
-      case 'item/commandExecution/requestApproval':
       case 'item/fileChange/requestApproval':
         return { decision: 'decline' };
       case 'item/tool/requestUserInput':

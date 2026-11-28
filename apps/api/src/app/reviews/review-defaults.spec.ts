@@ -59,6 +59,16 @@ describe('ReviewDefaultsStore', () => {
     expect(store.get().engine).toBe('claude-code');
   });
 
+  it('changes Claude Code’s model when the stored engine is not on the server', () => {
+    store.update({ engine: 'codex', model: 'gpt-5.4' }, both);
+    store.update({ model: 'opus' });
+    expect(store.get()).toEqual({
+      engine: 'codex',
+      models: { 'claude-code': 'opus', codex: 'gpt-5.4' },
+      effort: 'high',
+    });
+  });
+
   it('reads the settings from before Codex and ignores the former round limit', () => {
     store.update({ maxAutoRounds: 5 } as never);
     db.update(appSettings)

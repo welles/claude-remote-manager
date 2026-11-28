@@ -285,6 +285,16 @@ export abstract class AgentRunner {
    * rejects when the process cannot start, ends early or is aborted.
    */
   abstract review(options: AgentReviewOptions): Promise<AgentReviewResult>;
+
+  /**
+   * Why a review must not run with this engine for a session (its
+   * read-only setup could be bypassed), `null` when it may; engines
+   * without such a check leave it out.
+   */
+  reviewBlocked?(options: {
+    account?: AgentAccount;
+    cwd: string;
+  }): Promise<string | null>;
 }
 
 /** What a probe process can be asked. */

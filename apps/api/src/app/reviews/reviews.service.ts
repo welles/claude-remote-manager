@@ -70,8 +70,10 @@ import {
 /** What a session's reviewer runs with (see `ReviewsService.reviewer`). */
 export interface ReviewerChoice {
   engine: AgentEngineId;
-  /** The chosen engine when the server does not have it. */
+  /** The chosen engine when it was not used (see `fallbackReason`). */
   fallbackFrom: AgentEngineId | null;
+  /** Why, when the server has it; `null` when it does not. */
+  fallbackReason: string | null;
   /** `null`: the engine's default model. */
   model: string | null;
   effort: ReviewEffort;
@@ -193,12 +195,69 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     return {
       engine,
       fallbackFrom: engine === wanted ? null : wanted,
+      fallbackReason: null,
       model:
         record.reviewModel !== null && modelEngine === engine
           ? record.reviewModel
           : reviewDefaultModel(defaults, engine),
       effort: reviewEffortFor(engine, record.reviewEffort ?? defaults.effort),
     };
+  }
+
+  /**
+   * The reviewer of a review starting now: {@link reviewer}, and Claude
+   * Code instead when the chosen engine refuses this session's review
+   * (`AgentRunner.reviewBlocked`, e.g. Codex with command rules), with
+   * the reason.
+   */
+  private async choose(record: SessionRecord): Promise<ReviewerChoice> {
+    const choice = this.reviewer(record);
+    const runner = this.runnerOf(choice.engine);
+    const blocked = runner.reviewBlocked?.bind(runner);
+    if (choice.engine === DEFAULT_REVIEW_ENGINE || !blocked) {
+      return choice;
+    }
+    const check = (account?: AgentAccount) =>
+      blocked({
+        ...(account
+          ? { account: { configDir: account.configDir, main: account.main } }
+          : {}),
+        cwd: workingDirectory(record),
+      });
+    let reason: string | null;
+    try {
+      reason = this.accounts
+        ? await this.accounts.withAccount(record.accountId, check, {
+            provider: ENGINE_PROVIDERS[choice.engine],
+          })
+        : await check();
+    } catch (failure) {
+      // E.g. no account of the provider: the review fails visibly.
+      this.logger.warn(
+        `Could not check the ${choice.engine} reviewer of session ${record.id}: ${errorText(failure)}`,
+      );
+      return choice;
+    }
+    if (!reason) {
+      return choice;
+    }
+    const defaults = this.defaults.get();
+    return {
+      engine: DEFAULT_REVIEW_ENGINE,
+      fallbackFrom: choice.engine,
+      fallbackReason: reason,
+      model: reviewDefaultModel(defaults, DEFAULT_REVIEW_ENGINE),
+      effort: reviewEffortFor(
+        DEFAULT_REVIEW_ENGINE,
+        record.reviewEffort ?? defaults.effort,
+      ),
+    };
+  }
+
+  private runnerOf(engine: AgentEngineId): AgentRunner {
+    return this.engines?.has(engine)
+      ? this.engines.runner(engine)
+      : this.runner;
   }
 
   /** Changes a session's review settings; switching to `turn` may start a review. */
@@ -287,7 +346,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       // Archived or cleaned up meanwhile?
       const current = this.requireRecord(sessionId);
       this.requireReviewable(current);
-      return this.launch(current, diff, 'manual');
+      return this.launch(current, diff, 'manual', await this.choose(current));
     } finally {
       this.starting.delete(sessionId);
       if (!this.active.has(sessionId) && this.records.get(sessionId)) {
@@ -342,7 +401,12 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       if (current.reviewMode === 'off' || !this.reviewable(current)) {
         throw new Error('The session cannot be reviewed now.');
       }
-      const review = this.launch(current, diff, 'claude');
+      const review = this.launch(
+        current,
+        diff,
+        'claude',
+        await this.choose(current),
+      );
       return `The independent review started (${ENGINE_LABELS[review.engine]}, model ${review.model ?? 'its default'}, effort ${review.effort}, ${review.fileCount} changed files). Its findings will come as a message of the app, usually within minutes. End your turn now, or say with set_waiting_state "work" that you wait for the review.`;
     } finally {
       this.starting.delete(sessionId);
@@ -366,13 +430,15 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     record: SessionRecord,
     diff: SessionDiffResponse,
     trigger: ReviewTrigger,
+    choice: ReviewerChoice,
   ): RunningReviewDto {
-    const { engine, fallbackFrom, model, effort } = this.reviewer(record);
+    const { engine, fallbackFrom, fallbackReason, model, effort } = choice;
     const dto: RunningReviewDto = {
       id: randomUUID(),
       trigger,
       engine,
       fallbackFrom,
+      fallbackReason,
       model,
       effort,
       startedAt: new Date().toISOString(),
@@ -389,6 +455,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       trigger,
       engine,
       fallbackFrom,
+      fallbackReason,
       model,
       effort,
       fileCount: dto.fileCount,
@@ -456,9 +523,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
     timer.unref?.();
     try {
       let accountId: string | null = null;
-      const runner = this.engines?.has(dto.engine)
-        ? this.engines.runner(dto.engine)
-        : this.runner;
+      const runner = this.runnerOf(dto.engine);
       const review = (account?: AgentAccount & { id: string }) => {
         accountId = account?.id ?? null;
         return runner.review({
@@ -670,7 +735,7 @@ export class ReviewsService implements OnModuleInit, OnModuleDestroy {
       ) {
         return;
       }
-      this.launch(current, diff, 'auto');
+      this.launch(current, diff, 'auto', await this.choose(current));
     } catch (failure) {
       this.logger.warn(
         `Auto-review of session ${sessionId} could not start: ${errorText(failure)}`,

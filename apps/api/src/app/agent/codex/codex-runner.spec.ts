@@ -1,6 +1,7 @@
 import {
   existsSync,
   lstatSync,
+  readFileSync,
   mkdirSync,
   renameSync,
   mkdtempSync,
@@ -35,6 +36,7 @@ import {
   findRollout,
   matchesBashRule,
 } from './codex-runner';
+import { isReadOnlyCommand } from './review-commands';
 import {
   fakeCodexPids,
   fakeCodexRequests,
@@ -1421,9 +1423,15 @@ describe('CodexRunner', () => {
           config: expect.objectContaining({
             'mcp_servers.docs.enabled': false,
             'features.hooks': false,
+            'features.apps': false,
+            'features.plugins': false,
+            'features.multi_agent': false,
+            'features.goals': false,
           }),
         }),
       ]);
+      // The project's MCP servers too.
+      expect(at('config/read')).toEqual([{ cwd }]);
       expect(at('thread/start')[0]).not.toHaveProperty('model');
       expect(at('turn/start')).toEqual([
         expect.objectContaining({
@@ -1444,6 +1452,80 @@ describe('CodexRunner', () => {
       expect(fakeCodexRequests(home)).toEqual([]);
       // The app server has ended.
       expect(await processEnded(fakeCodexPids(account)[0])).toBe(true);
+    });
+
+    const decisions = (result: { output: unknown }) =>
+      (
+        result.output as { findings: { detail: string }[] }
+      ).findings[0].detail.split('\n');
+
+    it('probes Codex’s sandbox once, and refuses every request with it', async () => {
+      const result = await review({ prompt: 'review-commands' });
+      expect(decisions(result)).toEqual([
+        'cat work.txt: decline',
+        'git diff: decline',
+        'touch pwned: decline',
+        'cat work.txt > copy: decline',
+        'rg --pre sh x: decline',
+        'file change: decline',
+      ]);
+      await review();
+      expect(
+        readFileSync(join(home, 'fake-sandbox-probes'), 'utf8').split('\n'),
+      ).toEqual(['probe', '']);
+    });
+
+    it('runs without the sandbox where it cannot start, allowing only commands that read', async () => {
+      writeFileSync(join(home, 'fake-sandbox-fails'), '');
+      const result = await review({ prompt: 'review-commands' });
+      expect(requests('thread/start')[0]).toMatchObject({
+        sandbox: 'danger-full-access',
+        approvalPolicy: 'untrusted',
+      });
+      expect(requests('turn/start')[0]).toMatchObject({
+        approvalPolicy: 'untrusted',
+      });
+      expect(decisions(result)).toEqual([
+        'cat work.txt: accept',
+        'git diff: accept',
+        'touch pwned: decline',
+        'cat work.txt > copy: decline',
+        'rg --pre sh x: decline',
+        'file change: decline',
+      ]);
+    });
+
+    it('refuses to review where Codex has command rules', async () => {
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+      mkdirSync(join(home, 'rules'));
+      writeFileSync(join(home, 'rules', 'default.rules'), '# nothing\n\n');
+      expect(await runner.reviewBlocked({ cwd })).toBeNull();
+      mkdirSync(join(cwd, '.codex', 'rules'), { recursive: true });
+      writeFileSync(
+        join(cwd, '.codex', 'rules', 'project.rules'),
+        'prefix_rule(pattern=["touch"], decision="allow")\n',
+      );
+      expect(await runner.reviewBlocked({ cwd })).toContain('project.rules');
+      // An account's own rules (its `rules/` is a link into the base
+      // home's, followed).
+      rmSync(join(cwd, '.codex'), { recursive: true });
+      const account = join(dir, 'account');
+      mkdirSync(account);
+      symlinkSync(join(home, 'rules'), join(account, 'rules'));
+      writeFileSync(
+        join(home, 'rules', 'default.rules'),
+        'prefix_rule(pattern=["rm"], decision="allow")\n',
+      );
+      expect(
+        await runner.reviewBlocked({
+          cwd,
+          account: { configDir: account, main: false },
+        }),
+      ).toContain(join(account, 'rules', 'default.rules'));
+      await expect(
+        review({ account: { configDir: account, main: false } }),
+      ).rejects.toThrow('command rules');
+      expect(fakeCodexRequests(account)).toEqual([]);
     });
 
     it('lowers an effort the model does not offer', async () => {
@@ -1495,6 +1577,47 @@ describe('CodexRunner', () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     };
+  });
+});
+
+describe('isReadOnlyCommand', () => {
+  it('allows single commands that only read', () => {
+    for (const command of [
+      "/bin/bash -lc 'cat a.txt'",
+      "/bin/bash -lc 'git diff --stat'",
+      "/bin/bash -lc 'git log -p -3'",
+      '/bin/bash -lc "rg -n \'foo|bar\' src"',
+      "/bin/bash -lc 'sed -n 1,40p src/a.ts'",
+      "/bin/bash -lc 'find . -name a.ts'",
+      "/bin/bash -c 'ls -la'",
+    ]) {
+      expect([command, isReadOnlyCommand(command)]).toEqual([command, true]);
+    }
+  });
+
+  it('refuses writes, programs run by others, compounds and the unknown', () => {
+    for (const command of [
+      "/bin/bash -lc 'touch x'",
+      "/bin/bash -lc 'cat a > b'",
+      "/bin/bash -lc 'cat a; rm -rf ~'",
+      "/bin/bash -lc 'cat $(echo a)'",
+      "/bin/bash -lc 'ls *'",
+      "/bin/bash -lc 'rg --pre sh x'",
+      "/bin/bash -lc 'rg --pre=sh x'",
+      "/bin/bash -lc 'find . -delete'",
+      "/bin/bash -lc 'find . -exec rm {} ;'",
+      "/bin/bash -lc 'sed -i s/a/b/ f'",
+      "/bin/bash -lc 'sed -n w/tmp/x f'",
+      "/bin/bash -lc 'git diff --output=x'",
+      "/bin/bash -lc 'git -c core.pager=sh log'",
+      "/bin/bash -lc 'git grep -Ovim x'",
+      "/bin/bash -lc 'git commit -m x'",
+      "/bin/bash -lc 'FOO=1 cat a'",
+      "/bin/bash -lc './cat a'",
+      "/bin/bash -lc 'sort -o x a'",
+    ]) {
+      expect([command, isReadOnlyCommand(command)]).toEqual([command, false]);
+    }
   });
 });
 

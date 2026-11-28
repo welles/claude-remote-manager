@@ -150,14 +150,17 @@ export class ReviewDefaultsStore {
       // An effort the new engine does not offer becomes the closest one.
       next.effort = reviewEffortFor(next.engine, next.effort);
     }
+    // The engine reviews run with: a stored one the server does not have
+    // (any more) is Claude Code, whose model the request then changes.
+    const engine = available(next.engine) ? next.engine : DEFAULT_REVIEW_ENGINE;
     if (body['model'] !== undefined) {
-      next.models[next.engine] =
+      next.models[engine] =
         body['model'] === null
-          ? DEFAULT_REVIEW_MODELS[next.engine]
+          ? DEFAULT_REVIEW_MODELS[engine]
           : requireReviewModel(body['model'], 'model');
     }
     if (body['effort'] !== undefined) {
-      next.effort = requireReviewEffort(body['effort'], 'effort', next.engine);
+      next.effort = requireReviewEffort(body['effort'], 'effort', engine);
     }
     this.db
       .insert(appSettings)

@@ -477,6 +477,38 @@ describe('ReviewsService', () => {
       );
     });
 
+    it('reviews with Claude Code when Codex refuses the session’s review, saying why', async () => {
+      restart();
+      const checked: unknown[] = [];
+      codex.reviewBlocked = async (options) => {
+        checked.push(options);
+        return 'Codex has command rules (/homes/rules/default.rules)';
+      };
+      const session = await changedSession();
+      reviews.updateDefaults({ engine: 'codex', effort: 'max' });
+      const started = await reviews.start(session.id);
+      expect(started).toMatchObject({
+        engine: 'claude-code',
+        fallbackFrom: 'codex',
+        fallbackReason: 'Codex has command rules (/homes/rules/default.rules)',
+        model: 'claude-fable-5-2',
+        effort: 'max',
+      });
+      // Checked with the account the Codex reviewer would have had.
+      expect(checked).toEqual([
+        {
+          account: { configDir: '/homes/chatgpt-default', main: false },
+          cwd: session.cwd,
+        },
+      ]);
+      expect(codex.reviews).toHaveLength(0);
+      expect(harness.runner.reviews).toHaveLength(1);
+      expect(reviewEvents(session.id, 'review.started')[0]).toMatchObject({
+        fallbackFrom: 'codex',
+        fallbackReason: 'Codex has command rules (/homes/rules/default.rules)',
+      });
+    });
+
     it('keeps a session’s model with its engine and resets it when the engine changes', async () => {
       restart();
       const session = await changedSession();
@@ -488,6 +520,7 @@ describe('ReviewsService', () => {
       expect(reviews.reviewer(harness.sessions.require(session.id))).toEqual({
         engine: 'claude-code',
         fallbackFrom: null,
+        fallbackReason: null,
         model: 'opus',
         effort: 'high',
       });
@@ -514,6 +547,7 @@ describe('ReviewsService', () => {
       expect(reviews.reviewer(harness.sessions.require(session.id))).toEqual({
         engine: 'codex',
         fallbackFrom: null,
+        fallbackReason: null,
         model: null,
         effort: 'max',
       });

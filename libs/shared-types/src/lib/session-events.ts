@@ -514,6 +514,8 @@ export interface ReviewStartedEvent extends SessionEventBase {
    * review ran with Claude Code instead.
    */
   fallbackFrom?: AgentEngineId | null;
+  /** Why, when the server has that engine (see `RunningReviewDto`). */
+  fallbackReason?: string | null;
   /** `null`: the engine's default model. */
   model: string | null;
   effort: ReviewEffort;
