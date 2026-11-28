@@ -44,7 +44,11 @@
 //   subagent     a subagent thread's turn starts and ends first
 //   fail-start   turn/start is refused
 //   crash        the process exits (code 3) in the middle of the turn
+//   review-json  a commentary message, then the final answer: review JSON
+//                (one finding naming the turn's effort and model)
 // anything else: an agent message "Echo: <text>", streamed in two deltas.
+//
+// An `ephemeral` thread (thread/start) writes no rollout.
 'use strict';
 
 const fs = require('node:fs');
@@ -185,7 +189,7 @@ function threadView(thread, includeTurns) {
     forkedFromId: null,
     parentThreadId: null,
     preview: '',
-    ephemeral: false,
+    ephemeral: thread.ephemeral === true,
     section: null,
     sectionEnteredAt: null,
     projectId: null,
@@ -242,6 +246,9 @@ function rolloutPath(threadId, date) {
 
 /** Writes the thread's turns as its rollout (one turn per line). */
 function persist(thread) {
+  if (thread.ephemeral) {
+    return;
+  }
   if (!thread.path) {
     thread.path = rolloutPath(thread.id, new Date());
   }
@@ -653,6 +660,23 @@ async function runTurn(thread, turn, input) {
     };
     notify('error', { error, willRetry: false, threadId, turnId });
     status = 'failed';
+  } else if (/\breview-json\b/.test(prompt)) {
+    await message('Reading the changes.');
+    await message(
+      JSON.stringify({
+        summary: 'One problem.',
+        findings: [
+          {
+            severity: 'high',
+            repository: null,
+            file: 'work.txt',
+            line: 1,
+            title: `Found with ${turn.effort ?? 'no effort'} on ${turn.model ?? thread.model}`,
+            detail: `Schema: ${turn.outputSchema ? 'given' : 'none'}`,
+          },
+        ],
+      }),
+    );
   } else if (/\bcrash\b/.test(prompt)) {
     process.stderr.write('panicked: fake crash\n', () => process.exit(3));
     return;
@@ -830,7 +854,17 @@ function handle(message) {
           : {
               data: [
                 model('gpt-5.5-codex', 'GPT-5.5 Codex', { isDefault: true }),
-                model('gpt-5.4', 'GPT-5.4'),
+                model('gpt-5.4', 'GPT-5.4', {
+                  supportedReasoningEfforts: [
+                    'low',
+                    'medium',
+                    'high',
+                    'xhigh',
+                  ].map((reasoningEffort) => ({
+                    reasoningEffort,
+                    description: '',
+                  })),
+                }),
               ],
               nextCursor: 'page-2',
             },
@@ -856,6 +890,7 @@ function handle(message) {
     case 'thread/start': {
       const thread = {
         id: crypto.randomUUID(),
+        ephemeral: params?.ephemeral === true,
         cwd: params?.cwd ?? process.cwd(),
         model: params?.model ?? 'gpt-5.5-codex',
         approvalPolicy: params?.approvalPolicy ?? 'on-request',
@@ -937,6 +972,9 @@ function handle(message) {
       }
       const turn = {
         id: id('turn'),
+        effort: params?.effort ?? null,
+        model: params?.model ?? null,
+        outputSchema: params?.outputSchema ?? null,
         clientId: params?.clientUserMessageId ?? null,
         items: [],
         startedAt: Math.floor(Date.now() / 1000),

@@ -3,7 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SessionPermissionMode } from '@claude-remote-manager/shared-types';
+import {
+  REVIEW_EFFORTS,
+  type ReviewEffort,
+  type SessionPermissionMode,
+} from '@claude-remote-manager/shared-types';
 import type { ProcessLauncher } from '../../common/process-isolation';
 import type {
   AgentAccount,
@@ -20,6 +24,7 @@ import type {
   AgentApprovalResult,
   AgentEvent,
   AgentHistoryEntry,
+  AgentTurnResult,
 } from '../agent-events';
 import { AsyncQueue } from '../async-queue';
 import { loadZod } from '../sdk-agent-runner';
@@ -346,10 +351,16 @@ export class CodexRunner implements AgentRunner {
     }
   }
 
-  review(_options: AgentReviewOptions): Promise<AgentReviewResult> {
-    return Promise.reject(
-      new Error('Independent reviews do not run with Codex yet'),
-    );
+  /**
+   * An independent review: a short-lived app server as the session user
+   * with the account's home, in the session's first directory, and one
+   * ephemeral thread (no rollout) in Codex's read-only sandbox that never
+   * asks, without the app's tools, the user's MCP servers and hooks; one
+   * turn with the review prompt whose final message is constrained to the
+   * schema (`outputSchema`).
+   */
+  review(options: AgentReviewOptions): Promise<AgentReviewResult> {
+    return new CodexReview(this.config, this.launcher, options).run();
   }
 
   /**
@@ -415,6 +426,246 @@ export class CodexRunner implements AgentRunner {
     } finally {
       // Ended before the session's own process may resume the thread.
       await server.close();
+    }
+  }
+}
+
+/**
+ * The effort a review runs with on `model`: the requested one if the
+ * model offers it (or says nothing), else the highest it offers below it,
+ * else its default.
+ */
+export function codexReviewEffort(
+  model: CodexModel | undefined,
+  effort: ReviewEffort,
+): ReviewEffort {
+  const offered = (model?.supportedReasoningEfforts ?? [])
+    .map((option) => option.reasoningEffort)
+    .filter((value): value is ReviewEffort =>
+      (REVIEW_EFFORTS as readonly string[]).includes(value),
+    );
+  if (offered.length === 0 || offered.includes(effort)) {
+    return effort;
+  }
+  const rank = REVIEW_EFFORTS.indexOf(effort);
+  const below = REVIEW_EFFORTS.filter(
+    (value, index) => index < rank && offered.includes(value),
+  );
+  const fallback = model?.defaultReasoningEffort as ReviewEffort | undefined;
+  return (
+    below.at(-1) ??
+    (fallback && offered.includes(fallback) ? fallback : offered[0])
+  );
+}
+
+/** One review (see `CodexRunner.review`). */
+class CodexReview {
+  private readonly logger = new Logger('CodexReview');
+  private server: CodexAppServer | null = null;
+  private translator: CodexEventTranslator | null = null;
+  private threadId: string | null = null;
+  private turnId: string | null = null;
+  /** Notifications that came before the thread was known. */
+  private readonly early: [string, unknown][] = [];
+  /** The text of the thread's last completed agent message. */
+  private answer: string | null = null;
+  private settle: {
+    resolve: (result: AgentTurnResult) => void;
+    reject: (error: Error) => void;
+  } | null = null;
+
+  constructor(
+    private readonly config: CodexRunnerConfig,
+    private readonly launcher: ProcessLauncher,
+    private readonly options: AgentReviewOptions,
+  ) {}
+
+  async run(): Promise<AgentReviewResult> {
+    const started = Date.now();
+    const { signal } = this.options;
+    if (signal.aborted) {
+      throw new Error('The review was cancelled');
+    }
+    const ended = new Promise<AgentTurnResult>((resolve, reject) => {
+      this.settle = { resolve, reject };
+    });
+    // Nobody waits for it before the turn started.
+    ended.catch(() => undefined);
+    // Stops waiting for the turn; it is interrupted before Codex ends.
+    const abort = () =>
+      this.settle?.reject(new Error('The review was cancelled'));
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      const server = await CodexAppServer.start({
+        executable: this.config.executable,
+        launcher: this.launcher,
+        home: this.options.account?.configDir ?? this.config.baseHome,
+        cwd: this.options.cwd,
+        onNotification: (method, params) => this.notification(method, params),
+        onRequest: async (method) => this.serverRequest(method),
+        onExit: (error) =>
+          this.settle?.reject(error ?? new Error('Codex ended')),
+      });
+      this.server = server;
+      if (signal.aborted) {
+        throw new Error('The review was cancelled');
+      }
+      const developerInstructions = [
+        await machineInstructions(this.config.instructionsFile ?? null),
+        this.options.instructions,
+      ]
+        .filter((part): part is string => !!part)
+        .join('\n\n');
+      const thread = await server.request<CodexThreadStartResponse>(
+        'thread/start',
+        {
+          cwd: this.options.cwd,
+          // Reads anywhere the session user may, writes nowhere, no
+          // network; never asks (nobody would answer).
+          sandbox: 'read-only',
+          approvalPolicy: 'never',
+          approvalsReviewer: 'user',
+          // No rollout, nothing in the history.
+          ephemeral: true,
+          config: {
+            ...CODEX_THREAD_CONFIG,
+            ...(await withoutMcpServers(server)),
+            // The reviewed changes may have written the hooks.
+            'features.hooks': false,
+          },
+          ...(this.options.model ? { model: this.options.model } : {}),
+          developerInstructions,
+          dynamicTools: [],
+        },
+      );
+      this.threadId = thread.thread.id;
+      const model = thread.model ?? this.options.model ?? 'codex';
+      this.translator = new CodexEventTranslator(this.threadId, model);
+      for (const [method, params] of this.early.splice(0)) {
+        this.notification(method, params);
+      }
+      const effort = codexReviewEffort(
+        await listModels(server)
+          .then((models) => models.find((entry) => entry.model === model))
+          .catch(() => undefined),
+        this.options.effort,
+      );
+      if (signal.aborted) {
+        throw new Error('The review was cancelled');
+      }
+      const turn = await server.request<{ turn: { id: string } }>(
+        'turn/start',
+        {
+          threadId: this.threadId,
+          input: [
+            { type: 'text', text: this.options.prompt, text_elements: [] },
+          ],
+          approvalPolicy: 'never',
+          approvalsReviewer: 'user',
+          ...(this.options.model ? { model: this.options.model } : {}),
+          effort,
+          outputSchema: this.options.schema,
+        },
+      );
+      this.turnId ??= turn.turn.id;
+      if (signal.aborted) {
+        throw new Error('The review was cancelled');
+      }
+      const result = await ended;
+      let output: unknown = null;
+      let error: string | null = result.isError
+        ? result.text || 'The review failed'
+        : null;
+      if (!error) {
+        try {
+          output = this.answer === null ? null : JSON.parse(this.answer);
+        } catch {
+          output = null;
+        }
+        if (output === null) {
+          error =
+            this.answer === null
+              ? 'The reviewer gave no answer'
+              : 'The reviewer did not answer in the requested format';
+        }
+      }
+      return {
+        output,
+        error,
+        modelUsage: result.usage,
+        durationMs: Date.now() - started,
+        model,
+        effort,
+      };
+    } catch (error) {
+      if (signal.aborted) {
+        await this.interrupt();
+        throw new Error('The review was cancelled');
+      }
+      throw error;
+    } finally {
+      signal.removeEventListener('abort', abort);
+      this.settle = null;
+      await this.server?.close();
+    }
+  }
+
+  private notification(method: string, params: unknown): void {
+    if (!this.translator) {
+      this.early.push([method, params]);
+      return;
+    }
+    const p = (params ?? {}) as Record<string, unknown>;
+    if (typeof p['threadId'] === 'string' && p['threadId'] !== this.threadId) {
+      // A subagent's thread: not the review's answer.
+      return;
+    }
+    if (method === 'turn/started') {
+      const id = (p['turn'] as { id?: unknown } | undefined)?.id;
+      if (typeof id === 'string') {
+        this.turnId ??= id;
+      }
+    }
+    const item = p['item'] as CodexThreadItem | undefined;
+    if (method === 'item/completed' && item?.type === 'agentMessage') {
+      this.answer = (item as { text?: unknown }).text as string;
+    }
+    for (const event of this.translator.translate(method, params)) {
+      if (event.type === 'result') {
+        this.settle?.resolve(event);
+      }
+    }
+  }
+
+  /** Requests of a read-only thread that never asks: refused. */
+  private serverRequest(method: string): unknown {
+    this.logger.warn(`Codex sent ${method} during a review; refused`);
+    switch (method) {
+      case 'item/commandExecution/requestApproval':
+      case 'item/fileChange/requestApproval':
+        return { decision: 'decline' };
+      case 'item/tool/requestUserInput':
+        return { answers: {} };
+      case 'mcpServer/elicitation/request':
+        return { action: 'decline', content: null, _meta: null };
+      case 'item/permissions/requestApproval':
+        return { permissions: {}, scope: 'turn' };
+      default:
+        throw new Error(`${method} is not supported during a review`);
+    }
+  }
+
+  private async interrupt(): Promise<void> {
+    if (this.server && this.threadId && this.turnId) {
+      try {
+        await this.server.request(
+          'turn/interrupt',
+          { threadId: this.threadId, turnId: this.turnId },
+          5_000,
+        );
+      } catch {
+        // Closed anyway.
+      }
     }
   }
 }

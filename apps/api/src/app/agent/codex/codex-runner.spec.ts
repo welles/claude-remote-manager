@@ -19,6 +19,7 @@ import type {
   AgentEvent,
 } from '../agent-events';
 import type {
+  AgentReviewOptions,
   AgentRun,
   AgentStartOptions,
   AgentTool,
@@ -30,6 +31,7 @@ import {
   codexAdditionalContext,
   codexInput,
   codexPolicy,
+  codexReviewEffort,
   findRollout,
   matchesBashRule,
 } from './codex-runner';
@@ -1363,10 +1365,163 @@ describe('CodexRunner', () => {
     await expect(missing.start(options(), message('hello'))).rejects.toThrow();
   });
 
-  it('runs no reviews', async () => {
-    await expect(
-      runner.review({} as Parameters<CodexRunner['review']>[0]),
-    ).rejects.toThrow(/do not run with Codex/);
+  describe('reviews', () => {
+    const schema = { type: 'object', properties: {} };
+    const review = (overrides: Partial<AgentReviewOptions> = {}) =>
+      runner.review({
+        cwd,
+        additionalDirectories: [join(dir, 'other')],
+        model: null,
+        effort: 'high',
+        prompt: 'Review this. review-json',
+        instructions: 'Be an independent reviewer.',
+        schema,
+        signal: new AbortController().signal,
+        ...overrides,
+      });
+
+    it('runs one read-only, ephemeral turn with the schema and returns its answer', async () => {
+      const account = join(dir, 'account');
+      mkdirSync(account);
+      writeFileSync(
+        join(account, 'fake-mcp-servers'),
+        JSON.stringify({ docs: { command: 'docs' } }),
+      );
+      const result = await review({
+        account: { configDir: account, main: false },
+      });
+      expect(result).toEqual({
+        output: {
+          summary: 'One problem.',
+          findings: [
+            expect.objectContaining({
+              title: 'Found with high on gpt-5.5-codex',
+              detail: 'Schema: given',
+            }),
+          ],
+        },
+        error: null,
+        modelUsage: {
+          'gpt-5.5-codex': expect.objectContaining({ outputTokens: 200 }),
+        },
+        durationMs: expect.any(Number),
+        model: 'gpt-5.5-codex',
+        effort: 'high',
+      });
+      const at = (method: string) => requests(method, account);
+      expect(at('thread/start')).toEqual([
+        expect.objectContaining({
+          cwd,
+          sandbox: 'read-only',
+          approvalPolicy: 'never',
+          approvalsReviewer: 'user',
+          ephemeral: true,
+          dynamicTools: [],
+          developerInstructions: 'Be an independent reviewer.',
+          config: expect.objectContaining({
+            'mcp_servers.docs.enabled': false,
+            'features.hooks': false,
+          }),
+        }),
+      ]);
+      expect(at('thread/start')[0]).not.toHaveProperty('model');
+      expect(at('turn/start')).toEqual([
+        expect.objectContaining({
+          effort: 'high',
+          outputSchema: schema,
+          approvalPolicy: 'never',
+          input: [
+            {
+              type: 'text',
+              text: 'Review this. review-json',
+              text_elements: [],
+            },
+          ],
+        }),
+      ]);
+      // No rollout, and nothing in the base home.
+      expect(existsSync(join(account, 'sessions'))).toBe(false);
+      expect(fakeCodexRequests(home)).toEqual([]);
+      // The app server has ended.
+      expect(await processEnded(fakeCodexPids(account)[0])).toBe(true);
+    });
+
+    it('lowers an effort the model does not offer', async () => {
+      const result = await review({ model: 'gpt-5.4', effort: 'max' });
+      expect(result).toMatchObject({ model: 'gpt-5.4', effort: 'xhigh' });
+      expect(requests('turn/start')[0]).toMatchObject({
+        model: 'gpt-5.4',
+        effort: 'xhigh',
+      });
+      expect(requests('thread/start')[0]).toMatchObject({ model: 'gpt-5.4' });
+    });
+
+    it('fails without an answer in the format', async () => {
+      const result = await review({ prompt: 'Just talk' });
+      expect(result).toMatchObject({
+        output: null,
+        error: 'The reviewer did not answer in the requested format',
+      });
+    });
+
+    it('reports a failed turn as its error', async () => {
+      const result = await review({ prompt: 'limit' });
+      expect(result).toMatchObject({
+        output: null,
+        error: "You've hit your usage limit.",
+      });
+    });
+
+    it('interrupts the turn and ends Codex when aborted', async () => {
+      const abort = new AbortController();
+      const running = review({ prompt: 'slow', signal: abort.signal });
+      await waitForRequest('turn/start');
+      abort.abort();
+      await expect(running).rejects.toThrow('The review was cancelled');
+      expect(requests('turn/interrupt')).toHaveLength(1);
+      expect(await processEnded(fakeCodexPids(home)[0])).toBe(true);
+    });
+
+    it('fails when Codex exits during the review', async () => {
+      await expect(review({ prompt: 'crash' })).rejects.toThrow(/fake crash/);
+    });
+
+    const waitForRequest = async (method: string) => {
+      const deadline = Date.now() + 5000;
+      while (requests(method).length === 0) {
+        if (Date.now() > deadline) {
+          throw new Error(`No ${method} in time`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    };
+  });
+});
+
+describe('codexReviewEffort', () => {
+  const model = (efforts: string[], fallback = 'medium') => ({
+    id: 'm',
+    model: 'm',
+    displayName: 'M',
+    description: '',
+    hidden: false,
+    supportedReasoningEfforts: efforts.map((reasoningEffort) => ({
+      reasoningEffort,
+    })),
+    defaultReasoningEffort: fallback,
+  });
+
+  it('keeps an offered effort and lowers one that is not', () => {
+    expect(codexReviewEffort(undefined, 'max')).toBe('max');
+    expect(codexReviewEffort(model([]), 'max')).toBe('max');
+    expect(codexReviewEffort(model(['low', 'high', 'max']), 'max')).toBe('max');
+    expect(codexReviewEffort(model(['low', 'medium', 'high']), 'max')).toBe(
+      'high',
+    );
+    expect(codexReviewEffort(model(['high', 'xhigh']), 'low')).toBe('high');
+    expect(
+      codexReviewEffort(model(['minimal', 'medium', 'xhigh'], 'xhigh'), 'low'),
+    ).toBe('xhigh');
   });
 });
 
