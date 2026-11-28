@@ -1635,6 +1635,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * like after `switch_directory`; the conversation resumes).
    */
   private changeAccount(sessionId: string, accountId: string): void {
+    // The user decides: every account counts again for the next switch.
+    this.limitChains.delete(sessionId);
     const before = this.requireRecord(sessionId);
     let updated = this.sessions.update(sessionId, { accountId });
     const live = this.live.get(sessionId);
@@ -1731,6 +1733,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       await live.starting;
     }
     this.dropLimitWait(sessionId);
+    this.limitChains.delete(sessionId);
     if (live) {
       // Also messages held for the reset of the usage limit.
       this.withdrawQueue(live, QUEUE_WITHDRAWN.ended);
@@ -1976,6 +1979,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       }
       this.live.delete(sessionId);
     }
+    this.limitChains.delete(sessionId);
     this.deletions.next(sessionId);
   }
 
@@ -4827,6 +4831,8 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     this.requireUsable(record);
     const live = this.liveSession(sessionId);
     this.requireAccountProcess(live);
+    // The user tries now: every account counts again.
+    this.limitChains.delete(sessionId);
     await this.continueAfterLimit(live, false);
   }
 
@@ -5085,9 +5091,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
     if (
       until &&
       current.quiet &&
-      this.moveOnFromExhausted(sessionId, accountId)
+      this.moveOnFromExhausted(sessionId, accountId, until)
     ) {
-      // The account it switched to is exhausted too: on to the next one.
+      // The account it switched to is exhausted too: on to the next one,
+      // or to the one that resets first.
       return;
     }
     // A switch to an account whose limits cannot be read goes ahead: the
@@ -5131,6 +5138,10 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       this.scheduleLimitCheck(sessionId);
       return;
     }
+    if (!current.quiet) {
+      // Waited for a reset: the accounts tried before may have room again.
+      this.limitChains.delete(sessionId);
+    }
     await this.continueAfterLimit(this.liveSession(sessionId), true);
   }
 
@@ -5162,11 +5173,14 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
    * well: switches on to the next one with room (not one tried since a turn
    * last got through) and looks at it at once. Returns whether it did.
    */
-  private moveOnFromExhausted(sessionId: string, accountId: string): boolean {
+  private moveOnFromExhausted(
+    sessionId: string,
+    accountId: string,
+    until: Date,
+  ): boolean {
     const accounts = this.accounts;
-    const live = this.live.get(sessionId);
     const wait = this.sessions.get(sessionId)?.limitWait;
-    if (!accounts || !live || !wait) {
+    if (!accounts || !wait) {
       return false;
     }
     const chain = this.extendLimitChain(sessionId, accountId);
@@ -5175,7 +5189,36 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
       exclude: chain,
     });
     if (!next) {
-      return false;
+      // Every account is exhausted: wait for the one that resets first,
+      // also the one the session came from.
+      const earliest = accounts.earliestReset(wait.window ? [wait.window] : []);
+      if (!earliest || earliest.id === accountId || earliest.at >= until) {
+        return false;
+      }
+      this.sessions.update(sessionId, {
+        accountId: earliest.id,
+        limitWait: {
+          ...wait,
+          quiet: false,
+          accountId: earliest.id,
+          resumeAt: new Date(
+            earliest.at.getTime() + this.limitResumeMarginMs,
+          ).toISOString(),
+          resetKnown: true,
+        },
+      });
+      this.tellLimitWait(sessionId, wait);
+      this.append(this.liveSession(sessionId), {
+        type: 'notice',
+        level: 'info',
+        text: limitEarliestNotice(
+          accounts.get(accountId).name,
+          accounts.get(earliest.id).name,
+        ),
+      });
+      this.updates.next(this.toDto(this.requireRecord(sessionId)));
+      this.scheduleLimitCheck(sessionId);
+      return true;
     }
     this.sessions.update(sessionId, {
       accountId: next,
@@ -5186,7 +5229,7 @@ export class SessionsService implements OnModuleInit, OnModuleDestroy {
         resetKnown: false,
       },
     });
-    this.append(live, {
+    this.append(this.liveSession(sessionId), {
       type: 'notice',
       level: 'info',
       text: limitSwitchNotice(

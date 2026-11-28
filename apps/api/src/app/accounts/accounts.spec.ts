@@ -731,6 +731,38 @@ describe('accounts', () => {
       await waitFor(() => app.runner.runs.length === 2);
     });
 
+    it('goes back to the original account when it resets before the one switched to', async () => {
+      await mainLoggedIn();
+      const work = await addAccount('Work', 'work@example.test');
+      const soon = Date.now() + 30 * 60_000;
+      // Work's limits are unknown until read: then its week is used up.
+      app.runner.probeUsage = () =>
+        ({
+          subscription_type: 'max',
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: { utilization: 10, resets_at: null },
+            seven_day: {
+              utilization: 100,
+              resets_at: new Date(Date.now() + 4 * 86_400_000).toISOString(),
+            },
+            seven_day_opus: null,
+            seven_day_sonnet: null,
+            seven_day_oauth_apps: null,
+          },
+        }) as never;
+      const session = await startOn('main');
+      hitLimit(soon);
+      await waitFor(async () => {
+        const dto = await get(session.id);
+        return dto.accountId === 'main' && dto.limitResetKnown === true;
+      });
+      const resumes = Date.parse((await get(session.id)).limitResumesAt ?? '');
+      expect(resumes).toBeLessThan(soon + 5 * 60_000);
+      expect(app.runner.runs).toHaveLength(1);
+      expect(work.id).toBeTruthy();
+    });
+
     it('stays with the only account', async () => {
       const session = (
         await call('POST', '/api/sessions', { prompt: 'Hi', scratch: true })
